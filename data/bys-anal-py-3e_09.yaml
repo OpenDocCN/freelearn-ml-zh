@@ -1,0 +1,1860 @@
+- en: Chapter 10
+  id: totrans-0
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+  zh: 第10章
+- en: Inference Engines
+  id: totrans-1
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 推断引擎
+- en: The first principle is that you must not fool yourself—and you are the easiest
+    person to fool. – Richard Feynman
+  id: totrans-2
+  prefs:
+  - PREF_BQ
+  type: TYPE_NORMAL
+  zh: 第一个原则是，你绝不能欺骗自己——而你最容易被自己欺骗。——理查德·费曼
+- en: So far, we have focused on model building, interpretation of results, and criticism
+    of models. We have relied on the magic of the `pm.sample` function to compute
+    posterior distributions for us. Now we will focus on learning some of the details
+    of the inference engines behind this function.
+  id: totrans-3
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 到目前为止，我们主要关注模型构建、结果解释和模型批评。我们已经依赖 `pm.sample` 函数的魔力为我们计算后验分布。现在我们将集中学习该函数背后推断引擎的一些细节。
+- en: 'The whole purpose of probabilistic programming tools, such as PyMC, is that
+    the user should not care about how sampling is carried out, but understanding
+    how we get samples from the posterior is important for a full understanding of
+    the inference process, and could also help us to get an idea of when and how these
+    methods fail and what to do about it. If you are not interested in understanding
+    how these methods work, you can skip most of this chapter, but I strongly recommend
+    you at least read the *Diagnosing sample*s section, as this section provides a
+    few guidelines that will help you to check whether your posterior samples are
+    reliable. There are many methods for computing the posterior distribution. In
+    this chapter, we will discuss some general ideas and will focus on the most important
+    methods implemented in PyMC. We will learn about:'
+  id: totrans-4
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 概率编程工具的整个目的，比如 PyMC，就是用户不必关心采样是如何进行的，但理解我们如何从后验分布中获取样本对完全理解推断过程非常重要，也有助于我们了解这些方法在何时何种情况下失败，以及如何应对。如果你不关心这些方法是如何工作的，你可以跳过本章的大部分内容，但我强烈建议你至少阅读*诊断样本*这一节，因为这一节提供了一些指导方针，帮助你检查后验样本是否可靠。计算后验分布的方法有很多。在本章中，我们将讨论一些通用思想，并重点介绍
+    PyMC 中实现的最重要的方法。我们将学习：
+- en: Inference engines
+  id: totrans-5
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 推断引擎
+- en: Metropolis-Hastings
+  id: totrans-6
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 美特罗波利斯-哈斯廷斯算法
+- en: Hamiltonian Monte Carlo
+  id: totrans-7
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 哈密尔顿蒙特卡洛
+- en: Sequential Monte Carlo
+  id: totrans-8
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 序贯蒙特卡洛
+- en: Diagnosing samples
+  id: totrans-9
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 诊断样本
+- en: 10.1 Inference engines
+  id: totrans-10
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 10.1 推断引擎
+- en: While conceptually simple, Bayesian methods can be mathematically and numerically
+    challenging. The main reason is that the marginal likelihood, the denominator
+    in Bayes’ theorem, usually takes the form of an intractable or computationally
+    expensive integral to solve. For this reason, the posterior is usually estimated
+    numerically using algorithms from the **Markov Chain** **Monte Carlo** (**MCMC**)
+    family. These methods are sometimes called inference engines, because, at least
+    in principle, they are capable of approximating the posterior distribution for
+    any probabilistic model. Even though inference does not always work that well
+    in practice, the existence of such methods has motivated the development of probabilistic
+    programming languages such as PyMC.
+  id: totrans-11
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 虽然贝叶斯方法在概念上简单，但在数学和数值计算上具有挑战性。主要原因是边际似然性，贝叶斯定理中的分母，通常表现为一个难以求解或计算上开销较大的积分。因此，后验通常是通过数值方法使用**马尔可夫链****蒙特卡洛**（**MCMC**）家族的算法来估计的。这些方法有时被称为推断引擎，因为至少在理论上，它们能够近似任何概率模型的后验分布。尽管在实际应用中推断并不总是那么理想，但这些方法的存在促使了概率编程语言（如
+    PyMC）的发展。
+- en: The goal of probabilistic programming languages is to separate the model-building
+    process from the inference process to facilitate the iterative steps of model-building,
+    evaluation, and model modification/expansion. By treating the inference process
+    (but not the model-building process) as a black box, users of probabilistic programming
+    languages such as PyMC are free to focus on their specific problems, leaving PyMC
+    to handle the computational details for them. This is exactly what we have been
+    doing up to this point. So, you may be biased toward thinking that this is the
+    obvious or natural approach. But it is important to notice that before probabilistic
+    programming languages, people working with probabilistic models were also used
+    to writing their own sampling methods, generally tailored to their models, or
+    they were used to simplifying their models to make them suitable for certain mathematical
+    approximations. In fact, this is still true in some academic circles. This tailored
+    approach can be more elegant and can even provide a more efficient way of computing
+    a posterior (for a very specific model), but it is also error-prone and time-consuming,
+    even for experts. Furthermore, the tailored approach is not suitable for most
+    practitioners interested in solving problems with probabilistic models. Software
+    such as PyMC invites people from a very broad background to work with probabilistic
+    models, lowering the mathematical and computational entry barrier. I personally
+    think this is fantastic and also an invitation to learn more about good practices
+    in statistical modeling so we try to avoid fooling ourselves.
+  id: totrans-12
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 概率编程语言的目标是将模型构建过程与推理过程分离，以便于模型构建、评估以及模型修改/扩展的迭代步骤。通过将推理过程（而非模型构建过程）视为黑箱，像PyMC这样的概率编程语言用户可以专注于他们的具体问题，而将计算细节交给PyMC来处理。这正是我们迄今为止所做的事情。因此，你可能会偏向于认为这是显而易见或自然的方法。但需要注意的是，在概率编程语言出现之前，使用概率模型的人员也习惯于编写自己的采样方法，这些方法通常是根据他们的模型量身定制的，或者他们习惯于简化模型，使其适应某些数学近似。事实上，在某些学术圈子里，这种情况仍然存在。这种量身定制的方法可能更优雅，甚至可以为非常特定的模型提供更高效的后验计算方法，但它也容易出错且耗时，即使对于专家来说也是如此。此外，这种量身定制的方法并不适用于大多数希望利用概率模型解决问题的实践者。像PyMC这样的软件邀请来自不同背景的人们使用概率模型，降低了数学和计算的入门门槛。我个人认为这非常棒，也是在邀请我们更多地了解统计建模中的最佳实践，以避免自欺欺人。
+- en: The previous chapters have been mostly about learning the basics of Bayesian
+    modeling; now we are going to learn, at a conceptual level, how automatic inference
+    is achieved, when and why it fails, and what to do when it fails.
+  id: totrans-13
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 之前的章节主要介绍了贝叶斯建模的基础知识；现在我们将从概念层面学习，自动推理是如何实现的，何时以及为什么会失败，失败时该怎么办。
+- en: Before discussing MCMC methods, however, let me explain two other methods that
+    can be useful sometimes, and also provide an intuition of why we usually use MCMC
+    as general methods.
+  id: totrans-14
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 然而，在讨论MCMC方法之前，让我先解释另外两种方法，这些方法有时也很有用，并且提供一种直观的理解，说明为什么我们通常使用MCMC作为通用方法。
+- en: 10.2 The grid method
+  id: totrans-15
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 10.2 网格法
+- en: The grid method is a simple brute-force approach. Even if you are not able to
+    compute the whole posterior, you may be able to compute the prior and the likelihood
+    point-wise; this is a pretty common scenario, if not the most common one.
+  id: totrans-16
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 网格法是一种简单的暴力法。即使你无法计算整个后验分布，你也许能够逐点计算先验和似然性；这是一个相当常见的情况，甚至可以说是最常见的情形。
+- en: 'Let’s assume we want to compute the posterior for a model with a single parameter.
+    The grid approximation is as follows:'
+  id: totrans-17
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 假设我们想计算一个单参数模型的后验分布。网格逼近方法如下：
+- en: Define a reasonable interval for the parameter (the prior should give you a
+    hint).
+  id: totrans-18
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 为参数定义一个合理的区间（先验应该会给你一些提示）。
+- en: Place a grid of points (generally equidistant) on that interval.
+  id: totrans-19
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 在该区间上放置一个点的网格（通常是等距的）。
+- en: For each point in the grid, multiply the likelihood and the prior.
+  id: totrans-20
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 对于网格中的每个点，计算似然性与先验的乘积。
+- en: Optionally, we may normalize the computed values, that is, we divide each value
+    in the `posterior` array by the total area under the curve, ensuring that the
+    total area equals 1.
+  id: totrans-21
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 可选地，我们可以对计算值进行归一化，即将`posterior`数组中的每个值除以曲线下的总面积，确保总面积为1。
+- en: 'The following code block implements the grid method for the coin-flipping model:'
+  id: totrans-22
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 以下代码块实现了硬币翻转模型的网格法：
+- en: '**Code 10.1**'
+  id: totrans-23
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**代码 10.1**'
+- en: '[PRE0]'
+  id: totrans-24
+  prefs: []
+  type: TYPE_PRE
+  zh: '[PRE0]'
+- en: '*Figure [10.1](#x1-191020r1)* shows the posterior we get for flipping a coin
+    13 times and observing 3 heads under a Uniform prior. The curve is very rugged,
+    as we used a grid of only 10 points. If you increase the number of points, the
+    curve will look smoother, the computation will be more accurate, and the cost
+    will be higher.'
+  id: totrans-25
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '*图 [10.1](#x1-191020r1)*展示了我们在均匀先验下，抛硬币13次并观察到3次正面的后验。由于我们仅使用了10个点的网格，曲线显得非常崎岖。如果增加点的数量，曲线会变得更加平滑，计算结果也会更准确，但成本也会更高。'
+- en: '![PIC](img/file248.png)'
+  id: totrans-26
+  prefs: []
+  type: TYPE_IMG
+  zh: '![PIC](img/file248.png)'
+- en: '**Figure 10.1**: Posterior computed using the grid method'
+  id: totrans-27
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**图 10.1**：使用网格方法计算的后验'
+- en: The biggest caveat of the grid approach is that this method scales poorly with
+    the number of parameters, also referred to as dimensions. We can see this with
+    a simple example. Suppose we want to sample a unit interval (see *Figure [10.2](#x1-191021r2)*)
+    like in the coin-flipping problem, and we use four equidistant points; this would
+    mean a resolution of 0.25 units. Now, suppose we have a 2D problem (the square
+    in *Figure [10.2](#x1-191021r2)*) and we want to use a grid with the same resolution;
+    we will need 16 points. And lastly, for a 3D problem, we will need 64 (see the
+    cube in *Figure [10.2](#x1-191021r2)*). In this example, we need 16 times as many
+    resources to sample from a cube of side 1 than for a line of length 1 with a resolution
+    of 0.25\. If we decide instead to have a resolution of 0.1 units, we will have
+    to sample 10 points for the line and 1,000 for the cube.
+  id: totrans-28
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 网格方法的最大弊端是，当参数的数量（也称为维度）增多时，这种方法的扩展性较差。我们可以通过一个简单的例子来说明这一点。假设我们想要采样一个单位区间（参见*图
+    [10.2](#x1-191021r2)*），就像抛硬币问题一样，我们使用四个等距的点；这意味着分辨率为0.25单位。现在，假设我们有一个二维问题（*图 [10.2](#x1-191021r2)*中的正方形），并且我们想用相同分辨率的网格；我们需要16个点。最后，对于三维问题，我们需要64个点（参见*图
+    [10.2](#x1-191021r2)*中的立方体）。在这个例子中，我们需要16倍的资源来从一个边长为1的立方体中采样，相比于从一个边长为1、分辨率为0.25的线段中采样。如果我们决定改为分辨率为0.1单位，我们将需要为线段采样10个点，为立方体采样1,000个点。
+- en: '![PIC](img/file249.png)'
+  id: totrans-29
+  prefs: []
+  type: TYPE_IMG
+  zh: '![PIC](img/file249.png)'
+- en: '**Figure 10.2**: A grid with the same resolution in 1, 2, and 3 dimensions'
+  id: totrans-30
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**图 10.2**：1维、2维和3维中具有相同分辨率的网格'
+- en: Besides how fast the number of points increases, there is another phenomenon
+    that is not a property of the grid method, or any other method for that matter.
+    It is a property of high-dimensional spaces. As you increase the number of parameters,
+    the region of the parameter space where most of the posterior is concentrated
+    gets smaller and smaller compared to the sampled volume. This is a pervasive phenomenon
+    and is usually known as the curse of dimensionality, or as mathematicians prefer
+    to call it, the concentration of measure.
+  id: totrans-31
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 除了点的数量增长速度外，还有一个现象，并非网格方法或任何其他方法的特性，而是高维空间的特性。随着参数数量的增加，后验概率大部分集中在参数空间的某个区域，而这个区域相对于采样体积来说变得越来越小。这是一个普遍存在的现象，通常被称为“维度灾难”，或者数学家们更喜欢称之为“测度集中”。
+- en: 'The curse of dimensionality is the term used to refer to various related phenomena
+    that are absent in low-dimensional spaces but present in high-dimensional spaces.
+    Here are some examples of these phenomena:'
+  id: totrans-32
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 维度灾难是指一些相关现象，这些现象在低维空间中不存在，但在高维空间中存在。以下是一些这些现象的例子：
+- en: As the number of dimensions increases, the Euclidean distance between any pair
+    of samples tends to resemble the distance between other pairs. That is, in high-dimensional
+    spaces, most points are basically at the same distance from one another.
+  id: totrans-33
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 随着维度的增加，任何两个样本之间的欧几里得距离趋向于类似其他样本对之间的距离。也就是说，在高维空间中，大多数点之间的距离基本上是相同的。
+- en: For a hypercube, most of the volume is at its corners, not in the middle. For
+    a hypersphere, most of the volume is at its surface and not in the middle.
+  id: totrans-34
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 对于超立方体，大部分的体积位于其角落，而非中心。对于超球体，大部分的体积位于其表面，而非中心。
+- en: In high dimensions, most of the mass of a multivariate Gaussian distribution
+    is not close to the mean (or mode), but in a shell around it that moves away from
+    the mean to the tails as the dimensionality increases. This shell is referred
+    to as the typical set.
+  id: totrans-35
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 在高维空间中，多元高斯分布的大部分质量并不集中在均值（或众数）附近，而是位于一个壳层中，这个壳层从均值向尾部扩展，随着维度的增加而远离均值。这个壳层被称为典型集。
+- en: For code examples illustrating these concepts, please check out the repository
+    for this book at [https://github.com/aloctavodia/BAP3](https://github.com/aloctavodia/BAP3).
+  id: totrans-36
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 有关说明这些概念的代码示例，请访问本书的仓库：[https://github.com/aloctavodia/BAP3](https://github.com/aloctavodia/BAP3)。
+- en: For our current discussion, all these facts mean that if we do not choose wisely
+    where to evaluate the posterior, we will spend most of our time computing values
+    with an almost null contribution to the posterior, and thus we will be wasting
+    valuable resources. The grid method is not a very smart method to choose to evaluate
+    the posterior distribution, thus making it not very useful as a general method
+    for high-dimensional problems.
+  id: totrans-37
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 对于我们当前的讨论，所有这些事实意味着，如果我们不明智地选择评估后验分布的位置，我们将大部分时间都花在计算对后验贡献几乎为零的值上，从而浪费宝贵的资源。因此，网格方法并不是一个明智的选择来评估后验分布，因此作为高维问题的一般方法并不十分有用。
+- en: 10.3 Quadratic method
+  id: totrans-38
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 10.3 二次方法
+- en: The quadratic approximation, also known as the Laplace method or the normal
+    approximation, consists of approximating the posterior with a Gaussian distribution.
+    To do this, we first find the model of the posterior distribution; numerically,
+    we can do this with an optimization method. Then we compute the Hessian matrix,
+    from which we can then estimate the standard deviation. If you are wondering,
+    the Hessian matrix is a square matrix of second-order partial derivatives. For
+    what we care we can use it to obtain the standard deviation of in general a covariance
+    matrix.
+  id: totrans-39
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 二次近似，也称为 Laplace 方法或正态近似，包含将后验分布近似为高斯分布。为此，我们首先找到后验分布的模型；在数值上，我们可以使用优化方法来实现。然后我们计算
+    Hessian 矩阵，从中可以估算标准差。如果你在想，Hessian 矩阵是一个二阶偏导数的方阵。就我们关心的内容来说，我们可以用它来获得标准差，通常是协方差矩阵的标准差。
+- en: 'Bambi can solve Bayesian models using the quadratic method for us. In the following
+    code block, we first define a model for the coin-flipping problem, the same one
+    we already defined for the grid method, and then we fit it using the quadratic
+    method, called `laplace` in Bambi:'
+  id: totrans-40
+  prefs: []
+  type: TYPE_NORMAL
+  zh: Bambi 可以使用二次方法为我们解决贝叶斯模型。在以下代码块中，我们首先定义一个硬币投掷问题的模型，这是我们之前为网格方法定义的相同模型，然后使用 Bambi
+    中称为 `laplace` 的二次方法进行拟合：
+- en: '**Code 10.2**'
+  id: totrans-41
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**代码 10.2**'
+- en: '[PRE1]'
+  id: totrans-42
+  prefs: []
+  type: TYPE_PRE
+  zh: '[PRE1]'
+- en: '*Figure [10.3](#x1-192010r3)* shows the computed posterior and the exact posterior.
+    Notice that Bambi also returns samples when using this method. It first approximates
+    the posterior as a Gaussian (or multivariate Gaussian) and then takes samples
+    from it.'
+  id: totrans-43
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '*图 [10.3](#x1-192010r3)* 显示了计算得到的后验分布和精确的后验分布。请注意，Bambi 在使用此方法时还返回样本。它首先将后验分布近似为高斯分布（或多元高斯分布），然后从中采样。'
+- en: '![PIC](img/file250.png)'
+  id: totrans-44
+  prefs: []
+  type: TYPE_IMG
+  zh: '![图片](img/file250.png)'
+- en: '**Figure 10.3**: A quadratic approximation to the posterior'
+  id: totrans-45
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**图 10.3**：后验的二次近似'
+- en: The quadratic/Laplace method is included in Bambi mostly for pedagogical purposes.
+    One nice feature, though, is that Bambi takes into account the boundaries. For
+    example, for the coin-flipping problem, we know the solution must be in the interval
+    [0, 1]. Bambi ensures this is true, even when we use a Gaussian under the hood.
+    Bambi achieves this by fitting a Gaussian in an unbounded parameter space, and
+    then transforming to the proper bounded space.
+  id: totrans-46
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 二次/Laplace 方法在 Bambi 中主要是出于教学目的。尽管如此，一个不错的特点是 Bambi 会考虑边界。例如，在硬币投掷问题中，我们知道解必须位于区间
+    [0, 1] 内。即使在背后使用高斯分布时，Bambi 也能确保这一点。Bambi 通过在一个无界的参数空间中拟合高斯分布，然后将其转换到适当的有界空间，从而实现这一点。
+- en: The quadratic/Laplace method, while very limited in itself, can be used as the
+    building block of more advanced methods. For instance, the **Integrated Nested**
+    **Laplace Approximation** (**INLA**) can be used to fit a wide variety of models
+    very efficiently.
+  id: totrans-47
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 二次/Laplace 方法虽然本身非常有限，但可以作为更高级方法的构建块。例如，**集成嵌套** **拉普拉斯近似**（**INLA**）可以非常高效地拟合多种模型。
+- en: 10.4 Markovian methods
+  id: totrans-48
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 10.4 马尔可夫方法
+- en: There is a family of related methods, collectively known as the **Markov chain**
+    **Monte Carlo** or **MCMC** methods. These are stochastic methods that allow us
+    to get samples from the true posterior distribution as long as we can compute
+    the likelihood and the prior point-wise. You may remember that this is the same
+    condition we needed for the grid method, but contrary to them, MCMC methods can
+    efficiently sample from higher-probability regions in very high dimensions.
+  id: totrans-49
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 有一类相关的方法，统称为**马尔可夫链** **蒙特卡洛**（**MCMC**）方法。这些是随机方法，只要我们能逐点计算似然函数和先验分布，就可以从真实的后验分布中获取样本。你可能记得，这正是我们在网格方法中需要的条件，但与网格方法不同，MCMC
+    方法能够高效地从高维空间中的高概率区域采样。
+- en: 'MCMC methods visit each region of the parameter space following their relative
+    probabilities. If the probability of region A is twice that of region B, we will
+    obtain twice as many samples from A as we will from B. Hence, even if we are not
+    capable of computing the whole posterior analytically, we could use MCMC methods
+    to take samples from it. In theory, MCMC will give us samples from the correct
+    distribution – the catch is that this theoretical guarantee only holds asymptotically,
+    that is, for an infinite number of samples! In practice, we always have a finite
+    number of samples, thus we need to check that the samples are trustworthy. We
+    are going to learn about that, but let’s not get ahead of ourselves; first, let’s
+    get some intuition for how MCMC methods work. This will help us understand the
+    diagnostic later. To understand what MCMC methods are, we are going to split the
+    method into the ”two MC parts”: the Monte Carlo part and the Markov chain part.'
+  id: totrans-50
+  prefs: []
+  type: TYPE_NORMAL
+  zh: MCMC方法根据各个区域的相对概率访问参数空间的每个区域。如果区域A的概率是区域B的两倍，那么我们从A中获得的样本将是从B中获得样本的两倍。因此，即使我们无法通过解析方式计算整个后验分布，我们仍然可以使用MCMC方法从中抽取样本。理论上，MCMC将给我们来自正确分布的样本——关键在于，这一理论保证只在渐进意义上成立，也就是说，在无限数量的样本下！实际上，我们总是有有限数量的样本，因此我们需要检查这些样本是否可信。我们将要学习这一点，但不要急于求成；首先，让我们对MCMC方法的工作原理有些直观的了解。这将有助于我们稍后理解诊断方法。为了理解MCMC方法，我们将把这个方法拆分为“两个MC部分”：蒙特卡洛部分和马尔科夫链部分。
+- en: 10.4.1 Monte Carlo
+  id: totrans-51
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+  zh: 10.4.1 蒙特卡洛
+- en: The use of random numbers explains the Monte Carlo part of the name. Monte Carlo
+    methods are a very broad family of algorithms that use random sampling to compute
+    or simulate a given process. Monte Carlo is a very famous casino located in the
+    Principality of Monaco. One of the developers of the Monte Carlo method, Stanislaw
+    Ulam, had an uncle who used to gamble there. The key idea Stan had was that while
+    many problems are difficult to solve or even formulate in an exact way, they can
+    be effectively studied by taking samples from them. In fact, as the story goes,
+    the motivation was to answer questions about the probability of getting a particular
+    hand in a game of Solitaire.
+  id: totrans-52
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 随机数的使用解释了“蒙特卡洛”这个名字的一部分。蒙特卡洛方法是一类非常广泛的算法，通过随机抽样来计算或模拟给定的过程。蒙特卡洛是位于摩纳哥公国的一家非常著名的赌场。蒙特卡洛方法的开发者之一，Stanislaw
+    Ulam，有一个叔叔曾在那儿赌博。Stan的关键思想是，尽管许多问题难以精确求解或甚至无法精确表达，但它们可以通过从中抽取样本有效地进行研究。事实上，故事是这样传的：最初的动机是为了回答关于在纸牌接龙游戏中获得特定手牌的概率问题。
+- en: One way to solve this problem is to follow the analytical combinatorial problem.
+    Another way, Stanislaw argued, is to play several games of Solitaire and count
+    how many of the hands that we play match the particular hand we are interested
+    in! Maybe this sounds obvious to you, or at least pretty reasonable; you may even
+    have used resampling methods to solve statistical problems. But, remember this
+    mental experiment was performed about 70 years ago, a time when the first practical
+    computers were beginning to be developed!
+  id: totrans-53
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 解决这个问题的一种方法是遵循分析组合问题。另一种方法，Stanislaw认为，是玩几局纸牌接龙，并计算我们玩过的手牌中有多少和我们感兴趣的特定手牌相匹配！也许这对你来说听起来很显而易见，或者至少相当合理；你甚至可能用过重采样方法来解决统计问题。但请记住，这个心理实验是在大约70年前进行的，那时第一台实用计算机才开始被开发出来！
+- en: The first application of the Monte Carlo method was to solve a problem of nuclear
+    physics, a hard-to-tackle problem using the tools at the time. Nowadays, even
+    personal computers are powerful enough to solve many interesting problems using
+    the Monte Carlo approach; hence, these methods are applied to a wide variety of
+    problems in science, engineering, industry, and the arts. A classic pedagogical
+    example of using a Monte Carlo method to compute a quantity of interest is the
+    numerical estimation of the number *π*. In practice, there are better methods
+    for this particular computation, but its pedagogical value remains.
+  id: totrans-54
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 蒙特卡洛方法的首次应用是解决一个核物理问题，这是当时工具无法轻松应对的难题。如今，甚至个人计算机也足够强大，能够使用蒙特卡洛方法解决许多有趣的问题；因此，这些方法被广泛应用于科学、工程、工业和艺术等多个领域。使用蒙特卡洛方法计算感兴趣量的经典教学示例是对*π*值的数值估计。实际上，对于这个特定的计算，存在更好的方法，但它在教学中的价值依然存在。
+- en: 'We can estimate the value of *π* with the following procedure:'
+  id: totrans-55
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 我们可以通过以下过程估算*π*的值：
+- en: Throw *N* points at random into a square of side 2*R*.
+  id: totrans-56
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 随机地将*N*个点投掷到边长为2*R*的正方形中。
+- en: Draw a circle of radius *R* inscribed in the square and count the number of
+    points *M* inside the circle.
+  id: totrans-57
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 在方形内部画一个半径为*R*的圆，并计算圆内的点数*M*。
+- en: Compute ![](img/hat_Pi.png) as the ratio 4![MN-](img/file251.jpg).
+  id: totrans-58
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 计算 ![](img/hat_Pi.png) 作为比例 4![MN-](img/file251.jpg)。
+- en: 'Here are a few notes:'
+  id: totrans-59
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 这里有几点说明：
+- en: The area of the circle is proportional to the number of points inside it (*M*)
+    and the area of the square is proportional to the total points (*N*).
+  id: totrans-60
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 圆的面积与圆内点数(*M*)成正比，方形的面积与总点数(*N*)成正比。
+- en: 'We know a point is inside a circle if the following relation holds: ![∘ (x2-+-y2)
+    ≤-R-](img/file252.jpg).'
+  id: totrans-61
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 我们知道，如果满足以下关系式，则一个点在圆内：![∘ (x2-+-y2) ≤-R-](img/file252.jpg)。
+- en: The area of the square is (2*R*)² and the area of the circle is *πR*². Thus,
+    we know that the ratio of the area of the square to the area of the circle is
+    *π*.
+  id: totrans-62
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 方形的面积是(2*R*)²，圆的面积是*πR*²。因此，我们知道方形面积与圆面积的比值是*π*。
+- en: Using a few lines of Python, we can run this simple Monte Carlo simulation and
+    compute *π*, and also the relative error of our estimate compared to the true
+    value of *π*. The result of a run is shown in *Figure [10.4](#x1-194008r4)*.
+  id: totrans-63
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 使用几行Python代码，我们可以运行这个简单的蒙特卡罗模拟并计算*π*，同时也能计算我们估算值相对于真实*π*值的相对误差。一次运行的结果如**图 [10.4](#x1-194008r4)**所示。
+- en: '![PIC](img/file253.png)'
+  id: totrans-64
+  prefs: []
+  type: TYPE_IMG
+  zh: '![PIC](img/file253.png)'
+- en: '**Figure 10.4**: A Monte Carlo approximation of *π*'
+  id: totrans-65
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**图 10.4**：*π*的蒙特卡罗近似'
+- en: 10.4.2 Markov chain
+  id: totrans-66
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+  zh: 10.4.2 马尔可夫链
+- en: A Markov chain is a mathematical object that consists of a sequence of states
+    and a set of transition probabilities that describe how to move among the states.
+    You can create a Markov chain yourself; flip a coin and if you get heads take
+    a step to the right, otherwise step to the left. That is a simple 1-dimensional
+    Markov chain. A chain is Markovian if the probability of moving to any other state
+    depends only on the current state.
+  id: totrans-67
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 马尔可夫链是一个数学对象，由一系列状态和描述如何在状态之间转换的转移概率组成。你可以自己创建一个马尔可夫链；比如，抛硬币，如果得到正面，就向右走一步，否则向左走一步。这是一个简单的一维马尔可夫链。如果一个链是马尔可夫链，那么从任何状态转移到其他状态的概率只依赖于当前状态。
+- en: As a practitioner, you just need to know that Markov chains provide a framework
+    to study the properties of MCMC samplers (among other useful applications). They
+    are not that hard to understand, at least not the most basic properties. But going
+    into the details is not that useful for you as a modeler and thus we will not
+    discuss them any further. You can check [Blitzstein](Bibliography.xhtml#Xblitzstein_2019) [[2019](Bibliography.xhtml#Xblitzstein_2019)]
+    for a nice intro if you want.
+  id: totrans-68
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 作为从业者，你只需要知道马尔可夫链提供了一个框架来研究MCMC采样器的性质（以及其他一些有用的应用）。它们并不难理解，至少是最基本的性质并不难理解。但对于你作为模型构建者来说，深入细节并没有太大意义，因此我们不会进一步讨论。如果你有兴趣，可以查看[Blitzstein](Bibliography.xhtml#Xblitzstein_2019) [[2019](Bibliography.xhtml#Xblitzstein_2019)]，那是一个很好的入门介绍。
+- en: The most popular MCMC method is probably the Metropolis-Hasting algorithm, and
+    we will discuss it in the following section.
+  id: totrans-69
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 最流行的MCMC方法可能是美特罗波利斯-哈斯廷斯算法，接下来我们将讨论它。
+- en: 10.4.3 Metropolis-Hastings
+  id: totrans-70
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+  zh: 10.4.3 美特罗波利斯-哈斯廷斯算法
+- en: For some distributions, such as the Gaussian, we have very efficient algorithms
+    to get samples from, but for other distributions, this is not the case. Metropolis-Hastings
+    enables us to obtain samples from any probability distribution given that we can
+    compute at least a value proportional to it, thus ignoring the normalization factor.
+    This is very useful since many times the harder part is precisely to compute the
+    normalization factor. This is the case with Bayesian statistics, where the computation
+    of the marginal likelihood can be a deal-breaker.
+  id: totrans-71
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 对于某些分布，例如高斯分布，我们有非常高效的算法可以从中获得样本，但对于其他分布则不一定是这样。美特罗波利斯-哈斯廷斯算法使我们能够从任何概率分布中获得样本，只要我们能够计算出与之成比例的值，因此可以忽略归一化因子。这非常有用，因为很多时候更困难的部分恰恰是计算归一化因子。这在贝叶斯统计中尤为明显，在贝叶斯统计中，计算边际似然可能是一个决定性的难点。
+- en: 'To conceptually understand this method, we are going to use the following analogy.
+    Suppose we are interested in finding the volume of water in a lake and which part
+    of the lake has the deepest point. The water is really muddy so we can’t estimate
+    the depth just by looking through the water to the bottom, and the lake is really
+    big, so a grid approximation does not seem like a very good idea. To develop a
+    sampling strategy, we seek help from two of our best friends: Markovia and Monty.
+    After a fruitful discussion, they came up with the following algorithm, which
+    requires a boat—nothing fancy, we can even use a wooden raft and a very long stick.
+    This is cheaper than sonar and we have already spent all our money on the boat,
+    anyway! Check out these steps:'
+  id: totrans-72
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 为了概念性地理解这种方法，我们将使用以下类比。假设我们有兴趣找到湖泊中的水量，并且找出湖泊中最深的部分。湖水非常浑浊，因此我们无法通过看水底来估算深度，湖泊又非常大，所以使用网格近似方法似乎不是一个好主意。为了制定抽样策略，我们寻求了两位好朋友的帮助：Markovia
+    和 Monty。经过一次富有成效的讨论，他们提出了以下算法，它需要一艘船——不用太奢华，我们甚至可以使用一只木筏和一根非常长的木棍。这比声呐便宜，而且我们已经把所有的钱都花在船上了！看看这些步骤：
+- en: Choose a random place in the lake, and move the boat there.
+  id: totrans-73
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 在湖中选择一个随机位置，并将船移到那里。
+- en: Use the stick to measure the depth of the lake.
+  id: totrans-74
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 使用木棍测量湖泊的深度。
+- en: Move the boat to another point and take a new measurement.
+  id: totrans-75
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 将船移动到另一个点并进行新的测量。
+- en: 'Compare the two measures in the following way:'
+  id: totrans-76
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 通过以下方式比较这两种方法：
+- en: If the new spot is deeper than the first one, write down in your notebook the
+    depth of the new spot and repeat from step 3.
+  id: totrans-77
+  prefs:
+  - PREF_IND
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 如果新位置比第一个位置更深，记下新位置的深度并从第 3 步重复。
+- en: 'If the spot is shallower than the first one, we have two options: to accept
+    or reject. Accepting means we write down the depth of the new spot and repeat
+    from step 3\. Rejecting means we go back to the first spot and write down (yes,
+    again!) the value for the depth of the first spot.'
+  id: totrans-78
+  prefs:
+  - PREF_IND
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 如果这个位置比第一个位置更浅，我们有两个选择：接受或拒绝。接受意味着我们记录下新位置的深度并从第 3 步重复。拒绝意味着我们返回第一个位置，并再次（是的，重新！）记录第一个位置的深度值。
+- en: The rule for deciding whether to accept or reject is known as the Metropolis-Hastings
+    criteria, and it basically says that we must accept the new spot with a probability
+    that is proportional to the ratio of the depth of the new and old spots.
+  id: totrans-79
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 决定是否接受或拒绝新位置的规则称为 Metropolis-Hastings 标准，基本上说的是，我们必须按与新旧位置深度比值成正比的概率接受新位置。
+- en: If we follow this iterative procedure, we will get not only the total volume
+    of the lake and the deepest point, but also an approximation of the entire curvature
+    of the bottom of the lake. As you may have guessed, in this analogy, the curvature
+    of the bottom of the lake is the posterior distribution and the deepest point
+    is the mode. According to our friend Markovia, the larger the number of iterations,
+    the better the approximation. Indeed, the theory guarantees that under certain
+    general circumstances, we are going to get the exact answer if we get an infinite
+    number of samples. Luckily for us, in practice, and for many, many problems, we
+    can get a very accurate approximation using a finite and relatively small number
+    of samples.
+  id: totrans-80
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 如果我们按照这个迭代过程进行，不仅能得到湖泊的总体水量和最深的点，还能得到湖底整个曲率的近似值。正如你可能已经猜到的那样，在这个类比中，湖底的曲率就是后验分布，最深的点是众数。根据我们的朋友
+    Markovia 说，迭代次数越多，近似值就越好。事实上，理论保证在某些一般条件下，如果我们获取无限多个样本，我们最终会得到精确的答案。幸运的是，在实践中，对于许多问题，我们可以通过有限且相对较少的样本获得非常准确的近似值。
+- en: The preceding explanation is enough to get a conceptual-level understanding
+    of Metropolis-Hastings. The next few pages contain a more detailed and formal
+    explanation in case you want to dig deeper.
+  id: totrans-81
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 上述解释足以帮助我们概念性地理解 Metropolis-Hastings 算法。接下来的几页将提供更详细和正式的解释，以防你想深入了解。
+- en: 'The Metropolis-Hastings algorithm has the following steps:'
+  id: totrans-82
+  prefs: []
+  type: TYPE_NORMAL
+  zh: Metropolis-Hastings 算法有以下步骤：
+- en: Choose an initial value for a parameter *x*[*i*]. This can be done randomly
+    or by making an educated guess.
+  id: totrans-83
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 为参数 *x*[*i*] 选择一个初始值。这可以通过随机选择或根据经验猜测来完成。
+- en: Choose a new parameter value *x*[*i*+1], by sampling from *Q*(*x*[*i*+1]|*x*[*i*]).
+    We can think of this step as perturbing the state *x*[*i*] somehow.
+  id: totrans-84
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 通过从 *Q*(*x*[*i*+1]|*x*[*i*]) 中抽样，选择一个新的参数值 *x*[*i*+1]。我们可以把这一步看作是对状态 *x*[*i*]
+    的某种扰动。
+- en: 'Compute the probability of accepting a new parameter value by using the Metropolis-Hastings
+    criteria:'
+  id: totrans-85
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 使用 Metropolis-Hastings 标准计算接受新参数值的概率：
+- en: '![ ( ) pa(xi+1 | xi) = min 1, p(xi+1) q(xi-| xi+1) p(xi) q(xi+1 | xi) ](img/file254.jpg)'
+  id: totrans-86
+  prefs:
+  - PREF_IND
+  type: TYPE_IMG
+  zh: '![ ( ) pa(xi+1 | xi) = min 1, p(xi+1) q(xi-| xi+1) p(xi) q(xi+1 | xi) ](img/file254.jpg)'
+- en: If the probability computed in step 3 is larger than the value taken from a
+    Uniform distribution on the [0, 1] interval, we accept the new state; otherwise,
+    we stay in the old state.
+  id: totrans-87
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 如果在步骤 3 中计算的概率大于从 [0, 1] 区间的均匀分布中取出的值，我们就接受新的状态；否则，我们保持在旧的状态中。
+- en: We iterate from step 2 until we have enough samples.
+  id: totrans-88
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 我们从步骤 2 开始迭代，直到我们有足够的样本。
+- en: 'Here are a couple of notes to take into account:'
+  id: totrans-89
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 这里有几个需要注意的事项：
+- en: '*Q* is called the proposal distribution. It can be anything we want, but it
+    makes sense that we choose a distribution that we find simple to sample from,
+    such as a Gaussian or Uniform distribution.'
+  id: totrans-90
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: '*Q* 被称为提议分布。它可以是我们想要的任何分布，但我们通常选择一个容易采样的分布，比如高斯分布或均匀分布。'
+- en: Note that *Q* is not the prior or likelihood or any part of the model. It is
+    a component of the MCMC method, not of the model.
+  id: totrans-91
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 注意，*Q* 不是先验、似然或模型的任何部分。它是 MCMC 方法的一个组成部分，而不是模型的一部分。
+- en: If *Q* is symmetric, the terms *q*(*x*[*i*]|*x*[*i*+1]) and *q*(*x*[*i*+1]|*x*[*i*])
+    will cancel out. Hence we will just need to evaluate the ratio ![p(xi+1) p(xi)](img/file255.jpg).
+  id: totrans-92
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 如果 *Q* 是对称的，则 *q*(*x*[*i*]|*x*[*i*+1]) 和 *q*(*x*[*i*+1]|*x*[*i*]) 会相互抵消。因此，我们只需要评估比值
+    ![p(xi+1) p(xi)](img/file255.jpg)。
+- en: Step 3 and step 4 imply that we will always accept moving to a more probable
+    state. Less probable parameter values are accepted probabilistically, given the
+    ratio between the probability of the new parameter value *x*[*i*+1] and the old
+    parameter value *x*[*i*]. This criteria for accepting proposed steps gives us
+    a more efficient sampling approach compared to the grid method while ensuring
+    a correct sampling.
+  id: totrans-93
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 步骤 3 和步骤 4 表明我们总是会接受转向一个更可能的状态。较不可能的参数值会按概率接受，给定新参数值 *x*[*i*+1] 和旧参数值 *x*[*i*]
+    之间的比率。接受提议步骤的这一标准，相较于网格方法，给我们提供了一种更高效的采样方法，同时保证了正确的采样。
+- en: The target distribution (the posterior distribution in Bayesian statistics)
+    is approximated by a list of sampled parameter values. If we accept, we add *x*[*i*+1]
+    to the list of the new sampled values. If we reject, we add *x*[*i*] to the list,
+    even if the value is repeated.
+  id: totrans-94
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 目标分布（贝叶斯统计中的后验分布）是通过一组采样的参数值来近似的。如果我们接受，就将 *x*[*i*+1] 添加到新采样值的列表中。如果我们拒绝，就将
+    *x*[*i*] 添加到列表中，即使这个值是重复的。
+- en: At the end of the process, we will have a list of values. If everything was
+    done the right way, these samples would be an approximation of the posterior.
+    The most frequent values in our trace will be the most probable values according
+    to the posterior. An advantage of this procedure is that analyzing the posterior
+    is as simple as manipulating an array of values, as you have already experimented
+    with in all the previous chapters.
+  id: totrans-95
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 在这个过程的最后，我们将得到一组数值。如果一切都按正确的方式完成，这些样本将是后验分布的近似。我们追踪中出现频率最高的数值将是根据后验分布最可能的值。此过程的一个优点是，分析后验分布就像操作一组数值数组一样简单，正如你在之前的章节中所做的那样。
+- en: The following code illustrates a very basic implementation of the Metropolis
+    algorithm. It is not meant to solve a real problem, only to show it is possible
+    to sample from a probability distribution if we know how to compute its density
+    point-wise. Notice that the following implementation has nothing Bayesian in it;
+    there is no prior and we do not even have data! Remember that MCMC methods are
+    very general algorithms that can be applied to a broad array of problems.
+  id: totrans-96
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 以下代码演示了 metropolis 算法的一个非常基础的实现。它并不是为了求解一个实际问题，而是为了展示如果我们知道如何逐点计算概率密度，我们可以从概率分布中采样。请注意，以下实现没有涉及任何贝叶斯的内容；它没有先验，甚至没有数据！请记住，MCMC
+    方法是非常通用的算法，可以应用于广泛的问题。
+- en: 'The first argument of the metropolis function is a PreliZ distribution; we
+    are assuming we do not know how to directly get samples from this distribution:'
+  id: totrans-97
+  prefs: []
+  type: TYPE_NORMAL
+  zh: metropolis 函数的第一个参数是一个 PreliZ 分布；我们假设我们不知道如何直接从这个分布中获取样本：
+- en: '**Code 10.3**'
+  id: totrans-98
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**代码 10.3**'
+- en: '[PRE2]'
+  id: totrans-99
+  prefs: []
+  type: TYPE_PRE
+  zh: '[PRE2]'
+- en: The result of our simple metropolis algorithm is shown in *Figure [10.5](#x1-196044r5)*.
+    The black line shows the true distribution while the bars show the samples we
+    computed.
+  id: totrans-100
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 我们的简单 metropolis 算法的结果如 *图 [10.5](#x1-196044r5)* 所示。黑线表示真实分布，而条形表示我们计算的样本。
+- en: '![PIC](img/file256.png)'
+  id: totrans-101
+  prefs: []
+  type: TYPE_IMG
+  zh: '![PIC](img/file256.png)'
+- en: '**Figure 10.5**: Samples from a simple metropolis algorithm'
+  id: totrans-102
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**图 10.5**：来自简单的 metropolis 算法的样本'
+- en: The efficiency of the algorithm depends heavily on the proposal distribution;
+    if the proposed state is very far away from the current state, the chance of rejection
+    is very high, and if the proposed state is very close, we explore the parameter
+    space very slowly. In both scenarios, we will need many more samples than for
+    a less extreme situation. Usually, the proposal is a multivariate Gaussian distribution
+    whose covariance matrix is determined during the tuning phase. PyMC tunes the
+    covariance adaptively by following the rule of thumb that the ideal acceptance
+    is around 50% for a unidimensional Gaussian and around 23% for an n-dimensional
+    Gaussian target distribution.
+  id: totrans-103
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 算法的效率在很大程度上依赖于提议分布；如果提议的状态与当前状态相差很远，拒绝的概率就会非常高；如果提议的状态非常接近当前状态，我们就会非常缓慢地探索参数空间。在这两种情况下，我们需要的样本数量都远远多于较不极端的情况。通常，提议分布是一个多变量高斯分布，其协方差矩阵在调节阶段确定。PyMC通过遵循一个经验法则来自适应地调节协方差，即一维高斯分布的理想接受率大约是50%，而n维高斯目标分布的理想接受率大约是23%。
+- en: MCMC methods often take some time before they start getting samples from the
+    target distribution. So, in practice, people perform a burn-in step, which consists
+    of eliminating the first portion of the samples. Doing a burn-in is a practical
+    trick and not part of the Markovian theory; in fact, it will not be necessary
+    for an infinite sample. Thus, removing the first portion of the samples is just
+    an *ad hoc* trick to get better results, given that we can only compute a finite
+    sample. Having theoretical guarantees or guidance is better than not having them,
+    but for any practical problem, it is important to understand the difference between
+    theory and practice. Remember, we should not get confused by mixing mathematical
+    objects with the approximation of those objects. Spheres, Gaussians, Markov chains,
+    and all the mathematical objects live only in the Platonic world of ideas, not
+    in our imperfect, real world.
+  id: totrans-104
+  prefs: []
+  type: TYPE_NORMAL
+  zh: MCMC方法通常需要一些时间才能开始从目标分布中获取样本。所以，在实践中，人们会进行烧入步骤，即消除前一部分样本。进行烧入是一个实际的技巧，而不是马尔可夫理论的一部分；实际上，对于无限样本来说，这并不是必需的。因此，去除前一部分样本只是一个*临时*的技巧，用于在只能计算有限样本的情况下获得更好的结果。拥有理论保证或指导总是比没有它们要好，但对于任何实际问题，理解理论与实践之间的区别非常重要。记住，我们不应当因为将数学对象与这些对象的近似混淆而感到困惑。球体、高斯分布、马尔可夫链以及所有数学对象只存在于理念的柏拉图世界中，而不在我们不完美的现实世界中。
+- en: At this point, I hope you have a good conceptual grasp of the Metropolis-Hastings
+    method. You may need to go back and read this section a couple of times; that’s
+    totally fine. The main ideas are simple but also subtle.
+  id: totrans-105
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 到这一点，我希望你已经对Metropolis-Hastings方法有了一个清晰的概念理解。你可能需要回头再读这一部分几遍；这完全没问题。主要思想简单但也很微妙。
+- en: 10.4.4 Hamiltonian Monte Carlo
+  id: totrans-106
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+  zh: 10.4.4 哈密顿蒙特卡洛
+- en: MCMC methods, including Metropolis-Hastings, come with the theoretical guarantee
+    that if we take enough samples, we will get an accurate approximation of the correct
+    distribution. However, in practice, it could take more time than we have to get
+    enough samples. For that reason, alternatives to the Metropolis-Hastings algorithm
+    have been proposed.
+  id: totrans-107
+  prefs: []
+  type: TYPE_NORMAL
+  zh: MCMC方法，包括Metropolis-Hastings，提供了理论上的保证：如果我们获取足够多的样本，就能准确地近似正确的分布。然而，在实践中，可能需要比我们拥有的时间更多的时间来获取足够的样本。因此，已经提出了Metropolis-Hastings算法的替代方案。
+- en: Many of those alternative methods, such as the Metropolis-Hastings algorithm
+    itself, were developed originally to solve problems in statistical mechanics,
+    a branch of physics that studies properties of atomic and molecular systems, and
+    thus can be interpreted in a very natural way using analogies of physical systems.
+    One such modification is known as **Hamiltonian Monte Carlo**, or **Hybrid** **Monte
+    Carlo** (**HMC**). In simple terms, a Hamiltonian is a description of the total
+    energy of a physical system. The term *hybrid* is also used because it was originally
+    conceived as a hybridization of Metropolis-Hastings and molecular mechanics, a
+    widely used simulation technique for molecular systems.
+  id: totrans-108
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 许多替代方法，比如Metropolis-Hastings算法本身，最初是为了解决统计力学中的问题而开发的。统计力学是物理学的一个分支，研究原子和分子系统的性质，因此可以通过物理系统的类比以非常自然的方式进行解释。一个这样的修改被称为**哈密顿蒙特卡洛**，或者**混合蒙特卡洛**（**HMC**）。简单来说，哈密顿量是描述物理系统总能量的量。术语*混合*也被使用，因为它最初被构想为Metropolis-Hastings与分子力学的混合，分子力学是用于分子系统的广泛应用的模拟技术。
+- en: 'Conceptually, we can think of the HMC method as a Metropolis-Hastings but with
+    a proposal distribution that is not random. To get a general conceptual understanding
+    of HMC without going into the mathematical details, let’s use the lake and boat
+    analogy again. Instead of moving the boat randomly, we do so by following the
+    curvature of the bottom of the lake. To decide where to move the boat, we let
+    a ball roll onto the bottom of the lake starting from our current position. Our
+    ball is a very special one: not only is it perfectly spherical, it also has no
+    friction and thus is not slowed down by the water or mud. We throw the ball and
+    let it roll for a short moment until we suddenly stop it. Then we accept or reject
+    this proposed step using the Metropolis criteria, just as we did in the vanilla
+    Metropolis-Hastings method. Then the whole procedure is repeated many times. Nicely,
+    this modified procedure results in a higher chance of accepting new positions,
+    even if they are far away relative to the previous position.'
+  id: totrans-109
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 从概念上讲，我们可以将HMC方法视为一种Metropolis-Hastings方法，只不过其提议分布不是随机的。为了在不涉及数学细节的情况下对HMC有一个概念性的理解，我们可以再次使用湖泊和船只的类比。我们不再随机地移动船只，而是沿着湖底的曲率来移动船只。为了决定船只的移动方向，我们让一个球从当前位置开始滚到湖底。我们的球是一个非常特殊的球：它不仅是完美的球形，而且没有摩擦力，因此不会被水或泥土减速。我们扔下这个球，让它滚动一小段时间，直到我们突然停止它。然后，我们使用Metropolis准则接受或拒绝这个提议的步骤，就像我们在传统的Metropolis-Hastings方法中所做的那样。接着，整个过程会被重复多次。幸运的是，这种修改后的程序会增加接受新位置的机会，即使这些新位置相对于之前的位置远得多。
+- en: 'Moving according to the curvature of the parameter space turns out to be a
+    smarter way of moving because it avoids one of the main drawbacks of Metropolis-Hastings:
+    an efficient exploration of the sample space requires rejecting most of the proposed
+    steps. Instead, using HMC, it is possible to get a high acceptance rate even for
+    faraway points in the parameter space, thus resulting in a very efficient sampling
+    method.'
+  id: totrans-110
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 根据参数空间的曲率进行移动被证明是一种更聪明的移动方式，因为它避免了Metropolis-Hastings方法的主要缺点之一：高效探索样本空间需要拒绝大多数提出的步骤。相反，使用HMC方法，即使是参数空间中较远的点，也能获得较高的接受率，从而实现非常高效的采样方法。
+- en: Let’s get out of our Gedankenexperiment and back to the real world. We have
+    to pay a price for this very clever Hamiltonian-based proposal. We need to compute
+    the gradients of our function. A gradient is the generalization of the concept
+    of the derivative to more than one dimension; computing the derivative of a function
+    at one point tells us in which direction the function increases and in which direction
+    it decreases. We can use gradient information to simulate the ball moving in a
+    curved space; in fact, we use the same laws of motion and mathematical machinery
+    used in classical physics to simulate classical mechanical systems, such as balls
+    rolling, the orbits in planetary systems, and the jiggling of molecules.
+  id: totrans-111
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 让我们走出这个假想实验，回到现实世界。我们必须为这种非常巧妙的基于哈密顿量的提议付出代价。我们需要计算我们函数的梯度。梯度是导数概念在多维空间中的推广；计算函数在某一点的导数告诉我们函数在哪个方向上增大，在哪个方向上减小。我们可以使用梯度信息来模拟球体在弯曲空间中的运动；事实上，我们使用与经典物理学中模拟经典力学系统（如滚动的球体、行星系统中的轨道、分子震动）相同的运动定律和数学工具。
+- en: Computing gradients make us face a trade-off; each HMC step is more expensive
+    to compute than a Metropolis-Hastings step, but the probability of accepting that
+    step is much higher with HMC than with Metropolis. To balance this trade-off in
+    favor of HMC, we need to tune a few parameters of the HMC model (in a similar
+    fashion to how we need to tune the width of the proposal distribution for an efficient
+    Metropolis-Hastings sampler). When this tuning is done by hand, it takes some
+    trial and error and also requires an experienced user, making this procedure a
+    less universal inference engine than we may want. Luckily for us, modern probabilistic
+    programming languages come equipped with efficient adaptive Hamiltonian Monte
+    Carlo methods, such as the NUTS sampler in PyMC. This method has proven remarkably
+    useful and efficient for solving Bayesian models without requiring human intervention
+    (or at least minimizing it).
+  id: totrans-112
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 计算梯度使我们面临一个权衡：每一步HMC的计算成本比Metropolis-Hastings步骤高，但HMC的接受概率远高于Metropolis。为了平衡这个权衡，使其有利于HMC，我们需要调整HMC模型的一些参数（类似于调整Metropolis-Hastings采样器的提议分布宽度）。当这种调整是手动进行时，需要通过反复试验，并且还需要经验丰富的用户，这使得这个过程比我们希望的更加依赖于用户的经验，缺乏普遍适用性。幸运的是，现代的概率编程语言配备了高效的自适应哈密顿蒙特卡洛方法，比如PyMC中的NUTS采样器。这个方法已经证明在求解贝叶斯模型时非常有用和高效，且无需人工干预（或者至少可以最小化人工干预）。
+- en: One caveat of Hamiltonian Monte Carlo methods is that they only work for continuous
+    distribution; the reason is that we cannot compute gradients for discrete distribution.
+    PyMC solves this problem by assigning NUTS to continuous parameters and other
+    samplers to other parameters, such as PGBART for BART random variables or Metropolis
+    to discrete ones.
+  id: totrans-113
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 哈密顿蒙特卡洛方法的一个局限是，它们仅适用于连续分布；原因是我们无法对离散分布计算梯度。PyMC通过将NUTS分配给连续参数，将其他采样器分配给其他参数（例如，将PGBART分配给BART随机变量，将Metropolis分配给离散变量）来解决这个问题。
+- en: JAX-Based Sampling
+  id: totrans-114
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 基于JAX的采样
+- en: 'JAX is a library designed to provide high-performance numerical computing and
+    automatic differentiation for complex mathematical operations. PyMC use a Python
+    version of NUTS. But you can also use JAX-based implementations of this sampler.
+    Depending on your model, these samplers can be much faster than the default NUTS
+    sampler from PyMC. To used them we need to specify the argument `nuts_sampler`
+    for `pm.sample()`. The currently supported options are `"nutpie"`, `"blackjax"`,
+    and `"numpyro"`. None of these three samples comes installed with PyMC by default,
+    so you will need to install them. For CPUs, nutpie is probably the faster option
+    available: [https://github.com/pymc-devs/nutpie](https://github.com/pymc-devs/nutpie).
+    In this book, we used nutpie to sample from GPs – see the Jupyter notebooks for
+    *Chapter [8](CH08.xhtml#x1-1560008)*.'
+  id: totrans-115
+  prefs: []
+  type: TYPE_NORMAL
+  zh: JAX是一个旨在提供高性能数值计算和自动微分的库，用于复杂的数学运算。PyMC使用的是NUTS的Python版本。但你也可以使用基于JAX的采样器实现。根据你的模型，这些采样器可能比PyMC默认的NUTS采样器快得多。为了使用它们，我们需要为`pm.sample()`指定`nuts_sampler`参数。当前支持的选项有`"nutpie"`、`"blackjax"`和`"numpyro"`。这三种采样器默认不与PyMC一起安装，所以你需要手动安装它们。对于CPU，nutpie可能是最快的选择：[https://github.com/pymc-devs/nutpie](https://github.com/pymc-devs/nutpie)。在本书中，我们使用了nutpie从高斯过程（GPs）中采样——请参见*第[8章](CH08.xhtml#x1-1560008)*中的Jupyter笔记本。
+- en: 'I strongly recommend you complement this section with this very cool application
+    by Chi Feng: [https://chi-feng.github.io/mcmc-demo](https://chi-feng.github.io/mcmc-demo).'
+  id: totrans-116
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 我强烈推荐你配合这个非常酷的应用程序来阅读本节内容，作者是Chi Feng：[https://chi-feng.github.io/mcmc-demo](https://chi-feng.github.io/mcmc-demo)。
+- en: 10.5 Sequential Monte Carlo
+  id: totrans-117
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 10.5 序列蒙特卡洛
+- en: One of the caveats of Metropolis-Hastings and NUTS (and other Hamiltonian Monte
+    Carlo variants) is that if the posterior has multiple peaks and these peaks are
+    separated by regions of very low probability, these methods can get stuck in a
+    single mode and miss the others!
+  id: totrans-118
+  prefs: []
+  type: TYPE_NORMAL
+  zh: Metropolis-Hastings和NUTS（以及其他哈密顿蒙特卡洛变体）的一大局限是，如果后验分布具有多个峰值且这些峰值之间被非常低概率的区域分隔，这些方法可能会陷入单一模式，错过其他峰值！
+- en: Many of the methods developed to overcome this multiple minima problem are based
+    on the idea of tempering. This idea, once again, is borrowed from statistical
+    mechanics. The number of states a physical system can populate depends on the
+    temperature of the system; at 0 Kelvin (the lowest possible temperature), every
+    system is stuck in a single state. On the other extreme, for an infinite temperature,
+    all possible states are equally likely. Generally, we are interested in systems
+    at some intermediate temperature. For Bayesian models, there is a very intuitive
+    way to adapt this tempering idea by writing Bayes’ theorem with a twist.
+  id: totrans-119
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 许多为克服这个多重极小值问题而开发的方法基于温度化的思想。这个思想再次借鉴了统计力学的概念。一个物理系统可以占据的状态数取决于系统的温度；在0开尔文（最低可能温度）下，所有系统都陷入一个单一状态。而在另一极端，对于无限温度，所有可能的状态都是等概率的。通常，我们关注的是处于某个中间温度的系统。对于贝叶斯模型，通过对贝叶斯定理进行某种变化，可以直观地应用这个温度化思想。
+- en: '![ β p(θ | y)β = p(y | θ) p(θ) ](img/file257.jpg)'
+  id: totrans-120
+  prefs: []
+  type: TYPE_IMG
+  zh: '![ β p(θ | y)β = p(y | θ) p(θ) ](img/file257.jpg)'
+- en: The parameter *β* is known as the inverse temperature or tempering parameter.
+    Notice that for *β* = 0 we get *p*(*y*|*θ*)^(*β*) = 1 and thus the tempered posterior
+    *p*(*θ*|*y*)[*β*] is just the prior *p*(*θ*), and when *β* = 1 the *tempered*
+    posterior is the actual full posterior. As sampling from the prior is generally
+    easier than sampling from the posterior (by increasing the value of *β*), we start
+    sampling from an easier distribution and slowly morph it into the more complex
+    distribution we really care about.
+  id: totrans-121
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 参数*β*被称为逆温度或温度化参数。注意，当*β* = 0时，我们得到*p*(*y*|*θ*)^(*β*) = 1，因此温度化后验*p*(*θ*|*y*)[*β*]仅仅是先验*p*(*θ*)，而当*β*
+    = 1时，*温度化*后验就是实际的完整后验。由于从先验分布进行采样通常比从后验分布采样更容易（通过增加*β*的值），我们从一个较容易的分布开始采样，并逐渐将其转变为我们真正关心的更复杂的分布。
+- en: 'There are many methods that exploit this idea; one of them is known as **Sequential
+    Monte Carlo** (**SMC**). The SMC method, as implemented in PyMC, can be summarized
+    as follows (also see *Figure [10.6](#x1-198018r6)*):'
+  id: totrans-122
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 有许多方法利用了这个思想，其中之一被称为**顺序蒙特卡罗**（**SMC**）。PyMC中实现的SMC方法可以总结如下（也见*图 [10.6](#x1-198018r6)*）：
+- en: Initialize *β* at 0.
+  id: totrans-123
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 将*β*初始化为0。
+- en: Generate *N* samples *S*[*β*] from the tempered posterior.
+  id: totrans-124
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 从温度化后验中生成*N*个样本*S*[*β*]。
+- en: Increase *β* a *little bit*.
+  id: totrans-125
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 将*β*稍微增加一点。
+- en: Compute a set of *N* weights *W*. The weights are computed according to the
+    new tempered posterior.
+  id: totrans-126
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 计算一组*N*的权重*W*。这些权重是根据新的温度化后验计算得出的。
+- en: Obtain *S*[*w*] by resampling *S*[*b*] according to *W*.
+  id: totrans-127
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 通过根据*W*对*S*[*b*]进行重采样，获得*S*[*w*]。
+- en: Run *N* Metropolis chains, starting each one from a different sample in *S*[*w*].
+  id: totrans-128
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 运行*N*个Metropolis链，每个链都从*S*[*w*]中的不同样本开始。
+- en: Repeat from step 3 until *β* ≥ 1.
+  id: totrans-129
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 从步骤3开始重复，直到*β* ≥ 1。
+- en: '![PIC](img/file258.png)'
+  id: totrans-130
+  prefs: []
+  type: TYPE_IMG
+  zh: '![PIC](img/file258.png)'
+- en: '**Figure 10.6**: Schematic representation of SMC'
+  id: totrans-131
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**图 10.6**：SMC的示意图'
+- en: The resampling step works by removing samples with a low probability and replacing
+    them with samples with a higher probability. The Metropolis step perturbs these
+    samples, helping to explore the parameter space.
+  id: totrans-132
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 重采样步骤通过移除概率较低的样本并用概率较高的样本替换它们来工作。Metropolis步骤扰动这些样本，帮助探索参数空间。
+- en: The efficiency of the tempered method depends heavily on the intermediate values
+    of *β*, which is usually referred to as the cooling schedule. The smaller the
+    difference between two successive values of *β*, the closer the two successive
+    tempered posteriors will be, and thus the easier the transition from one stage
+    to the next. But if the steps are too small, we will need many intermediate stages,
+    and beyond some point, this will translate into wasting a lot of computational
+    resources without really improving the accuracy of the results.
+  id: totrans-133
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 温度化方法的效率很大程度上取决于*β*的中间值，这通常被称为降温计划。*β*的两个连续值之间的差异越小，两个连续的温度化后验就会越接近，因此从一个阶段到下一个阶段的过渡就会更容易。但如果步长太小，我们将需要许多中间阶段，超过某个点，这将导致浪费大量计算资源，而并未真正提高结果的准确性。
+- en: Fortunately, SMC can automatically compute the intermediate values of *β*. The
+    exact cooling schedule will be adapted to the difficulty of the problem; distributions
+    that are more difficult to sample will require more stages than simpler ones.
+  id: totrans-134
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 幸运的是，SMC可以自动计算*β*的中间值。具体的降温计划将根据问题的难度进行调整；较难采样的分布将需要比简单分布更多的阶段。
+- en: At the top of *Figure [10.6](#x1-198018r6)*, we have nine samples or particles
+    (gray dots) that we obtained from the prior, represented as the very wide distribution
+    on top of everything (stage 0). For the rest of the stages, we re-weight the samples
+    from the previous stage according to their tempered posterior density. And then
+    we resample proportional to those weights. As a result, some particles are lost
+    and replaced by other samples, so the total number is fixed. We then mutate the
+    sample, that is, we apply one or more MCMC steps to the particles. We then increase
+    *β* and repeat. When we reach *β* = 1, the particles (or samples) will be distributed
+    as the posterior.
+  id: totrans-135
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 在*图 [10.6](#x1-198018r6)* 的顶部，我们有九个样本或粒子（灰色点），它们来自先验，表示为覆盖所有内容的非常宽的分布（阶段0）。对于后续阶段，我们根据其加权后验密度重新加权前一个阶段的样本。然后，我们根据这些权重进行重采样。因此，一些粒子会被丢失并被其他样本替代，所以总数保持不变。接着，我们对样本进行突变，也就是说，我们对粒子应用一个或多个MCMC步骤。然后我们增加
+    *β* 并重复这一过程。当我们达到 *β* = 1 时，粒子（或样本）将按照后验分布进行分布。
+- en: 'Besides the intermediate values of *β*, two more parameters are dynamically
+    computed based on the acceptance rate of the previous stage: the number of steps
+    of each Markov chain and the width of the proposal distribution.'
+  id: totrans-136
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 除了*β*的中间值外，还有两个参数是根据前一个阶段的接受率动态计算的：每个马尔可夫链的步数和提议分布的宽度。
+- en: 10.6 Diagnosing the samples
+  id: totrans-137
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 10.6 诊断样本
+- en: In this book, we have used numerical methods to compute the posterior for virtually
+    all models. That will most likely be the case for you, too, when using Bayesian
+    methods for your own problems. Since we are approximating the posterior with a
+    finite number of samples, it is important to check whether we have a valid sample;
+    otherwise, any analysis from it will be totally flawed. There are several tests
+    we can perform, some of which are visual and others quantitative. These tests
+    are designed to spot problems with our samples, but they are unable to prove we
+    have the correct distribution; they can only provide evidence that the sample
+    seems reasonable. If we find problems with the sample, there are many solutions
+    to try. We will discuss them along with the diagnostics.
+  id: totrans-138
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 在本书中，我们使用数值方法计算几乎所有模型的后验。你在使用贝叶斯方法处理自己问题时，很可能也会遇到这种情况。由于我们使用有限数量的样本来近似后验，因此检查我们是否有有效样本是非常重要的；否则，从中得出的任何分析都会完全失真。我们可以执行几个测试，其中一些是视觉测试，其他的是定量测试。这些测试旨在发现样本的问题，但无法证明我们拥有正确的分布；它们只能提供样本似乎合理的证据。如果我们发现样本有问题，还有很多解决方案可以尝试。我们将在诊断过程中讨论这些解决方法。
+- en: 'To make the explanations concrete, we are going to use minimalist models, with
+    two parameters: a global parameter *a* and a group parameter *b*. And that’s it,
+    we do not even have likelihood/data in these models!'
+  id: totrans-139
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 为了使解释更具体，我们将使用最简模型，包含两个参数：一个全局参数 *a* 和一个组参数 *b*。仅此而已，这些模型甚至没有似然/数据！
+- en: '**Code 10.4**'
+  id: totrans-140
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**代码 10.4**'
+- en: '[PRE3]'
+  id: totrans-141
+  prefs: []
+  type: TYPE_PRE
+  zh: '[PRE3]'
+- en: The difference between `model_c` and `model_nc` models is that for the former,
+    we fit the group-level parameter directly, and for the latter, we model the group-level
+    parameter as a shifted and scaled Gaussian.
+  id: totrans-142
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '`model_c`和`model_nc`模型之间的区别在于，对于前者，我们直接拟合组级参数，而对于后者，我们将组级参数建模为一个平移和缩放的高斯分布。'
+- en: These two models may look too artificial to you, or just weird. However, it
+    is important to notice that these two models have essentially the same structure
+    as the centered and non-centered parametrization we already discussed in *Chapter
+    [4](CH04.xhtml#x1-760004)*.
+  id: totrans-143
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 这两个模型可能看起来对你来说过于人工化，或者只是奇怪。然而，需要注意的是，这两个模型的结构本质上与我们在*第4章 [4](CH04.xhtml#x1-760004)*
+    中已经讨论过的居中和非居中参数化是相同的。
+- en: From the discussion in that chapter, we should expect better samples from `model_nc`
+    than from `model_c`. Let’s check if our expectations hold.
+  id: totrans-144
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 根据该章节的讨论，我们应该期待从`model_nc`获得比`model_c`更好的样本。让我们检查我们的预期是否成立。
+- en: 10.7 Convergence
+  id: totrans-145
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 10.7 收敛性
+- en: Theoretically, MCMC methods are guaranteed to converge once we take infinite
+    samples. In practice, we need to check that we have reasonable finite samples.
+    Usually, we say the sampler has converged once we have collected evidence showing
+    that samples are *stable* in some sense. A simple test to do is to run the same
+    MCMC simulation multiple times and check whether we get the same result every
+    time. This is the reason why PyMC runs more by default than on chain. For modern
+    computers, this is virtually free as we have multiple cores. Also, they do not
+    create any waste, as we can combine samples from different chains to compute summaries,
+    plots, etc.
+  id: totrans-146
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 理论上，MCMC 方法在我们采集无限样本时是可以保证收敛的。实际上，我们需要检查所采样本是否合理且有限。通常，当我们收集到证据表明样本在某种意义上是*稳定*的时，我们就认为采样器已收敛。一个简单的测试方法是多次运行相同的
+    MCMC 模拟，并检查每次是否得到相同的结果。这也是为什么 PyMC 默认运行更多链条的原因。对于现代计算机来说，这是几乎没有成本的，因为我们有多个核心。而且，它们不会浪费资源，因为我们可以将不同链条的样本合并来计算摘要、绘图等。
+- en: There are many ways to check that different chains are practically equivalent,
+    both visually and with formal tests. We are not going to get too technical here;
+    we are just going to show a few examples and hope they are enough for you to develop
+    an intuition for interpreting diagnostics.
+  id: totrans-147
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 有许多方法可以检查不同链条在实际应用中的等效性，无论是通过视觉方式还是正式测试。我们在这里不会深入探讨技术细节；我们只会展示一些例子，希望它们足以让你培养出解读诊断结果的直觉。
+- en: 10.7.1 Trace plot
+  id: totrans-148
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+  zh: 10.7.1 轨迹图
+- en: One way to check for convergence is to visually check whether chains look similar.
+    For instance, we can use ArviZ’s `plot_trace` function. To better understand what
+    we should look for when inspecting these plots, let’s compare the results for
+    the two previously defined models.
+  id: totrans-149
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 检查收敛性的一种方法是通过视觉检查链条是否相似。例如，我们可以使用 ArviZ 的 `plot_trace` 函数。为了更好地理解在检查这些图表时应该注意什么，我们将比较之前定义的两个模型的结果。
+- en: The variable `b` is 10-dimensional. For clarity and brevity we are only going
+    to show one of its dimensions. Feel free to visualize all of them on your own
+    computer. *Figure [10.7](#x1-201003r7)* shows many issues. In the left column,
+    we have four KDEs, one per chain. We can see that they look different. This is
+    an indication that each chain is sampling slightly different regions of the posterior.
+    In the right column, we have the trace itself. We also have four lines, one per
+    chain, which can be messy, but still we see that one chain is stuck in the neighborhood
+    of 0 from the first step until almost step 400\. We see something similar at step
+    ≈800.
+  id: totrans-150
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 变量 `b` 是 10 维的。为了清晰和简洁，我们只展示其中一个维度。你可以随时在自己的计算机上将所有维度可视化。*图 [10.7](#x1-201003r7)*
+    显示了许多问题。在左列中，我们有四个 KDE，每个链条一个。我们可以看到它们看起来不同。这表明每条链条采样的后验区域略有不同。在右列中，我们有轨迹本身。我们也有四条线，每条链条一条，虽然它们有些凌乱，但我们仍然可以看到，有一条链条从第一步就卡在
+    0 附近，直到几乎第 400 步才有所变化。我们在第 800 步左右也看到类似的情况。
+- en: The issues become even more clear when we compare *Figure [10.7](#x1-201003r7)*
+    with *Figure [10.8](#x1-201004r8)*. For the latter, we see that the KDEs for the
+    four chains look much more similar to each other, and the trace looks much more
+    fuzzy, more like *noise*, and very difficult to see a pattern. We want a curve
+    freely meandering around. When this happens, we say we have **good** **mixing**.
+    We express it like this because it will be difficult to distinguish one chain
+    from the other; they are mixed. This is good because it means that even when we
+    run four (or more) separated chains starting from different points, they all describe
+    the same distribution. This is not proof of convergence but at least we don’t
+    see evidence of non-convergence or poor mixing.
+  id: totrans-151
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 当我们将*图 [10.7](#x1-201003r7)*与*图 [10.8](#x1-201004r8)*进行比较时，问题变得更加明显。对于后者，我们看到四条链的
+    KDE 看起来相互之间更为相似，而轨迹图看起来模糊得多，更像是*噪声*，很难看到明显的模式。我们希望曲线能够自由地漫游。当这种情况发生时，我们说我们有**良好的**
+    **混合**。我们这么表达是因为很难区分一条链与另一条链；它们是混合的。这是好事，因为这意味着即使我们从不同的起点启动四条（或更多）独立链条，它们也都描述了相同的分布。这并不是收敛的证明，但至少我们没有看到非收敛或糟糕混合的证据。
+- en: '![PIC](img/file259.png)'
+  id: totrans-152
+  prefs: []
+  type: TYPE_IMG
+  zh: '![PIC](img/file259.png)'
+- en: '**Figure 10.7**: Trace plot for `model_c`'
+  id: totrans-153
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**图 10.7**：`model_c` 的轨迹图'
+- en: '*Figure [10.7](#x1-201003r7)* also has a few black vertical bars at the top
+    that are absent from *Figure [10.8](#x1-201004r8)*. These are divergences; there
+    is a section dedicated to them later in this chapter.'
+  id: totrans-154
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '*图 [10.7](#x1-201003r7)* 还有一些黑色垂直线条出现在顶部，而*图 [10.8](#x1-201004r8)* 中没有这些线条。这些是发散点；本章稍后有专门的部分讨论这些问题。'
+- en: '![PIC](img/file260.png)'
+  id: totrans-155
+  prefs: []
+  type: TYPE_IMG
+  zh: '![PIC](img/file260.png)'
+- en: '**Figure 10.8**: Trace plot for `model_nc`'
+  id: totrans-156
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**图 10.8**：`model_nc` 的轨迹图'
+- en: 10.7.2 Rank plot
+  id: totrans-157
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+  zh: 10.7.2 排名图
+- en: 'Trace plots can be difficult to read, especially when we have multiple chains
+    as it is easy to miss some details. An alternative is rank plots [[Vehtari et al.](Bibliography.xhtml#Xvehtari_2021), [2021](Bibliography.xhtml#Xvehtari_2021)].
+    To build a rank plot for a given parameter we first take all the samples from
+    all the chains, order them, and assign an integer: this is sample 0, this is 1,
+    this is 2, etc. We then group all the ranks according to the original chains.
+    Finally, we plot as many histograms as chains. If all chains are sampled from
+    the same distribution, we can expect that all chains have the same number of low
+    ranks, high ranks, medium ranks, etc. In other words, a histogram of the rank
+    should be uniform.'
+  id: totrans-158
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 轨迹图可能很难解读，特别是当我们有多个链时，因为容易忽略一些细节。一个替代方案是使用排名图 [[Vehtari et al.](Bibliography.xhtml#Xvehtari_2021),
+    [2021](Bibliography.xhtml#Xvehtari_2021)]。为了构建某一参数的排名图，我们首先将所有链中的所有样本进行排序，并分配一个整数：这是第
+    0 个样本，这是第 1 个样本，这是第 2 个样本，依此类推。然后，我们将所有排名根据原始链进行分组。最后，我们绘制与链数相等的直方图。如果所有链都来自相同的分布，我们可以预期所有链都有相同数量的低排名、高排名、中等排名等。换句话说，排名的直方图应该是均匀的。
+- en: To get a rank plot we can call ArviZ’s `plot_trace` with the `kind="rank_bars"`
+    argument. Figures [10.9](#x1-202003r9) and [10.10](#x1-202004r10) are examples
+    of such plots.
+  id: totrans-159
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 要获取排名图，我们可以调用 ArviZ 的 `plot_trace` 函数，并使用 `kind="rank_bars"` 参数。图 [10.9](#x1-202003r9)
+    和图 [10.10](#x1-202004r10) 是这类图的示例。
+- en: '![PIC](img/file261.png)'
+  id: totrans-160
+  prefs: []
+  type: TYPE_IMG
+  zh: '![PIC](img/file261.png)'
+- en: '**Figure 10.9**: Rank plot for `model_c`'
+  id: totrans-161
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**图 10.9**：`model_c` 的排名图'
+- en: '![PIC](img/file262.png)'
+  id: totrans-162
+  prefs: []
+  type: TYPE_IMG
+  zh: '![PIC](img/file262.png)'
+- en: '**Figure 10.10**: Rank plot for `model_nc`'
+  id: totrans-163
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**图 10.10**：`model_nc` 的排名图'
+- en: On the left, we have the same KDEs we have already shown. On the right, we have
+    the rank plots. Again the result for `model_nc` looks much better; the deviations
+    from uniformity are very small. On the other hand, we can see a few issues from
+    *Figure [10.9](#x1-202003r9)*; for instance, the histograms for rank 500 or lower
+    look very bad for parameter `a` and also very bad for parameter `b` around the
+    rank 2000\. There are issues in other regions as well.
+  id: totrans-164
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 左边是我们之前展示过的相同的 KDE 图。右边是排名图。再次强调，`model_nc` 的结果看起来好多了；与均匀分布的偏差非常小。另一方面，我们可以从
+    *图 [10.9](#x1-202003r9)* 中看到一些问题；例如，参数 `a` 的排名在 500 或更低的地方看起来非常差，参数 `b` 在排名大约为
+    2000 处也很糟糕。其他区域也存在问题。
+- en: 10.7.3 ![](img/hat_R.png) (R hat)
+  id: totrans-165
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+  zh: 10.7.3 ![](img/hat_R.png) (R hat)
+- en: A quantitative way of comparing independent chains is by using the ![](img/hat_R.png)
+    statistic. The idea of this test is to compute the variance between chains with
+    the variance within chains. Ideally, we should expect a value of 1\. As an empirical
+    rule, we will be OK with a value below 1.01; higher values signal a lack of convergence.
+    We can compute it using the `az.r_hat` function (see *Table [10.1](#x1-203003r1)*).
+    The ![](img/hat_R.png) diagnostic is also computed by default with the `az.summary`
+    function and optionally with `az.plot_forest` (using the `r_hat=True` argument).
+  id: totrans-166
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 比较独立链的一种定量方法是使用 ![](img/hat_R.png) 统计量。此测试的思路是计算链之间的方差与链内部的方差之比。理想情况下，我们应该期望值为
+    1。作为经验法则，值小于 1.01 也是可以接受的；较高的值则表示缺乏收敛性。我们可以使用 `az.r_hat` 函数计算该值（参见 *表 [10.1](#x1-203003r1)*）。![](img/hat_R.png)
+    诊断量也可以通过默认的 `az.summary` 函数计算，或者通过 `az.plot_forest`（使用 `r_hat=True` 参数）来选择性计算。
+- en: '|  | *a* | *b*[0] | *b*[1] | *b*[2] | *b*[3] | *b*[4] | *b*[5] | *b*[6] | *b*[7]
+    | *b*[8] | *b*[9] |'
+  id: totrans-167
+  prefs: []
+  type: TYPE_TB
+  zh: '|  | *a* | *b*[0] | *b*[1] | *b*[2] | *b*[3] | *b*[4] | *b*[5] | *b*[6] | *b*[7]
+    | *b*[8] | *b*[9] |'
+- en: '| model_c | 1.2 | 1.17 | 1.05 | 1.17 | 1.17 | 1.15 | 1.11 | 1.09 | 1.17 | 1.18
+    | 1.17 |'
+  id: totrans-168
+  prefs: []
+  type: TYPE_TB
+  zh: '| model_c | 1.2 | 1.17 | 1.05 | 1.17 | 1.17 | 1.15 | 1.11 | 1.09 | 1.17 | 1.18
+    | 1.17 |'
+- en: '| model_nc | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0
+    |'
+  id: totrans-169
+  prefs: []
+  type: TYPE_TB
+  zh: '| model_nc | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0
+    |'
+- en: '**Table 10.1**: ![](img/hat_R.png) values for models `model_c` and `model_ncm`'
+  id: totrans-170
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**表 10.1**：`model_c` 和 `model_ncm` 模型的 ![](img/hat_R.png) 值'
+- en: Values around 1.1 could be OK, at the initial phase of modeling, when you are
+    just checking whether a likelihood makes sense, or just trying to find out which
+    model you really want to build. Also, the threshold 1.01 could be too tight for
+    a model with a lot of parameters. The reason is that even when you really have
+    convergence, you could still get a few ![](img/hat_R.png) values larger than this
+    threshold by chance. For instance, the PyMC-BART package includes the `plot_convergence`
+    function. This function is intended to check the convergence of BART random variables.
+    When using a BART model, you will get one ![](img/hat_R.png) per observation,
+    and that could be a lot. Thus, `plot_convergence` shows the cumulative distribution
+    of ![](img/hat_R.png) values and a threshold that includes a correction for multiple
+    comparisons that is automatically computed by taking into account the number of
+    observations.
+  id: totrans-171
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 大约 1.1 的值在建模初期可能是可以接受的，特别是当你只是检查一个似然是否合理，或仅仅是尝试找出你真正想要构建的模型时。此外，对于参数较多的模型来说，1.01
+    的阈值可能过于严格。原因是即使你确实已经达到了收敛，你仍然可能偶然得到一些超过这个阈值的 ![](img/hat_R.png) 值。例如，PyMC-BART
+    包括 `plot_convergence` 函数。该函数旨在检查 BART 随机变量的收敛性。使用 BART 模型时，每个观察值都会得到一个 ![](img/hat_R.png)，而且这个数量可能很多。因此，`plot_convergence`
+    显示了 ![](img/hat_R.png) 值的累积分布以及一个阈值，这个阈值会自动计算并考虑到观察值的数量，从而进行多重比较的校正。
+- en: '*Figure [10.11](#x1-203005r11)* shows an example of such a plot. On the right,
+    we have a cumulative distribution of ![](img/hat_R.png)s and a gray dashed line
+    showing the adjusted threshold. Ideally, the entire cumulative curve should be
+    to the left of the dashed line. On the left subplot of *Figure [10.11](#x1-203005r11)*,
+    we have the **Effective Sample Size** (**ESS**). We explain the ESS in the next
+    section.'
+  id: totrans-172
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '*图 [10.11](#x1-203005r11)* 显示了此类图的示例。在右侧，我们展示了 ![](img/hat_R.png) 的累积分布，并有一条灰色虚线表示调整后的阈值。理想情况下，整个累积曲线应位于虚线的左侧。在
+    *图 [10.11](#x1-203005r11)* 的左侧子图中，我们展示了 **有效样本量**（**ESS**）。我们将在下一节解释 ESS。'
+- en: '![PIC](img/file263.png)'
+  id: totrans-173
+  prefs: []
+  type: TYPE_IMG
+  zh: '![PIC](img/file263.png)'
+- en: '**Figure 10.11**: Diagnostic plot computed with `pmb.plot_convergence(.)`'
+  id: totrans-174
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**图 10.11**：使用 `pmb.plot_convergence(.)` 计算的诊断图'
+- en: 10.8 Effective Sample Size (ESS)
+  id: totrans-175
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 10.8 有效样本量（ESS）
+- en: MCMC samples can be correlated. The reason is that we use the current position
+    to generate a new position and we accept or reject the next position taking into
+    account the old position. This dependency is usually lower for well-tuned modern
+    methods, such as Hamiltonian Monte Carlo, but it can be high. We can compute and
+    plot the autocorrelation with `az.plot_autocorrelation`. But usually, a more useful
+    metric is to compute the **Effective Sample Size** (**ESS**). We can think of
+    this number as the number of useful draws we have in our sample. Due to autocorrelation,
+    this number is usually going to be lower than the actual number of samples. We
+    can compute it using the `az.ess` function (see *Table [10.2](#x1-204002r2)*).
+    The ESS diagnostic is also computed by default with the `az.summary` function
+    and optionally with `az.plot_forest` (using the `ess=True` argument).
+  id: totrans-176
+  prefs: []
+  type: TYPE_NORMAL
+  zh: MCMC 样本可能是相关的。原因是我们使用当前的位置生成一个新位置，并在考虑旧位置的基础上接受或拒绝下一个位置。这种依赖性对于调优良好的现代方法（如哈密顿蒙特卡洛）通常较低，但有时也可能较高。我们可以使用
+    `az.plot_autocorrelation` 计算并绘制自相关图。但通常，更有用的度量是计算 **有效样本量**（**ESS**）。我们可以将这个数字看作是样本中有用的抽样次数。由于自相关，这个数字通常会低于实际的样本数。我们可以使用
+    `az.ess` 函数来计算它（见 *表 [10.2](#x1-204002r2)*）。ESS 诊断也可以通过 `az.summary` 函数默认计算，或者通过
+    `az.plot_forest` 函数（使用 `ess=True` 参数）来选择性计算。
+- en: '|  | *a* | *b*[0] | *b*[1] | *b*[2] | *b*[3] | *b*[4] | *b*[5] | *b*[6] | *b*[7]
+    | *b*[8] | *b*[9] |'
+  id: totrans-177
+  prefs: []
+  type: TYPE_TB
+  zh: '|  | *a* | *b*[0] | *b*[1] | *b*[2] | *b*[3] | *b*[4] | *b*[5] | *b*[6] | *b*[7]
+    | *b*[8] | *b*[9] |'
+- en: '| model_cm | 14 | 339 | 3893 | 5187 | 4025 | 5588 | 4448 | 4576 | 4025 | 4249
+    | 4973 |'
+  id: totrans-178
+  prefs: []
+  type: TYPE_TB
+  zh: '| model_cm | 14 | 339 | 3893 | 5187 | 4025 | 5588 | 4448 | 4576 | 4025 | 4249
+    | 4973 |'
+- en: '| model_ncm | 2918 | 4100 | 4089 | 3942 | 3806 | 4171 | 3632 | 4653 | 3975
+    | 4092 | 3647 |'
+  id: totrans-179
+  prefs: []
+  type: TYPE_TB
+  zh: '| model_ncm | 2918 | 4100 | 4089 | 3942 | 3806 | 4171 | 3632 | 4653 | 3975
+    | 4092 | 3647 |'
+- en: '**Table 10.2**: ESS values for models `model_c` and `model_ncm`'
+  id: totrans-180
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**表 10.2**：`model_c` 和 `model_ncm` 模型的 ESS 值'
+- en: The rule of thumb is that we need, at least, an effective sample size of 400
+    (100 ESS per chain). If we get values lower than this, not only could our estimates
+    be excessively noisy, but even diagnostics such as ![](img/hat_R.png) might become
+    unreliable.
+  id: totrans-181
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 一般规则是我们至少需要一个有效样本量为 400（每条链 100 ESS）。如果得到的值低于这个数值，我们的估计不仅可能过于嘈杂，甚至像 ![](img/hat_R.png)
+    这样的诊断图也可能变得不可靠。
+- en: The quality of the MCMC samples can be different from different regions of the
+    posterior. For instance, at least for some problems, it could be easier to sample
+    the bulk of the distribution than its tails. Thus, we may want to compute ESS
+    for different regions of the posterior. The default value returned by `az.ess()`
+    is the bulk-ESS, which estimates how well the center of the distribution was resolved.
+    This is the ESS you need to check if you are interested in values such as the
+    mean or median of a parameter. If you want to report posterior intervals or you
+    are interested in rare events, you should check the value of the tail-ESS, which
+    is computed as the minimum ESS at the percentiles 5 and 95\. If you are interested
+    in specific quantiles, you can ask ArviZ for those specific values using `az.ess(.,
+    method=’quantile’)`. We can even plot the ESS for many quantiles at the same time
+    with the `az.plot_ess(., kind="quantiles"` function, as in *Figure [10.12](#x1-204004r12)*
+    for parameter `a`.
+  id: totrans-182
+  prefs: []
+  type: TYPE_NORMAL
+  zh: MCMC样本的质量可能会因后验分布的不同区域而异。例如，至少对于某些问题，采样分布的中心部分可能比尾部部分更容易。因此，我们可能希望计算后验分布不同区域的ESS值。`az.ess()`返回的默认值是中心区域的ESS，它估计分布中心的解析精度。如果你对某个参数的均值或中位数感兴趣，应该检查这个ESS值。如果你想报告后验区间或关注稀有事件，应检查尾部ESS值，它是在5%和95%分位数处计算的最小ESS值。如果你对特定分位数感兴趣，可以使用`az.ess(.,
+    method='quantile')`来请求这些具体的值。我们甚至可以使用`az.plot_ess(., kind="quantiles")`函数同时绘制多个分位数的ESS，如*图
+    [10.12](#x1-204004r12)*所示，针对参数`a`。
+- en: '![PIC](img/file264.png)'
+  id: totrans-183
+  prefs: []
+  type: TYPE_IMG
+  zh: '![PIC](img/file264.png)'
+- en: '**Figure 10.12**: ESS for quantiles of parameter `a`'
+  id: totrans-184
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**图 10.12**：参数`a`的ESS分位数'
+- en: Finally, when we are running a model and find out that we have a very low ESS,
+    the first reaction may be to increase the number of samples. Sometimes this is
+    enough. But sometimes even a 10-fold increase is not enough. Instead of trial
+    and error, we could use `az.plot_ess(., kind="evolution"`. This will give us a
+    plot of samples versus ESS, as in *Figure [10.13](#x1-204005r13)*. We can use
+    the information to estimate how many samples we need to reach a given value of
+    ESS. For example, in *Figure [10.13](#x1-204005r13)* we can see that there is
+    not much hope of getting a good ESS value for parameter `a` in `model_c` just
+    by increasing the number of samples. Compare this with `model_nc`, where the ESS
+    for the bulk is very close to the actual number of samples.
+  id: totrans-185
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 最后，当我们运行模型并发现ESS值非常低时，第一反应可能是增加样本数。有时候这就足够了。但有时即使增加10倍样本也不够。我们可以使用`az.plot_ess(.,
+    kind="evolution")`，而不是通过反复试验。这将为我们提供一个样本与ESS的图，如*图 [10.13](#x1-204005r13)*所示。我们可以利用这些信息来估计需要多少样本才能达到给定的ESS值。例如，在*图
+    [10.13](#x1-204005r13)*中，我们可以看到仅通过增加样本数，`model_c`中参数`a`的ESS值没有太大希望变得理想。与此相比，`model_nc`的ESS值对于大部分样本接近实际样本数。
+- en: '![PIC](img/file265.png)'
+  id: totrans-186
+  prefs: []
+  type: TYPE_IMG
+  zh: '![PIC](img/file265.png)'
+- en: '**Figure 10.13**: Evolution of the ESS for parameter `a`'
+  id: totrans-187
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**图 10.13**：参数`a`的ESS演变'
+- en: 10.9 Monte Carlo standard error
+  id: totrans-188
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 10.9 蒙特卡罗标准误差
+- en: Even if we have a very low ![](img/hat_R.png) and a very high value of ESS.
+    The samples from MCMC are still finite, and thus we are introducing an error in
+    the estimation of the posterior parameters. Fortunately, we can estimate the error,
+    and it is called the **Monte Carlo Standard Error** (**MCSE**). The estimation
+    of the MCSE takes into account that the samples are not truly independent of each
+    other. The precision we want in our results is limited by this value. If the MCSE
+    for a parameter is 0.2, it does not make sense to report a parameter as 2.54\.
+    Instead, if we repeat the simulation (with a different random seed), we should
+    expect that for 68% of the results, we obtain values in the range 2*.*54 ± 0*.*2\.
+    Similarly, for 95% of them, we should get values in the range 2*.*54 ± 0*.*4\.
+    Here, I am assuming the MCSE distributes normally and then using the fact that
+    ≈ 68% of the value of a Gaussian is within one standard deviation and ≈ 95% is
+    within two standard deviations.
+  id: totrans-189
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 即使我们有一个非常低的![](img/hat_R.png)和一个非常高的ESS值，MCMC的样本仍然是有限的，因此我们在估计后验参数时会引入误差。幸运的是，我们可以估算这个误差，它被称为**蒙特卡罗标准误差**（**MCSE**）。MCSE的估算考虑到样本之间并非真正独立。我们希望得到的结果精度受限于这个值。如果某个参数的MCSE为0.2，那么报告该参数为2.54是没有意义的。相反，如果我们重复模拟（使用不同的随机种子），我们应该预期68%的结果会落在2.54±0.2的范围内。同样，对于95%的结果，它们应该落在2.54±0.4的范围内。在这里，我假设MCSE服从正态分布，并利用高斯分布的性质：大约68%的值位于一个标准差以内，约95%的值位于两个标准差以内。
+- en: The ![](img/hat_R.png), ESS, and MCSE are related. In practice, we should use
+    the ESS as a scale-free diagnostic to ensure we have enough useful samples. It
+    is scale-free because it does not matter if one parameter goes from 0 to 1 and
+    another from 0 to 100\. We can compare their ESSs. With ESS, the larger the better,
+    with a minimum of at least 400\. If we have the minimum, we check we have a low
+    enough ![](img/hat_R.png). We can also visually check a rank plot or a trace plot
+    (we should also check for divergences, as we will explain later). If everything
+    looks fine, then we check that we have a low enough MCSE for the parameters and
+    precision we want to report. Hopefully, for most problems, we will have an MCSE
+    that is way below the precision we want.
+  id: totrans-190
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '![](img/hat_R.png)、ESS 和 MCSE 是相关的。实际上，我们应该使用 ESS 作为无量纲诊断，以确保我们拥有足够的有效样本。它是无量纲的，因为无论一个参数从
+    0 到 1，另一个从 0 到 100，都不影响 ESS 的比较。我们可以比较它们的 ESS 值。对于 ESS，值越大越好，最低值至少为 400。如果达到最低值，我们检查是否有足够低的
+    ![](img/hat_R.png)。我们还可以通过可视化的排名图或轨迹图来检查（我们还应检查发散，因为稍后我们将进行解释）。如果一切正常，我们再检查 MCSE
+    是否足够低，适用于我们希望报告的参数和精度。希望对于大多数问题，MCSE 都会远低于我们所需的精度。'
+- en: Too Many Digits can Hurt
+  id: totrans-191
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 过多的数字可能会有害
+- en: When reporting results in text, tables, or plots, it is important to be aware
+    that excessive digits can make the numbers difficult to read and comprehend. It
+    is easier to read a number like 0.9 than 0.909297, and it is also easier to retain
+    in working memory. Also note that when a number is reported with more digits than
+    warranted, a technical audience may assume that you are implying a higher level
+    of significance than actually exists. So you will mislead this audience into trying
+    to find meaning in differences that are actually meaningless. Finally, including
+    too many digits can make your figures, tables, and graphs look cluttered and visually
+    overwhelming. So always remember to be aware of the context of the data interests
+    of your audience.
+  id: totrans-192
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 在报告文本、表格或图表时，重要的是要意识到过多的数字会让数字难以读取和理解。数字如 0.9 比 0.909297 更容易阅读，也更容易记住。此外，当报告的数字位数超过实际需要时，技术受众可能会认为你暗示着比实际存在的更高的显著性。因此，你会误导这些受众，让他们试图从本无意义的差异中寻找含义。最后，过多的数字会让你的图表、表格和图形看起来凌乱且视觉上令人不堪重负。所以，请时刻记住要考虑你的受众的数据兴趣和上下文。
+- en: 10.10 Divergences
+  id: totrans-193
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 10.10 发散
+- en: We will now explore divergences, a diagnostic that is exclusive to NUTS, as
+    it is based on the inner workings of the method and not a property of the generated
+    samples. Divergences are a powerful and sensitive method that indicate the sampler
+    has most likely found a region of high curvature in the posterior that cannot
+    be explored properly. A nice feature of divergences is that they usually appear
+    close to the problematic parameter space region, and thus we can use them to identify
+    where the problem may be.
+  id: totrans-194
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 我们现在将探讨发散（divergences），这是一种 NUTS 特有的诊断方法，因为它基于方法的内部机制，而不是生成样本的属性。发散是一种强大且敏感的诊断方法，它表明采样器很可能已经发现了后验分布中的一个高曲率区域，该区域无法被正确探索。发散的一个优点是，它们通常出现在问题参数空间区域附近，因此我们可以利用它们来识别问题可能所在的位置。
+- en: 'Let’s discuss divergences with a visual aid:'
+  id: totrans-195
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 让我们通过视觉辅助工具讨论发散：
+- en: '![PIC](img/file266.png)'
+  id: totrans-196
+  prefs: []
+  type: TYPE_IMG
+  zh: '![PIC](img/file266.png)'
+- en: '**Figure 10.14**: Pair plot for selected parameters from models `model_c` and
+    `model_nc`'
+  id: totrans-197
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**图 10.14**：`model_c` 和 `model_nc` 模型中选定参数的配对图'
+- en: 'As you can see, *Figure [10.14](#x1-206002r14)* shows the following three subplots:'
+  id: totrans-198
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 如你所见，*图 [10.14](#x1-206002r14)* 显示了以下三个子图：
+- en: 'The left subplot: We have a scatter plot for two parameters of model `model_c`;
+    namely, one dimension of the parameter `b` (we just picked one at random – feel
+    free to pick a different one), and the logarithm of the parameter `a`. We take
+    the logarithm because `a` is restricted to be positive (it is a scale parameter).
+    Before sampling, PyMC transforms all bounded parameters into unbounded ones. For
+    parameters such as `a`, the transformation is a logarithm. We do the same here
+    because we want to understand what the sampler is *seeing*. OK, so we have a scatter
+    plot where the gray dots are the samples. Look at the shape of the parameter.
+    This shape is known as Neal’s funnel and it is typical in hierarchical models.
+    The black dots are divergences; they are scattered around, but we can see that
+    many of them are around the tip of the funnel. This geometry is problematic for
+    most MCMC methods because it is difficult to tune the sampler in such a way that
+    we can get both good samples from the tip and the top of a funnel. One is a more
+    ”spherical” region, where the sampler can move both up-down and left-right, and
+    the other is ”narrower,” where the sampler has to move more in the up-down direction
+    and very little in the left-right direction.'
+  id: totrans-199
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 左侧子图：我们展示的是`model_c`模型的两个参数的散点图；即，`b`参数的一个维度（我们随便挑了一个 – 你可以选择不同的维度），以及`a`参数的对数值。我们取对数是因为`a`被限制为正值（它是一个尺度参数）。在采样之前，PyMC会将所有有界的参数转换为无界的参数。对于像`a`这样的参数，转换方法是取对数。我们在这里也做同样的处理，因为我们想理解采样器究竟在“看到”什么。好了，我们有一个散点图，其中灰色点表示样本。看看这个参数的形状，这种形状被称为Neal的漏斗形状，在层次模型中很常见。黑色点表示发散，它们散布在各处，但我们可以看到，许多黑点集中在漏斗的尖端附近。这个几何形状对大多数MCMC方法来说是有问题的，因为很难调整采样器，使其既能在漏斗尖端和顶部获取良好的样本，又能适应这种几何形状。一种是更“球形”的区域，采样器可以上下左右自由移动，另一种是“更窄”的区域，采样器必须主要沿上下方向移动，左右方向的移动则非常有限。
+- en: 'The middle subplot: We basically have the same as before but for model `model_nc`,
+    now the funnel shape is even more accentuated. But we don’t have divergences.
+    And we already know from previous sections that samples from this model are actually
+    better. What is going on? The key to understanding this is in the model definition.
+    You will notice that for this model, `b` is not actually sampled: `b` is a deterministic
+    variable, a combination of `b_offset` and `a`, and those two are plotted on the
+    last subplot.'
+  id: totrans-200
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 中间的子图：我们基本上与之前的情况相同，但对于`model_nc`模型，现在漏斗形状更加明显。但我们没有出现发散。而且我们从前面的章节已经知道，这个模型的样本实际上更好。到底发生了什么？理解这一点的关键在于模型的定义。你会注意到，对于这个模型，`b`并没有被采样：`b`是一个确定性变量，是`b_offset`和`a`的组合，这两个参数在最后一个子图中被绘制出来。
+- en: 'The right subplot: We have `b_offset` versus `a`, and we can see that the geometry
+    is more ”spherical”. It is this and not the middle subplot that the sampler is
+    ”seeing.” Because this geometry is easier to sample, we do not get divergences
+    and we get much better diagnostics overall.'
+  id: totrans-201
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 右侧子图：我们有`b_offset`与`a`的关系，可以看到几何形状更“球形”。正是这一点，而不是中间的子图，才是采样器“看到”的内容。因为这种几何形状更容易采样，所以我们没有出现发散，整体的诊断结果也更好。
+- en: Changing the parametrization of a model is a way to remove divergences, but
+    unless you are already aware of an alternative parametrization of your model,
+    it can be very time-consuming to find one. An alternative that is often easy to
+    try is to change the value of `target_accept`, an argument of `pm.sample`. Sometimes
+    you may need both a different parametrization and a different value for `target_accept`.
+    But what is `target_accept`? It is a parameter that controls the tuning of the
+    NUTS sampler in PyMC. It controls the acceptance rate of the proposed samples,
+    which defaults to 0.8\. This means accepting 80% of the proposed samples. The
+    NUTS sampler adaptively adjusts the step size of the Hamiltonian dynamics simulation
+    to achieve the target acceptance rate. 80% is a good default, but for some models,
+    you may want to try larger values like 0.90, 0.95, 0.99, or even 0.999 if you
+    refuse to lose all hope.
+  id: totrans-202
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 改变模型的参数化是去除发散的一种方法，但除非你已经知道模型的另一种参数化方法，否则找到合适的参数化可能非常耗时。一个常见且容易尝试的替代方案是改变`target_accept`的值，这是`pm.sample`的一个参数。有时候，你可能需要同时更换参数化方法和`target_accept`的值。那么，什么是`target_accept`呢？它是控制PyMC中NUTS采样器调优的一个参数。它控制提议样本的接受率，默认值为0.8。也就是说，接受80%的提议样本。NUTS采样器通过自适应调整哈密顿动力学仿真中的步长来实现目标接受率。80%是一个不错的默认值，但对于某些模型，你可能想尝试更大的值，如0.90、0.95、0.99，甚至是0.999，如果你不想完全失去希望的话。
+- en: 10.11 Keep calm and keep trying
+  id: totrans-203
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 10.11 保持冷静，继续尝试
+- en: 'What should we do when diagnostics show problems? We should try to fix them.
+    Sometimes, PyMC will provide suggestions on what to change. Pay attention to those
+    suggestions, and you will save a lot of debugging time. Here, I have listed a
+    few common actions you could take:'
+  id: totrans-204
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 当诊断显示问题时，我们应该怎么做？我们应该尝试修复它们。有时候，PyMC会提供一些关于如何修改的建议。注意这些建议，你可以节省大量的调试时间。在这里，我列出了几个常见的操作，你可以采取：
+- en: Check for typos or other silly mistakes. It is super common even for experts
+    to make ”silly” mistakes. If you misspell the name of a variable, it is highly
+    likely that the model will not even run. But sometimes the mistake is more subtle,
+    and you still get a syntactically valid model that runs, but with the wrong semantics.
+  id: totrans-205
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 检查拼写错误或其他低级错误。即使是专家，也很常犯这种“低级”错误。如果你拼错了一个变量名，很可能模型根本无法运行。但有时候，错误更加微妙，你仍然得到一个语法上有效的模型，它能运行，但语义却是错误的。
+- en: Increase the number of samples. This might help for very mild problems, like
+    when you’re close to the target ESS (or MCSE), or when ^*R* is slightly higher
+    than 1.01 but not too much.
+  id: totrans-206
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 增加样本数量。这可能对一些轻微的问题有所帮助，比如当你接近目标ESS（或MCSE）时，或者当^*R*略高于1.01但差距不大时。
+- en: Remove some samples from the beginning of the trace. When checking a trace plot,
+    you may observe that a few samples from the first few steps have overall higher
+    or lower values compared to the rest of the trace, which otherwise looks OK. If
+    that’s the case, simply removing those first few samples may be enough. This is
+    known as burn-in, and it was a very common practice in the old days. Modern samplers
+    have reduced the need for it. Also, PyMC already discards the samples from the
+    tuning phase, so this tip is not as useful as it used to be.
+  id: totrans-207
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 从轨迹的开始部分移除一些样本。当检查轨迹图时，你可能会观察到，前几步的部分样本相比于其余部分具有明显较高或较低的值，而其他部分看起来正常。如果是这种情况，简单地移除这些前几步的样本可能就足够了。这被称为预热，这在过去是非常常见的做法。现代的采样器已经减少了对它的需求。此外，PyMC已经会丢弃调优阶段的样本，所以这个建议现在不再像以前那样有用。
+- en: Modify sampler parameters, such as increasing the length of the tuning phase,
+    or increasing the `target_accept` parameter for the NUTS sampler.
+  id: totrans-208
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 修改采样器参数，例如增加调优阶段的长度，或者增加NUTS采样器的`target_accept`参数。
+- en: Transform the data. For example, for linear regression models, centering the
+    covariates (subtracting their means) usually speeds up the sampler and also reduces
+    sampling issues.
+  id: totrans-209
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 转换数据。例如，对于线性回归模型，居中协变量（减去其均值）通常能加速采样器，并且减少采样问题。
+- en: Spend some time thinking about your priors. You should not tweak the priors
+    to speed up the sampler or get rid of bad diagnostics. You should use your priors
+    to encode prior knowledge. But it is often the case that when you do that, you
+    also make the sampler’s life much easier. Use tools such as PreliZ and prior predictive
+    checks to help you encode better priors.
+  id: totrans-210
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 花些时间思考你的先验分布。你不应该为了加速采样器或者去除不良诊断而调整先验。你应该用先验来编码已有的知识。但通常情况下，当你这么做时，也会让采样器的工作变得更加容易。使用像PreliZ和先验预测检查这样的工具，帮助你编码更好的先验分布。
+- en: Re-parametrize the model, that is, express the model in a different but equivalent
+    way. This is not always easy to do, but for some common models such as hierarchical
+    models, you already know of alternative parametrizations.
+  id: totrans-211
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 重新参数化模型，即用一种不同但等效的方式表达模型。这并不总是容易的，但对于一些常见模型，如层级模型，你已经知道一些替代的参数化方法。
+- en: 10.12 Summary
+  id: totrans-212
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 10.12 总结
+- en: In this chapter, we have taken a conceptual walk through some of the most common
+    methods used to compute the posterior distribution. We have put special emphasis
+    on MCMC methods, which are designed to work on any given model (or at least a
+    broad range of models), and thus are sometimes called universal inference engines.
+    These methods are the core of any probabilistic programming language as they allow
+    for automatic inference, letting users concentrate on iterative model design and
+    interpretations of the results.
+  id: totrans-213
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 在本章中，我们对一些最常用的计算后验分布的方法进行了概念性的讲解。我们特别强调了MCMC方法，这些方法旨在适用于任何给定的模型（或者至少广泛的模型范围），因此有时被称为通用推断引擎。这些方法是任何概率编程语言的核心，因为它们允许自动推断，从而让用户专注于迭代的模型设计和结果的解释。
+- en: We also discussed numerical and visual tests for diagnosing samples. Without
+    good approximations of the posterior distribution, all the advantages and flexibility
+    of the Bayesian framework vanish. Thus, evaluating the quality of the samples
+    is a crucial step before doing any other type of analysis.
+  id: totrans-214
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 我们还讨论了用于诊断样本的数值和视觉测试。没有良好的后验分布近似，贝叶斯框架的所有优势和灵活性都会消失。因此，在进行任何其他类型的分析之前，评估样本的质量是一个至关重要的步骤。
+- en: 10.13 Exercises
+  id: totrans-215
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 10.13 练习
+- en: Use the grid method with other priors; for example, try with `prior = (grid
+    <= 0.5).astype(int)` or `prior = abs(grid - 0.5)`, or try defining your own crazy
+    priors. Experiment with other data, such as increasing the total amount of data
+    or making it more or less even in terms of the number of heads you observe.
+  id: totrans-216
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 使用网格方法与其他先验；例如，尝试 `prior = (grid <= 0.5).astype(int)` 或 `prior = abs(grid -
+    0.5)`，或者尝试定义你自己的奇特先验。还可以尝试使用其他数据，例如增加数据的总量，或使数据在正反面次数上更加均匀或不均匀。
+- en: In the code we use to estimate *π*, keep `N` fixed and re-run the code a couple
+    of times. Notice that the results are different because we are using random numbers,
+    but also check that the errors are more or less in the same order. Try changing
+    the number of `N` points and re-run the code. Can you guesstimate how the number
+    of N points and the error are related? For a better estimation, you may want to
+    modify the code to compute the error as a function of `N`. You can also run the
+    code a few times with the same `N` and compute the mean error and standard deviation
+    of the error. You can plot these results using the `plt.errorbar()` function from
+    Matplotlib. Try using a set of `N`s, such as 100, 1,000, and 10,000; that is,
+    a difference of one order of magnitude or so.
+  id: totrans-217
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 在估计 *π* 的代码中，保持 `N` 固定并重新运行几次。注意到结果有所不同，因为我们使用的是随机数，但也要检查误差大致相同的顺序。尝试改变 `N`
+    点的数量，并重新运行代码。你能估算出 `N` 点的数量和误差之间的关系吗？为了更好的估算，你可能想修改代码，将误差作为 `N` 的函数进行计算。你还可以用相同的
+    `N` 运行几次代码，计算平均误差和误差的标准差。你可以使用 Matplotlib 的 `plt.errorbar()` 函数绘制这些结果。尝试使用一组 `N`
+    值，如 100、1000 和 10000；也就是一个数量级的差异。
+- en: Modify the `dist` argument you pass to the metropolis function; try using the
+    values of the prior from *Chapter [1](CH01.xhtml#x1-160001)*. Compare this code
+    to the grid method; which part should be modified to be able to use it to solve
+    a Bayesian inference problem?
+  id: totrans-218
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 修改你传递给 metropolis 函数的 `dist` 参数；尝试使用 *第 [1 章](CH01.xhtml#x1-160001)* 中的先验值。将此代码与网格方法进行比较；哪一部分需要修改，才能使用它来解决贝叶斯推断问题？
+- en: 'Compare your answer from the previous exercise to this code by Thomas Wiecki:
+    [http://twiecki.github.io/blog/2015/11/10/mcmc-sampling/](http://twiecki.github.io/blog/2015/11/10/mcmc-sampling/)'
+  id: totrans-219
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 将你在之前练习中的答案与 Thomas Wiecki 的代码进行比较：[http://twiecki.github.io/blog/2015/11/10/mcmc-sampling/](http://twiecki.github.io/blog/2015/11/10/mcmc-sampling/)
+- en: Revisit at least a few of the models from previous chapters and run all the
+    diagnostic tools we saw in this chapter.
+  id: totrans-220
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 重温至少几个前面章节中的模型，并运行我们在本章中看到的所有诊断工具。
+- en: Revisit the code from all previous chapters, find those with divergences, and
+    try to reduce the number of them.
+  id: totrans-221
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 重温所有前几章的代码，找出那些存在偏差的地方，并尽量减少这些偏差。
+- en: Join our community Discord space
+  id: totrans-222
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 加入我们的社区 Discord 空间
+- en: 'Join our Discord community to meet like-minded people and learn alongside more
+    than 5000 members at: [https://packt.link/bayesian](https://packt.link/bayesian)'
+  id: totrans-223
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 加入我们的 Discord 社区，与志同道合的人一起学习，超过 5000 名成员在此一起成长： [https://packt.link/bayesian](https://packt.link/bayesian)
+- en: '![PIC](img/file1.png)'
+  id: totrans-224
+  prefs: []
+  type: TYPE_IMG
+  zh: '![PIC](img/file1.png)'

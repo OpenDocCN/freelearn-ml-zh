@@ -1,0 +1,995 @@
+- en: Chapter 9
+  id: totrans-0
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+  zh: 第9章
+- en: Bayesian Additive Regression Trees
+  id: totrans-1
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 贝叶斯加法回归树
+- en: Individually, we are one drop. Together, we are an ocean. – Ryunosuke Satoro
+  id: totrans-2
+  prefs:
+  - PREF_BQ
+  type: TYPE_NORMAL
+  zh: 个人而言，我们是一个水滴。一起时，我们是海洋。—— 佐藤隆之
+- en: In the last chapter, we discussed the **Gaussian process** (**GPs**), a non-parametric
+    model for regression. In this chapter, we will learn about another non-parametric
+    model for regression known as Bayesian additive regression trees, or BART to friends.
+    We can consider BART from many different perspectives. It can be an ensemble of
+    decision trees, each with a distinct role and contribution to the overall understanding
+    of the data. These trees, guided by Bayesian priors, work harmoniously to capture
+    the nuances of the data, avoiding the pitfall of individual overfitting. Usually,
+    BART is discussed as a standalone model, and software that implements it is usually
+    limited to one or a few models. In this chapter, we will take a different approach
+    and use PyMC-BART, a Python library that allows the use of BART models within
+    PyMC.
+  id: totrans-3
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 在上一章中，我们讨论了**高斯过程**（**GPs**），一种用于回归的非参数模型。在本章中，我们将学习另一种非参数回归模型，称为贝叶斯加法回归树，或者亲切地称为BART。我们可以从多个不同的角度来看待BART。它可以看作是决策树的一个集成，每棵树在整体数据理解中扮演着独特的角色和贡献。这些树在贝叶斯先验的指导下和谐工作，以捕捉数据的细微差别，避免个体过拟合的陷阱。通常，BART作为一个独立的模型进行讨论，实施该模型的软件通常仅限于一个或少数几个模型。在本章中，我们将采用不同的方式，使用PyMC-BART，这是一个允许在PyMC中使用BART模型的Python库。
+- en: 'In this chapter, we will cover the following topics:'
+  id: totrans-4
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 在本章中，我们将讨论以下主题：
+- en: Decision trees
+  id: totrans-5
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 决策树
+- en: BART models
+  id: totrans-6
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: BART模型
+- en: Flexible regression with BART
+  id: totrans-7
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 使用BART的灵活回归
+- en: Partial dependence plots
+  id: totrans-8
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 部分依赖图
+- en: Individual conditional expectation plots
+  id: totrans-9
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 单个条件期望图
+- en: Variable selection
+  id: totrans-10
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 变量选择
+- en: 9.1 Decision trees
+  id: totrans-11
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 9.1 决策树
+- en: Before jumping into BART models, let’s take a moment to discuss what decision
+    trees are. A decision tree is like a flowchart that guides you through different
+    questions until you reach a final choice. For instance, suppose you need to decide
+    what type of shoes to wear every morning. To do so, you may ask yourself a series
+    of questions. ”Is it warm?” If yes, you then ask something more specific, like
+    ”Do I have to go to the office?” Eventually, you will stop asking questions and
+    reach an output value like flip-flops, sneakers, boots, moccasins, etc.
+  id: totrans-12
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 在深入讨论BART模型之前，先花点时间了解一下什么是决策树。决策树就像一个流程图，指导你通过不同的问题，直到你做出最终选择。例如，假设你每天早上需要决定穿什么鞋子。为了做出决定，你可能会问自己一系列问题：“今天暖和吗？”如果是的话，你可能会问更具体的问题，比如“我需要去办公室吗？”最终，你会停止提问并得到一个输出值，比如拖鞋、运动鞋、靴子、莫卡辛鞋等。
+- en: This flowchart can be conveniently encoded in a tree structure, where at the
+    root of the tree we place more general questions, then proceed along the tree
+    to more and more specific ones, and finally arrive at the leaves of the tree with
+    the output of the different types of shoes. Trees are very common data structures
+    in computer science and data analysis.
+  id: totrans-13
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 该流程图可以方便地编码为树状结构，在树的根部放置更一般性的问题，然后沿着树结构向更具体的问题推进，最终到达树的叶子节点，输出不同类型鞋子的结果。树是计算机科学和数据分析中非常常见的数据结构。
+- en: More formally, we can say that a tree is a collection of nodes and vertices
+    linking those nodes. The nodes that have questions are called decision nodes,
+    and the nodes with the output of the trees (like the shoes) are called leaf nodes.
+    When the answers are ”yes” or ”no,” then we have a binary tree, because each node
+    can have at most two children. *Figure [9.1](#x1-177003r1)* shows a decision tree.
+    The rounded squares are leaf nodes. The regular squares are decision nodes.
+  id: totrans-14
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 更正式地说，树是节点和连接这些节点的顶点的集合。带有问题的节点称为决策节点，带有树的输出（如鞋子）的节点称为叶子节点。当答案是“是”或“否”时，我们就有了一个二叉树，因为每个节点最多可以有两个子节点。*图
+    [9.1](#x1-177003r1)* 显示了一个决策树。圆角方块是叶子节点，普通方块是决策节点。
+- en: '![PIC](img/file240.png)'
+  id: totrans-15
+  prefs: []
+  type: TYPE_IMG
+  zh: '![PIC](img/file240.png)'
+- en: '**Figure 9.1**: A decision tree to choose footwear.'
+  id: totrans-16
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**图 9.1**：选择鞋类的决策树。'
+- en: We can use decision trees to classify, that is, to return discrete categories,
+    like sneakers, flip-flops, slippers, etc. But we can also use them to perform
+    regression, that is, to return continuous outcomes like 4.24 or 20.9 (and anything
+    in between). Usually, these trees are called regression trees. *Figure [9.2](#x1-177006r2)*
+    shows a regression tree on the left. We can also see a regression tree as a representation
+    of a piece-wise step-function as shown in the right panel of *Figure [9.2](#x1-177006r2)*.
+    This contrasts with cubic splines or GPs, which represent smooth functions (at
+    least to some degree). Trees can be flexible enough to provide good practical
+    approximations of smooth functions.
+  id: totrans-17
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 我们可以使用决策树进行分类，即返回离散类别，如运动鞋、拖鞋、凉鞋等。但我们也可以用它们进行回归，即返回连续结果，如4.24或20.9（以及介于两者之间的任何值）。通常，这些树被称为回归树。*图
+    [9.2](#x1-177006r2)*展示了左侧的回归树。我们还可以将回归树视为分段阶梯函数的表示，如*图 [9.2](#x1-177006r2)*右侧所示。这与表示平滑函数（至少在某种程度上）的三次样条或高斯过程（GPs）不同。树可以足够灵活，以提供良好的平滑函数的实用近似。
+- en: '![PIC](img/file241.png)'
+  id: totrans-18
+  prefs: []
+  type: TYPE_IMG
+  zh: '![PIC](img/file241.png)'
+- en: '**Figure 9.2**: On the left, a regression tree; on the right is the corresponding
+    piece-wise step function'
+  id: totrans-19
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**图 9.2**：左侧为回归树，右侧为对应的分段阶梯函数'
+- en: Trees can be very flexible; in an extreme case, we could have a tree with as
+    many leaf nodes as observations, and this tree will perfectly fit the data. As
+    we saw in *Chapter [5](CH05.xhtml#x1-950005)*, this may not be a great idea unless
+    we add some regularization. In Bayesian terms, we can achieve such regularization
+    through priors. For instance, we could set a prior that induces shallow trees.
+    In this way, we make it very unlikely that we will end up with a tree with as
+    many nodes as data points.
+  id: totrans-20
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 树可以非常灵活；在极端情况下，我们可以有一棵树，其中的叶节点数量与观测值一样多，这棵树将完美拟合数据。正如我们在*第[5章](CH05.xhtml#x1-950005)*中看到的，除非我们添加一些正则化，否则这可能不是一个好主意。在贝叶斯术语中，我们可以通过先验来实现这种正则化。例如，我们可以设置一个先验，使树较浅。通过这种方式，我们使得树的节点数与数据点数相等的情况非常不太可能发生。
+- en: 9.2 BART models
+  id: totrans-21
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 9.2 BART模型
+- en: A **Bayesian additive regression trees** (**BART**) model is a sum of *m* trees
+    that we use to approximate a function [[Chipman et al.](Bibliography.xhtml#Xchipman2010), [2010](Bibliography.xhtml#Xchipman2010)].
+    To complete the model, we need to set priors over trees. The main function of
+    such priors is to prevent overfitting while retaining the flexibility that trees
+    provide. Priors are designed to keep the individual trees relatively shallow and
+    the values at the leaf nodes relatively small.
+  id: totrans-22
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**贝叶斯加性回归树**（**BART**）模型是*m*棵树的和，我们用它来逼近一个函数[[Chipman et al.](Bibliography.xhtml#Xchipman2010)，[2010](Bibliography.xhtml#Xchipman2010)]。为了完成模型，我们需要设置树的先验。这些先验的主要作用是防止过拟合，同时保留树所提供的灵活性。先验设计旨在使得每棵树相对较浅，并且叶节点的值相对较小。'
+- en: 'PyMC does not support BART models directly but we can use PyMC-BART, a Python
+    module that extends PyMC functionality to support BART models. PyMC-BART offers:'
+  id: totrans-23
+  prefs: []
+  type: TYPE_NORMAL
+  zh: PyMC不直接支持BART模型，但我们可以使用PyMC-BART，一个扩展PyMC功能以支持BART模型的Python模块。PyMC-BART提供：
+- en: A BART random variable that works very similar to other distributions in PyMC
+    like `pm.Normal`, `pm.Poisson`, etc.
+  id: totrans-24
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 一个与PyMC中其他分布（如`pm.Normal`、`pm.Poisson`等）非常相似的BART随机变量。
+- en: A sampler called PGBART as trees cannot be sampled with PyMC’s default step
+    methods such as NUTS or Metropolis.
+  id: totrans-25
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 一个名为PGBART的采样器，因为树不能使用PyMC的默认步进方法（如NUTS或Metropolis）进行采样。
+- en: 'The following utility functions to help work with the result of a BART model:'
+  id: totrans-26
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 以下是一些帮助处理BART模型结果的实用函数：
+- en: '`pmb.plot_pdp`: A function to generate partial dependence plots [[Friedman](Bibliography.xhtml#Xfriedman2001), [2001](Bibliography.xhtml#Xfriedman2001)].'
+  id: totrans-27
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: '`pmb.plot_pdp`：用于生成部分依赖图的函数[[Friedman](Bibliography.xhtml#Xfriedman2001)，[2001](Bibliography.xhtml#Xfriedman2001)]。'
+- en: '`pmb.plot_ice`: A function to generate individual conditional expectation plots [[Goldstein
+    et al.](Bibliography.xhtml#XGoldstein2013PeekingIT), [2013](Bibliography.xhtml#XGoldstein2013PeekingIT)].'
+  id: totrans-28
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: '`pmb.plot_ice`：用于生成个体条件期望图的函数[[Goldstein et al.](Bibliography.xhtml#XGoldstein2013PeekingIT)，[2013](Bibliography.xhtml#XGoldstein2013PeekingIT)]。'
+- en: '`pmb.plot_variable_importance`: A function to estimate the variable importance.'
+  id: totrans-29
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: '`pmb.plot_variable_importance`：用于估算变量重要性的函数。'
+- en: '`pmb.plot_convergence`: A function that plots the empirical cumulative distribution
+    for the effective sample size and ![](img/hat_R.png) values for the BART random
+    variables.'
+  id: totrans-30
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: '`pmb.plot_convergence`：一个绘制BART随机变量的有效样本大小的经验累积分布以及![](img/hat_R.png)值的函数。'
+- en: BARTs Are Priors Over Step Functions
+  id: totrans-31
+  prefs: []
+  type: TYPE_NORMAL
+  zh: BART是步进函数的先验
+- en: We can think of BART as priors over piece-wise constant functions. Furthermore,
+    in the limit of the number of trees *m* → ∞, BART converges to a nowhere-differentiable
+    Gaussian process.
+  id: totrans-32
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 我们可以将BART看作是分段常数函数的先验。此外，当树的数量*m* → ∞时，BART会收敛为一个处处不可微的高斯过程。
+- en: In the following sections, we will focus on the applied side of BART, specifically
+    examining how to use PyMC-BART. If you are interested in reading more about the
+    details of how BART models work, the implementation details of PyMC-BART, and
+    how changing the hyperparameters of PyMC-BART affects the results, I recommend
+    reading [Quiroga et al.](Bibliography.xhtml#Xquiroga2022) [[2022](Bibliography.xhtml#Xquiroga2022)].
+  id: totrans-33
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 在接下来的部分，我们将重点讨论BART的应用部分，特别是如何使用PyMC-BART。如果您有兴趣了解更多有关BART模型工作原理的细节，PyMC-BART的实现细节，以及更改PyMC-BART的超参数如何影响结果，建议阅读[Quiroga
+    等人](Bibliography.xhtml#Xquiroga2022) [[2022](Bibliography.xhtml#Xquiroga2022)]。
+- en: 9.2.1 Bartian penguins
+  id: totrans-34
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+  zh: 9.2.1 巴特企鹅
+- en: 'Let’s imagine that, for some reason, we are interested in modeling the body
+    mass of penguins as a function of other body measures. The following code block
+    shows a BART model for such a problem. In this example, `X = "flipper_length",
+    "bill_depth", "bill_length"]` and `Y` is the `body_mass`:'
+  id: totrans-35
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 假设出于某种原因，我们有兴趣将企鹅的体重作为其他身体指标的函数进行建模。下面的代码块展示了一个针对这种问题的BART模型。在这个示例中，`X = "flipper_length",
+    "bill_depth", "bill_length"]`，而`Y`是`body_mass`：
+- en: '**Code 9.1**'
+  id: totrans-36
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**代码 9.1**'
+- en: '[PRE0]'
+  id: totrans-37
+  prefs: []
+  type: TYPE_PRE
+  zh: '[PRE0]'
+- en: We can see that using PyMC-BART to define a BART model with PyMC is straightforward.
+    Essentially, we need to define a BART random variable with the arguments `X`,
+    the covariates, and `Y` the response variable. Other than that, the rest of the
+    model should look very familiar. As in other regression models, the length of
+    *μ* will be the same as the observations.
+  id: totrans-38
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 我们可以看到，使用PyMC-BART通过PyMC定义BART模型是很简单的。基本上，我们需要定义一个带有参数`X`（协变量）和`Y`（响应变量）的BART随机变量。除此之外，模型的其余部分应该与其他回归模型非常相似。像其他回归模型一样，*μ*的长度将与观察值的数量相同。
+- en: While theoretically, the trees are only a function of `X`, PyMC-BART asks for
+    `Y` to obtain an estimate for the initial value for the variance at the leaf nodes
+    of the trees.
+  id: totrans-39
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 从理论上讲，这些树仅仅是`X`的函数，但PyMC-BART需要`Y`来获取树叶节点上方差初始值的估计。
+- en: Once we have fitted a model with a BART variable, the rest of the workflow is
+    as usual. For instance, we can compute a posterior predictive check simply by
+    calling `az.plot_ppc(.)` and we will get something like *Figure [9.3](#x1-179011r3)*.
+  id: totrans-40
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 一旦我们使用BART变量拟合了模型，剩余的工作流程就和通常一样。例如，我们可以通过调用`az.plot_ppc(.)`来计算后验预测检验，结果将类似于*图
+    [9.3](#x1-179011r3)*。
+- en: '![PIC](img/file242.png)'
+  id: totrans-41
+  prefs: []
+  type: TYPE_IMG
+  zh: '![图片](img/file242.png)'
+- en: '**Figure 9.3**: Posterior predictive check for `model_pen`'
+  id: totrans-42
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**图 9.3**：`model_pen`的后验预测检验'
+- en: '*Figure [9.3](#x1-179011r3)*, shows a reasonable fit. Remarkably, we don’t
+    get negative masses even when we use a Normal likelihood. But with PyMC and PyMC-BART,
+    it is super easy to try other likelihoods; just replace the Normal with another
+    distribution like Gamma or a Truncated Normal as you would do in a regular PyMC
+    model and you are good to go. You can then use posterior predictive checks and
+    LOO, as discussed in *Chapter [5](CH05.xhtml#x1-950005)*.'
+  id: totrans-43
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '*图 [9.3](#x1-179011r3)*显示了一个合理的拟合。值得注意的是，即使我们使用正态似然，也没有得到负的质量。然而，使用PyMC和PyMC-BART时，尝试其他似然分布非常简单；只需将正态分布替换为其他分布（如Gamma分布或截断正态分布），就像在常规的PyMC模型中那样，就能顺利进行。然后，您可以使用后验预测检验和LOO，如*第[5章](CH05.xhtml#x1-950005)*中讨论的那样。'
+- en: In the next few sections, we are going to discuss how to use and interpret the
+    utility function provided by PyMC-BART (except for `pmb.plot_convergence`, which
+    is discussed in *Chapter [10](CH10.xhtml#x1-18900010)* with other diagnostic methods).
+  id: totrans-44
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 在接下来的几节中，我们将讨论如何使用和解释PyMC-BART提供的工具函数（`pmb.plot_convergence`除外，该函数将在*第[10章](CH10.xhtml#x1-18900010)*中与其他诊断方法一起讨论）。
+- en: 9.2.2 Partial dependence plots
+  id: totrans-45
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+  zh: 9.2.2 部分依赖图
+- en: A **partial dependence plot** (**PDP**) is a graphical tool widespread in the
+    BART literature, but it is not exclusive to BART. In principle, it can be used
+    with any method or model. It consists of plotting the predicted response as a
+    function of a given covariate *X*[*i*], while averaging over the rest of the covariates
+    *X*[−*i*]. So, essentially, we are plotting how much each covariate contributes
+    to the response variable while keeping all other variables constant. One thing
+    that is particular to BART and other tree-based methods is that the computation
+    of PDPs can be done without refitting the model to synthetic data; instead, it
+    can be efficiently computed from the already fitted trees. This makes BART an
+    attractive choice for model interpretability and understanding the impact of individual
+    features on predictions.
+  id: totrans-46
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**部分依赖图**（**PDP**）是一种在 BART 文献中广泛使用的图形工具，但并非仅限于 BART。原则上，它可以与任何方法或模型一起使用。它的基本原理是绘制给定协变量
+    *X*[*i*] 下的预测响应，同时对其余协变量 *X*[−*i*] 进行平均。因此，实质上，我们是在绘制每个协变量对响应变量的贡献，同时保持其他变量不变。对于
+    BART 和其他基于树的方法，有一个特点是 PDP 的计算可以在不重新拟合模型到合成数据的情况下进行；相反，它可以通过已拟合的树高效地计算出来。这使得 BART
+    成为模型可解释性和理解单个特征对预测影响的一个有吸引力的选择。'
+- en: 'Once a model like `model_pen` has been fitted, we can compute a PDP with:'
+  id: totrans-47
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 一旦像 `model_pen` 这样的模型已经拟合，我们可以通过以下方式计算部分依赖图（PDP）：
+- en: '**Code 9.2**'
+  id: totrans-48
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**代码 9.2**'
+- en: '[PRE1]'
+  id: totrans-49
+  prefs: []
+  type: TYPE_PRE
+  zh: '[PRE1]'
+- en: Notice we passed the BART random variable, the covariates, and the response
+    variable. The response variable is not really needed, but if passed, and if it
+    is a pandas Series, it will use its name for the y-axis label.
+  id: totrans-50
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 请注意，我们传递了 BART 随机变量、协变量和响应变量。响应变量其实并非必需，但如果传递了且它是 pandas Series 类型，它将使用其名称作为
+    y 轴标签。
+- en: '*Figure [9.4](#x1-180006r4)* shows one example of a partial dependence plot
+    from `model_pen`. We can see that `flipper_length` shows the largest effect, which
+    is approximately linear, while the other two variables show mostly a flat response,
+    indicating their partial contribution is not very large. For a variable with a
+    null contribution to the response, its expected PDP will be a flat, constant line
+    at a value of the average of the response variable.'
+  id: totrans-51
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '*图 [9.4](#x1-180006r4)* 显示了来自 `model_pen` 的部分依赖图示例。我们可以看到，`flipper_length`
+    显示出最大的效应，呈线性关系，而另外两个变量则基本保持平坦的响应，表明它们对响应变量的部分贡献不大。对于对响应变量贡献为零的变量，其预期的 PDP 将是一个平坦的常数线，值为响应变量的平均值。'
+- en: '![PIC](img/file243.png)'
+  id: totrans-52
+  prefs: []
+  type: TYPE_IMG
+  zh: '![图片](img/file243.png)'
+- en: '**Figure 9.4**: Partial dependence plot for `model_pen`'
+  id: totrans-53
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**图 9.4**：`model_pen` 的部分依赖图'
+- en: In *Figure [9.4](#x1-180006r4)*, we can see that the largest contribution comes
+    from `flipper_length`, but this does not mean the other two variables are not
+    related to `body_mass`. We can only say that considering we have `flipper_length`
+    in the model, the effect of the other two is minimal.
+  id: totrans-54
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 在 *图 [9.4](#x1-180006r4)* 中，我们可以看到，最大的贡献来自 `flipper_length`，但这并不意味着其他两个变量与 `body_mass`
+    没有关系。我们只能说，考虑到模型中已经包含了 `flipper_length`，其他两个变量的影响是最小的。
+- en: 9.2.3 Individual conditional plots
+  id: totrans-55
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+  zh: 9.2.3 个体条件图
+- en: When computing partial dependence plots, we assume that variables *X*[*i*] and
+    *X*[−*i*] are uncorrelated. In many real-world problems, this is hardly the case,
+    and partial dependence plots can hide relationships in the data. Nevertheless,
+    if the dependence between the subset of chosen variables is not too strong, then
+    partial dependence plots can be useful summaries [Friedman](Bibliography.xhtml#Xfriedman2001) [[2001](Bibliography.xhtml#Xfriedman2001)].
+  id: totrans-56
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 在计算部分依赖图时，我们假设变量 *X*[*i*] 和 *X*[−*i*] 之间没有相关性。在许多实际问题中，情况往往并非如此，部分依赖图可能会掩盖数据中的关系。然而，如果所选变量子集之间的依赖关系不太强，则部分依赖图仍然可以作为有用的总结工具
+    [Friedman](Bibliography.xhtml#Xfriedman2001) [[2001](Bibliography.xhtml#Xfriedman2001)]。
+- en: '**Individual Conditional Expectation** (**ICE**) plots are closely related
+    to PDPs. The difference is that instead of plotting the target covariates’ average
+    partial effect on the predicted response, we plot *n* conditional expectation
+    curves at given fixed values (10 by default). That is, each curve in an ICE plot
+    reflects the partial predicted response as a function of covariate *X*[*i*] for
+    a fixed value of *X*[−*ij*].'
+  id: totrans-57
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**个体条件期望**（**ICE**）图与部分依赖图（PDP）密切相关。不同之处在于，我们不是绘制目标协变量对预测响应的平均部分效应，而是在给定固定值（默认为
+    10）下，绘制 *n* 条条件期望曲线。也就是说，ICE 图中的每条曲线反映了在固定的 *X*[*i*] 值下，协变量 *X*[*i*] 对预测响应的部分影响。'
+- en: 'Once a model like `model_pen` has been fitted, we can compute an ICE plot with
+    the following command:'
+  id: totrans-58
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 一旦像 `model_pen` 这样的模型已经拟合，我们可以通过以下命令计算 ICE 图：
+- en: '**Code 9.3**'
+  id: totrans-59
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**代码 9.3**'
+- en: '[PRE2]'
+  id: totrans-60
+  prefs: []
+  type: TYPE_PRE
+  zh: '[PRE2]'
+- en: 'The signature is the same as for PDPs. The result is shown in *Figure [9.5](#x1-181006r5)*.
+    The gray curves are the conditional expectation curves at different values. If
+    we average them, we should get the PDP curve (in black). If the curves in an ICE
+    plot are mostly parallel to each other, it is because the contributions of the
+    covariates to the response variable are mostly independent. This is the case for
+    `flipper_length` and `bill_length`. In this case, the ICE and PDP plots convey
+    the same information. However, if the curve is crossed, it indicates non-independent
+    contributions. In such cases, the PDP would hide the effects. We can see an example
+    of this in the following figure for `bill_depth`:'
+  id: totrans-61
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 这个签名与PDP相同。结果显示在*图 [9.5](#x1-181006r5)*中。灰色曲线是不同值下的条件期望曲线。如果我们对它们取平均值，我们应该得到PDP曲线（黑色）。如果ICE图中的曲线大多平行，这意味着协变量对响应变量的贡献大多是独立的。这对于`flipper_length`和`bill_length`来说是成立的。在这种情况下，ICE图和PDP图传达的是相同的信息。然而，如果曲线交叉，则表示贡献是非独立的。在这种情况下，PDP会隐藏这些效应。我们可以在下图中看到`bill_depth`的例子：
+- en: '![PIC](img/file244.png)'
+  id: totrans-62
+  prefs: []
+  type: TYPE_IMG
+  zh: '![PIC](img/file244.png)'
+- en: '**Figure 9.5**: Individual conditional expectation plot for `model_pen`'
+  id: totrans-63
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**图 9.5**：`model_pen`的个体条件期望图'
+- en: 'By default, ICE plots are centered, meaning that the gray curves are centered
+    around the partial response evaluated at the lowest value on the x-axis. This
+    helps interpret the plots: for instance, it is easier to see whether the lines
+    cross. This also explains why the scale for the y-axis in *Figure [9.5](#x1-181006r5)*
+    is different from the scale in *Figure [9.4](#x1-180006r4)*. You can change it
+    with the argument `centered=False`.'
+  id: totrans-64
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 默认情况下，ICE图是居中的，这意味着灰色曲线围绕在x轴最低值处计算的部分响应进行居中。这有助于解释图形：例如，可以更容易地看出线条是否交叉。这也解释了为什么*图
+    [9.5](#x1-181006r5)*中的y轴刻度与*图 [9.4](#x1-180006r4)*中的刻度不同。你可以通过参数`centered=False`来修改这一点。
+- en: 9.2.4 Variable selection with BART
+  id: totrans-65
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+  zh: 9.2.4 使用BART进行变量选择
+- en: In *Chapter [6](CH06.xhtml#x1-1200006)*, we already discussed variable selection
+    and explained under which scenarios we may be interested in selecting a subset
+    of variables. PyMC-BART offers a very simple, and almost computational-free, heuristic
+    to estimate variable importance. It keeps track of how many times a covariate
+    is used as a splitting variable. For BART models, the variable importance is computed
+    by averaging over the *m* trees and over all posterior samples. To further ease
+    interpretation, we can report the values normalized so each value is in the interval
+    [0*,*1] and the total importance is 1.
+  id: totrans-66
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 在*第 [6](CH06.xhtml#x1-1200006)*章中，我们已经讨论过变量选择，并解释了在某些场景下我们可能有兴趣选择一个变量子集。PyMC-BART提供了一种非常简单、几乎不需要计算的启发式方法来估计变量重要性。它跟踪每个协变量作为分裂变量被使用的次数。对于BART模型，变量重要性是通过在*m*棵树和所有后验样本上取平均值来计算的。为了进一步简化解释，我们可以报告经过归一化的值，使每个值都位于区间[0,
+    1]内，且总重要性为1。
+- en: In some implementations of BART, the estimation of the variable importance is
+    very sensitive to the number of trees *m*. The authors of those implementations
+    recommend that you use a relatively low number of trees for variable selection
+    and a higher number of trees for model fitting/predictions. This is not the case
+    with PyMC-BART, for which the estimates of variable importance are robust to the
+    number of trees.
+  id: totrans-67
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 在某些BART实现中，变量重要性的估计对树的数量*m*非常敏感。这些实现的作者建议，在进行变量选择时使用相对较少的树，而在进行模型拟合/预测时使用更多的树。PyMC-BART不是这种情况，PyMC-BART的变量重要性估计对树的数量具有鲁棒性。
+- en: 'Once we have fitted a model like `model_pen` to perform variable selection
+    with PyMC-BART, we need to do something like:'
+  id: totrans-68
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 一旦我们像`model_pen`这样拟合了一个模型来使用PyMC-BART进行变量选择，我们需要做如下操作：
+- en: '**Code 9.4**'
+  id: totrans-69
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**代码 9.4**'
+- en: '[PRE3]'
+  id: totrans-70
+  prefs: []
+  type: TYPE_PRE
+  zh: '[PRE3]'
+- en: 'Notice we passed the inference data, the BART random variable, and the covariates.
+    The result is shown in *Figure [9.6](#x1-182005r6)*:'
+  id: totrans-71
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 请注意，我们传递了推断数据、BART随机变量和协变量。结果显示在*图 [9.6](#x1-182005r6)*中：
+- en: '![PIC](img/file245.png)'
+  id: totrans-72
+  prefs: []
+  type: TYPE_IMG
+  zh: '![PIC](img/file245.png)'
+- en: '**Figure 9.6**: Variable importance plot for `model_pen`'
+  id: totrans-73
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**图 9.6**：`model_pen`的变量重要性图'
+- en: From the top panel, we can see that `flipper_length` has the largest value of
+    variable importance, followed by `bill_depth` and `fill_length`. Notice that this
+    qualitatively agrees with the partial dependence plots and individual conditional
+    expectation plots.
+  id: totrans-74
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 从顶部面板，我们可以看到`flipper_length`具有最大的变量重要性值，其次是`bill_depth`和`fill_length`。请注意，这与部分依赖图和个体条件期望图在定性上是一致的。
+- en: The simple heuristic of counting how many times a variable enters a tree has
+    some issues. One concerns interpretability, as the lack of a clear threshold separating
+    the *important* variables from the *unimportant* ones is problematic. PyMC-BART
+    offers some help. The bottom panel of *Figure [9.6](#x1-182005r6)* shows the square
+    of the Pearson correlation coefficient between the predictions generated with
+    the reference model, that is, the model with all covariates, and the predictions
+    generated with the submodels, with fewer covariates. We can use this plot to find
+    the minimal model capable of making predictions that are as close as possible
+    to the reference model. *Figure [9.6](#x1-182005r6)* tells us that a model with
+    just `flipper_length` will have almost the same predictive performance as the
+    model with all three variables. Notice we may add some small gain by adding `bill_depth`,
+    but it would probably be too small.
+  id: totrans-75
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 计算一个变量在树中出现的次数这一简单启发式方法存在一些问题。其中一个问题涉及可解释性，因为缺乏一个明确的阈值来区分*重要*变量和*不重要*变量，这是一个问题。PyMC-BART提供了一些帮助。*图[9.6](#x1-182005r6)*的底部面板显示了参考模型生成的预测与使用子模型生成的预测之间的皮尔逊相关系数的平方，参考模型是包含所有协变量的模型，子模型是包含较少协变量的模型。我们可以使用这个图来找到能够做出与参考模型尽可能接近的预测的最小模型。*图[9.6](#x1-182005r6)*告诉我们，只有`flipper_length`的模型，其预测性能几乎与包含所有三个变量的模型相同。请注意，通过加入`bill_depth`可能会稍微提高一点性能，但这可能是微不足道的。
+- en: 'Now, let me briefly explain what `pmb.plot_variable_importance` is doing under
+    the hood. Primarily, two approximations are taking place:'
+  id: totrans-76
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 现在，让我简要解释一下`pmb.plot_variable_importance`在背后做了什么。主要有两个近似过程：
+- en: It does not evaluate all possible combinations of covariates. Instead, it adds
+    one variable at a time, following their relative importance (the top subplot in
+    *Figure [9.6](#x1-182005r6)*).
+  id: totrans-77
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 它不会评估所有可能的协变量组合。相反，它一次添加一个变量，按照变量的重要性顺序进行（*图[9.6](#x1-182005r6)*中的上面子图）。
+- en: It does not refit all models from 1 to n covariates. Instead, it approximates
+    the effect of removing a variable by traversing the trees from the posterior distribution
+    for the reference model and it prunes the branches without the variable of interest.
+    This is similar to the procedure to compute the partial dependence plots, with
+    the difference that for the plots, we excluded all but one variable, while for
+    the variable importance we start by excluding all but the most important one,
+    then all but the two most important ones, and so on until we include all variables.
+  id: totrans-78
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 它并不会重新拟合从1到n个协变量的所有模型。相反，它通过遍历参考模型的后验分布中的树，近似估计去除一个变量的影响，并且剪枝去除没有兴趣变量的分支。这与计算部分依赖图的过程类似，不同之处在于，对于部分依赖图，我们排除了除了一个变量之外的所有变量，而对于变量重要性，我们首先排除除了最重要的一个变量之外的所有变量，然后排除除了最重要的两个变量之外的所有变量，依此类推，直到包括所有变量。
+- en: If this procedure for variable selection sounds familiar to you, it is highly
+    likely that you have been paying attention to this chapter and also *Chapter [6](CH06.xhtml#x1-1200006)*.
+    The procedure is conceptually similar to what Kulprit does. Here, we also make
+    use of the concept of a reference model, and we evaluate a model in terms of its
+    predictive distribution. But the similarities stop there. PyMC-BART does not use
+    the ELPD, instead using the square of the Pearson correlation coefficient, and
+    estimating the submodels by pruning the trees fitted with the reference model,
+    not via a Kullback-Liebler divergence projection.
+  id: totrans-79
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 如果这个变量选择过程对你来说听起来很熟悉，那么很可能你一直在关注这一章，并且也看过*第[6章](CH06.xhtml#x1-1200006)*。这个过程在概念上类似于Kulprit所做的工作。在这里，我们也利用了参考模型的概念，并根据其预测分布来评估模型。但相似之处到此为止。PyMC-BART并没有使用ELPD，而是使用皮尔逊相关系数的平方，并通过修剪用参考模型拟合的树来估计子模型，而不是通过Kullback-Liebler散度投影。
+- en: Before moving on to another topic, let me just add some words of caution. As
+    we discussed in *Chapter [6](CH06.xhtml#x1-1200006)*, with the output of Kulprit,
+    we should not over-interpret the order of the variables. The sample applies to
+    figures generated with `pmb.plot_variable_importance` like *Figure [9.6](#x1-182005r6)*.
+    If the importance of two variables is very similar, it can easily happen that
+    the order changes if we refit the model with a different random seed or if the
+    data slightly changes, such as after adding or removing a data point. The error
+    bars for the variable importance could help, but it is likely that they underestimate
+    the true variability. Thus, take the order with a pinch of salt, and use it as
+    a guide in the context of your problems.
+  id: totrans-80
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 在进入下一个话题之前，让我再补充几点提醒。正如我们在*第[6章](CH06.xhtml#x1-1200006)*中讨论的那样，使用Kulprit的输出时，我们不应过度解读变量的顺序。样本适用于通过`pmb.plot_variable_importance`生成的图形，如*图[9.6](#x1-182005r6)*。如果两个变量的重要性非常相似，当我们用不同的随机种子重新拟合模型，或数据发生轻微变化（如添加或删除一个数据点）时，顺序可能会发生变化。变量重要性的误差条可以提供帮助，但它们可能低估了真实的变异性。因此，要谨慎对待顺序，将其作为解决问题时的参考。
+- en: 9.3 Distributional BART models
+  id: totrans-81
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 9.3 分布式BART模型
+- en: As we saw in *Chapter [6](CH06.xhtml#x1-1200006)*, for generalized linear models,
+    we are not restricted to creating linear models for the mean or location parameter;
+    we can also model other parameters, for example, the standard deviation of a Gaussian
+    or even both the mean and standard deviation. The same applies to BART models.
+  id: totrans-82
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 正如我们在*第[6章](CH06.xhtml#x1-1200006)*中看到的，对于广义线性模型，我们并不限于为均值或位置参数创建线性模型；我们还可以建模其他参数，例如高斯分布的标准差，甚至同时建模均值和标准差。BART模型也适用同样的原则。
+- en: 'To exemplify this, let’s model the bike dataset. We will use `rented` as the
+    response variable and `hour`, `temperature`, `humidity`, and `workday` as predictor
+    variables. As we did previously, we are going to use a NegativeBinomial distribution
+    as likelihood. This distribution has two parameters *μ* and *alpha*. We are going
+    to use a sum of trees for both parameters. The following code block shows the
+    model:'
+  id: totrans-83
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 为了举例说明，让我们以自行车数据集为模型。我们将使用`rented`作为响应变量，`hour`、`temperature`、`humidity`和`workday`作为预测变量。正如我们之前所做的，我们将使用负二项分布作为似然函数。该分布有两个参数，*μ*和*alpha*。我们将为这两个参数使用树的和。以下代码块展示了模型：
+- en: '**Code 9.5**'
+  id: totrans-84
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**代码 9.5**'
+- en: '[PRE4]'
+  id: totrans-85
+  prefs: []
+  type: TYPE_PRE
+  zh: '[PRE4]'
+- en: Let’s take a moment to be sure we understand this model. First, notice that
+    we passed a `shape` argument to `pmb.BART()`. When `separate_trees = True`, this
+    instructs PyMC-BART to fit two separate sets of sum-of-trees. Then we index *μ*
+    in order to use the first dimension for the *μ* parameter of the NegativeBinomial
+    and the second dimension for the *α* parameter. If, instead, `separate_trees =
+    False`, then we tell PyMC-BART to fit a single sum-of-trees but each tree will
+    return 2 values at each leaf node, instead of 1\. The advantage of this is that
+    the algorithm will run faster and use less memory, as we are only fitting one
+    set of trees. The disadvantage is that we get a less flexible model. In practice,
+    both options can be useful, so which one you should use is another modeling decision.
+  id: totrans-86
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 让我们花点时间确保理解这个模型。首先，注意我们传递了一个`shape`参数给`pmb.BART()`。当`separate_trees = True`时，这指示PyMC-BART拟合两组独立的树和。然后我们索引*μ*，以便使用第一维度作为负二项分布的*μ*参数，第二维度作为*α*参数。如果`separate_trees
+    = False`，则告诉PyMC-BART拟合一组树和，但每棵树在每个叶节点返回2个值，而不是1个。这样做的好处是算法运行更快，内存使用更少，因为我们只拟合一组树。缺点是模型的灵活性较差。实际上，这两种选项都可以有用，因此你应该选择哪个，取决于你的建模决策。
+- en: Another important aspect of `model_bb` is that we take the exponential of *μ*.
+    We do this to ensure that the NegativeBinomial distribution gets only positive
+    values, both for *μ* and *α*. This is the same type of transformation we discussed
+    in the context of generalized linear models. What is particular about PyMC-BART
+    is that we applied its inverse to the value of *Y* we passed to `pmb.BART()`.
+    In my experience, this helps PyMC-BART to find better solutions. For a model with
+    a Binomial or Categorical likelihood, it is not necessary to apply the inverse
+    of the logistic or softmax, respectively. PyMC-BART handles the Binomial as a
+    particular case and for the Categorical, we have empirically seen good results
+    without the inverse. It is important to remark that the value of *Y* we passed
+    to `pmb.BART()` is only used to initialize the sampling of the BART variables.
+    The initialization seems to be robust to the values we pass and passing *Y* or
+    some transformation of it works well in most cases.
+  id: totrans-87
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '`model_bb`的另一个重要方面是我们对*μ*取指数。这样做是为了确保NegativeBinomial分布的*μ*和*α*值都为正值。这与我们在广义线性模型中讨论的变换类型相同。PyMC-BART的特殊之处在于，我们将其逆变换应用于传递给`pmb.BART()`的*Y*值。根据我的经验，这有助于PyMC-BART找到更好的解。对于具有二项分布或类别分布的模型，无需分别对逻辑回归或softmax应用逆变换。PyMC-BART将二项分布作为特例处理，对于类别分布，我们通过经验发现即使没有逆变换，也能获得良好的结果。需要强调的是，我们传递给`pmb.BART()`的*Y*值仅用于初始化BART变量的采样。初始化似乎对我们传递的值具有鲁棒性，传递*Y*或其某种变换在大多数情况下都能很好地工作。'
+- en: The third aspect I want you to pay attention to is that we are passing a new
+    argument to `pm.sample`, namely `pgbart`. The value for this argument is the dictionary
+    `"batch":(0.05, 0.15)`. Why are we doing this? Occasionally, to obtain good-quality
+    samples, it becomes necessary to tweak the hyperparameters of the sampler. In
+    previous examples, we opted to omit this aspect to maintain simplicity and focus.
+    However, as we later discuss in more depth in *Chapter [10](CH10.xhtml#x1-18900010)*,
+    paying attention to these adjustments can become important. For the particular
+    case of the PGBART sampler, there are two hyperparameters we can change. One is
+    `num_particles` (defaults to 10), where the larger the number of particles, the
+    more accurate the sampling of BART, but also the more expensive it is. The other
+    is `batch`; by default, this is a tuple `(0.1, 0.1)`, meaning that at each step,
+    the sampler fits 10% of the `m` trees during the tuning phase and the same for
+    the sampling phase. For the `model_bb` model, we used `(0.05, 0.15)`, meaning
+    5% during tuning (2 trees) and 15% (7 trees) during the actual sampling.
+  id: totrans-88
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 我希望你注意的第三个方面是，我们向`pm.sample`传递了一个新的参数，即`pgbart`。这个参数的值是字典`"batch":(0.05, 0.15)`。为什么要这么做呢？有时，为了获得高质量的样本，必须调整采样器的超参数。在之前的示例中，我们选择省略这一部分，以保持简单和专注。然而，正如我们在*第
+    [10](CH10.xhtml#x1-18900010)*章中更深入地讨论的那样，关注这些调整可能变得非常重要。对于PGBART采样器的特殊情况，我们可以改变两个超参数。其中一个是`num_particles`（默认为10），粒子数量越大，BART的采样越准确，但代价也越高。另一个是`batch`；默认值为元组`(0.1,
+    0.1)`，意味着在每一步中，采样器在调节阶段拟合10%的`m`棵树，在采样阶段也是如此。对于`model_bb`模型，我们使用了`(0.05, 0.15)`，即在调节阶段使用5%（2棵树），在实际采样阶段使用15%（7棵树）。
+- en: '![PIC](img/file246.png)'
+  id: totrans-89
+  prefs: []
+  type: TYPE_IMG
+  zh: '![PIC](img/file246.png)'
+- en: '**Figure 9.7**: Partial dependence plot for `model_bb`'
+  id: totrans-90
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**图 9.7**：`model_bb`的部分依赖图'
+- en: 'We can explore the relationship of the covariates to the response for both
+    parameters as in *Figure [9.7](#x1-183010r7)*. Notice that variables appear twice:
+    the first column corresponds to parameter *μ* and the second column to parameter
+    *α*. We can see that `hour` has the largest effect on the response variable for
+    both parameters of the NegativeBinomial.'
+  id: totrans-91
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 我们可以像*图 [9.7](#x1-183010r7)*中一样，探索协变量与响应之间的关系。请注意，变量出现了两次：第一列对应参数*μ*，第二列对应参数*α*。我们可以看到，`hour`对NegativeBinomial的两个参数的响应变量影响最大。
+- en: 9.4 Constant and linear response
+  id: totrans-92
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 9.4 常数和线性响应
+- en: By default, PyMC-BART will fit trees that return a single value at each leaf
+    node. This is a simple approach that usually works just fine. However, it is important
+    to understand its implications. For instance, this means that predictions for
+    any value outside the range of the observed data used to fit the model will be
+    constants. To see this, go back and check *Figure [9.2](#x1-177006r2)*. This tree
+    will return 1.9 for any value below `c1`. Notice that this will still be the case
+    if we, instead, sum a bunch of trees, because summing a bunch of constant values
+    results in yet another constant value.
+  id: totrans-93
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 默认情况下，PyMC-BART将拟合在每个叶节点返回单一值的树。这是一种通常非常有效的简单方法。然而，理解其影响是很重要的。例如，这意味着对于任何超出用于拟合模型的观察数据范围的值，预测将是常数。为了验证这一点，回去查看*图[9.2](#x1-177006r2)*。这棵树对于`c1`以下的任何值都将返回1.9。请注意，即使我们将多棵树相加，这仍然是事实，因为加总一堆常数值仍然会得到另一个常数值。
+- en: Whether this is a problem or not is up to you and the context in which you apply
+    the BART model. Nevertheless, PyMC-BART offers a `response` argument that you
+    pass to the BART random variable. Its default value is `"constant"`. You can change
+    it to `"linear"`, in which case PyMC-BART will return a linear fit at each leaf
+    node or `"mix"`, which will propose (during sampling) trees with either constant
+    or linear values.
+  id: totrans-94
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 这是否是一个问题，取决于你和你应用BART模型的上下文。尽管如此，PyMC-BART提供了一个`response`参数，可以传递给BART随机变量。它的默认值是`"constant"`。你可以将其更改为`"linear"`，在这种情况下，PyMC-BART将在每个叶节点返回一个线性拟合，或者更改为`"mix"`，这将在采样过程中提出具有常数或线性值的树。
+- en: 'To exemplify the difference, let us fit a very simple example: the number of
+    rented bikes versus the temperature. The observed temperature values go from ≈−5
+    to ≈ 35\. After fitting this model, we will ask for out-of-sample posterior predictive
+    values in the range [-20, 45]. For that reason, we will set up a model with a
+    mutable variable as introduced in *Chapter [4](CH04.xhtml#x1-760004)*.'
+  id: totrans-95
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 为了举例说明差异，我们来拟合一个非常简单的例子：租赁自行车的数量与温度的关系。观察到的温度值从≈−5到≈35。拟合此模型后，我们将要求范围为[-20,
+    45]的样本外后验预测值。因此，我们将设置一个具有可变变量的模型，如*第[4章](CH04.xhtml#x1-760004)*所介绍的。
+- en: '**Code 9.6**'
+  id: totrans-96
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**代码 9.6**'
+- en: '[PRE5]'
+  id: totrans-97
+  prefs: []
+  type: TYPE_PRE
+  zh: '[PRE5]'
+- en: Notice that we passed `shape=`*μ*`.shape` to the likelihood. This is something
+    we need to do to be able to change the shape of `X_mut1`, which is also a requirement
+    of PyMC, so this is something you should also do for non-BART models like linear
+    regression.
+  id: totrans-98
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 注意我们将`shape=`*μ*`.shape`传递给了似然函数。这是我们需要做的，以便能够改变`X_mut1`的形状，这也是PyMC的要求，所以你在使用非BART模型（如线性回归）时也应该做这件事。
+- en: OK, to continue with the example, in the accompanying code, you will find the
+    code for the `model_tmp0` model, which is exactly the same as **model_tmp1**,
+    except that it has the default constant response. The results from both models
+    are shown in *Figure [9.8](#x1-184010r8)*.
+  id: totrans-99
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 好的，继续这个例子，在随附的代码中，你将找到`model_tmp0`模型的代码，它与**model_tmp1**完全相同，只是它具有默认的常数响应。两个模型的结果显示在*图[9.8](#x1-184010r8)*中。
+- en: '![PIC](img/file247.png)'
+  id: totrans-100
+  prefs: []
+  type: TYPE_IMG
+  zh: '![PIC](img/file247.png)'
+- en: '**Figure 9.8**: Mean predictions with constant and linear responses'
+  id: totrans-101
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**图 9.8**：常数和线性响应的平均预测'
+- en: Notice how outside of the range of the data (dashed gray lines), the predictions
+    for the model with constant response are indeed constant. Which one is providing
+    better predictions? I am not sure. I will argue that for predictions on the lower
+    end of temperatures, the linear response is better as it predicts that the number
+    of rented bikes will keep decreasing until eventually reaching 0\. But on the
+    higher end of temperatures, a plateau or even a decrease should be more likely
+    than an increase. I mean, I have tried riding my bike at 40 or maybe even 42 degrees,
+    and it is not a super nice experience. What do you think?
+  id: totrans-102
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 请注意，在数据范围之外（虚线灰色线），具有常数响应的模型的预测确实是常数。哪个模型提供的预测更好？我不确定。我认为，在较低温度范围内，线性响应更好，因为它预测租赁自行车的数量将继续减少，直到最终降至0。但在较高温度范围内，平台效应或甚至下降应该比上升更可能。我是说，我尝试过在40度甚至42度时骑自行车，那可不是一个超级愉快的体验。你怎么看？
+- en: 9.5 Choosing the number of trees
+  id: totrans-103
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 9.5 选择树的数量
+- en: The number of trees (`m`) controls the flexibility of the BART function. As
+    a rule of thumb, the default value of 50 should be enough to get a good approximation.
+    And larger values, like 100 or 200, should provide a more refined answer. Usually,
+    it is hard to overfit by increasing the number of trees, because the larger the
+    number of trees, the smaller the values at the leaf nodes.
+  id: totrans-104
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 树的数量（`m`）控制 BART 函数的灵活性。一般来说，默认值 50 应该足以得到一个不错的近似。较大的值，比如 100 或 200，应当提供更精细的结果。通常，增加树的数量不会导致过拟合，因为树的数量越大，叶节点的值越小。
+- en: In practice, you may be worried about overshooting `m` because the computational
+    cost of BART, both in terms of time and memory, will increase. One way to tune
+    `m` is to perform K-fold cross-validation, as recommended by [Chipman et al.](Bibliography.xhtml#Xchipman2010) [[2010](Bibliography.xhtml#Xchipman2010)].
+    Another option is to approximate cross-validation by using LOO as discussed in
+    *Chapter [5](CH05.xhtml#x1-950005)*. We have observed that LOO can indeed be of
+    help to provide a reasonable value of `m` [[Quiroga et al.](Bibliography.xhtml#Xquiroga2022), [2022](Bibliography.xhtml#Xquiroga2022)].
+  id: totrans-105
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 在实际应用中，你可能会担心 `m` 的值过大，因为 BART 的计算成本（无论是时间还是内存）会随之增加。调节 `m` 的一种方式是执行 K 折交叉验证，正如
+    [Chipman et al.](Bibliography.xhtml#Xchipman2010) [[2010](Bibliography.xhtml#Xchipman2010)]
+    所推荐的那样。另一种选择是通过使用 LOO 来近似交叉验证，正如在*第 [5](CH05.xhtml#x1-950005) 章*中讨论的那样。我们已经观察到
+    LOO 确实能帮助提供合理的 `m` 值 [[Quiroga et al.](Bibliography.xhtml#Xquiroga2022), [2022](Bibliography.xhtml#Xquiroga2022)]。
+- en: 9.6 Summary
+  id: totrans-106
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 9.6 总结
+- en: BART is a flexible non-parametric model where a sum of trees is used to approximate
+    an unknown function from the data. Priors are used to regularize inference, mainly
+    by restricting trees’ learning capacity so that no individual tree is able to
+    explain the data, but rather the sum of trees. PyMC-BART is a Python library that
+    extends PyMC to work with BART models.
+  id: totrans-107
+  prefs: []
+  type: TYPE_NORMAL
+  zh: BART 是一种灵活的非参数模型，通过树的总和来近似从数据中获得的未知函数。先验用于规范推理，主要是通过限制树的学习能力，使得没有单一的树能够解释数据，而是树的总和。PyMC-BART
+    是一个 Python 库，它扩展了 PyMC 以支持 BART 模型。
+- en: We built a few BART models in this chapter, and learned how to perform variable
+    selection and use partial dependence plots and individual conditional plots to
+    interpret the output of BART models.
+  id: totrans-108
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 本章中我们构建了一些 BART 模型，并学习了如何执行变量选择，利用部分依赖图和个体条件图来解释 BART 模型的输出。
+- en: 9.7 Exercises
+  id: totrans-109
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 9.7 练习
+- en: 'Explain each of the following:'
+  id: totrans-110
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 解释以下内容：
+- en: How is BART different from linear regression and splines?
+  id: totrans-111
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: BART 和线性回归、样条有什么不同？
+- en: When might you want to use linear regression over BART?
+  id: totrans-112
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 在什么情况下你可能会选择线性回归而非 BART？
+- en: When might you want to use Gaussian processes over BART?
+  id: totrans-113
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 在什么情况下你可能会选择高斯过程而非 BART？
+- en: In your own words, explain why it can be the case that multiple small trees
+    can fit patterns better than one single large tree. What is the difference in
+    the two approaches? What are the trade-offs?
+  id: totrans-114
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 用你自己的话解释为什么多个小树比一棵大树更能拟合模式。两者方法有什么区别？各自有什么权衡？
+- en: Below, we provide two simple synthetic datasets. Fit a BART model with m=50
+    to each of them. Plot the data and the mean fitted function. Describe the fit.
+  id: totrans-115
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 以下是两个简单的合成数据集。对每个数据集拟合一个 m=50 的 BART 模型。绘制数据和均值拟合函数。描述拟合情况。
+- en: x = np.linspace(-1, 1., 200) and y = np.random.normal(2*x, 0.25)
+  id: totrans-116
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: x = np.linspace(-1, 1., 200) 和 y = np.random.normal(2*x, 0.25)
+- en: x = np.linspace(-1, 1., 200) and y = np.random.normal(x**2, 0.25)
+  id: totrans-117
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: x = np.linspace(-1, 1., 200) 和 y = np.random.normal(x**2, 0.25)
+- en: Create your own synthetic dataset.
+  id: totrans-118
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 创建你自己的合成数据集。
+- en: Create the following dataset *Y* = 10sin(*πX*[0]*X*[1])+20(*X*[2] −0*.*5)² +10*X*[3]
+    +5*X*[4] + ![](img/e.png), where ![](img/e.png) ∼![](img/N.PNG)(0*,*1) and ***X***[0:9]
+    ∼![](img/U.PNG)(0*,*1). This is called Friedman’s five-dimensional function. Notice
+    that we actually have 10 dimensions, but the last 5 are pure noise.
+  id: totrans-119
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 创建以下数据集 *Y* = 10sin(*πX*[0]*X*[1])+20(*X*[2] −0*.*5)² +10*X*[3] +5*X*[4] + ![](img/e.png)，其中
+    ![](img/e.png) ∼![](img/N.PNG)(0*,*1)，且 ***X***[0:9] ∼![](img/U.PNG)(0*,*1)。这就是所谓的
+    Friedman 的五维函数。注意，我们实际上有 10 个维度，但最后 5 个是纯噪声。
+- en: Fit a BART model to this data.
+  id: totrans-120
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 将 BART 模型拟合到这个数据中。
+- en: Compute a PDP and the variable importance (VI).
+  id: totrans-121
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 计算 PDP 和变量重要性（VI）。
+- en: Do the PDP and VI qualitatively agree? How?
+  id: totrans-122
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: PDP 和 VI 是否在定性上相符？如何相符？
+- en: Use BART with the penguins dataset. Use `bill_length`, `flipper_length`, `bill_depth`,
+    `bill_length`, and `body_mass` as covariates and the species `Adelie` and `Chistrap`
+    as the response. Try different values of `m` –, 10, 20, 50, and 100\. Use LOO
+    to pick a suitable value.
+  id: totrans-123
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 使用BART模型和企鹅数据集。将`bill_length`、`flipper_length`、`bill_depth`、`bill_length`和`body_mass`作为协变量，物种`Adelie`和`Chistrap`作为响应变量。尝试不同的`m`值——10、20、50和100。使用LOO选择合适的值。
+- en: Check the variable importance for the model in the previous question. Compare
+    the result with one obtained with Kulprit for a generalized linear model with
+    the same covariates and response, built with Bambi.
+  id: totrans-124
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 查看前一个问题中模型的变量重要性。将结果与使用Kulprit构建的同一协变量和响应变量的广义线性模型的结果进行比较，该模型使用Bambi构建。
+- en: Join our community Discord space
+  id: totrans-125
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 加入我们的社区Discord空间
+- en: 'Join our Discord community to meet like-minded people and learn alongside more
+    than 5000 members at: [https://packt.link/bayesian](https://packt.link/bayesian)'
+  id: totrans-126
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 加入我们的Discord社区，结识志同道合的人，并与超过5000名成员一起学习： [https://packt.link/bayesian](https://packt.link/bayesian)
+- en: '![PIC](img/file1.png)'
+  id: totrans-127
+  prefs: []
+  type: TYPE_IMG
+  zh: '![PIC](img/file1.png)'

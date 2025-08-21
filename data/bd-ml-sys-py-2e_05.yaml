@@ -1,0 +1,1508 @@
+- en: Chapter 5. Classification – Detecting Poor Answers
+  id: totrans-0
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+  zh: 第5章 分类 – 检测差答案
+- en: Now that we are able to extract useful features from text, we can take on the
+    challenge of building a classifier using real data. Let's come back to our imaginary
+    website in [Chapter 3](ch03.html "Chapter 3. Clustering – Finding Related Posts"),
+    *Clustering – Finding Related Posts*, where users can submit questions and get
+    them answered.
+  id: totrans-1
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 现在我们能够从文本中提取有用的特征，我们可以开始挑战使用真实数据构建分类器。让我们回到我们在[第3章](ch03.html "第3章 聚类 – 查找相关帖子")中的虚拟网站，*聚类
+    – 查找相关帖子*，用户可以提交问题并获得答案。
+- en: A continuous challenge for owners of those Q&A sites is to maintain a decent
+    level of quality in the posted content. Sites such as StackOverflow make considerable
+    efforts to encourage users with diverse possibilities to score content and offer
+    badges and bonus points in order to encourage the users to spend more energy on
+    carving out the question or crafting a possible answer.
+  id: totrans-2
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 对于那些问答网站的拥有者来说，保持发布内容的质量水平一直是一个持续的挑战。像StackOverflow这样的站点付出了巨大努力，鼓励用户通过多种方式为内容评分，并提供徽章和奖励积分，以鼓励用户在雕琢问题或编写可能的答案时付出更多精力。
+- en: One particular successful incentive is the ability for the asker to flag one
+    answer to their question as the accepted answer (again there are incentives for
+    the asker to flag answers as such). This will result in more score points for
+    the author of the flagged answer.
+  id: totrans-3
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 一个特别成功的激励措施是提问者可以将他们问题的一个答案标记为已接受答案（同样，提问者标记答案时也会有激励措施）。这将为被标记答案的作者带来更多的积分。
+- en: Would it not be very useful to the user to immediately see how good his answer
+    is while he is typing it in? That means, the website would continuously evaluate
+    his work-in-progress answer and provide feedback as to whether the answer shows
+    some signs of a poor one. This will encourage the user to put more effort into
+    writing the answer (providing a code example? including an image?), and thus improve
+    the overall system.
+  id: totrans-4
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 对用户来说，能否在他输入答案时立即看到答案的好坏并不是非常有用？这意味着，网站会不断评估他的正在编写的答案，并提供反馈，指出答案是否显示出某些不好的迹象。这将鼓励用户在写答案时付出更多努力（提供代码示例？包括图片？），从而改善整个系统。
+- en: Let's build such a mechanism in this chapter.
+  id: totrans-5
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 让我们在本章中构建这样的机制。
+- en: Sketching our roadmap
+  id: totrans-6
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+  zh: 绘制我们的路线图
+- en: As we will build a system using real data that is very noisy, this chapter is
+    not for the fainthearted, as we will not arrive at the golden solution of a classifier
+    that achieves 100 percent accuracy; often, even humans disagree whether an answer
+    was good or not (just look at some of the StackOverflow comments). Quite the contrary,
+    we will find out that some problems like this one are so hard that we have to
+    adjust our initial goals on the way. But on the way, we will start with the nearest
+    neighbor approach, find out why it is not very good for the task, switch over
+    to logistic regression, and arrive at a solution that will achieve good enough
+    prediction quality, but on a smaller part of the answers. Finally, we will spend
+    some time looking at how to extract the winner to deploy it on the target system.
+  id: totrans-7
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 由于我们将使用非常嘈杂的真实数据构建一个系统，本章并不适合心智脆弱的人，因为我们不会得到一个能够达到100%准确度的分类器的黄金解决方案；事实上，甚至人类有时也会不同意一个答案是否好（看看StackOverflow上一些评论就知道了）。相反，我们会发现，像这样的某些问题非常困难，以至于我们不得不在过程中调整我们的初步目标。但在这个过程中，我们将从最近邻方法开始，发现它在这个任务中并不好，然后切换到逻辑回归，并得到一个能够实现足够好预测质量的解决方案，尽管它只在一小部分答案上有效。最后，我们将花一些时间研究如何提取获胜者，并将其部署到目标系统上。
+- en: Learning to classify classy answers
+  id: totrans-8
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+  zh: 学习分类有价值的答案
+- en: 'In classification, we want to find the corresponding **classes**, sometimes
+    also called **labels**, for given data instances. To be able to achieve this,
+    we need to answer two questions:'
+  id: totrans-9
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 在分类中，我们希望为给定的数据实例找到相应的**类别**，有时也称为**标签**。为了能够实现这一目标，我们需要回答两个问题：
+- en: How should we represent the data instances?
+  id: totrans-10
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 我们应如何表示数据实例？
+- en: Which model or structure should our classifier possess?
+  id: totrans-11
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 我们的分类器应具备什么样的模型或结构？
+- en: Tuning the instance
+  id: totrans-12
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 调整实例
+- en: In its simplest form, in our case, the data instance is the text of the answer
+    and the label would be a binary value indicating whether the asker accepted this
+    text as an answer or not. Raw text, however, is a very inconvenient representation
+    to process for most machine learning algorithms. They want numbers. And it will
+    be our task to extract useful features from the raw text, which the machine learning
+    algorithm can then use to learn the right label for it.
+  id: totrans-13
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 在其最简单的形式下，在我们的案例中，数据实例是答案的文本，标签将是一个二进制值，表示提问者是否接受此文本作为答案。然而，原始文本对大多数机器学习算法来说是非常不方便的表示方式。它们需要数字化的数据。而我们的任务就是从原始文本中提取有用的特征，机器学习算法可以利用这些特征来学习正确的标签。
+- en: Tuning the classifier
+  id: totrans-14
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 调整分类器
+- en: Once we have found or collected enough (text, label) pairs, we can train a **classifier**.
+    For the underlying structure of the classifier, we have a wide range of possibilities,
+    each of them having advantages and drawbacks. Just to name some of the more prominent
+    choices, there are logistic regression, decision trees, SVMs, and Naïve Bayes.
+    In this chapter, we will contrast the instance-based method from the last chapter,
+    nearest neighbor, with model-based logistic regression.
+  id: totrans-15
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 一旦我们找到了或收集了足够的（文本，标签）对，就可以训练一个**分类器**。对于分类器的底层结构，我们有很多种选择，每种都有优缺点。仅举几个更为突出的选择，包括逻辑回归、决策树、支持向量机（SVM）和朴素贝叶斯。在本章中，我们将对比上一章中的基于实例的方法——最近邻，与基于模型的逻辑回归。
+- en: Fetching the data
+  id: totrans-16
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+  zh: 获取数据
+- en: Luckily for us, the team behind StackOverflow provides most of the data behind
+    the StackExchange universe to which StackOverflow belongs under a cc-wiki license.
+    At the time of writing this book, the latest data dump can be found at [https://archive.org/details/stackexchange](https://archive.org/details/stackexchange).
+    It contains data dumps of all Q&A sites of the StackExchange family. For StackOverflow,
+    you will find multiple files, of which we only need the `stackoverflow.com-Posts.7z`
+    file, which is 5.2 GB.
+  id: totrans-17
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 幸运的是，StackOverflow 背后的团队提供了 StackExchange 宇宙中大部分的数据，而 StackOverflow 属于这个宇宙，这些数据可以在
+    cc-wiki 许可下使用。在写本书时，最新的数据转储可以在[https://archive.org/details/stackexchange](https://archive.org/details/stackexchange)找到。它包含了
+    StackExchange 系列所有问答站点的数据转储。对于 StackOverflow，你会找到多个文件，我们只需要其中的 `stackoverflow.com-Posts.7z`
+    文件，大小为 5.2 GB。
+- en: 'After downloading and extracting it, we have around 26 GB of data in the format
+    of XML, containing all questions and answers as individual `row` tags within the
+    `root` tag posts:'
+  id: totrans-18
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 下载并解压后，我们有大约 26 GB 的 XML 格式数据，包含所有问题和答案，作为 `root` 标签下的各个 `row` 标签：
+- en: '[PRE0]'
+  id: totrans-19
+  prefs: []
+  type: TYPE_PRE
+  zh: '[PRE0]'
+- en: '| Name | Type | Description |'
+  id: totrans-20
+  prefs: []
+  type: TYPE_TB
+  zh: '| 名称 | 类型 | 描述 |'
+- en: '| --- | --- | --- |'
+  id: totrans-21
+  prefs: []
+  type: TYPE_TB
+  zh: '| --- | --- | --- |'
+- en: '| `Id` | `Integer` | This is a unique identifier. |'
+  id: totrans-22
+  prefs: []
+  type: TYPE_TB
+  zh: '| `Id` | `整数` | 这是唯一的标识符。 |'
+- en: '| `PostTypeId` | `Integer` | This describes the category of the post. The values
+    interesting to us are the following:'
+  id: totrans-23
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '| `PostTypeId` | `整数` | 这是帖子的类别描述。对我们感兴趣的值如下：'
+- en: Question
+  id: totrans-24
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 问题
+- en: Answer
+  id: totrans-25
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 答案
+- en: Other values will be ignored. |
+  id: totrans-26
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 其他值将被忽略。 |
+- en: '| `ParentId` | `Integer` | This is a unique identifier of the question to which
+    this answer belongs (missing for questions). |'
+  id: totrans-27
+  prefs: []
+  type: TYPE_TB
+  zh: '| `ParentId` | `整数` | 这是该答案所属问题的唯一标识符（问题没有该字段）。 |'
+- en: '| `CreationDate` | `DateTime` | This is the date of submission. |'
+  id: totrans-28
+  prefs: []
+  type: TYPE_TB
+  zh: '| `CreationDate` | `日期时间` | 这是提交日期。 |'
+- en: '| `Score` | `Integer` | This is the score of the post. |'
+  id: totrans-29
+  prefs: []
+  type: TYPE_TB
+  zh: '| `Score` | `整数` | 这是该帖子的得分。 |'
+- en: '| `ViewCount` | `Integer or empty` | This is the number of user views for this
+    post. |'
+  id: totrans-30
+  prefs: []
+  type: TYPE_TB
+  zh: '| `ViewCount` | `整数或空` | 这是该帖子被用户查看的次数。 |'
+- en: '| `Body` | `String` | This is the complete post as encoded HTML text. |'
+  id: totrans-31
+  prefs: []
+  type: TYPE_TB
+  zh: '| `Body` | `字符串` | 这是作为 HTML 编码文本的完整帖子内容。 |'
+- en: '| `OwnerUserId` | `Id` | This is a unique identifier of the poster. If 1, then
+    it is a wiki question. |'
+  id: totrans-32
+  prefs: []
+  type: TYPE_TB
+  zh: '| `OwnerUserId` | `ID` | 这是帖子的唯一标识符。如果值为 1，则表示这是一个 Wiki 问题。 |'
+- en: '| `Title` | `String` | This is the title of the question (missing for answers).
+    |'
+  id: totrans-33
+  prefs: []
+  type: TYPE_TB
+  zh: '| `Title` | `字符串` | 这是问题的标题（答案没有该字段）。 |'
+- en: '| `AcceptedAnswerId` | `Id` | This is the ID for the accepted answer (missing
+    for answers). |'
+  id: totrans-34
+  prefs: []
+  type: TYPE_TB
+  zh: '| `AcceptedAnswerId` | `ID` | 这是被接受的答案的 ID（答案没有该字段）。 |'
+- en: '| `CommentCount` | `Integer` | This is the number of comments for the post.
+    |'
+  id: totrans-35
+  prefs: []
+  type: TYPE_TB
+  zh: '| `CommentCount` | `整数` | 这是该帖子评论的数量。 |'
+- en: Slimming the data down to chewable chunks
+  id: totrans-36
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 将数据精简成易于处理的块
+- en: To speed up our experimentation phase, we should not try to evaluate our classification
+    ideas on the huge XML file. Instead, we should think of how we could trim it down
+    so that we still keep a representable snapshot of it while being able to quickly
+    test our ideas. If we filter the XML for `row` tags that have a creation date
+    of, for example, 2012, we still end up with over 6 million posts (2,323,184 questions
+    and 4,055,999 answers), which should be enough to pick our training data from
+    for now. We also do not want to operate on the XML format as it will slow us down,
+    too. The simpler the format, the better. That's why we parse the remaining XML
+    using Python's `cElementTree` and write it out to a tab-separated file.
+  id: totrans-37
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 为了加速我们的实验阶段，我们不应该尝试在庞大的 XML 文件上评估我们的分类思路。相反，我们应该考虑如何将其裁剪，使得在保留足够代表性快照的同时，能够快速测试我们的思路。如果我们将
+    XML 过滤为例如 2012 年创建的 `row` 标签，我们仍然会得到超过 600 万个帖子（2,323,184 个问题和 4,055,999 个回答），这些足够我们目前挑选训练数据了。我们也不想在
+    XML 格式上进行操作，因为这会拖慢速度。格式越简单越好。这就是为什么我们使用 Python 的 `cElementTree` 解析剩余的 XML 并将其写出为制表符分隔的文件。
+- en: Preselection and processing of attributes
+  id: totrans-38
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 属性的预选择和处理
+- en: To cut down the data even more, we can certainly drop attributes that we think
+    will not help the classifier in distinguishing between good and not-so-good answers.
+    But we have to be cautious here. Although some features are not directly impacting
+    the classification, they are still necessary to keep.
+  id: totrans-39
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 为了进一步减少数据量，我们当然可以删除那些我们认为对分类器区分好答案和差答案没有帮助的属性。但我们必须小心。虽然一些特征不会直接影响分类，它们仍然是必须保留的。
+- en: The `PostTypeId` attribute, for example, is necessary to distinguish between
+    questions and answers. It will not be picked to serve as a feature, but we will
+    need it to filter the data.
+  id: totrans-40
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '`PostTypeId` 属性，例如，用于区分问题和回答。它不会被选中作为特征，但我们需要它来过滤数据。'
+- en: '`CreationDate` could be interesting to determine the time span between posting
+    the question and posting the individual answers, so we keep it. The `Score` is
+    of course important as an indicator for the community''s evaluation.'
+  id: totrans-41
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '`CreationDate` 可能对确定提问和各个回答之间的时间跨度很有用，所以我们保留它。`Score` 作为社区评价的指标，当然也很重要。'
+- en: '`ViewCount`, in contrast, is most likely of no use for our task. Even if it
+    would help the classifier to distinguish between good and bad, we would not have
+    this information at the time when an answer is being submitted. Drop it!'
+  id: totrans-42
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 相反，`ViewCount` 很可能对我们的任务没有任何帮助。即使它能帮助分类器区分好答案和差答案，我们在答案提交时也没有这个信息。舍弃它！
+- en: The `Body` attribute obviously contains the most important information. As it
+    is encoded HTML, we will have to decode to plain text.
+  id: totrans-43
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '`Body` 属性显然包含了最重要的信息。由于它是编码的 HTML，我们需要将其解码为纯文本。'
+- en: '`OwnerUserId` is only useful if we take user-dependent features in to account,
+    which we won''t. Although we drop it here, we encourage you to use it to build
+    a better classifier (maybe in connection with `stackoverflow.com-Users.7z`).'
+  id: totrans-44
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '`OwnerUserId` 只有在我们考虑用户相关特征时才有用，而我们并不打算这样做。虽然我们在这里舍弃它，但我们鼓励你使用它来构建一个更好的分类器（也许可以与
+    `stackoverflow.com-Users.7z` 结合使用）。'
+- en: The `Title` attribute is also ignored here, although it could add some more
+    information about the question.
+  id: totrans-45
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '`Title` 属性在这里被忽略，尽管它可能为问题提供更多的信息。'
+- en: '`CommentCount` is also ignored. Similar to `ViewCount`, it could help the classifier
+    with posts that are out there for a while (more comments = more ambiguous post?).
+    It will, however, not help the classifier at the time an answer is posted.'
+  id: totrans-46
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '`CommentCount` 也被忽略。与 `ViewCount` 类似，它可能有助于分类器处理那些已经存在一段时间的帖子（更多评论 = 更模糊的帖子？）。然而，它不会在答案发布时对分类器产生帮助。'
+- en: '`AcceptedAnswerId` is similar to `Score` in that it is an indicator of a post''s
+    quality. As we will access this per answer, instead of keeping this attribute,
+    we will create the new attribute `IsAccepted`, which is 0 or 1 for answers and
+    ignored for questions (`ParentId=-1`).'
+  id: totrans-47
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '`AcceptedAnswerId` 类似于 `Score`，都是帖子质量的指示器。由于我们会按答案访问它，因此我们不会保留这个属性，而是创建一个新的属性
+    `IsAccepted`，对于答案它是0或1，对于问题则被忽略（`ParentId=-1`）。'
+- en: 'We end up with the following format:'
+  id: totrans-48
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 最终我们得到以下格式：
+- en: '[PRE1]'
+  id: totrans-49
+  prefs: []
+  type: TYPE_PRE
+  zh: '[PRE1]'
+- en: 'For the concrete parsing details, please refer to `so_xml_to_tsv.py` and `choose_instance.py`.
+    Suffice to say that in order to speed up processing, we will split the data into
+    two files: in `meta.json`, we store a dictionary mapping a post''s `Id` value
+    to its other data except `Text` in JSON format so that we can read it in the proper
+    format. For example, the score of a post would reside at `meta[Id][''Score'']`.
+    In `data.tsv`, we store the `Id` and `Text` values, which we can easily read with
+    the following method:'
+  id: totrans-50
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 关于具体的解析细节，请参考`so_xml_to_tsv.py`和`choose_instance.py`。简单来说，为了加速处理，我们将数据分为两个文件：在`meta.json`中，我们存储一个字典，将帖子的`Id`值映射到除`Text`外的其他数据，并以JSON格式存储，这样我们就可以以正确的格式读取它。例如，帖子的得分将存储在`meta[Id]['Score']`中。在`data.tsv`中，我们存储`Id`和`Text`值，可以通过以下方法轻松读取：
+- en: '[PRE2]'
+  id: totrans-51
+  prefs: []
+  type: TYPE_PRE
+  zh: '[PRE2]'
+- en: Defining what is a good answer
+  id: totrans-52
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 定义什么是好答案
+- en: Before we can train a classifier to distinguish between good and bad answers,
+    we have to create the training data. So far, we only have a bunch of data. What
+    we still have to do is define labels.
+  id: totrans-53
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 在我们能够训练分类器来区分好答案和坏答案之前，我们必须先创建训练数据。到目前为止，我们只有一堆数据。我们还需要做的是定义标签。
+- en: We could, of course, simply use the `IsAccepted` attribute as a label. After
+    all, that marks the answer that answered the question. However, that is only the
+    opinion of the asker. Naturally, the asker wants to have a quick answer and accepts
+    the first *best* answer. If over time more answers are submitted, some of them
+    will tend to be better than the already accepted one. The asker, however, seldom
+    gets back to the question and changes his mind. So we end up with many questions
+    that have accepted answers that are not scored highest.
+  id: totrans-54
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 当然，我们可以简单地使用`IsAccepted`属性作为标签。毕竟，它标记了回答问题的答案。然而，这只是提问者的看法。自然，提问者希望快速得到答案，并接受第一个*最好的*答案。如果随着时间推移，更多的答案被提交，其中一些可能比已经接受的答案更好。然而，提问者很少回去修改自己的选择。所以我们最终会得到许多已经接受的答案，其得分并不是最高的。
+- en: At the other extreme, we could simply always take the best and worst scored
+    answer per question as positive and negative examples. However, what do we do
+    with questions that have only good answers, say, one with two and the other with
+    four points? Should we really take an answer with, for example, two points as
+    a negative example just because it happened to be the one with the lower score?
+  id: totrans-55
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 在另一个极端，我们可以简单地始终取每个问题中得分最好和最差的答案作为正例和负例。然而，对于那些只有好答案的问题，我们该怎么办呢？比如，一个得两分，另一个得四分。我们是否真的应该把得两分的答案当作负例，仅仅因为它是得分较低的答案？
+- en: 'We should settle somewhere between these extremes. If we take all answers that
+    are scored higher than zero as positive and all answers with zero or less points
+    as negative, we end up with quite reasonable labels:'
+  id: totrans-56
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 我们应该在这些极端之间找到一个平衡。如果我们把所有得分高于零的答案作为正例，所有得分为零或更低的答案作为负例，我们最终会得到相当合理的标签：
+- en: '[PRE3]'
+  id: totrans-57
+  prefs: []
+  type: TYPE_PRE
+  zh: '[PRE3]'
+- en: Creating our first classifier
+  id: totrans-58
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+  zh: 创建我们的第一个分类器
+- en: 'Let''s start with the simple and beautiful nearest neighbor method from the
+    previous chapter. Although it is not as advanced as other methods, it is very
+    powerful: as it is not model-based, it can *learn* nearly any data. But this beauty
+    comes with a clear disadvantage, which we will find out very soon.'
+  id: totrans-59
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 让我们从上一章的简单而美丽的最近邻方法开始。虽然它不如其他方法先进，但它非常强大：由于它不是基于模型的，它可以*学习*几乎任何数据。但这种美丽也伴随着一个明显的缺点，我们很快就会发现。
+- en: Starting with kNN
+  id: totrans-60
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 从kNN开始
+- en: 'This time, we won''t implement it ourselves, but rather take it from the `sklearn`
+    toolkit. There, the classifier resides in `sklearn.neighbors`. Let''s start with
+    a simple 2-Nearest Neighbor classifier:'
+  id: totrans-61
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 这次我们不自己实现，而是从`sklearn`工具包中取用。分类器位于`sklearn.neighbors`中。让我们从一个简单的2-近邻分类器开始：
+- en: '[PRE4]'
+  id: totrans-62
+  prefs: []
+  type: TYPE_PRE
+  zh: '[PRE4]'
+- en: 'It provides the same interface as all other estimators in `sklearn`: we train
+    it using `fit()`, after which we can predict the class of new data instances using
+    `predict()`:'
+  id: totrans-63
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 它提供与`sklearn`中所有其他估计器相同的接口：我们使用`fit()`来训练它，然后可以使用`predict()`来预测新数据实例的类别：
+- en: '[PRE5]'
+  id: totrans-64
+  prefs: []
+  type: TYPE_PRE
+  zh: '[PRE5]'
+- en: 'To get the class probabilities, we can use `predict_proba()`. In this case
+    of having two classes, `0` and `1`, it will return an array of two elements:'
+  id: totrans-65
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 为了获得类别概率，我们可以使用`predict_proba()`。在这个只有两个类别`0`和`1`的案例中，它将返回一个包含两个元素的数组：
+- en: '[PRE6]'
+  id: totrans-66
+  prefs: []
+  type: TYPE_PRE
+  zh: '[PRE6]'
+- en: Engineering the features
+  id: totrans-67
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 特征工程
+- en: So, what kind of features can we provide to our classifier? What do we think
+    will have the most discriminative power?
+  id: totrans-68
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 那么，我们可以向分类器提供什么样的特征呢？我们认为什么特征具有最强的区分能力？
+- en: '`TimeToAnswer` is already there in our `meta` dictionary, but it probably won''t
+    provide much value on its own. Then there is only `Text`, but in its raw form,
+    we cannot pass it to the classifier, as the features must be in numerical form.
+    We will have to do the dirty (and fun!) work of extracting features from it.'
+  id: totrans-69
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '`TimeToAnswer` 已经存在于我们的 `meta` 字典中，但它单独使用可能不会提供太多价值。然后还有 `Text`，但以原始形式我们不能将其传递给分类器，因为特征必须是数值形式。我们将不得不做一些脏活（也很有趣！）从中提取特征。'
+- en: 'What we could do is check the number of HTML links in the answer as a proxy
+    for quality. Our hypothesis would be that more hyperlinks in an answer indicate
+    better answers and thus a higher likelihood of being up-voted. Of course, we want
+    to only count links in normal text and not code examples:'
+  id: totrans-70
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 我们可以做的是检查答案中 HTML 链接的数量，作为质量的代理指标。我们的假设是，答案中的超链接越多，表示答案质量越好，从而更有可能被点赞。当然，我们只想统计普通文本中的链接，而不是代码示例中的链接：
+- en: '[PRE7]'
+  id: totrans-71
+  prefs: []
+  type: TYPE_PRE
+  zh: '[PRE7]'
+- en: Tip
+  id: totrans-72
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+  zh: 提示
+- en: For production systems, we would not want to parse HTML content with regular
+    expressions. Instead, we should rely on excellent libraries such as BeautifulSoup,
+    which does a marvelous job of robustly handling all the weird things that typically
+    occur in everyday HTML.
+  id: totrans-73
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 对于生产系统，我们不希望使用正则表达式解析 HTML 内容。相反，我们应该依赖像 BeautifulSoup 这样优秀的库，它能够非常稳健地处理日常 HTML
+    中通常出现的各种奇怪情况。
+- en: 'With this in place, we can generate one feature per answer. But before we train
+    the classifier, let''s first have a look at what we will train it with. We can
+    get a first impression with the frequency distribution of our new feature. This
+    can be done by plotting the percentage of how often each value occurs in the data.
+    Have a look at the following plot:'
+  id: totrans-74
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 有了这个基础，我们可以为每个答案生成一个特征。但在训练分类器之前，先看看我们将用什么来训练它。我们可以通过绘制新特征的频率分布来获得初步印象。这可以通过绘制每个值在数据中出现的百分比来完成。请查看以下图表：
+- en: '![Engineering the features](img/2772OS_05_01.jpg)'
+  id: totrans-75
+  prefs: []
+  type: TYPE_IMG
+  zh: '![工程特征](img/2772OS_05_01.jpg)'
+- en: With the majority of posts having no link at all, we know now that this feature
+    will not make a good classifier alone. Let's nevertheless try it out to get a
+    first estimation of where we are.
+  id: totrans-76
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 由于大多数帖子根本没有链接，我们现在知道仅凭这个特征无法构建一个好的分类器。尽管如此，我们仍然可以尝试它，先做一个初步估计，看看我们处于什么位置。
+- en: Training the classifier
+  id: totrans-77
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 训练分类器
+- en: 'We have to pass the feature array together with the previously defined labels
+    `Y` to the kNN learner to obtain a classifier:'
+  id: totrans-78
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 我们需要将特征数组与之前定义的标签 `Y` 一起传递给 kNN 学习器，以获得分类器：
+- en: '[PRE8]'
+  id: totrans-79
+  prefs: []
+  type: TYPE_PRE
+  zh: '[PRE8]'
+- en: Using the standard parameters, we just fitted a 5NN (meaning NN with `k=5`)
+    to our data. Why 5NN? Well, at the current state of our knowledge about the data,
+    we really have no clue what the right `k` should be. Once we have more insight,
+    we will have a better idea of how to set `k`.
+  id: totrans-80
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 使用标准参数，我们刚刚为我们的数据拟合了一个 5NN（即 `k=5` 的 NN）。为什么是 5NN？嗯，基于我们对数据的当前了解，我们真的不知道正确的
+    `k` 应该是多少。一旦我们有了更多的洞察力，就能更好地确定 `k` 的值。
+- en: Measuring the classifier's performance
+  id: totrans-81
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 测量分类器的性能
+- en: We have to be clear about what we want to measure. The naïve but easiest way
+    is to simply calculate the average prediction quality over the test set. This
+    will result in a value between 0 for predicting everything wrongly and 1 for perfect
+    prediction. The accuracy can be obtained through `knn.score()`.
+  id: totrans-82
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 我们需要明确我们想要测量的内容。最简单的做法是计算测试集上的平均预测质量。这将产生一个介于 0（完全错误的预测）和 1（完美预测）之间的值。准确度可以通过
+    `knn.score()` 获得。
+- en: 'But as we learned in the previous chapter, we will not do it just once, but
+    apply cross-validation here using the readymade `KFold` class from `sklearn.cross_validation`.
+    Finally, we will then average the scores on the test set of each fold and see
+    how much it varies using standard deviation:'
+  id: totrans-83
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 但正如我们在前一章中学到的，我们不仅要做一次，而是使用交叉验证，通过 `sklearn.cross_validation` 中现成的 `KFold` 类来实现。最后，我们将对每一折的测试集分数进行平均，并使用标准差来看它的变化：
+- en: '[PRE9]'
+  id: totrans-84
+  prefs: []
+  type: TYPE_PRE
+  zh: '[PRE9]'
+- en: 'Here is the output:'
+  id: totrans-85
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 这是输出结果：
+- en: '[PRE10]'
+  id: totrans-86
+  prefs: []
+  type: TYPE_PRE
+  zh: '[PRE10]'
+- en: Now that is far from being usable. With only 55 percent accuracy, it is not
+    much better than tossing a coin. Apparently, the number of links in a post is
+    not a very good indicator for the quality of a post. So, we can say that this
+    feature does not have much discriminative power—at least not for kNN with `k=5`.
+  id: totrans-87
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 现在，这远远不能使用。只有 55% 的准确率，它与抛硬币的效果差不多。显然，帖子中的链接数量不是衡量帖子质量的一个好指标。所以，我们可以说，这个特征没有太多的区分能力——至少对于
+    `k=5` 的 kNN 来说是这样。
+- en: Designing more features
+  id: totrans-88
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 设计更多特征
+- en: 'In addition to using the number of hyperlinks as a proxy for a post''s quality,
+    the number of code lines is possibly another good one, too. At least it is a good
+    indicator that the post''s author is interested in answering the question. We
+    can find the code embedded in the `<pre>…</pre>` tag. And once we have it extracted,
+    we should count the number of words in the post while ignoring code lines:'
+  id: totrans-89
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 除了使用超链接数量作为帖子质量的代理外，代码行数也可能是另一个不错的指标。至少它是一个很好的指示，说明帖子作者有兴趣回答问题。我们可以在`<pre>…</pre>`标签中找到嵌入的代码。一旦提取出来，我们应该在忽略代码行的情况下统计帖子的单词数：
+- en: '[PRE11]'
+  id: totrans-90
+  prefs: []
+  type: TYPE_PRE
+  zh: '[PRE11]'
+- en: 'Looking at them, we notice that at least the number of words in a post shows
+    higher variability:'
+  id: totrans-91
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 看着这些，我们注意到至少帖子的单词数量表现出更高的变异性：
+- en: '![Designing more features](img/2772OS_05_02.jpg)'
+  id: totrans-92
+  prefs: []
+  type: TYPE_IMG
+  zh: '![设计更多特征](img/2772OS_05_02.jpg)'
+- en: 'Training on the bigger feature space improves accuracy quite a bit:'
+  id: totrans-93
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 在更大的特征空间上训练能显著提高准确性：
+- en: '[PRE12]'
+  id: totrans-94
+  prefs: []
+  type: TYPE_PRE
+  zh: '[PRE12]'
+- en: 'But still, this would mean that we would classify roughly 4 out of 10 wrong.
+    At least we are going in the right direction. More features lead to higher accuracy,
+    which leads us to adding more features. Therefore, let''s extend the feature space
+    by even more features:'
+  id: totrans-95
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 但即便如此，这仍然意味着我们大约会将10个帖子中的4个分类错。至少我们朝着正确的方向前进了。更多的特征带来了更高的准确性，这促使我们添加更多的特征。因此，让我们通过更多特征来扩展特征空间：
+- en: '`AvgSentLen`: This measures the average number of words in a sentence. Maybe
+    there is a pattern that particularly good posts don''t overload the reader''s
+    brain with overly long sentences?'
+  id: totrans-96
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: '`AvgSentLen`：这个特征衡量的是一个句子的平均单词数。也许有一个规律是，特别好的帖子不会用过长的句子让读者大脑过载？'
+- en: '`AvgWordLen`: Similar to `AvgSentLen`, this feature measures the average number
+    of characters in the words of a post.'
+  id: totrans-97
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: '`AvgWordLen`：类似于`AvgSentLen`，这个特征衡量的是帖子中单词的平均字符数。'
+- en: '`NumAllCaps`: This measures the number of words that are written in uppercase,
+    which is considered bad style.'
+  id: totrans-98
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: '`NumAllCaps`：这个特征衡量的是帖子中以大写字母书写的单词数量，这通常被认为是糟糕的写作风格。'
+- en: '`NumExclams`: This measures the number of exclamation marks.'
+  id: totrans-99
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: '`NumExclams`：这个特征衡量的是感叹号的数量。'
+- en: 'The following charts show the value distributions for average sentence and
+    word lengths and number of uppercase words and exclamation marks:'
+  id: totrans-100
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 以下图表显示了平均句子和单词长度、以及大写字母单词和感叹号数量的值分布：
+- en: '![Designing more features](img/2772OS_05_03.jpg)'
+  id: totrans-101
+  prefs: []
+  type: TYPE_IMG
+  zh: '![设计更多特征](img/2772OS_05_03.jpg)'
+- en: 'With these four additional features, we now have seven features representing
+    the individual posts. Let''s see how we progress:'
+  id: totrans-102
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 有了这四个额外的特征，我们现在有七个特征来表示单个帖子。让我们看看我们的进展：
+- en: '[PRE13]'
+  id: totrans-103
+  prefs: []
+  type: TYPE_PRE
+  zh: '[PRE13]'
+- en: Now, that's interesting. We added four more features and don't get anything
+    in return. How can that be?
+  id: totrans-104
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 嗯，这很有意思。我们添加了四个新特征，却没有得到任何回报。怎么会这样呢？
+- en: 'To understand this, we have to remind ourselves how kNN works. Our 5NN classifier
+    determines the class of a new post by calculating the seven aforementioned features,
+    `LinkCount`, `NumTextTokens`, `NumCodeLines`, `AvgSentLen`, `AvgWordLen`, `NumAllCaps`,
+    and `NumExclams`, and then finds the five nearest other posts. The new post''s
+    class is then the majority of the classes of those nearest posts. The nearest
+    posts are determined by calculating the Euclidean distance (as we did not specify
+    it, the classifier was initialized with the default `p=2`, which is the parameter
+    in the Minkowski distance). That means that all seven features are treated similarly.
+    kNN does not really learn that, for instance, `NumTextTokens` is good to have
+    but much less important than `NumLinks`. Let''s consider the following two posts
+    A and B that only differ in the following features and how they compare to a new
+    post:'
+  id: totrans-105
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 要理解这一点，我们需要提醒自己kNN是如何工作的。我们的5NN分类器通过计算上述七个特征——`LinkCount`、`NumTextTokens`、`NumCodeLines`、`AvgSentLen`、`AvgWordLen`、`NumAllCaps`和`NumExclams`——然后找到五个最接近的其他帖子。新帖子的类别就是这些最接近帖子类别中的多数。最近的帖子是通过计算欧氏距离来确定的（由于我们没有指定，分类器是使用默认的`p=2`参数初始化的，这是明可夫斯基距离中的参数）。这意味着所有七个特征被视为类似的。kNN并没有真正学会，例如，`NumTextTokens`虽然有用，但远不如`NumLinks`重要。让我们考虑以下两个帖子A和B，它们仅在以下特征上有所不同，并与新帖子进行比较：
+- en: '| Post | NumLinks | NumTextTokens |'
+  id: totrans-106
+  prefs: []
+  type: TYPE_TB
+  zh: '| 帖子 | 链接数 | 文本词数 |'
+- en: '| --- | --- | --- |'
+  id: totrans-107
+  prefs: []
+  type: TYPE_TB
+  zh: '| --- | --- | --- |'
+- en: '| A | 2 | 20 |'
+  id: totrans-108
+  prefs: []
+  type: TYPE_TB
+  zh: '| A | 2 | 20 |'
+- en: '| B | 0 | 25 |'
+  id: totrans-109
+  prefs: []
+  type: TYPE_TB
+  zh: '| B | 0 | 25 |'
+- en: '| new | 1 | 23 |'
+  id: totrans-110
+  prefs: []
+  type: TYPE_TB
+  zh: '| new | 1 | 23 |'
+- en: Although we would think that links provide more value than mere text, post B
+    would be considered more similar to the new post than post A.
+  id: totrans-111
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 尽管我们认为链接比纯文本提供更多的价值，但帖子B会被认为与新帖子更相似，而不是帖子A。
+- en: Clearly, kNN has a hard time in correctly using the available data.
+  id: totrans-112
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 显然，kNN在正确使用现有数据方面遇到了困难。
+- en: Deciding how to improve
+  id: totrans-113
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+  zh: 决定如何改进
+- en: 'To improve on this, we basically have the following options:'
+  id: totrans-114
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 为了改进这一点，我们基本上有以下几个选择：
+- en: '**Add more data**: Maybe it is just not enough data for the learning algorithm
+    and we should simply add more training data?'
+  id: totrans-115
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: '**增加更多数据**：也许学习算法的数据量不足，我们应该简单地增加更多的训练数据？'
+- en: '**Play with the model complexity**: Maybe the model is not complex enough?
+    Or maybe it is already too complex? In this case, we could decrease *k* so that
+    it would take less nearest neighbors into account and thus be better in predicting
+    non-smooth data. Or we could increase it to achieve the opposite.'
+  id: totrans-116
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: '**调整模型复杂度**：也许模型还不够复杂？或者它已经太复杂了？在这种情况下，我们可以减少*k*，使其考虑更少的最近邻，从而更好地预测不平滑的数据。或者我们可以增加*k*，以达到相反的效果。'
+- en: '**Modify the feature space**: Maybe we do not have the right set of features?
+    We could, for example, change the scale of our current features or design even
+    more new features. Or should we rather remove some of our current features in
+    case some features are aliasing others?'
+  id: totrans-117
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: '**修改特征空间**：也许我们没有合适的特征集？我们可以，例如，改变当前特征的尺度，或者设计更多的新特征。或者我们是否应该去除一些当前的特征，以防某些特征相互重复？'
+- en: '**Change the model**: Maybe kNN is in general not a good fit for our use case
+    such that it will never be capable of achieving good prediction performance, no
+    matter how complex we allow it to be and how sophisticated the feature space will
+    become?'
+  id: totrans-118
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: '**改变模型**：也许kNN在我们的用例中通常并不适用，因此无论我们如何允许其复杂化，如何提升特征空间，它都永远无法实现良好的预测性能？'
+- en: In real life, at this point, people often try to improve the current performance
+    by randomly picking one of the these options and trying them out in no particular
+    order, hoping to find the golden configuration by chance. We could do the same
+    here, but it will surely take longer than making informed decisions. Let's take
+    the informed route, for which we need to introduce the bias-variance tradeoff.
+  id: totrans-119
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 在现实生活中，通常人们会尝试通过随机选择这些选项之一并按无特定顺序尝试它们来改善当前的性能，希望能偶然找到最佳配置。我们也可以这么做，但这肯定会比做出有根据的决策花费更长时间。让我们采取有根据的方法，为此我们需要引入偏差-方差权衡。
+- en: Bias-variance and their tradeoff
+  id: totrans-120
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 偏差-方差及其权衡
+- en: In [Chapter 1](ch01.html "Chapter 1. Getting Started with Python Machine Learning"),
+    *Getting Started with Python Machine Learning*, we tried to fit polynomials of
+    different complexities controlled by the dimensionality parameter `d` to fit the
+    data. We realized that a two-dimensional polynomial, a straight line, does not
+    fit the example data very well, because the data was not of linear nature. No
+    matter how elaborate our fitting procedure would have been, our two-dimensional
+    model would see everything as a straight line. We say that it is too biased for
+    the data at hand. It is under-fitting.
+  id: totrans-121
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 在[第1章](ch01.html "第1章. 开始使用Python机器学习")，*开始使用Python机器学习*中，我们尝试了用不同复杂度的多项式，通过维度参数`d`来拟合数据。我们意识到，二维多项式，一个直线，并不能很好地拟合示例数据，因为数据并非线性。无论我们如何精细化拟合过程，我们的二维模型都会将所有数据视为一条直线。我们说它对现有数据有过高的偏差。它是欠拟合的。
+- en: We played a bit with the dimensions and found out that the 100-dimensional polynomial
+    is actually fitting very well to the data on which it was trained (we did not
+    know about train-test splits at that time). However, we quickly found out that
+    it was fitting too well. We realized that it was over-fitting so badly, that with
+    different samples of the data points, we would have gotten totally different 100-dimensional
+    polynomials. We say that the model has a too high variance for the given data,
+    or that it is over-fitting.
+  id: totrans-122
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 我们对维度进行了些许尝试，发现100维的多项式实际上很好地拟合了它所训练的数据（当时我们并不了解训练集-测试集拆分）。然而，我们很快发现它拟合得太好了。我们意识到它严重过拟合，以至于用不同的数据样本，我们会得到完全不同的100维多项式。我们说这个模型对于给定数据的方差太高，或者说它过拟合了。
+- en: These are the extremes between which most of our machine learning problems reside.
+    Ideally, we want to have both, low bias and low variance. But, we are in a bad
+    world, and have to tradeoff between them. If we improve on one, we will likely
+    get worse on the other.
+  id: totrans-123
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 这些是我们大多数机器学习问题所处的极端情况之间的两种极端。理想情况下，我们希望能够同时拥有低偏差和低方差。但我们处于一个不完美的世界，必须在二者之间做出权衡。如果我们改善其中一个，另一个可能会变得更差。
+- en: Fixing high bias
+  id: totrans-124
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 修正高偏差
+- en: Let's now assume we suffer from high bias. In that case, adding more training
+    data clearly does not help. Also, removing features surely will not help, as our
+    model would have already been overly simplistic.
+  id: totrans-125
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 现在假设我们遭遇高偏差。在这种情况下，增加更多的训练数据显然没有帮助。此外，去除特征肯定也没有帮助，因为我们的模型已经过于简单化。
+- en: The only possibilities we have in this case are to get more features, make the
+    model more complex, or change the model.
+  id: totrans-126
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 在这种情况下，我们唯一的选择是获取更多特征、使模型更复杂，或者更换模型。
+- en: Fixing high variance
+  id: totrans-127
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 修复高方差
+- en: If, on the contrary, we suffer from high variance, that means that our model
+    is too complex for the data. In this case, we can only try to get more data or
+    decrease the complexity. This would mean to increase *k* so that more neighbors
+    would be taken into account or to remove some of the features.
+  id: totrans-128
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 反之，如果我们遇到高方差，意味着我们的模型对于数据过于复杂。在这种情况下，我们只能尝试获取更多的数据或减少模型的复杂性。这意味着要增加*k*，让更多的邻居参与计算，或者去除一些特征。
+- en: High bias or low bias
+  id: totrans-129
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 高偏差或低偏差
+- en: To find out what our problem actually is, we have to simply plot the train and
+    test errors over the data size.
+  id: totrans-130
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 要找出我们真正的问题所在，我们只需将训练和测试误差随着数据集大小绘制出来。
+- en: High bias is typically revealed by the test error decreasing a bit at the beginning,
+    but then settling at a very high value with the train error approaching with a
+    growing dataset size. High variance is recognized by a big gap between both curves.
+  id: totrans-131
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 高偏差通常表现为测试误差在开始时略有下降，但随着训练数据集大小的增加，误差最终会稳定在一个很高的值。高方差则通过两条曲线之间的巨大差距来识别。
+- en: 'Plotting the errors for different dataset sizes for 5NN shows a big gap between
+    train and test errors, hinting at a high variance problem:'
+  id: totrans-132
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 绘制不同数据集大小下5NN的误差图，显示训练误差和测试误差之间存在较大差距，暗示了一个高方差问题：
+- en: '![High bias or low bias](img/2772OS_05_04.jpg)'
+  id: totrans-133
+  prefs: []
+  type: TYPE_IMG
+  zh: '![高偏差或低偏差](img/2772OS_05_04.jpg)'
+- en: Looking at the graph, we immediately see that adding more training data will
+    not help, as the dashed line corresponding to the test error seems to stay above
+    0.4\. The only option we have is to decrease the complexity, either by increasing
+    *k* or by reducing the feature space.
+  id: totrans-134
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 看着图表，我们立刻看到增加更多的训练数据没有帮助，因为对应于测试误差的虚线似乎保持在0.4以上。我们唯一的选择是降低复杂性，方法是增加*k*或减少特征空间。
+- en: 'Reducing the feature space does not help here. We can easily confirm this by
+    plotting the graph for a simplified feature space of only `LinkCount` and `NumTextTokens`:'
+  id: totrans-135
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 在这里，减少特征空间没有帮助。我们可以通过将简化后的特征空间（仅包含`LinkCount`和`NumTextTokens`）绘制成图来轻松确认这一点：
+- en: '![High bias or low bias](img/2772OS_05_05.jpg)'
+  id: totrans-136
+  prefs: []
+  type: TYPE_IMG
+  zh: '![高偏差或低偏差](img/2772OS_05_05.jpg)'
+- en: We get similar graphs for other smaller feature sets. No matter what subset
+    of features we take, the graph would look similar.
+  id: totrans-137
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 对于其他较小的特征集，我们得到的图形相似。无论我们选择哪个特征子集，图形看起来都差不多。
+- en: 'At least reducing the model complexity by increasing *k* shows some positive
+    impact:'
+  id: totrans-138
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 至少通过增加*k*来减少模型复杂性显示了一些积极的影响：
+- en: '| k | mean(scores) | stddev(scores) |'
+  id: totrans-139
+  prefs: []
+  type: TYPE_TB
+  zh: '| k | mean(scores) | stddev(scores) |'
+- en: '| --- | --- | --- |'
+  id: totrans-140
+  prefs: []
+  type: TYPE_TB
+  zh: '| --- | --- | --- |'
+- en: '| 40 | 0.62800 | 0.03750 |'
+  id: totrans-141
+  prefs: []
+  type: TYPE_TB
+  zh: '| 40 | 0.62800 | 0.03750 |'
+- en: '| 10 | 0.62000 | 0.04111 |'
+  id: totrans-142
+  prefs: []
+  type: TYPE_TB
+  zh: '| 10 | 0.62000 | 0.04111 |'
+- en: '| 5 | 0.61400 | 0.02154 |'
+  id: totrans-143
+  prefs: []
+  type: TYPE_TB
+  zh: '| 5 | 0.61400 | 0.02154 |'
+- en: 'But it is not enough, and also comes at a price of lower classification runtime
+    performance. Take, for instance, `k=40`, where we have a very low test error.
+    To classify a new post, we would need to find the 40 nearest other posts to decide
+    whether the new post is a good one or not:'
+  id: totrans-144
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 但这还不够，并且也会导致较低的分类运行时性能。例如，以`k=40`为例，在这个情况下，我们有非常低的测试误差。要对一个新帖子进行分类，我们需要找到与该新帖子最接近的40个帖子，以决定这个新帖子是否是好帖子：
+- en: '![High bias or low bias](img/2772OS_05_06.jpg)'
+  id: totrans-145
+  prefs: []
+  type: TYPE_IMG
+  zh: '![高偏差或低偏差](img/2772OS_05_06.jpg)'
+- en: Clearly, it seems to be an issue with using nearest neighbor for our scenario.
+    And it has another real disadvantage. Over time, we will get more and more posts
+    into our system. As the nearest neighbor method is an instance-based approach,
+    we will have to store all posts in our system. The more we get, the slower the
+    prediction will be. This is different with model-based approaches, where one tries
+    to derive a model from the data.
+  id: totrans-146
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 显然，似乎是使用最近邻方法在我们的场景中出现了问题。它还有另一个真正的缺点。随着时间的推移，系统中会加入越来越多的帖子。由于最近邻方法是基于实例的，我们必须在系统中存储所有的帖子。获取的数据越多，预测的速度就会变得越慢。这与基于模型的方法不同，后者试图从数据中推导出一个模型。
+- en: There we are, with enough reasons now to abandon the nearest neighbor approach
+    to look for better places in the classification world. Of course, we will never
+    know whether there is the one golden feature we just did not happen to think of.
+    But for now, let's move on to another classification method that is known to work
+    great in text-based classification scenarios.
+  id: totrans-147
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 到这里，我们已经有足够的理由放弃最近邻方法，去寻找分类世界中更好的方法。当然，我们永远无法知道是否有我们没有想到的那个黄金特征。但现在，让我们继续研究另一种在文本分类场景中表现优秀的分类方法。
+- en: Using logistic regression
+  id: totrans-148
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+  zh: 使用逻辑回归
+- en: Contrary to its name, logistic regression is a classification method. It is
+    a very powerful one when it comes to text-based classification; it achieves this
+    by first doing a regression on a logistic function, hence the name.
+  id: totrans-149
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 与其名称相反，逻辑回归是一种分类方法。在文本分类中，它是一种非常强大的方法；它通过首先对逻辑函数进行回归，从而实现这一点，这也是其名称的由来。
+- en: A bit of math with a small example
+  id: totrans-150
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 一些数学与小示例
+- en: To get an initial understanding of the way logistic regression works, let's
+    first take a look at the following example where we have artificial feature values
+    *X* plotted with the corresponding classes, 0 or 1\. As we can see, the data is
+    noisy such that classes overlap in the feature value range between 1 and 6\. Therefore,
+    it is better to not directly model the discrete classes, but rather the probability
+    that a feature value belongs to class 1, *P(X)*. Once we possess such a model,
+    we could then predict class 1 if *P(X)>0.5*, and class 0 otherwise.
+  id: totrans-151
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 为了初步理解逻辑回归的工作原理，让我们首先看一下下面的示例，在该示例中，我们有人工特征值*X*，并与相应的类别0或1进行绘制。如我们所见，数据有噪声，因此在1到6的特征值范围内，类别是重叠的。因此，最好不是直接对离散类别进行建模，而是建模特征值属于类别1的概率，*P(X)*。一旦我们拥有了这样的模型，我们就可以在*P(X)>0.5*时预测类别1，反之则预测类别0。
+- en: '![A bit of math with a small example](img/2772OS_05_07.jpg)'
+  id: totrans-152
+  prefs: []
+  type: TYPE_IMG
+  zh: '![一些数学与小示例](img/2772OS_05_07.jpg)'
+- en: Mathematically, it is always difficult to model something that has a finite
+    range, as is the case here with our discrete labels 0 and 1\. We can, however,
+    tweak the probabilities a bit so that they always stay between 0 and 1\. And for
+    that, we will need the odds ratio and the logarithm of it.
+  id: totrans-153
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 从数学上讲，建模一个具有有限范围的事物总是很困难的，就像我们这里的离散标签0和1一样。然而，我们可以稍微调整概率，使其始终保持在0和1之间。为此，我们需要赔率比率及其对数。
+- en: Let's say a feature has the probability of 0.9 that it belongs to class 1, *P(y=1)
+    = 0.9*. The odds ratio is then *P(y=1)/P(y=0) = 0.9/0.1 = 9*. We could say that
+    the chance is 9:1 that this feature maps to class 1\. If *P(y=0.5)*, we would
+    consequently have a 1:1 chance that the instance is of class 1\. The odds ratio
+    is bounded by 0, but goes to infinity (the left graph in the following set of
+    graphs). If we now take the logarithm of it, we can map all probabilities between
+    0 and 1 to the full range from negative to positive infinity (the right graph
+    in the following set of graphs). The nice thing is that we still maintain the
+    relationship that higher probability leads to a higher log of odds, just not limited
+    to 0 and 1 anymore.
+  id: totrans-154
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 假设某个特征属于类别1的概率为0.9，*P(y=1) = 0.9*。那么赔率比率为*P(y=1)/P(y=0) = 0.9/0.1 = 9*。我们可以说，这个特征属于类别1的机会是9:1。如果*P(y=0.5)*，我们将有1:1的机会，该实例属于类别1。赔率比率的下限是0，但可以趋向无限大（下图中的左图）。如果我们现在取其对数，就可以将所有概率从0到1映射到从负无穷到正无穷的完整范围（下图中的右图）。好处是，我们仍然保持了较高概率导致较高对数赔率的关系，只是不再局限于0和1。
+- en: '![A bit of math with a small example](img/2772OS_05_08.jpg)'
+  id: totrans-155
+  prefs: []
+  type: TYPE_IMG
+  zh: '![一些数学与小示例](img/2772OS_05_08.jpg)'
+- en: This means that we can now fit linear combinations of our features (OK, we only
+    have one and a constant, but that will change soon) to the ![A bit of math with
+    a small example](img/2772OS_05_19.jpg) values. In a sense, we replace the linear
+    from [Chapter 1](ch01.html "Chapter 1. Getting Started with Python Machine Learning"),
+    *Getting Started with Python Machine Learning*, ![A bit of math with a small example](img/2772OS_05_14.jpg)
+    with ![A bit of math with a small example](img/2772OS_05_15.jpg) (replacing *y*
+    with *log(odds)*).
+  id: totrans-156
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 这意味着我们现在可以将特征的线性组合拟合到![一些数学与小示例](img/2772OS_05_19.jpg)值上（好吧，我们只有一个特征和一个常数，但这很快就会改变）。从某种意义上讲，我们用![一些数学与小示例](img/2772OS_05_14.jpg)替代了[第1章](ch01.html
+    "第1章. 使用Python进行机器学习入门")中的线性模型，*使用Python进行机器学习入门*，用![一些数学与小示例](img/2772OS_05_15.jpg)（将*y*替换为*log(odds)*）。
+- en: We can solve this for *p[i]*, so that we have ![A bit of math with a small example](img/2772OS_05_16.jpg).
+  id: totrans-157
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 我们可以解出 *p[i]*，这样我们就得到了！[一些带有小示例的数学公式](img/2772OS_05_16.jpg)。
+- en: We simply have to find the right coefficients, such that the formula gives the
+    lowest errors for all our (x[i], p[i]) pairs in our data set, but that will be
+    done by scikit-learn.
+  id: totrans-158
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 我们只需要找到合适的系数，使得公式对于数据集中的所有（x[i], p[i]）对能够给出最低的误差，而这将通过 scikit-learn 来完成。
+- en: 'After fitting, the formula will give the probability for every new data point
+    *x* that belongs to class 1:'
+  id: totrans-159
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 拟合后，公式将为每个新的数据点 *x* 计算属于类别 1 的概率：
+- en: '[PRE14]'
+  id: totrans-160
+  prefs: []
+  type: TYPE_PRE
+  zh: '[PRE14]'
+- en: You might have noticed that scikit-learn exposes the first coefficient through
+    the special field `intercept_`.
+  id: totrans-161
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 你可能已经注意到，scikit-learn 通过特殊字段 `intercept_` 展示了第一个系数。
+- en: 'If we plot the fitted model, we see that it makes perfect sense given the data:'
+  id: totrans-162
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 如果我们绘制拟合的模型，我们会看到，考虑到数据，模型完全有意义：
+- en: '![A bit of math with a small example](img/2772OS_05_09.jpg)'
+  id: totrans-163
+  prefs: []
+  type: TYPE_IMG
+  zh: '![一些带有小示例的数学公式](img/2772OS_05_09.jpg)'
+- en: Applying logistic regression to our post classification problem
+  id: totrans-164
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 将逻辑回归应用于我们的帖子分类问题
+- en: Admittedly, the example in the previous section was created to show the beauty
+    of logistic regression. How does it perform on the real, noisy data?
+  id: totrans-165
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 毋庸置疑，上一节中的示例是为了展示逻辑回归的美妙。它在真实的、噪声较大的数据上表现如何？
+- en: Comparing it to the best nearest neighbor classifier (`k=40`) as a baseline,
+    we see that it performs a bit better, but also won't change the situation a whole
+    lot.
+  id: totrans-166
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 与最佳最近邻分类器（`k=40`）作为基准进行比较，我们可以看到它的表现稍微好一些，但也不会有太大变化。
+- en: '| Method | mean(scores) | stddev(scores) |'
+  id: totrans-167
+  prefs: []
+  type: TYPE_TB
+  zh: '| 方法 | 平均（得分） | 标准差（得分） |'
+- en: '| --- | --- | --- |'
+  id: totrans-168
+  prefs: []
+  type: TYPE_TB
+  zh: '| --- | --- | --- |'
+- en: '| LogReg C=0.1 | 0.64650 | 0.03139 |'
+  id: totrans-169
+  prefs: []
+  type: TYPE_TB
+  zh: '| LogReg C=0.1 | 0.64650 | 0.03139 |'
+- en: '| LogReg C=1.00 | 0.64650 | 0.03155 |'
+  id: totrans-170
+  prefs: []
+  type: TYPE_TB
+  zh: '| LogReg C=1.00 | 0.64650 | 0.03155 |'
+- en: '| LogReg C=10.00 | 0.64550 | 0.03102 |'
+  id: totrans-171
+  prefs: []
+  type: TYPE_TB
+  zh: '| LogReg C=10.00 | 0.64550 | 0.03102 |'
+- en: '| LogReg C=0.01 | 0.63850 | 0.01950 |'
+  id: totrans-172
+  prefs: []
+  type: TYPE_TB
+  zh: '| LogReg C=0.01 | 0.63850 | 0.01950 |'
+- en: '| 40NN | 0.62800 | 0.03750 |'
+  id: totrans-173
+  prefs: []
+  type: TYPE_TB
+  zh: '| 40NN | 0.62800 | 0.03750 |'
+- en: We have shown the accuracy for different values of the regularization parameter
+    `C`. With it, we can control the model complexity, similar to the parameter `k`
+    for the nearest neighbor method. Smaller values for `C` result in more penalization
+    of the model complexity.
+  id: totrans-174
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 我们已经展示了不同正则化参数 `C` 值下的准确度。通过它，我们可以控制模型的复杂性，类似于最近邻方法中的参数 `k`。较小的 `C` 值会对模型复杂性进行更多的惩罚。
+- en: 'A quick look at the bias-variance chart for one of our best candidates, `C=0.1`,
+    shows that our model has high bias—test and train error curves approach closely
+    but stay at unacceptable high values. This indicates that logistic regression
+    with the current feature space is under-fitting and cannot learn a model that
+    captures the data correctly:'
+  id: totrans-175
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 快速查看我们最佳候选之一（`C=0.1`）的偏差-方差图表，我们发现模型具有较高的偏差——测试和训练误差曲线接近，但都保持在不可接受的高值。这表明，在当前特征空间下，逻辑回归存在欠拟合，无法学习出能够正确捕捉数据的模型：
+- en: '![Applying logistic regression to our post classification problem](img/2772OS_05_10.jpg)'
+  id: totrans-176
+  prefs: []
+  type: TYPE_IMG
+  zh: '![将逻辑回归应用于我们的帖子分类问题](img/2772OS_05_10.jpg)'
+- en: So what now? We switched the model and tuned it as much as we could with our
+    current state of knowledge, but we still have no acceptable classifier.
+  id: totrans-177
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 那么接下来怎么办呢？我们更换了模型，并尽我们当前的知识调整了它，但仍然没有得到一个可接受的分类器。
+- en: More and more it seems that either the data is too noisy for this task or that
+    our set of features is still not appropriate to discriminate the classes well
+    enough.
+  id: totrans-178
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 越来越多的迹象表明，要么数据对于这个任务来说太嘈杂，要么我们的特征集仍然不足以足够好地区分类别。
+- en: Looking behind accuracy – precision and recall
+  id: totrans-179
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+  zh: 探讨准确率背后的精确度和召回率
+- en: Let's step back and think again about what we are trying to achieve here. Actually,
+    we do not need a classifier that perfectly predicts good and bad answers as we
+    measured it until now using accuracy. If we can tune the classifier to be particularly
+    good at predicting one class, we could adapt the feedback to the user accordingly.
+    If we, for example, had a classifier that was always right when it predicted an
+    answer to be bad, we would give no feedback until the classifier detected the
+    answer to be bad. On the contrary, if the classifier exceeded in predicting answers
+    to be good, we could show helpful comments to the user at the beginning and remove
+    them when the classifier said that the answer is a good one.
+  id: totrans-180
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 让我们退后一步，再次思考我们在这里试图实现的目标。实际上，我们并不需要一个能够完美预测好坏答案的分类器，至少我们用准确率来衡量时并不需要。如果我们能够调优分类器，使其在预测某一类时特别准确，我们就可以根据用户的反馈进行相应的调整。例如，如果我们有一个分类器，每次预测答案是坏的时都非常准确，那么在分类器检测到答案为坏之前，我们将不给予任何反馈。相反，如果分类器在预测答案为好时特别准确，我们可以在一开始给用户显示有帮助的评论，并在分类器确认答案是好时将这些评论移除。
+- en: 'To find out in which situation we are here, we have to understand how to measure
+    precision and recall. And to understand that, we have to look into the four distinct
+    classification results as they are described in the following table:'
+  id: totrans-181
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 要了解我们当前的情况，我们需要理解如何衡量精确度和召回率。为了理解这一点，我们需要查看下表中描述的四种不同的分类结果：
+- en: '|   | Classified as |'
+  id: totrans-182
+  prefs: []
+  type: TYPE_TB
+  zh: '|   | 被分类为 |'
+- en: '| --- | --- |'
+  id: totrans-183
+  prefs: []
+  type: TYPE_TB
+  zh: '| --- | --- |'
+- en: '| **Positive** | **Negative** |'
+  id: totrans-184
+  prefs: []
+  type: TYPE_TB
+  zh: '| **正类** | **负类** |'
+- en: '| --- | --- |'
+  id: totrans-185
+  prefs: []
+  type: TYPE_TB
+  zh: '| --- | --- |'
+- en: '| **In reality it is** | Positive | True positive (TP) | False negative (FN)
+    |'
+  id: totrans-186
+  prefs: []
+  type: TYPE_TB
+  zh: '| **实际情况是** | 正类 | 真正例（TP） | 假阴性（FN） |'
+- en: '| Negative | False positive (FP) | True negative (TN) |'
+  id: totrans-187
+  prefs: []
+  type: TYPE_TB
+  zh: '| 负类 | 假阳性（FP） | 真负性（TN） |'
+- en: For instance, if the classifier predicts an instance to be positive and the
+    instance indeed is positive in reality, this is a true positive instance. If on
+    the other hand the classifier misclassified that instance, saying that it is negative
+    while in reality it was positive, that instance is said to be a false negative.
+  id: totrans-188
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 例如，如果分类器预测某个实例为正，而该实例在现实中确实为正，那么这是一个真正的正例。如果分类器错误地将该实例分类为负，而实际上它是正的，那么这个实例就是一个假阴性。
+- en: 'What we want is to have a high success rate when we are predicting a post as
+    either good or bad, but not necessarily both. That is, we want as much true positives
+    as possible. This is what precision captures:'
+  id: totrans-189
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 我们希望在预测某个帖子是好是坏时能够有较高的成功率，但不一定要求两者都正确。也就是说，我们希望尽可能多地获得真正的正例。这就是精确度所衡量的内容：
+- en: '![Looking behind accuracy – precision and recall](img/2772OS_05_17.jpg)'
+  id: totrans-190
+  prefs: []
+  type: TYPE_IMG
+  zh: '![看准确率背后的内容 - 精确度与召回率](img/2772OS_05_17.jpg)'
+- en: 'If instead our goal would have been to detect as much good or bad answers as
+    possible, we would be more interested in recall:'
+  id: totrans-191
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 如果我们的目标是尽可能多地检测出好的或坏的答案，我们可能会更关注召回率：
+- en: '![Looking behind accuracy – precision and recall](img/2772OS_05_18.jpg)'
+  id: totrans-192
+  prefs: []
+  type: TYPE_IMG
+  zh: '![看准确率背后的内容 - 精确度与召回率](img/2772OS_05_18.jpg)'
+- en: 'In terms of the following graphic, precision is the fraction of the intersection
+    of the right circle while recall is the fraction of the intersection of the left
+    circle:'
+  id: totrans-193
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 在下面的图表中，精确度是右侧圆的交集部分的比例，而召回率则是左侧圆的交集部分的比例：
+- en: '![Looking behind accuracy – precision and recall](img/2772OS_05_12.jpg)'
+  id: totrans-194
+  prefs: []
+  type: TYPE_IMG
+  zh: '![看准确率背后的内容 - 精确度与召回率](img/2772OS_05_12.jpg)'
+- en: So, how can we now optimize for precision? Up to now, we have always used 0.5
+    as the threshold to decide whether an answer is good or not. What we can do now
+    is count the number of TP, FP, and FN while varying that threshold between 0 and
+    1\. With those counts, we can then plot precision over recall.
+  id: totrans-195
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 那么，如何优化精确度呢？到目前为止，我们总是使用 0.5 作为阈值来判断一个答案是好是坏。我们现在可以做的是在该阈值从 0 到 1 之间变化时，计算 TP、FP
+    和 FN 的数量。然后，基于这些计数，我们可以绘制精确度与召回率的关系曲线。
+- en: 'The handy function `precision_recall_curve()` from the metrics module does
+    all the calculations for us:'
+  id: totrans-196
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 来自 metrics 模块的便捷函数 `precision_recall_curve()` 可以为我们完成所有的计算：
+- en: '[PRE15]'
+  id: totrans-197
+  prefs: []
+  type: TYPE_PRE
+  zh: '[PRE15]'
+- en: 'Predicting one class with acceptable performance does not always mean that
+    the classifier is also acceptable predicting the other class. This can be seen
+    in the following two plots, where we plot the precision/recall curves for classifying
+    bad (the left graph) and good (the right graph) answers:'
+  id: totrans-198
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 预测某一类的表现良好并不总意味着分类器在预测另一类时也能达到同样的水平。以下两个图表展示了这种现象，我们分别为分类坏（左图）和好（右图）答案绘制了精确度/召回率曲线：
+- en: '![Looking behind accuracy – precision and recall](img/2772OS_05_11.jpg)'
+  id: totrans-199
+  prefs: []
+  type: TYPE_IMG
+  zh: '![看准确率背后的内容 - 精确度与召回率](img/2772OS_05_11.jpg)'
+- en: Tip
+  id: totrans-200
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+  zh: 提示
+- en: In the graphs, we have also included a much better description of a classifier's
+    performance, the **area under curve** (**AUC**). It can be understood as the average
+    precision of the classifier and is a great way of comparing different classifiers.
+  id: totrans-201
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 在图表中，我们还包含了一个更好的分类器性能描述——**曲线下的面积**（**AUC**）。它可以理解为分类器的平均精度，是比较不同分类器的一个很好的方法。
+- en: We see that we can basically forget predicting bad answers (the left plot).
+    Precision drops to a very low recall and stays at an unacceptably low 60 percent.
+  id: totrans-202
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 我们看到，在预测不良答案（左图）时，我们基本上可以忽略。精度降到非常低的召回率，并保持在不可接受的60%。
+- en: 'Predicting good answers, however, shows that we can get above 80 percent precision
+    at a recall of almost 40 percent. Let''s find out what threshold we need for that.
+    As we trained many classifiers on different folds (remember, we iterated over
+    `KFold()` a couple of pages back), we need to retrieve the classifier that was
+    neither too bad nor too good in order to get a realistic view. Let''s call it
+    the medium clone:'
+  id: totrans-203
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 然而，预测正确答案表明，当召回率接近40%时，我们可以获得超过80%的精度。让我们找出达到该结果所需的阈值。由于我们在不同的折叠上训练了许多分类器（记住，我们在前几页中使用了`KFold()`），我们需要检索那个既不差也不太好的分类器，以便获得现实的视角。我们称之为中等克隆：
+- en: '[PRE16]'
+  id: totrans-204
+  prefs: []
+  type: TYPE_PRE
+  zh: '[PRE16]'
+- en: Setting the threshold at `0.59`, we see that we can still achieve a precision
+    of 80 percent detecting good answers when we accept a low recall of 37 percent.
+    That means that we would detect only one in three good answers as such. But from
+    that third of good answers that we manage to detect, we would be reasonably sure
+    that they are indeed good. For the rest, we could then politely display additional
+    hints on how to improve answers in general.
+  id: totrans-205
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 将阈值设置为`0.59`时，我们看到在接受37%的低召回率时，仍然可以在检测到优秀答案时达到80%的精度。这意味着我们将仅检测出三分之一的优秀答案。但对于我们能够检测出的那三分之一的优秀答案，我们可以合理地确定它们确实是优秀的。对于其余的答案，我们可以礼貌地提供如何改进答案的一些额外提示。
+- en: 'To apply this threshold in the prediction process, we have to use `predict_proba()`,
+    which returns per class probabilities, instead of `predict()`, which returns the
+    class itself:'
+  id: totrans-206
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 要在预测过程中应用此阈值，我们必须使用`predict_proba()`，该方法返回每个类别的概率，而不是返回类别本身的`predict()`：
+- en: '[PRE17]'
+  id: totrans-207
+  prefs: []
+  type: TYPE_PRE
+  zh: '[PRE17]'
+- en: 'We can confirm that we are in the desired precision/recall range using `classification_report`:'
+  id: totrans-208
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 我们可以使用`classification_report`来确认我们处于期望的精度/召回范围内：
+- en: '[PRE18]'
+  id: totrans-209
+  prefs: []
+  type: TYPE_PRE
+  zh: '[PRE18]'
+- en: Tip
+  id: totrans-210
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+  zh: 提示
+- en: Note that using the threshold will not guarantee that we are always above the
+    precision and recall values that we determined above together with its threshold.
+  id: totrans-211
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 请注意，使用阈值并不能保证我们总是能够超过上述所确定的精度和召回值以及其阈值。
+- en: Slimming the classifier
+  id: totrans-212
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+  zh: 精简分类器
+- en: It is always worth looking at the actual contributions of the individual features.
+    For logistic regression, we can directly take the learned coefficients (`clf.coef_`)
+    to get an impression of the features' impact. The higher the coefficient of a
+    feature, the more the feature plays a role in determining whether the post is
+    good or not. Consequently, negative coefficients tell us that the higher values
+    for the corresponding features indicate a stronger signal for the post to be classified
+    as bad.
+  id: totrans-213
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 总是值得查看各个特征的实际贡献。对于逻辑回归，我们可以直接使用已学习的系数（`clf.coef_`）来了解特征的影响。特征的系数越大，说明该特征在确定帖子是否优秀时所起的作用越大。因此，负系数告诉我们，对于相应特征的较高值意味着该帖子被分类为不好的信号更强。
+- en: '![Slimming the classifier](img/2772OS_05_13.jpg)'
+  id: totrans-214
+  prefs: []
+  type: TYPE_IMG
+  zh: '![精简分类器](img/2772OS_05_13.jpg)'
+- en: We see that `LinkCount`, `AvgWordLen`, `NumAllCaps`, and `NumExclams` have the
+    biggest impact on the overall classification decision, while `NumImages` (a feature
+    that we sneaked in just for demonstration purposes a second ago) and `AvgSentLen`
+    play a rather minor role. While the feature importance overall makes sense intuitively,
+    it is surprising that `NumImages` is basically ignored. Normally, answers containing
+    images are always rated high. In reality, however, answers very rarely have images.
+    So, although in principal it is a very powerful feature, it is too sparse to be
+    of any value. We could easily drop that feature and retain the same classification
+    performance.
+  id: totrans-215
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 我们看到`LinkCount`、`AvgWordLen`、`NumAllCaps`和`NumExclams`对整体分类决策影响最大，而`NumImages`（这是我们刚才为了演示目的偷偷加入的特征）和`AvgSentLen`的作用较小。虽然整体特征重要性直观上是有道理的，但令人惊讶的是`NumImages`几乎被忽略了。通常，包含图片的答案总是被评价为高质量。但实际上，答案中很少有图片。因此，尽管从原则上讲，这是一个非常强大的特征，但由于它太稀疏，无法提供任何价值。我们可以轻松地删除该特征并保持相同的分类性能。
+- en: Ship it!
+  id: totrans-216
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+  zh: 发货！
+- en: 'Let''s assume we want to integrate this classifier into our site. What we definitely
+    do not want is training the classifier each time we start the classification service.
+    Instead, we can simply serialize the classifier after training and then deserialize
+    on that site:'
+  id: totrans-217
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 假设我们想将这个分类器集成到我们的网站中。我们绝对不希望每次启动分类服务时都重新训练分类器。相反，我们可以在训练后将分类器序列化，然后在网站上进行反序列化：
+- en: '[PRE19]'
+  id: totrans-218
+  prefs: []
+  type: TYPE_PRE
+  zh: '[PRE19]'
+- en: Congratulations, the classifier is now ready to be used as if it had just been
+    trained.
+  id: totrans-219
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 恭喜，现在分类器已经可以像刚训练完一样投入使用了。
+- en: Summary
+  id: totrans-220
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+  zh: 总结
+- en: We made it! For a very noisy dataset, we built a classifier that suits a part
+    of our goal. Of course, we had to be pragmatic and adapt our initial goal to what
+    was achievable. But on the way we learned about strengths and weaknesses of nearest
+    neighbor and logistic regression. We learned how to extract features such as `LinkCount`,
+    `NumTextTokens`, `NumCodeLines`, `AvgSentLen`, `AvgWordLen`, `NumAllCaps`, `NumExclams`,
+    and `NumImages`, and how to analyze their impact on the classifier's performance.
+  id: totrans-221
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 我们做到了！对于一个非常嘈杂的数据集，我们构建了一个符合我们目标部分的分类器。当然，我们必须务实地调整最初的目标，使其变得可实现。但在这个过程中，我们了解了最近邻算法和逻辑回归的优缺点。我们学会了如何提取特征，如`LinkCount`、`NumTextTokens`、`NumCodeLines`、`AvgSentLen`、`AvgWordLen`、`NumAllCaps`、`NumExclams`和`NumImages`，并分析它们对分类器性能的影响。
+- en: But what is even more valuable is that we learned an informed way of how to
+    debug bad performing classifiers. That will help us in the future to come up with
+    usable systems much faster.
+  id: totrans-222
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 但更有价值的是，我们学会了一种明智的方法来调试表现不佳的分类器。这将帮助我们在未来更快速地构建出可用的系统。
+- en: 'After having looked into nearest neighbor and logistic regression, in the next
+    chapter, we will get familiar with yet another simple yet powerful classification
+    algorithm: Naïve Bayes. Along the way, we will also learn some more convenient
+    tools from scikit-learn.'
+  id: totrans-223
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 在研究了最近邻算法和逻辑回归之后，在下一章中，我们将熟悉另一个简单而强大的分类算法：朴素贝叶斯。同时，我们还将学习一些来自scikit-learn的更方便的工具。

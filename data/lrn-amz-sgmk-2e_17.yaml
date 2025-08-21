@@ -1,0 +1,1796 @@
+- en: 'Chapter 13: Optimizing Prediction Cost and Performance'
+  id: totrans-0
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+  zh: 第 13 章：优化预测成本和性能
+- en: In the previous chapter, you learned how to automate training and deployment
+    workflows.
+  id: totrans-1
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 在上一章中，你学习了如何自动化训练和部署工作流。
+- en: In this final chapter, we'll focus on optimizing cost and performance for prediction
+    infrastructure, which typically accounts for 90% of the machine learning spend
+    by AWS customers. This number may come as a surprise, until we realize that a
+    model built by a single training job may end on multiple endpoints running 24/7
+    on a large scale.
+  id: totrans-2
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 在本章的最后，我们将重点讨论如何优化预测基础设施的成本和性能，而预测基础设施通常占 AWS 客户机器学习开支的 90%。这个数字可能会让人吃惊，直到我们意识到，一个由单次训练任务构建的模型可能会在多个端点上运行，且这些端点会全天候运行，规模庞大。
+- en: Hence, great care must be taken to optimize your prediction infrastructure to
+    ensure that you get the most bang for your buck!
+  id: totrans-3
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 因此，必须格外小心地优化预测基础设施，以确保你能最大化成本效益！
+- en: 'This chapter features the following topics:'
+  id: totrans-4
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 本章内容包括以下主题：
+- en: Autoscaling an endpoint
+  id: totrans-5
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 自动扩展端点
+- en: Deploying a multi-model endpoint
+  id: totrans-6
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 部署多模型端点
+- en: Deploying a model with Amazon Elastic Inference
+  id: totrans-7
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 使用 Amazon Elastic Inference 部署模型
+- en: Compiling models with Amazon SageMaker Neo
+  id: totrans-8
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 使用 Amazon SageMaker Neo 编译模型
+- en: Technical requirements
+  id: totrans-9
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+  zh: 技术要求
+- en: You will need an AWS account to run the examples included in this chapter. If
+    you haven't got one already, please point your browser at [https://aws.amazon.com/getting-started/](https://aws.amazon.com/getting-started/)
+    to create it. You should also familiarize yourself with the AWS Free Tier ([https://aws.amazon.com/free/](https://aws.amazon.com/free/)),
+    which lets you use many AWS services for free within certain usage limits.
+  id: totrans-10
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 你需要一个 AWS 账户才能运行本章中的示例。如果你还没有账户，请访问 [https://aws.amazon.com/getting-started/](https://aws.amazon.com/getting-started/)
+    创建一个。你还应该熟悉 AWS 免费使用层 ([https://aws.amazon.com/free/](https://aws.amazon.com/free/))，该服务让你在一定的使用限制内免费使用许多
+    AWS 服务。
+- en: You will need to install and configure the AWS **Command Line Interface** (**CLI**)
+    for your account ([https://aws.amazon.com/cli/](https://aws.amazon.com/cli/)).
+  id: totrans-11
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 你需要为你的账户安装并配置 AWS **命令行界面**（**CLI**）([https://aws.amazon.com/cli/](https://aws.amazon.com/cli/))。
+- en: You will need a working Python 3.x environment. ­Installing the Anaconda distribution
+    ([https://www.anaconda.com/](https://www.anaconda.com/)) is not mandatory but
+    strongly encouraged, as it includes many projects that we will need (Jupyter,
+    `pandas`, `numpy`, and more).
+  id: totrans-12
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 你需要一个工作中的 Python 3.x 环境。安装 Anaconda 发行版 ([https://www.anaconda.com/](https://www.anaconda.com/))
+    不是必须的，但强烈建议这样做，因为它包含了我们需要的许多项目（Jupyter、`pandas`、`numpy` 等）。
+- en: Code examples included in the book are available on GitHub at [https://github.com/PacktPublishing/Learn-Amazon-SageMaker-second-edition](https://github.com/PacktPublishing/Learn-Amazon-SageMaker-second-edition).
+    You will need to install a Git client to access them ([https://git-scm.com/](https://git-scm.com/)).
+  id: totrans-13
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 本书中的代码示例可以在 GitHub 上获取，地址为 [https://github.com/PacktPublishing/Learn-Amazon-SageMaker-second-edition](https://github.com/PacktPublishing/Learn-Amazon-SageMaker-second-edition)。你需要安装
+    Git 客户端来访问它们 ([https://git-scm.com/](https://git-scm.com/))。
+- en: Autoscaling an endpoint
+  id: totrans-14
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+  zh: 自动扩展端点
+- en: Autoscaling has long been the most important technique in adjusting infrastructure
+    size for incoming traffic, and it's available for SageMaker endpoints. However,
+    it's based on **Application Auto Scaling** and not on **EC2 Auto Scaling** ([https://docs.aws.amazon.com/autoscaling/application/userguide/what-is-application-auto-scaling.html](https://docs.aws.amazon.com/autoscaling/application/userguide/what-is-application-auto-scaling.html)),
+    although the concepts are extremely similar.
+  id: totrans-15
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 自动扩展长期以来一直是根据流量调整基础设施规模的最重要技术，并且它在 SageMaker 端点中可用。然而，它基于 **应用程序自动扩展** 而非 **EC2
+    自动扩展** ([https://docs.aws.amazon.com/autoscaling/application/userguide/what-is-application-auto-scaling.html](https://docs.aws.amazon.com/autoscaling/application/userguide/what-is-application-auto-scaling.html))，尽管这两者的概念非常相似。
+- en: 'Let''s set up autoscaling for the **XGBoost** model we trained on the Boston
+    Housing dataset:'
+  id: totrans-16
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 让我们为我们在波士顿房价数据集上训练的 **XGBoost** 模型设置自动扩展：
+- en: 'We first create an **endpoint configuration**, and we use it to build the endpoint.
+    Here, we use the m5 instance family; t2 and t3 are not recommended for autoscaling
+    as their burstable behavior makes it harder to measure their real load:'
+  id: totrans-17
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 我们首先创建一个 **端点配置**，然后使用它来构建端点。这里，我们使用的是 m5 实例系列；不建议使用 t2 和 t3 实例系列进行自动扩展，因为它们的突发行为使得很难衡量其实际负载：
+- en: '[PRE0]'
+  id: totrans-18
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+  zh: '[PRE0]'
+- en: 'Once the endpoint is in service, we define the target value that we want to
+    scale on, namely the number of instances backing the endpoint:'
+  id: totrans-19
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 一旦端点投入使用，我们定义希望扩展的目标值，即支持该端点的实例数量：
+- en: '[PRE1]'
+  id: totrans-20
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+  zh: '[PRE1]'
+- en: 'Then, we apply a scaling policy for this target value:'
+  id: totrans-21
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 然后，我们为这个目标值应用扩展策略：
+- en: '[PRE2]'
+  id: totrans-22
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+  zh: '[PRE2]'
+- en: 'We use the only built-in metric available in SageMaker, `SageMakerVariantInvocationsPerInstance`.
+    We could also define a custom metric if we wanted to. We set the metric threshold
+    at 1,000 invocations per minute. This is a bit of an arbitrary value. In real
+    life, we would run a load test on a single instance and monitor model latency
+    in order to find the actual value that ought to trigger autoscaling. You can find
+    more information at [https://docs.aws.amazon.com/sagemaker/latest/dg/endpoint-scaling-loadtest.html](https://docs.aws.amazon.com/sagemaker/latest/dg/endpoint-scaling-loadtest.html).
+    We also define a 60-second cooldown for scaling in and out, a good practice for
+    smoothing out transient traffic drops and peaks:'
+  id: totrans-23
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 我们使用 SageMaker 中唯一的内置指标 `SageMakerVariantInvocationsPerInstance`。如果需要，我们也可以定义自定义指标。我们将指标阈值设置为每分钟
+    1,000 次调用。这个值有点随意。在实际操作中，我们会对单个实例进行负载测试，并监控模型延迟，以找到应该触发自动扩展的实际值。你可以在 [https://docs.aws.amazon.com/sagemaker/latest/dg/endpoint-scaling-loadtest.html](https://docs.aws.amazon.com/sagemaker/latest/dg/endpoint-scaling-loadtest.html)
+    查找更多信息。我们还定义了 60 秒的冷却时间，用于扩展和收缩，这是平滑过渡流量波动的好做法：
+- en: '[PRE3]'
+  id: totrans-24
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+  zh: '[PRE3]'
+- en: As shown in the following screenshot, autoscaling is now configured on the endpoint:![Figure
+    13.1 – Viewing autoscaling
+  id: totrans-25
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 如下图所示，端点上已经配置了自动扩展：![图 13.1 – 查看自动扩展
+- en: '](img/B17705_13_1.jpg)'
+  id: totrans-26
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+  zh: '](img/B17705_13_1.jpg)'
+- en: Figure 13.1 – Viewing autoscaling
+  id: totrans-27
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+  zh: 图 13.1 – 查看自动扩展
+- en: 'Using an infinite loop, we send some traffic to the endpoint:'
+  id: totrans-28
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 使用无限循环，我们向端点发送一些流量：
+- en: '[PRE4]'
+  id: totrans-29
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+  zh: '[PRE4]'
+- en: 'Looking at the **CloudWatch** metrics for the endpoints, as shown in the following
+    screenshot, we see that invocations per instance exceed the threshold we defined:
+    1.42k versus 1k:![Figure 13.2 – Viewing CloudWatch metrics'
+  id: totrans-30
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 如下图所示，通过查看端点的**CloudWatch**指标，我们发现每个实例的调用次数超过了我们定义的阈值：1.42k 对比 1k:![图 13.2 –
+    查看 CloudWatch 指标
+- en: '](img/B17705_13_2.jpg)'
+  id: totrans-31
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+  zh: '](img/B17705_13_2.jpg)'
+- en: Figure 13.2 – Viewing CloudWatch metrics
+  id: totrans-32
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+  zh: 图 13.2 – 查看 CloudWatch 指标
+- en: Autoscaling quickly kicks in and decides to add another instance, as visible
+    in the following screenshot. If the load was even higher, it could decide to add
+    several instances at once:![Figure 13.3 – Viewing autoscaling
+  id: totrans-33
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 自动扩展迅速启动，并决定添加另一个实例，如下图所示。如果负载更高，它可能会决定一次添加多个实例：![图 13.3 – 查看自动扩展
+- en: '](img/B17705_13_3.jpg)'
+  id: totrans-34
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+  zh: '](img/B17705_13_3.jpg)'
+- en: Figure 13.3 – Viewing autoscaling
+  id: totrans-35
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+  zh: 图 13.3 – 查看自动扩展
+- en: A few minutes later, the extra instance is in service, and invocations per instance
+    are now below the threshold (935 versus 1,000):![Figure 13.4 – Viewing CloudWatch
+    metrics
+  id: totrans-36
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 几分钟后，额外的实例已经投入服务，每个实例的调用次数现在低于阈值（935 对比 1,000）：![图 13.4 – 查看 CloudWatch 指标
+- en: '](img/B17705_13_4.jpg)'
+  id: totrans-37
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+  zh: '](img/B17705_13_4.jpg)'
+- en: Figure 13.4 – Viewing CloudWatch metrics
+  id: totrans-38
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+  zh: 图 13.4 – 查看 CloudWatch 指标
+- en: A similar process takes place when traffic decreases.
+  id: totrans-39
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+  zh: 当流量减少时，会发生类似的过程。
+- en: 'Once we''re finished, we delete everything:'
+  id: totrans-40
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 完成后，我们删除所有内容：
+- en: '[PRE5]'
+  id: totrans-41
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+  zh: '[PRE5]'
+- en: Setting up autoscaling is easy. It helps you automatically adapt your prediction
+    infrastructure and the associated costs to changing business conditions.
+  id: totrans-42
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 设置自动扩展非常简单。它帮助你根据变化的业务条件自动调整预测基础设施及相关成本。
+- en: 'Now, let''s study another technique that you''ll find extremely useful when
+    you''re dealing with a very large number of models: **multi-model endpoints**.'
+  id: totrans-43
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 现在，让我们学习另一种技术，当你需要处理大量模型时，这种技术会非常有用：**多模型端点**。
+- en: Deploying a multi-model endpoint
+  id: totrans-44
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+  zh: 部署多模型端点
+- en: Multi-model endpoints are useful when you're dealing with a large number of
+    models where it wouldn't make sense to deploy to individual endpoints. For example,
+    imagine a SaaS company building a regression model for each one of their 10,000
+    customers. Surely, they wouldn't want to manage (and pay for) 10,000 endpoints!
+  id: totrans-45
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 多模型端点在你需要处理大量模型的情况下非常有用，在这种情况下，将每个模型部署到单独的端点是没有意义的。例如，想象一下一个 SaaS 公司为其 10,000
+    个客户构建回归模型。显然，他们不希望管理（并为此支付）10,000 个端点！
+- en: Understanding multi-model endpoints
+  id: totrans-46
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 理解多模型端点
+- en: A multi-model endpoint can serve CPU-based predictions from an arbitrary number
+    of models stored in S3 (GPUs are not supported at the time of writing). The path
+    of the model artifact to use is passed in each prediction request. Models are
+    loaded and unloaded dynamically, according to usage and the amount of memory available
+    on the endpoint. Models can also be added to, or removed from, the endpoint by
+    simply copying or deleting artifacts in S3.
+  id: totrans-47
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 一个多模型终端可以提供来自任意数量存储在 S3 中的模型的 CPU 基础预测（截至写作时，不支持 GPU）。每个预测请求中都会传递所使用模型的路径。模型会根据使用情况和终端可用内存动态加载和卸载。你还可以通过简单地复制或删除
+    S3 中的工件来添加或删除终端中的模型。
+- en: 'In order to serve multiple models, your inference container must implement
+    a specific set of APIs that the endpoint will invoke: LOAD MODEL, LIST MODEL,
+    GET MODEL, UNLOAD MODEL, and INVOKE MODEL. You can find the details at [https://docs.aws.amazon.com/sagemaker/latest/dg/mms-container-apis.html](https://docs.aws.amazon.com/sagemaker/latest/dg/mms-container-apis.html).'
+  id: totrans-48
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 为了提供多个模型，你的推理容器必须实现一组特定的 API，终端会调用这些 API：LOAD MODEL、LIST MODEL、GET MODEL、UNLOAD
+    MODEL 和 INVOKE MODEL。你可以在 [https://docs.aws.amazon.com/sagemaker/latest/dg/mms-container-apis.html](https://docs.aws.amazon.com/sagemaker/latest/dg/mms-container-apis.html)
+    获取详细信息。
+- en: At the time of writing, the latest built-in containers for **scikit-learn**,
+    **TensorFlow**, **Apache MXNet**, and **PyTorch** natively support these APIs.
+    The **XGBoost**, **kNN**, **Linear Learner**, and **Random Cut Forest** built-in
+    algorithms also support them.
+  id: totrans-49
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 截至写作时，最新的内置容器如 **scikit-learn**、**TensorFlow**、**Apache MXNet** 和 **PyTorch**
+    原生支持这些 API。**XGBoost**、**kNN**、**Linear Learner** 和 **Random Cut Forest** 内置算法也支持这些
+    API。
+- en: For other algorithms and frameworks, your best option is to build a custom container
+    that includes the **SageMaker Inference Toolkit**, as it already implements the
+    required APIs ([https://github.com/aws/sagemaker-inference-toolkit](https://github.com/aws/sagemaker-inference-toolkit)).
+  id: totrans-50
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 对于其他算法和框架，最佳选择是构建一个包含 **SageMaker 推理工具包** 的自定义容器，因为它已经实现了所需的 API ([https://github.com/aws/sagemaker-inference-toolkit](https://github.com/aws/sagemaker-inference-toolkit))。
+- en: This toolkit is based on the multi-model server ([https://github.com/awslabs/multi-model-server](https://github.com/awslabs/multi-model-server)),
+    which you could also use directly from the CLI to serve predictions from multiple
+    models. You can find more information at [https://docs.aws.amazon.com/sagemaker/latest/dg/build-multi-model-build-container.html](https://docs.aws.amazon.com/sagemaker/latest/dg/build-multi-model-build-container.html).
+  id: totrans-51
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 该工具包基于多模型服务器 ([https://github.com/awslabs/multi-model-server](https://github.com/awslabs/multi-model-server))，你也可以直接从
+    CLI 使用它来提供来自多个模型的预测。你可以在 [https://docs.aws.amazon.com/sagemaker/latest/dg/build-multi-model-build-container.html](https://docs.aws.amazon.com/sagemaker/latest/dg/build-multi-model-build-container.html)
+    获取更多信息。
+- en: Building a multi-model endpoint with scikit-learn
+  id: totrans-52
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 使用 scikit-learn 构建多模型终端
+- en: 'Let''s build a multi-model endpoint with **scikit-learn**, hosting models trained
+    on the Boston Housing dataset. This is only supported on scikit-learn 0.23-1 and
+    above:'
+  id: totrans-53
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 让我们使用 **scikit-learn** 构建一个多模型终端，托管在波士顿住房数据集上训练的模型。仅支持 scikit-learn 0.23-1 及以上版本：
+- en: 'We upload the dataset to S3:'
+  id: totrans-54
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 我们将数据集上传到 S3：
+- en: '[PRE6]'
+  id: totrans-55
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+  zh: '[PRE6]'
+- en: 'We train three models with a different test size, storing their names in a
+    dictionary. Here, we use the latest version of scikit-learn, the first one to
+    support multi-model endpoints:'
+  id: totrans-56
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 我们使用不同的测试大小训练三个模型，并将它们的名称存储在字典中。在这里，我们使用最新版本的 scikit-learn，它是第一个支持多模型终端的版本：
+- en: '[PRE7]'
+  id: totrans-57
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+  zh: '[PRE7]'
+- en: 'We find the S3 URI of the model artifact along with its prefix:'
+  id: totrans-58
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 我们找到模型工件的 S3 URI 及其前缀：
+- en: '[PRE8]'
+  id: totrans-59
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+  zh: '[PRE8]'
+- en: 'We delete any previous model stored in S3:'
+  id: totrans-60
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 我们删除 S3 中存储的任何先前的模型：
+- en: '[PRE9]'
+  id: totrans-61
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+  zh: '[PRE9]'
+- en: 'We copy the three model artifacts to this location:'
+  id: totrans-62
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 我们将三个模型工件复制到这个位置：
+- en: '[PRE10]'
+  id: totrans-63
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+  zh: '[PRE10]'
+- en: 'This lists the model artifacts:'
+  id: totrans-64
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+  zh: 这会列出模型工件：
+- en: '[PRE11]'
+  id: totrans-65
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+  zh: '[PRE11]'
+- en: 'We define the name of the script and the S3 location where we''ll upload the
+    code archive. Here, I''m passing the training script, which includes a `model_fn()`
+    function to load the model. This is the only function that will be used to serve
+    predictions:'
+  id: totrans-66
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 我们定义脚本的名称以及我们将上传代码归档的 S3 位置。在这里，我传递了训练脚本，其中包括一个 `model_fn()` 函数来加载模型。这个函数是唯一用于提供预测的函数：
+- en: '[PRE12]'
+  id: totrans-67
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+  zh: '[PRE12]'
+- en: 'We create the code archive and we upload it to S3:'
+  id: totrans-68
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 我们创建代码归档并将其上传到 S3：
+- en: '[PRE13]'
+  id: totrans-69
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+  zh: '[PRE13]'
+- en: 'We create the multi-model endpoint with the `create_model()` API and we set
+    the `Mode` parameter accordingly:'
+  id: totrans-70
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 我们通过 `create_model()` API 创建多模型终端，并相应设置 `Mode` 参数：
+- en: '[PRE14]'
+  id: totrans-71
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+  zh: '[PRE14]'
+- en: 'We create the endpoint configuration as usual:'
+  id: totrans-72
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 我们像往常一样创建终端配置：
+- en: '[PRE15]'
+  id: totrans-73
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+  zh: '[PRE15]'
+- en: 'We create the endpoint as usual:'
+  id: totrans-74
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 我们像往常一样创建终端：
+- en: '[PRE16]'
+  id: totrans-75
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+  zh: '[PRE16]'
+- en: 'Once the endpoint is in service, we load samples from the dataset and convert
+    them to a `numpy` array:'
+  id: totrans-76
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 一旦终端节点投入使用，我们就从数据集中加载样本并将其转换为 `numpy` 数组：
+- en: '[PRE17]'
+  id: totrans-77
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+  zh: '[PRE17]'
+- en: 'We predict these samples with all three models, passing the name of the model
+    to use for each prediction request, such as **sagemaker-scikit-learn-2021-09-01-08-05-33-229**:'
+  id: totrans-78
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 我们使用这三种模型对这些样本进行预测，并将要使用的模型名称传递给每个预测请求，例如 **sagemaker-scikit-learn-2021-09-01-08-05-33-229**：
+- en: '[PRE18]'
+  id: totrans-79
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+  zh: '[PRE18]'
+- en: We could train more models, copy their artifacts to the same S3 location, and
+    use them directly without recreating the endpoint. We could also delete those
+    models we don't need.
+  id: totrans-80
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 我们可以训练更多的模型，将它们的工件复制到相同的 S3 位置，并直接使用它们，而无需重新创建终端节点。我们还可以删除那些不需要的模型。
+- en: 'Once we''re finished, we delete the endpoint:'
+  id: totrans-81
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 一旦完成，我们就删除终端节点：
+- en: '[PRE19]'
+  id: totrans-82
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+  zh: '[PRE19]'
+- en: As you can see, multi-model endpoints are a great way to serve as many models
+    as you'd like from a single endpoint, and setting them up isn't difficult.
+  id: totrans-83
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 如您所见，多模型终端节点是一个很好的方式，可以从单一终端节点提供您想要的多个模型，而且设置起来并不困难。
+- en: 'In the next section, we''re going to study another cost optimization technique
+    that can help you save a lot of money on GPU prediction: **Amazon Elastic Inference**.'
+  id: totrans-84
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 在下一节中，我们将研究另一种成本优化技术，它可以帮助您在 GPU 预测中节省大量费用：**Amazon Elastic Inference**。
+- en: Deploying a model with Amazon Elastic Inference
+  id: totrans-85
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+  zh: 使用 Amazon Elastic Inference 部署模型
+- en: When deploying a model, you have to decide whether it should run on a CPU instance
+    or on a GPU instance. In some cases, there isn't much of a debate. For example,
+    some algorithms simply don't benefit from GPU acceleration, so they should be
+    deployed to CPU instances. At the other end of the spectrum, complex deep learning
+    models for computer vision or natural language processing run best on GPUs.
+  id: totrans-86
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 部署模型时，您需要决定它是应该运行在 CPU 实例上，还是 GPU 实例上。在某些情况下，这个问题并不复杂。例如，有些算法根本无法从 GPU 加速中获益，因此应该部署到
+    CPU 实例上。另一方面，用于计算机视觉或自然语言处理的复杂深度学习模型，最好运行在 GPU 上。
+- en: In many cases, the situation is not that clear-cut. First, you should know what
+    the maximum predicted latency is for your application. If you're predicting a
+    click-through rate for a real-time ad tech application, every millisecond counts;
+    if you're predicting customer churn in a back-office application, not so much.
+  id: totrans-87
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 在许多情况下，情况并不是那么简单明确。首先，您需要知道您应用程序的最大预测延迟是多少。如果您正在为实时广告技术应用预测点击率，那么每毫秒都至关重要；如果您是在后台应用程序中预测客户流失，那么就没那么重要。
+- en: 'In addition, even models that could benefit from GPU acceleration may not be
+    large and complex enough to fully utilize the thousands of cores available on
+    a modern GPU. In such scenarios, you''re stuck between a rock and a hard place:
+    deploying on CPU would be a little slow for your needs, and deploying on GPU wouldn''t
+    be cost-effective.'
+  id: totrans-88
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 此外，即使是能够从 GPU 加速中受益的模型，可能也不够大或复杂，无法充分利用现代 GPU 上数千个核心。在这种情况下，您会陷入两难境地：在 CPU 上部署可能会对您的需求稍显缓慢，而在
+    GPU 上部署则不具备成本效益。
+- en: This is the problem that Amazon Elastic Inference aims to solve ([https://aws.amazon.com/machine-learning/elastic-inference/](https://aws.amazon.com/machine-learning/elastic-inference/)).
+    It lets you attach fractional GPU acceleration to any EC2 instance, including
+    notebook instances and endpoint instances. **Accelerators** come in three different
+    sizes (medium, large, and extra large), which let you find the best cost-performance
+    ratio for your application.
+  id: totrans-89
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 这是 Amazon Elastic Inference 旨在解决的问题 ([https://aws.amazon.com/machine-learning/elastic-inference/](https://aws.amazon.com/machine-learning/elastic-inference/))。它让您可以将分段
+    GPU 加速附加到任何 EC2 实例上，包括笔记本实例和终端节点实例。**加速器**有三种不同的尺寸（中型、大型和超大型），可以帮助您找到最适合您应用的性价比。
+- en: Elastic Inference is available for **TensorFlow**, **PyTorch**, and **Apache
+    MXNet**. You can use it in your own code running on EC2 instances, thanks to AWS
+    extensions available in the **Deep Learning AMI**. You can also use it with **Deep
+    Learning Containers**. More information is available at [https://docs.aws.amazon.com/elastic-inference/latest/developerguide/working-with-ei.html](https://docs.aws.amazon.com/elastic-inference/latest/developerguide/working-with-ei.html).
+  id: totrans-90
+  prefs: []
+  type: TYPE_NORMAL
+  zh: Elastic Inference 可用于**TensorFlow**、**PyTorch** 和 **Apache MXNet**。您可以通过 AWS
+    提供的扩展，在 EC2 实例上运行自己的代码，使用 **深度学习 AMI**。您还可以与 **深度学习容器** 一起使用。更多信息请访问 [https://docs.aws.amazon.com/elastic-inference/latest/developerguide/working-with-ei.html](https://docs.aws.amazon.com/elastic-inference/latest/developerguide/working-with-ei.html)。
+- en: Of course, **Elastic Inference** is available on SageMaker. You can attach an
+    accelerator to a **Notebook Instance** at creation time and work with the built-in
+    **conda** environments. You can also attach an accelerator to an endpoint, and
+    we'll show you how to do this in the next example.
+  id: totrans-91
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 当然，**Elastic Inference**可以在SageMaker上使用。你可以在创建时将加速器附加到**Notebook Instance**，并使用内置的**conda**环境。你还可以将加速器附加到端点，接下来我们会展示如何操作。
+- en: Deploying a model with Amazon Elastic Inference
+  id: totrans-92
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 使用Amazon Elastic Inference部署模型
+- en: 'Let''s reuse the **Image Classification** model we trained on dog and cat images
+    in [*Chapter 5*](B17705_05_Final_JM_ePub.xhtml#_idTextAnchor091), *Training Computer
+    Vision Models*. This is based on an 18-layer **ResNet** model, which is pretty
+    small as far as convolution neural networks are concerned:'
+  id: totrans-93
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 让我们重新使用在[ *第5章* ](B17705_05_Final_JM_ePub.xhtml#_idTextAnchor091)中训练的**图像分类**模型，这个模型基于18层**ResNet**网络，在卷积神经网络中算是比较小的：
+- en: 'Once the model has been trained, we deploy it as usual on two endpoints: one
+    backed by an `ml.c5.large` instance and another one backed by an `ml.g4dn.xlarge`
+    instance, the most cost-effective GPU instance available on SageMaker:'
+  id: totrans-94
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 一旦模型训练完成，我们像往常一样将其部署到两个端点：一个由`ml.c5.large`实例支持，另一个由`ml.g4dn.xlarge`实例支持，后者是SageMaker上最具成本效益的GPU实例：
+- en: '[PRE20]'
+  id: totrans-95
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+  zh: '[PRE20]'
+- en: 'We then download a test image, predict it 1,000 times, and measure the total
+    time it takes:'
+  id: totrans-96
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 然后，我们下载一张测试图像，进行1,000次预测，并测量总时间：
+- en: '[PRE21]'
+  id: totrans-97
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+  zh: '[PRE21]'
+- en: The results are shown in the next table (us-east-1 prices):![](img/B17705_13_Table_1.jpg)
+  id: totrans-98
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 结果显示在下表中（us-east-1价格）：![](img/B17705_13_Table_1.jpg)
+- en: Unsurprisingly, the GPU instance is about twice as fast. Yet, the CPU instance
+    is more cost-effective, as it's over four times less expensive. Putting it another
+    way, you could run your endpoint with four CPU instances instead of one GPU instance
+    and get more throughput for the same cost. This shows why it's so important to
+    understand the latency requirement of your application. "Fast" and "slow" are
+    very relative concepts!
+  id: totrans-99
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+  zh: 不出所料，GPU实例大约是CPU实例的两倍速度。然而，CPU实例更具成本效益，因为它的成本比GPU实例低四倍多。换句话说，你可以用四个CPU实例代替一个GPU实例，且以相同的成本获得更多的吞吐量。这也说明了为何了解你应用的延迟要求如此重要。
+    "快"和"慢"是非常相对的概念！
+- en: 'We then deploy the same model on three more endpoints backed by `ml.c5.large`
+    instances, accelerated by a medium, large, and extra-large `deploy()` API. Here''s
+    the code for the medium endpoint:'
+  id: totrans-100
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 然后，我们在三个不同的端点上部署相同的模型，这些端点由`ml.c5.large`实例支持，并通过中型、大型和超大型`deploy()` API加速。以下是中型端点的代码：
+- en: '[PRE22]'
+  id: totrans-101
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+  zh: '[PRE22]'
+- en: 'You can see the results in the following table:'
+  id: totrans-102
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+  zh: 你可以在下表中看到结果：
+- en: '![](img/B17705_13_Table_2.jpg)'
+  id: totrans-103
+  prefs:
+  - PREF_IND
+  type: TYPE_IMG
+  zh: '![](img/B17705_13_Table_2.jpg)'
+- en: 'We get up to 20% speed-up compared to the naked CPU endpoint, and the cost
+    is lower than if we used a GPU instance. Let''s keep tweaking:'
+  id: totrans-104
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+  zh: 相比裸机CPU端点，我们的速度提升了最多20%，而且成本低于使用GPU实例的情况。让我们继续调整：
+- en: 'Attentive readers will have noticed that the previous tables include teraFLOP
+    values for both 32-bit and 16-bit floating-point values. Indeed, either one of
+    these data types may be used to store model parameters. Looking at the documentation
+    for the image classification algorithm, we see that we can actually select a data
+    type with the `precision_dtype` parameter and that the default value is `float32`.
+    This begs the question: would the results differ if we trained our model in `float16`
+    mode? There''s only one way to know, isn''t there?'
+  id: totrans-105
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 细心的读者可能已经注意到，前面的表格中包含了32位和16位浮点值的teraFLOP值。事实上，这两种数据类型都可以用来存储模型参数。查看图像分类算法的文档，我们发现实际上可以通过`precision_dtype`参数选择数据类型，默认值是`float32`。这就引出了一个问题：如果我们以`float16`模式训练模型，结果会有所不同吗？只有一个办法知道答案，不是吗？
+- en: '[PRE23]'
+  id: totrans-106
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+  zh: '[PRE23]'
+- en: 'Training again, we hit the same model accuracy as in `float32` mode. Deploying
+    benchmarking again, we get the following results:'
+  id: totrans-107
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 重新训练后，我们达到了与`float32`模式下相同的模型精度。再次进行部署基准测试，我们得到了以下结果：
+- en: '![](img/B17705_13_Table_3.jpg)'
+  id: totrans-108
+  prefs: []
+  type: TYPE_IMG
+  zh: '![](img/B17705_13_Table_3.jpg)'
+- en: No meaningful difference is visible on the naked instances. Predicting with
+    an **FP-16** model on the large and extra-large accelerators helps us speed up
+    predictions by about 10% compared to the **FP-32** model. Pretty good! This performance
+    level is definitely a nice upgrade compared to a naked CPU instance, and it's
+    cost-effective compared to a GPU instance.
+  id: totrans-109
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 在裸机实例上看不出明显的差异。使用**FP-16**模型在大规模和超大规模加速器上进行预测，相比于**FP-32**模型，能帮助我们将预测速度提高大约10%。相当不错！与裸机CPU实例相比，这个性能水平无疑是一个不错的升级，而与GPU实例相比，它在成本上更具优势。
+- en: In fact, switching a single endpoint instance from `ml.g4dn.xlarge` to `ml.c5.large+ml.eia2.large`
+    would save you ($0.736–$0.438) x 24 x 30 = $214 dollars per month. That's serious
+    money!
+  id: totrans-110
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 实际上，将单个终端实例从 `ml.g4dn.xlarge` 切换到 `ml.c5.large+ml.eia2.large`，每月将节省（$0.736–$0.438）x
+    24 x 30 = $214 美元。这可是大笔钱！
+- en: As you can see, Amazon Elastic Inference is extremely easy to use, and it gives
+    you additional deployment options. Once you've defined the prediction latency
+    requirement for your application, you can quickly experiment and find the best
+    cost-performance ratio.
+  id: totrans-111
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 如你所见，Amazon Elastic Inference 非常易于使用，并且为你提供了额外的部署选项。一旦你定义了应用程序的预测延迟要求，你就可以快速进行实验，并找到最佳的性价比。
+- en: 'Now, let''s talk about another SageMaker capability that lets you compile models
+    for a specific hardware architecture: **Amazon Neo**.'
+  id: totrans-112
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 现在，让我们来谈谈另一个 SageMaker 功能，它可以让你为特定硬件架构编译模型：**Amazon Neo**。
+- en: Compiling models with Amazon SageMaker Neo
+  id: totrans-113
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+  zh: 使用 Amazon SageMaker Neo 编译模型
+- en: Embedded software developers have long learned how to write highly optimized
+    code that both runs fast and uses hardware resources frugally. In theory, the
+    same techniques could also be applied to optimize machine learning predictions.
+    In practice, this is a daunting task given the complexity of machine learning
+    libraries and models.
+  id: totrans-114
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 嵌入式软件开发人员早已学会如何编写高度优化的代码，使其既能快速运行，又能节约硬件资源。从理论上讲，同样的技术也可以用于优化机器学习预测。但在实践中，由于机器学习库和模型的复杂性，这是一项艰巨的任务。
+- en: This is the problem that Amazon SageMaker Neo aims to solve.
+  id: totrans-115
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 这是 Amazon SageMaker Neo 旨在解决的问题。
+- en: Understanding Amazon SageMaker Neo
+  id: totrans-116
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 了解 Amazon SageMaker Neo
+- en: 'Amazon Neo has two components: a model compiler that optimizes models for the
+    underlying hardware, and a small runtime named **Deep Learning Runtime** (**DLR**),
+    used to load optimized models and run predictions ([https://aws.amazon.com/sagemaker/neo](https://aws.amazon.com/sagemaker/neo)).'
+  id: totrans-117
+  prefs: []
+  type: TYPE_NORMAL
+  zh: Amazon Neo 有两个组件：一个优化模型以适应底层硬件的模型编译器和一个名为**深度学习运行时**（**DLR**）的小型运行时，用于加载优化后的模型并进行预测（[https://aws.amazon.com/sagemaker/neo](https://aws.amazon.com/sagemaker/neo)）。
+- en: 'Amazon SageMaker Neo can compile models trained with the following:'
+  id: totrans-118
+  prefs: []
+  type: TYPE_NORMAL
+  zh: Amazon SageMaker Neo 可以编译以下训练的模型：
+- en: '**Two built-in algorithms**: XGBoost and Image Classification.'
+  id: totrans-119
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: '**两个内置算法**：XGBoost 和图像分类。'
+- en: '**Built-in frameworks**: TensorFlow, PyTorch, and Apache MXNet, as well as
+    models in **ONNX** format. Many operators are supported, and you can find the
+    full list at [https://aws.amazon.com/releasenotes/sagemaker-neo-supported-frameworks-and-operators](https://aws.amazon.com/releasenotes/sagemaker-neo-supported-frameworks-and-operators).'
+  id: totrans-120
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: '**内置框架**：TensorFlow、PyTorch 和 Apache MXNet，以及 **ONNX** 格式的模型。支持许多运算符，你可以在 [https://aws.amazon.com/releasenotes/sagemaker-neo-supported-frameworks-and-operators](https://aws.amazon.com/releasenotes/sagemaker-neo-supported-frameworks-and-operators)
+    找到完整的列表。'
+- en: 'Training takes place as usual, using your estimator of choice. Then, using
+    the `compile_model()` API, we can easily compile the model for one of these hardware
+    targets:'
+  id: totrans-121
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 训练照常进行，使用你选择的估算器。然后，使用 `compile_model()` API，我们可以轻松地为以下硬件目标编译模型：
+- en: 'Amazon EC2 instances of the following families: `c4`, `c5`, `m4`, `m5`, `p2`,
+    `p3`, and `inf1` (which we''ll discuss later in this chapter), as well as Lambda'
+  id: totrans-122
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 以下系列的 Amazon EC2 实例：`c4`、`c5`、`m4`、`m5`、`p2`、`p3` 和 `inf1`（我们将在本章后面讨论），以及 Lambda
+- en: 'AI-powered cameras: AWS DeepLens and Acer aiSage'
+  id: totrans-123
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: AI 驱动的相机：AWS DeepLens 和 Acer aiSage
+- en: 'NVIDIA Jetson platforms: TX1, TX2, Nano, and Xavier'
+  id: totrans-124
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: NVIDIA Jetson 平台：TX1、TX2、Nano 和 Xavier
+- en: Raspberry Pi
+  id: totrans-125
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 树莓派
+- en: System-on-chip platforms from Rockchip, Qualcomm, Ambarella, and more
+  id: totrans-126
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: 来自 Rockchip、Qualcomm、Ambarella 等的系统级芯片平台
+- en: Model compilation performs both architecture optimizations (such as fusing layers)
+    and code optimizations (replacing machine learning operators with hardware-optimized
+    versions). The resulting artifact is stored in S3 and contains both the original
+    model and its optimized form.
+  id: totrans-127
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 模型编译执行架构优化（如融合层）和代码优化（将机器学习运算符替换为硬件优化版本）。生成的工件存储在 S3 中，包含原始模型及其优化后的形式。
+- en: The DLR is then used to load the model and predict with it. Of course, it can
+    be used in a standalone fashion, such as on a Raspberry Pi. You can find installation
+    instructions at [https://neo-ai-dlr.readthedocs.io](https://neo-ai-dlr.readthedocs.io).
+    As the DLR is open source ([https://github.com/neo-ai/neo-ai-dlr](https://github.com/neo-ai/neo-ai-dlr)),
+    you can also build it from source and – why not? – customize it for your own hardware
+    platform!
+  id: totrans-128
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 然后使用 DLR 加载模型并进行预测。当然，它也可以独立使用，例如在 Raspberry Pi 上。您可以在 [https://neo-ai-dlr.readthedocs.io](https://neo-ai-dlr.readthedocs.io)
+    找到安装说明。由于 DLR 是开源的（[https://github.com/neo-ai/neo-ai-dlr](https://github.com/neo-ai/neo-ai-dlr)），您也可以从源代码构建它，并为自己的硬件平台定制它！
+- en: When it comes to using the DLR with SageMaker, things are much simpler. SageMaker
+    provides built-in containers with Neo support, and these are the ones you should
+    use to deploy models compiled with Neo (as already mentioned, the training container
+    remains unchanged). You can find a list of Neo-enabled containers at [https://docs.aws.amazon.com/sagemaker/latest/dg/neo-deployment-hosting-services-cli.html](https://docs.aws.amazon.com/sagemaker/latest/dg/neo-deployment-hosting-services-cli.html).
+  id: totrans-129
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 当涉及使用 DLR 和 SageMaker 时，情况要简单得多。SageMaker 提供了带有 Neo 支持的内置容器，这些容器是您应该用于部署使用 Neo
+    编译的模型的容器（正如前面提到的，训练容器保持不变）。您可以在 [https://docs.aws.amazon.com/sagemaker/latest/dg/neo-deployment-hosting-services-cli.html](https://docs.aws.amazon.com/sagemaker/latest/dg/neo-deployment-hosting-services-cli.html)
+    找到 Neo 支持的容器列表。
+- en: Last, but not least, one of the benefits of the DLR is its small size. For example,
+    the Python package for p2 and p3 instances is only 5.4 MB in size, orders of magnitude
+    smaller than your typical deep learning library and its dependencies. This is
+    obviously critical for embedded environments, and it's also welcome on SageMaker
+    as containers will be smaller too.
+  id: totrans-130
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 最后但并非最不重要的，DLR 的一个好处是其体积小。例如，适用于 p2 和 p3 实例的 Python 包仅为 5.4 MB，比您通常使用的深度学习库及其依赖项小得多。这显然对嵌入式环境至关重要，同时也受到
+    SageMaker 的欢迎，因为容器也会更小。
+- en: Let's reuse our image classification example and see whether Neo can speed it
+    up.
+  id: totrans-131
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 让我们重用我们的图像分类示例，看看 Neo 是否能加速它。
+- en: Compiling and deploying an image classification model on SageMaker
+  id: totrans-132
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 在 SageMaker 上编译和部署图像分类模型
+- en: 'In order to give Neo a little more work, we train a 50-layer ResNet this time.
+    Then, we''ll compile it, deploy it to an endpoint, and compare it with the vanilla
+    model:'
+  id: totrans-133
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 为了让 Neo 多做一些工作，这次我们训练一个 50 层的 ResNet。然后，我们将其编译并部署到端点，并与原始模型进行比较：
+- en: 'Setting `num_layers` to `50`, we train the model for 30 epochs. Then, we deploy
+    it to an `ml.c5.4xlarge` instance as usual:'
+  id: totrans-134
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 将 `num_layers` 设置为 `50`，我们对模型进行 30 个 epochs 的训练。然后，像往常一样将其部署到 `ml.c5.4xlarge`
+    实例上：
+- en: '[PRE24]'
+  id: totrans-135
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+  zh: '[PRE24]'
+- en: 'We compile the model with Neo, targeting the EC2 c5 instance family. We also
+    define the input shape of the model: one image, three channels (red, green, blue),
+    and 224 x 224 pixels (the default value for the image classification algorithm).
+    As built-in algorithms are implemented with Apache MXNet, we set the framework
+    accordingly:'
+  id: totrans-136
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 我们使用 Neo 编译模型，目标是 EC2 c5 实例系列。我们还定义了模型的输入形状：一张图像，三个通道（红色、绿色、蓝色），以及 224 x 224
+    像素（图像分类算法的默认值）。由于内置算法是使用 Apache MXNet 实现的，我们相应地设置了框架：
+- en: '[PRE25]'
+  id: totrans-137
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+  zh: '[PRE25]'
+- en: 'We then deploy the compiled model as usual, explicitly setting the prediction
+    container to the Neo-enabled version of image classification:'
+  id: totrans-138
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 然后像往常一样部署编译后的模型，明确将预测容器设置为启用 Neo 的图像分类版本：
+- en: '[PRE26]'
+  id: totrans-139
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+  zh: '[PRE26]'
+- en: 'Downloading a test image, and using the same benchmarking function that we
+    used for Amazon Elastic Inference, we measure the time required to predict 1,000
+    images:'
+  id: totrans-140
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 下载一个测试图像，并使用与 Amazon Elastic Inference 相同的基准测试函数，测量预测 1,000 张图像所需的时间：
+- en: '[PRE27]'
+  id: totrans-141
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+  zh: '[PRE27]'
+- en: Prediction with the vanilla model takes 87 seconds. Prediction with the Neo-optimized
+    model takes 28.5 seconds, three times faster! That compilation step sure paid
+    off. You'll also be happy to learn that compiling Neo models is free of charge,
+    so there's really no reason not to try it.
+  id: totrans-142
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+  zh: 使用原始模型进行预测需要 87 秒。使用经过 Neo 优化的模型仅需 28.5 秒，快了三倍！那个编译步骤确实值回票价。您还会高兴地了解到，Neo 模型的编译是免费的，所以确实没有理由不尝试。
+- en: Let's take a look at these compiled models.
+  id: totrans-143
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 让我们来看看这些编译后的模型。
+- en: Exploring models compiled with Neo
+  id: totrans-144
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 探索使用 Neo 编译的模型
+- en: 'Looking at the output location passed to the `compile_model()` API, we see
+    the model artifact generated by Neo:'
+  id: totrans-145
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 查看传递给 `compile_model()` API 的输出位置，我们看到了 Neo 生成的模型文件：
+- en: '[PRE28]'
+  id: totrans-146
+  prefs: []
+  type: TYPE_PRE
+  zh: '[PRE28]'
+- en: 'Copying it locally and extracting it, we see that it contains both the original
+    model and its compiled version:'
+  id: totrans-147
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 将其本地复制并解压缩，我们看到其中包含原始模型及其编译版本：
+- en: '[PRE29]'
+  id: totrans-148
+  prefs: []
+  type: TYPE_PRE
+  zh: '[PRE29]'
+- en: 'In particular, the `compiled.so` file is a native file containing hardware-optimized
+    versions of the model operators:'
+  id: totrans-149
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 特别地，`compiled.so` 文件是一个本地文件，包含模型操作符的硬件优化版本：
+- en: '[PRE30]'
+  id: totrans-150
+  prefs: []
+  type: TYPE_PRE
+  zh: '[PRE30]'
+- en: We could look at the assembly code for these, but something tells me that most
+    of you wouldn't particularly enjoy it. Joking aside, this is completely unnecessary.
+    All we need to know is how to compile and deploy models with Neo.
+  id: totrans-151
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 我们本可以查看这些的汇编代码，但直觉告诉我，大多数人可能并不特别喜欢这个。开个玩笑，实际上这是完全不必要的。我们需要知道的仅仅是如何使用 Neo 编译和部署模型。
+- en: Now, how about we deploy our model on a **Raspberry Pi**?
+  id: totrans-152
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 现在，我们来看看如何在 **Raspberry Pi** 上部署我们的模型？
+- en: Deploying an image classification model on a Raspberry Pi
+  id: totrans-153
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 在 Raspberry Pi 上部署图像分类模型
+- en: The Raspberry Pi is a fantastic device, and despite its limited compute and
+    memory capabilities, it's well capable of predicting images with complex deep
+    learning models. Here, I'm using a Raspberry Pi 3 Model B, with a 1.2 GHz quad-core
+    ARM processor and 1 GB of memory. That's definitely not much, yet it could run
+    a vanilla Apache MXNet model.
+  id: totrans-154
+  prefs: []
+  type: TYPE_NORMAL
+  zh: Raspberry Pi 是一款非常棒的设备，尽管其计算和内存能力有限，但它完全能够用复杂的深度学习模型进行图像预测。在这里，我使用的是 Raspberry
+    Pi 3 Model B，配备 1.2 GHz 四核 ARM 处理器和 1 GB 内存。虽然这不算强大，但它足以运行原生 Apache MXNet 模型。
+- en: Inexplicably, there is no pre-packaged version of MXNet for Raspberry Pi, and
+    building it from source is a painstakingly long and unpredictable process. (I'm
+    looking at you, OOM errors!) Fortunately, thanks to the DLR, we can do away with
+    all of it!
+  id: totrans-155
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 不可思议的是，Raspberry Pi 没有 MXNet 的预编译版本，从源代码构建它是一项既漫长又难以预测的过程。（我在看你，OOM 错误！）幸运的是，借助
+    DLR，我们可以摆脱所有这些麻烦！
+- en: 'In our SageMaker notebook, we compile the model for the Raspberry Pi:'
+  id: totrans-156
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 在我们的 SageMaker 笔记本中，我们为 Raspberry Pi 编译模型：
+- en: '[PRE31]'
+  id: totrans-157
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+  zh: '[PRE31]'
+- en: 'On our local machine, we fetch the compiled model artifact from S3 and copy
+    it to the Raspberry Pi:'
+  id: totrans-158
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 在我们的本地机器上，我们从 S3 获取已编译的模型文件并将其复制到 Raspberry Pi 上：
+- en: '[PRE32]'
+  id: totrans-159
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+  zh: '[PRE32]'
+- en: 'Moving to the Raspberry Pi, we extract the compiled model to the `resnet50`
+    directory:'
+  id: totrans-160
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 转到 Raspberry Pi，我们将已编译的模型提取到`resnet50`目录：
+- en: '[PRE33]'
+  id: totrans-161
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+  zh: '[PRE33]'
+- en: 'Installing the DLR is very easy. We locate the appropriate package at [https://github.com/neo-ai/neo-ai-dlr/releases](https://github.com/neo-ai/neo-ai-dlr/releases),
+    download it, and use `pip` to install it:'
+  id: totrans-162
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 安装 DLR 非常简单。我们在 [https://github.com/neo-ai/neo-ai-dlr/releases](https://github.com/neo-ai/neo-ai-dlr/releases)
+    找到合适的安装包，下载并使用`pip`进行安装：
+- en: '[PRE34]'
+  id: totrans-163
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+  zh: '[PRE34]'
+- en: 'We first write a function that loads an image from a file, resizes it to 224
+    x 224 pixels, and shapes it as a (1, 3, 224, 224) `numpy` array, the correct input
+    shape of our model:'
+  id: totrans-164
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 我们首先编写一个函数，从文件中加载图像，将其调整为 224 x 224 像素，并将其形状调整为（1, 3, 224, 224）的`numpy`数组，这是我们模型正确的输入形状：
+- en: '[PRE35]'
+  id: totrans-165
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+  zh: '[PRE35]'
+- en: 'Then, we import the DLR and load the compiled model from the `resnet50` directory:'
+  id: totrans-166
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 然后，我们导入 DLR 并从`resnet50`目录加载已编译的模型：
+- en: '[PRE36]'
+  id: totrans-167
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+  zh: '[PRE36]'
+- en: Then, we load a dog image… or an image of a cat. Your choice!
+  id: totrans-168
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 接着，我们加载一张狗的图片……或者一张猫的图片。由你选择！
+- en: '[PRE37]'
+  id: totrans-169
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+  zh: '[PRE37]'
+- en: 'Finally, we predict the image 100 times, printing the prediction to defeat
+    any lazy evaluation that MXNet could implement:'
+  id: totrans-170
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+  zh: 最后，我们预测图像 100 次，将预测结果打印出来，以避免 MXNet 可能实现的延迟评估：
+- en: '[PRE38]'
+  id: totrans-171
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+  zh: '[PRE38]'
+- en: 'The following dog and cat images are respectively predicted as [2.554065e-09
+    1.000000e+00] and [9.9967313e-01 3.2689856e-04], which is very nice given the
+    validation accuracy of our model (about 84%):'
+  id: totrans-172
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 以下的狗和猫图像分别被预测为 [2.554065e-09 1.000000e+00] 和 [9.9967313e-01 3.2689856e-04]，考虑到我们模型的验证精度（约
+    84%），这是非常不错的：
+- en: '![Figure 13.5 – Test images (source: Wikimedia)'
+  id: totrans-173
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '![图 13.5 – 测试图像（来源：Wikimedia）'
+- en: '](img/B17705_13_5.jpg)'
+  id: totrans-174
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '](img/B17705_13_5.jpg)'
+- en: 'Figure 13.5 – Test images (source: Wikimedia)'
+  id: totrans-175
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 图 13.5 – 测试图像（来源：Wikimedia）
+- en: Prediction time is about 1.2 seconds per image, which is slow but certainly
+    good enough for plenty of embedded applications. Predicting with the vanilla model
+    takes about 6–7 seconds, so the speed-up is very significant.
+  id: totrans-176
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 每张图像的预测时间约为 1.2 秒，虽然较慢，但对于许多嵌入式应用来说，完全足够。使用原生模型进行预测大约需要 6-7 秒，所以加速效果非常显著。
+- en: As you can see, compiling models is a very effective technique. In the next
+    section, we're going to focus on one of Neo's targets, **AWS Inferentia**.
+  id: totrans-177
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 如你所见，编译模型是一项非常有效的技术。在下一部分，我们将重点介绍 Neo 的一个目标，**AWS Inferentia**。
+- en: Deploying models on AWS Inferentia
+  id: totrans-178
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 在 AWS Inferentia 上部署模型
+- en: AWS Inferentia is a custom chip designed specifically for high-throughput and
+    low-cost prediction ([https://aws.amazon.com/machine-learning/inferentia](https://aws.amazon.com/machine-learning/inferentia)).
+    Inferentia chips are hosted on **EC2 inf1** instances. These come in different
+    sizes, with 1, 4, or 16 chips. Each chip contains four **NeuronCores**, implementing
+    high-performance matrix multiply engines that speed up typical deep learning operations
+    such as convolution. NeuronCores also contain large caches that save external
+    memory accesses.
+  id: totrans-179
+  prefs: []
+  type: TYPE_NORMAL
+  zh: AWS Inferentia是一款专为高吞吐量和低成本预测而设计的定制芯片（[https://aws.amazon.com/machine-learning/inferentia](https://aws.amazon.com/machine-learning/inferentia)）。Inferentia芯片托管在**EC2
+    inf1**实例上。这些实例有不同的大小，分别包含1、4或16颗芯片。每颗芯片包含四个**NeuronCores**，实现了高性能的矩阵乘法引擎，加速了典型的深度学习操作，如卷积。NeuronCores还包含大量缓存，减少了外部内存访问。
+- en: In order to run on Inferentia, models need to be compiled and deployed with
+    the Neuron SDK ([https://github.com/aws/aws-neuron-sdk](https://github.com/aws/aws-neuron-sdk)).
+    This SDK lets you work with TensorFlow, PyTorch, and Apache MXNet models.
+  id: totrans-180
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 为了在Inferentia上运行，模型需要使用Neuron SDK进行编译和部署（[https://github.com/aws/aws-neuron-sdk](https://github.com/aws/aws-neuron-sdk)）。这个SDK允许你与TensorFlow、PyTorch和Apache
+    MXNet模型进行工作。
+- en: You can work with the Neuron SDK on EC2 instances, compiling and deploying models
+    yourself. Once again, SageMaker simplifies the whole process, as inf1 instances
+    are part of the target architectures that Neo can compile models for.
+  id: totrans-181
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 你可以在EC2实例上使用Neuron SDK，自己进行模型的编译和部署。再一次，SageMaker简化了整个过程，因为inf1实例是Neo可以编译模型的目标架构之一。
+- en: You can find an example at [https://github.com/awslabs/amazon-sagemaker-examples/tree/master/sagemaker_neo_compilation_jobs/deploy_tensorflow_model_on_Inf1_instance](https://github.com/awslabs/amazon-sagemaker-examples/tree/master/sagemaker_neo_compilation_jobs/deploy_tensorflow_model_on_Inf1_instance).
+  id: totrans-182
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 你可以在[https://github.com/awslabs/amazon-sagemaker-examples/tree/master/sagemaker_neo_compilation_jobs/deploy_tensorflow_model_on_Inf1_instance](https://github.com/awslabs/amazon-sagemaker-examples/tree/master/sagemaker_neo_compilation_jobs/deploy_tensorflow_model_on_Inf1_instance)找到一个示例。
+- en: To close this chapter, let's sum up all the cost optimization techniques we
+    discussed throughout the book.
+  id: totrans-183
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 为了结束本章，让我们总结一下在整本书中讨论的所有成本优化技术。
+- en: Building a cost optimization checklist
+  id: totrans-184
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+  zh: 构建成本优化清单
+- en: You should constantly pay attention to cost, even in the early stages of your
+    machine learning project. Even if you're not paying the AWS bill, someone is,
+    and I'm sure you'll quite quickly find out who that person is if you spend too
+    much.
+  id: totrans-185
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 即使在机器学习项目的初期阶段，你也应该时刻关注成本。即使你没有支付AWS账单，肯定有人在支付，我敢肯定，如果你花得太多，很快就会知道是谁支付的。
+- en: Regularly going through the following checklist will help you spend as little
+    as possible, get the most machine learning-happy bang for your buck, and hopefully
+    keep the finance team off your back!
+  id: totrans-186
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 定期检查以下清单将帮助你尽可能少花钱，获得最大化的机器学习效益，并希望能够避免财务团队的干扰！
+- en: Optimizing costs for data preparation
+  id: totrans-187
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 数据准备的成本优化
+- en: With so much focus on optimizing training and deployment, it's easy to overlook
+    data preparation. Yet, this critical piece of the machine learning workflow can
+    incur very significant costs.
+  id: totrans-188
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 由于在优化训练和部署上投入了大量精力，很容易忽视数据准备。然而，机器学习工作流中的这个关键环节可能会产生非常显著的成本。
+- en: 'Tip #1'
+  id: totrans-189
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 提示#1
+- en: Resist the urge to build ad hoc ETL tools running on instance-based services.
+  id: totrans-190
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 抵制在基于实例的服务上构建临时ETL工具的冲动。
+- en: Obviously, your workflows will require data to be processed in a custom fashion,
+    such as applying domain-specific feature engineering. Working with a managed service
+    such as **Amazon Glue**, **Amazon Athena**, or **Amazon SageMaker Data Wrangler**,
+    you will never have to provision any infrastructure, and you will only pay for
+    what you use.
+  id: totrans-191
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 显然，你的工作流将需要以定制的方式处理数据，例如应用特定领域的特征工程。通过使用像**Amazon Glue**、**Amazon Athena**或**Amazon
+    SageMaker Data Wrangler**这样的托管服务，你无需配置任何基础设施，只需为你使用的部分付费。
+- en: 'As a second choice, **Amazon EMR** is a fine service, provided that you understand
+    how to optimize its cost. As much as possible, you should avoid running long-lived,
+    low-usage clusters. Instead, you should run transient clusters and rely massively
+    on **Spot Instances** for task nodes. You can find more information at the following
+    sites:'
+  id: totrans-192
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 作为第二选择，**Amazon EMR**是一个不错的服务，前提是你了解如何优化其成本。尽可能避免运行长时间存在、低使用率的集群。相反，你应该运行临时集群，并大量依赖**Spot
+    Instances**作为任务节点。你可以在以下网站找到更多信息：
+- en: '[https://docs.aws.amazon.com/emr/latest/ManagementGuide/emr-plan-longrunning-transient.html](https://docs.aws.amazon.com/emr/latest/ManagementGuide/emr-plan-longrunning-transient.html)'
+  id: totrans-193
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: '[https://docs.aws.amazon.com/emr/latest/ManagementGuide/emr-plan-longrunning-transient.html](https://docs.aws.amazon.com/emr/latest/ManagementGuide/emr-plan-longrunning-transient.html)'
+- en: '[https://docs.aws.amazon.com/emr/latest/ManagementGuide/emr-instance-purchasing-options.html](https://docs.aws.amazon.com/emr/latest/ManagementGuide/emr-instance-purchasing-options.html)'
+  id: totrans-194
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: '[https://docs.aws.amazon.com/emr/latest/ManagementGuide/emr-instance-purchasing-options.html](https://docs.aws.amazon.com/emr/latest/ManagementGuide/emr-instance-purchasing-options.html)'
+- en: The same advice applies to **Amazon EC2** instances.
+  id: totrans-195
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 同样的建议适用于**Amazon EC2**实例。
+- en: 'Tip #2'
+  id: totrans-196
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '提示 #2'
+- en: Use SageMaker Ground Truth and automatic labeling to cut down on data labeling
+    costs.
+  id: totrans-197
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 使用 SageMaker Ground Truth 和自动标注来降低数据标注成本。
+- en: If you need to label large unstructured datasets, enabling automatic labeling
+    in **SageMaker Ground Truth** can save you a significant amount of time and money
+    compared to labeling everything manually. You can read about it at [https://docs.aws.amazon.com/sagemaker/latest/dg/sms-automated-labeling.html](https://docs.aws.amazon.com/sagemaker/latest/dg/sms-automated-labeling.html).
+  id: totrans-198
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 如果你需要标注大量的非结构化数据集，启用**SageMaker Ground Truth**中的自动标注可以节省大量的时间和金钱，相比于手动标注所有数据。你可以阅读相关内容：[https://docs.aws.amazon.com/sagemaker/latest/dg/sms-automated-labeling.html](https://docs.aws.amazon.com/sagemaker/latest/dg/sms-automated-labeling.html)。
+- en: Optimizing costs for experimentation
+  id: totrans-199
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 实验成本优化
+- en: Experimentation is another area that is often overlooked, and you should apply
+    the following tips to minimize the related spend.
+  id: totrans-200
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 实验是另一个常被忽视的领域，你应该应用以下提示来最小化相关的开支。
+- en: 'Tip #3'
+  id: totrans-201
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '提示 #3'
+- en: You don't have to use SageMaker Studio.
+  id: totrans-202
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 你不必使用 SageMaker Studio。
+- en: As explained in [*Chapter 1*](B17705_01_Final_JM_ePub.xhtml#_idTextAnchor013),
+    *Introducing Amazon SageMaker*, you can easily work with SageMaker Python SDK
+    on your local machine or on a local development server.
+  id: totrans-203
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 正如在[*第1章*](B17705_01_Final_JM_ePub.xhtml#_idTextAnchor013)中解释的，*介绍 Amazon SageMaker*，你可以轻松地在本地计算机或本地开发服务器上使用
+    SageMaker Python SDK。
+- en: 'Tip #4'
+  id: totrans-204
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '提示 #4'
+- en: Stop Studio instances when you don't need them.
+  id: totrans-205
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 在不需要时停止 Studio 实例。
+- en: This sounds like an obvious one, but are you really doing it? There's really
+    no reason to run idle instances; commit your work, stop them, and then restart
+    them when you need them again. Storage is persisted.
+  id: totrans-206
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 这听起来像是显而易见的事情，但你真的在做吗？实际上没有理由运行空闲实例；提交你的工作，停止它们，然后在需要时再重新启动。存储是持久化的。
+- en: 'Tip #5'
+  id: totrans-207
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '提示 #5'
+- en: Experiment on a small scale and with instances of the correct size.
+  id: totrans-208
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 在小规模上进行实验，并使用正确大小的实例。
+- en: 'Do you really need the full dataset to start visualizing data and evaluating
+    algorithms? Probably not. By working on a small fraction of your dataset, you''ll
+    be able to use smaller notebook instances. Here''s an example: imagine 5 developers
+    working 10 hours a day on their own `ml.c5.2xlarge` notebook instance. The daily
+    cost is 5 x 10 x $0.557 = $27.85\.'
+  id: totrans-209
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 你真的需要完整的数据集来开始可视化数据和评估算法吗？可能不需要。通过处理数据集的一小部分，你可以使用更小的笔记本实例。举个例子：假设 5 个开发人员每天工作
+    10 小时，在各自的`ml.c5.2xlarge`笔记本实例上。每日成本为 5 x 10 x $0.557 = $27.85\。
+- en: Right-sizing to `ml.t3.xlarge` (less RAM, burstable behavior), the daily cost
+    would be reduced to 5 x 10 x $0.233 = $11.65\. You would save $486 per month,
+    which you could certainly spend on more experimentation, more training, and more
+    **automatic model tuning**.
+  id: totrans-210
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 将实例调整为 `ml.t3.xlarge`（较少的 RAM，具有突发行为），每日成本将降低到 5 x 10 x $0.233 = $11.65\。你每月可以节省
+    $486，这笔钱肯定可以用来进行更多实验、更多训练和更多**自动模型调优**。
+- en: 'If you need to perform large-scale cleaning and processing, please take the
+    time to migrate that work to a managed service (see Tip #1) instead of working
+    all day long with a humongous instance. Don''t say, "Me? Never!" I know you''re
+    doing it!'
+  id: totrans-211
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '如果你需要进行大规模清理和处理，请花时间将这项工作迁移到托管服务（参见提示 #1），而不是整天在一个巨大的实例上工作。不要说“我？从不！”我知道你正在这么做！'
+- en: 'Tip #6'
+  id: totrans-212
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '提示 #6'
+- en: Use local mode.
+  id: totrans-213
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 使用本地模式。
+- en: We saw in [*Chapter 7*](B17705_07_Final_JM_ePub.xhtml#_idTextAnchor130), *Extending
+    Machine Learning Services with Built-In Frameworks*, how to use **local mode**
+    to avoid firing up managed infrastructure in the AWS cloud. This is a great technique
+    to quickly iterate at no cost in the experimentation phase!
+  id: totrans-214
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 我们在[*第7章*](B17705_07_Final_JM_ePub.xhtml#_idTextAnchor130)中看到，*通过内建框架扩展机器学习服务*，如何使用**本地模式**避免在
+    AWS 云中启动托管基础设施。这是一个在实验阶段以零成本快速迭代的绝佳技巧！
+- en: Optimizing costs for model training
+  id: totrans-215
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 模型训练成本优化
+- en: There are many techniques you can use, and we've already discussed most of them.
+  id: totrans-216
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 你可以使用很多技术，我们已经讨论过其中的大部分。
+- en: 'Tip #7'
+  id: totrans-217
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '提示 #7'
+- en: Don't train on Studio instances.
+  id: totrans-218
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 不要在Studio实例上进行训练。
+- en: I'm going to repeat myself here, but it's an important point. Unfortunately,
+    this antipattern seems to be pretty common. People pick a large instance (such
+    as `ml.p3.2xlarge`), fire up a large job in their notebook, leave it running,
+    forget about it, and end up paying good money for an instance sitting idle for
+    hours once the job is complete.
+  id: totrans-219
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 我要在这里重复一次，但这是一个重要的点。不幸的是，这种反模式似乎非常常见。人们选择一个大型实例（如`ml.p3.2xlarge`），在笔记本中启动一个大任务，放着不管，忘记它，最终在任务完成后，支付了大量费用给一个闲置了好几个小时的实例。
+- en: Instead, please run your training jobs on **managed instances**. Thanks to **distributed**
+    **training**, you'll get your results much quicker, and as instances are terminated
+    as soon as training is complete, you will never overpay for training.
+  id: totrans-220
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 相反，请在**托管实例**上运行您的训练任务。得益于**分布式** **训练**，您将更快地获得结果，而且由于实例在训练完成后立即终止，您永远不会为训练支付过多费用。
+- en: As a bonus, you won't be at the mercy of a clean-up script (or an overzealous
+    admin) killing all notebook instances in the middle of the night ("because they're
+    doing nothing, right?").
+  id: totrans-221
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 作为额外好处，您将不再受制于清理脚本（或过于热心的管理员）在半夜将所有笔记本实例终止（“因为它们什么都不做，对吧？”）。
+- en: 'Tip #8'
+  id: totrans-222
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '提示 #8'
+- en: Pack your dataset in RecordIO/TFRecord files.
+  id: totrans-223
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 将您的数据集打包成RecordIO/TFRecord文件。
+- en: This makes it easier and faster to move your dataset around and distribute it
+    to training instances. We discussed this at length in [*Chapter 5*](B17705_05_Final_JM_ePub.xhtml#_idTextAnchor091),
+    *Training Computer Vision Models*, and [*Chapter 6*](B17705_06_Final_JM_ePub.xhtml#_idTextAnchor108),
+    *Training Natural Language Processing Models*.
+  id: totrans-224
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 这样可以更轻松、更快速地移动您的数据集，并将其分发到训练实例。我们在[*第5章*](B17705_05_Final_JM_ePub.xhtml#_idTextAnchor091)，*训练计算机视觉模型*和[*第6章*](B17705_06_Final_JM_ePub.xhtml#_idTextAnchor108)，*训练自然语言处理模型*中详细讨论了这一点。
+- en: 'Tip #9'
+  id: totrans-225
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '提示 #9'
+- en: Use pipe mode.
+  id: totrans-226
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 使用管道模式。
+- en: '**Pipe mode** streams your dataset directly from Amazon S3 to your training
+    instances. No copying is involved, which saves on start-up time. We discussed
+    this feature in detail in [*Chapter 9*](B17705_09_Final_JM_ePub.xhtml#_idTextAnchor168),
+    *Scaling Your Training Jobs*.'
+  id: totrans-227
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**管道模式**将您的数据集直接从Amazon S3流式传输到您的训练实例。没有复制过程，这节省了启动时间。我们在[*第9章*](B17705_09_Final_JM_ePub.xhtml#_idTextAnchor168)，*扩展训练任务*中详细讨论了这一功能。'
+- en: 'Tip #10'
+  id: totrans-228
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '提示 #10'
+- en: Right-size training instances.
+  id: totrans-229
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 合理选择训练实例的大小。
+- en: 'We saw how to do this in [*Chapter 9*](B17705_09_Final_JM_ePub.xhtml#_idTextAnchor168),
+    *Scaling Your Training Jobs*. One word: **CloudWatch** metrics.'
+  id: totrans-230
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 我们在[*第9章*](B17705_09_Final_JM_ePub.xhtml#_idTextAnchor168)，*扩展训练任务*中看到了如何实现这一点。一个词：**CloudWatch**
+    指标。
+- en: 'Tip #11'
+  id: totrans-231
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '提示 #11'
+- en: Use Managed Spot Training.
+  id: totrans-232
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 使用托管的Spot训练。
+- en: We covered this in great detail in [*Chapter 10*](B17705_10_Final_JM_ePub.xhtml#_idTextAnchor206),
+    *Advanced Training Techniques*. If that didn't convince you, nothing will! Seriously,
+    there are very few instances when **Managed Spot Training** should not be used,
+    and it should be a default setting in your notebooks.
+  id: totrans-233
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 我们在[*第10章*](B17705_10_Final_JM_ePub.xhtml#_idTextAnchor206)，*高级训练技巧*中详细讨论了这一点。如果这还没说服您，那就没有什么能说服您了！说真的，**托管的Spot训练**几乎没有不应使用的情况，它应该是您笔记本中的默认设置。
+- en: 'Tip #12'
+  id: totrans-234
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '提示 #12'
+- en: Use AWS-provided versions of TensorFlow, Apache MXNet, and so on.
+  id: totrans-235
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 使用AWS提供的TensorFlow、Apache MXNet等版本。
+- en: 'We have entire teams dedicated to extracting the last bit of performance from
+    deep learning libraries on AWS. No offense, but if you think you can `pip install`
+    and go faster, your time is probably better invested elsewhere. You can find more
+    information at the following links:'
+  id: totrans-236
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 我们有专门的团队致力于从AWS上的深度学习库中提取最后一丝性能。没有冒犯的意思，但如果您认为可以通过`pip install`来加速，您的时间可能最好投入到其他地方。您可以通过以下链接找到更多信息：
+- en: '[https://aws.amazon.com/blogs/machine-learning/faster-training-with-optimized-tensorflow-1-6-on-amazon-ec2-c5-and-p3-instances/](https://aws.amazon.com/blogs/machine-learning/faster-training-with-optimized-tensorflow-1-6-on-amazon-ec2-c5-and-p3-instances/),'
+  id: totrans-237
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: '[https://aws.amazon.com/blogs/machine-learning/faster-training-with-optimized-tensorflow-1-6-on-amazon-ec2-c5-and-p3-instances/](https://aws.amazon.com/blogs/machine-learning/faster-training-with-optimized-tensorflow-1-6-on-amazon-ec2-c5-and-p3-instances/)，'
+- en: '[https://aws.amazon.com/about-aws/whats-new/2018/11/tensorflow-scalability-to-256-gpus/](https://aws.amazon.com/about-aws/whats-new/2018/11/tensorflow-scalability-to-256-gpus/)'
+  id: totrans-238
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: '[https://aws.amazon.com/about-aws/whats-new/2018/11/tensorflow-scalability-to-256-gpus/](https://aws.amazon.com/about-aws/whats-new/2018/11/tensorflow-scalability-to-256-gpus/)'
+- en: '[https://aws.amazon.com/blogs/machine-learning/amazon-web-services-aSchieves-fastest-training-times-for-bert-and-mask-r-cnn/](https://aws.amazon.com/blogs/machine-learning/amazon-web-services-aSchieves-fastest-training-times-for-bert-and-mask-r-cnn/)'
+  id: totrans-239
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+  zh: '[https://aws.amazon.com/blogs/machine-learning/amazon-web-services-aSchieves-fastest-training-times-for-bert-and-mask-r-cnn/](https://aws.amazon.com/blogs/machine-learning/amazon-web-services-aSchieves-fastest-training-times-for-bert-and-mask-r-cnn/)'
+- en: Optimizing costs for model deployment
+  id: totrans-240
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+  zh: 优化模型部署成本
+- en: This very chapter was dedicated to several of these techniques. I'll add a few
+    more ideas to cut costs even further.
+  id: totrans-241
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 本章专门讲解了这些技术中的几个。我将再添加一些想法，进一步降低成本。
+- en: 'Tip #13'
+  id: totrans-242
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '提示 #13'
+- en: Use batch transform if you don't need online predictions.
+  id: totrans-243
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 如果你不需要在线预测，使用批量转换。
+- en: Some applications don't require a live endpoint. They are perfectly fine with
+    **batch transform**, which we studied in [*Chapter 11*](B17705_11_Final_JM_ePub.xhtml#_idTextAnchor237),
+    *Deploying Machine Learning Models*. The extra benefit is that the underlying
+    instances are terminated automatically when the batch job is done, meaning that
+    you will never overpay for prediction because you left an endpoint running for
+    a week for no good reason.
+  id: totrans-244
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 一些应用程序不需要实时端点。它们完全可以使用**批量转换**，我们在[**第 11 章**](B17705_11_Final_JM_ePub.xhtml#_idTextAnchor237)，*部署机器学习模型*中研究过。额外的好处是，底层实例在批处理作业完成后会自动终止，这意味着你永远不会因为没有理由让端点运行一周而多付预测费用。
+- en: 'Tip #14'
+  id: totrans-245
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '提示 #14'
+- en: Delete unnecessary endpoints.
+  id: totrans-246
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 删除不必要的端点。
+- en: This requires no explanation, and I have written "Delete the endpoint when you're
+    done" tens of times in this book already. Yet, this is still a common mistake.
+  id: totrans-247
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 这一点不需要解释，我在本书中已经写了“完成后删除端点”十多次了。然而，这仍然是一个常见的错误。
+- en: 'Tip #15'
+  id: totrans-248
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '提示 #15'
+- en: Right-size endpoints and use autoscaling.
+  id: totrans-249
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 正确设置端点并使用自动扩展。
+- en: 'Tip #16'
+  id: totrans-250
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '提示 #16'
+- en: Use a multi-model endpoint to consolidate models.
+  id: totrans-251
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 使用多模型端点来整合模型。
+- en: 'Tip #17'
+  id: totrans-252
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '提示 #17'
+- en: Compile models with Amazon Neo to use fewer hardware resources.
+  id: totrans-253
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 使用 Amazon Neo 编译模型，以减少硬件资源的使用。
+- en: 'Tip #18'
+  id: totrans-254
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '提示 #18'
+- en: At large scale, use AWS Inferentia instead of GPU instances.
+  id: totrans-255
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 在大规模使用时，使用 AWS Inferentia 而不是 GPU 实例。
+- en: And, of course, the mother of all tips for all things AWS, which is why we dedicated
+    a full chapter to it ([*Chapter 12*](B17705_12_Final_JM_ePub.xhtml#_idTextAnchor260),
+    *Automating Machine Learning Workflows*).
+  id: totrans-256
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 当然，还有针对 AWS 所有事项的最大秘诀，这就是为什么我们专门为其写了一整章（[**第 12 章**](B17705_12_Final_JM_ePub.xhtml#_idTextAnchor260)，*自动化机器学习工作流*）。
+- en: 'Tip #19'
+  id: totrans-257
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '提示 #19'
+- en: Automate, automate, automate!
+  id: totrans-258
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 自动化，自动化，再自动化！
+- en: 'Tip #20'
+  id: totrans-259
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '提示 #20'
+- en: Purchase Savings Plans for Amazon SageMaker.
+  id: totrans-260
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 购买 Amazon SageMaker 的节省计划。
+- en: '**Savings Plans** is a flexible pricing model that offers low prices on AWS
+    usage, in exchange for a commitment to a consistent amount of usage for a one-year
+    or three-year term ([https://aws.amazon.com/savingsplans/](https://aws.amazon.com/savingsplans/)).'
+  id: totrans-261
+  prefs: []
+  type: TYPE_NORMAL
+  zh: '**节省计划**是一种灵活的定价模型，提供 AWS 使用的低价，作为对一年或三年期内承诺一致使用量的交换（[https://aws.amazon.com/savingsplans/](https://aws.amazon.com/savingsplans/)）。'
+- en: Savings Plans is now available for SageMaker, and you'll find it in the console
+    at [https://console.aws.amazon.com/cost-management/home?/savings-plans/](https://console.aws.amazon.com/cost-management/home?/savings-plans/).
+  id: totrans-262
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 现在，SageMaker 也支持节省计划，你可以在控制台中找到它：[https://console.aws.amazon.com/cost-management/home?/savings-plans/](https://console.aws.amazon.com/cost-management/home?/savings-plans/)。
+- en: Built-in recommendations help you pick the right commitment and purchase a plan
+    in minutes. Depending on the term and the commitment, you could save up to 72%
+    (!) on all instance-based SageMaker costs. You can find a demo at [https://aws.amazon.com/blogs/aws/slash-your-machine-learning-costs-with-instance-price-reductions-and-savings-plans-for-amazon-sagemaker/](https://aws.amazon.com/blogs/aws/slash-your-machine-learning-costs-with-instance-price-reductions-and-savings-plans-for-amazon-sagemaker/).
+  id: totrans-263
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 内置推荐帮助你选择合适的承诺并在几分钟内购买计划。根据期限和承诺，你可以在所有基于实例的 SageMaker 成本上节省高达 72%（！）。你可以在[https://aws.amazon.com/blogs/aws/slash-your-machine-learning-costs-with-instance-price-reductions-and-savings-plans-for-amazon-sagemaker/](https://aws.amazon.com/blogs/aws/slash-your-machine-learning-costs-with-instance-price-reductions-and-savings-plans-for-amazon-sagemaker/)找到演示。
+- en: Equipped with this checklist, not only will you slash your machine learning
+    budget but you will also build more robust and more agile workflows. Rome wasn't
+    built in a day, so please take your time, use common sense, apply the techniques
+    that matter most right now, and iterate.
+  id: totrans-264
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 配备了这份清单，你不仅能削减机器学习预算，还能构建更强大、更灵活的工作流。罗马不是一天建成的，所以请慢慢来，运用常识，应用目前最重要的技术，并进行迭代。
+- en: Summary
+  id: totrans-265
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+  zh: 总结
+- en: In this final chapter, you learned different techniques that help to reduce
+    prediction costs with SageMaker. First, you saw how to use autoscaling to scale
+    prediction infrastructure according to incoming traffic. Then, you learned how
+    to deploy an arbitrary number of models on the same endpoint, thanks to multi-model
+    endpoints.
+  id: totrans-266
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 在本章的最后部分，你学习了不同的技巧，这些技巧有助于通过 SageMaker 降低预测成本。首先，你了解了如何使用自动扩展根据来访流量来扩展预测基础设施。接着，你学习了如何借助多模型端点将任意数量的模型部署到同一个端点上。
+- en: We also worked with Amazon Elastic Inference, which allows you to add fractional
+    GPU acceleration to a CPU-based instance and find the right cost-performance ratio
+    for your application. We then moved on to Amazon SageMaker Neo, an innovative
+    capability that compiles models for a given hardware architecture, both for EC2
+    instances and embedded devices. Finally, we built a cost optimization checklist
+    that will come in handy for your upcoming SageMaker projects.
+  id: totrans-267
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 我们还介绍了 Amazon Elastic Inference，它允许你为基于 CPU 的实例添加分数 GPU 加速，并为你的应用找到合适的成本效益比。然后，我们讲解了
+    Amazon SageMaker Neo，这是一项创新功能，它能够为特定硬件架构编译模型，适用于 EC2 实例和嵌入式设备。最后，我们创建了一个成本优化清单，将在你未来的
+    SageMaker 项目中派上用场。
+- en: You've made it to the end. Congratulations! You now know a lot about SageMaker.
+    Now, go grab a dataset, build cool stuff, and let me know about it!
+  id: totrans-268
+  prefs: []
+  type: TYPE_NORMAL
+  zh: 你已经学完了全部内容，恭喜你！现在，你对 SageMaker 了解颇多。快去获取一个数据集，构建一些酷东西，并告诉我你的成果！
