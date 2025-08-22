@@ -1,6 +1,6 @@
-# Python 应用监督学习
+# Python 表情分析的机器学习
 
-> 原文：[`annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47`](https://annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47)
+> 原文：[`annas-archive.org/md5/f97ce8c88160e8c42ef68a8f1c0b9e4e`](https://annas-archive.org/md5/f97ce8c88160e8c42ef68a8f1c0b9e4e)
 > 
 > 译者：[飞龙](https://github.com/wizardforcel)
 > 

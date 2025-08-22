@@ -1,6 +1,6 @@
-# Python 应用监督学习
+# 谷歌机器学习和生成式人工智能的解决方案架构
 
-> 原文：[`annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47`](https://annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47)
+> 原文：[`annas-archive.org/md5/90c02ac66d0c0f03912aac73223f0fbf`](https://annas-archive.org/md5/90c02ac66d0c0f03912aac73223f0fbf)
 > 
 > 译者：[飞龙](https://github.com/wizardforcel)
 > 
