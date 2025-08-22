@@ -1,0 +1,1667 @@
+<html><head></head><body>
+<div id="sbo-rt-content"><div id="_idContainer080">
+<h1 class="chapter-number" id="_idParaDest-93"><a id="_idTextAnchor134"/>6</h1>
+<h1 id="_idParaDest-94"><a id="_idTextAnchor135"/>Naïve Bayes</h1>
+<p>In <a href="B18714_05.xhtml#_idTextAnchor116"><span class="No-Break"><em class="italic">Chapter 5</em></span></a>, <em class="italic">Sentiment Lexicons and Vector-Space Models</em>, we investigated the use of simple lexicon-based classifiers, using both a hand-coded sentiment lexicon and extracting a lexicon from a corpus of marked-up texts. The results from this investigation were that such models can produce reasonable scores, with a variety of tweaks (using a stemmer or changing the way that weights are calculated, such as by using TF-IDF scores) that produce improvements in some cases but not in others. We will now turn to a range of machine learning algorithms to see whether they will lead to <span class="No-Break">better results.</span></p>
+<p>For most of the algorithms that we will be looking at, we will use the Python scikit-learn (<strong class="source-inline">sklearn</strong>) implementations. A wide range of implementations for all these algorithms are available. The <strong class="source-inline">sklearn</strong> versions have two substantial advantages: they are freely available with a fairly consistent interface to the training and testing data and they can be easily installed and run on a standard computer. They also have a significant disadvantage, in that some of them are slower than versions that have been designed to run on computers with fast GPUs or other highly parallel processors. Fortunately, most of them run reasonably quickly on a standard machine, and even the slowest with our largest dataset can train a model in about half an hour. So, for the tasks we are investigating here, where we are interested in comparing the performance of the various algorithms on identical datasets, the advantages outweigh the fact that on very large datasets, some of them will take an infeasibly <span class="No-Break">long time.</span></p>
+<p>In this chapter, we will look at the Naïve Bayes algorithm. We will look at the effects of the various preprocessing steps we used in <a href="B18714_05.xhtml#_idTextAnchor116"><span class="No-Break"><em class="italic">Chapter 5</em></span></a>, <em class="italic">Sentiment Lexicons and Vector Space Models</em> but we will not look at all the tweaks and parameter settings that are provided with this package. The various <strong class="source-inline">sklearn</strong> packages <a id="_idIndexMarker573"/>provide a range of options that can affect either the accuracy or the speed of the given algorithm, but we will not generally try out all the options – it is very easy to get distracted into playing with the parameters in the hope of gaining a few percentage points, but for our goal of looking at ways of carrying out sentiment mining, it is more useful to consider how changes to the data can affect performance. Once you have chosen your algorithm, then it may be worth investigating the effects of changing the parameters, but this book aims to see what the algorithms do with tweets that have been annotated with emotion labels, not to look at all the minutiae of the <span class="No-Break">algorithms themselves.</span></p>
+<p>We will start this chapter by looking at how to prepare our datasets to match the <strong class="source-inline">sklearn</strong> representation. We will then give a brief introduction to the Naïve Bayes approach to machine learning, <span class="No-Break">and then</span></p>
+<p>apply the Naïve Bayes implementation from <strong class="source-inline">sklearn.naive_bayes.MultinomialNB</strong> to our datasets and consider why the algorithm behaves as it does and what we can do to improve its performance on our data. By the end of this chapter, you’ll have a clear understanding of the theory behind Naive Bayes and the effectiveness of this as a way of assigning emotions <span class="No-Break">to tweets.</span></p>
+<p>In this chapter, we’ll cover the <span class="No-Break">following topics:</span></p>
+<ul>
+<li>Preparing the data <span class="No-Break">for </span><span class="No-Break"><strong class="source-inline">sklearn</strong></span></li>
+<li>Naïve Bayes as a machine <span class="No-Break">learning algorithm</span></li>
+<li>Naively applying Bayes' theorem as <span class="No-Break">a classifier</span></li>
+<li>Multi-label and <span class="No-Break">multi-class datasets</span></li>
+</ul>
+<h1 id="_idParaDest-95"><a id="_idTextAnchor136"/>Preparing the data for sklearn</h1>
+<p>The <strong class="source-inline">sklearn</strong> packages <a id="_idIndexMarker574"/>expect training data consisting of a set of data points, where <a id="_idIndexMarker575"/>each data point is a real-valued vector, and a set of numerical labels representing the class to which each data point has<a id="_idIndexMarker576"/> been assigned. Our data consists of sets of tweets, where each tweet is represented by, among other things, a set of words and a set of values such as <strong class="source-inline">[0, 0, 1, 1, 0, 0]</strong>, where each element of the set corresponds to a single dimension. So, if the set of emotions in some training set were <strong class="source-inline">['anger', 'fear', 'joy', 'love', 'sadness', 'surprise']</strong>, then the <strong class="source-inline">[0, 0, 1, 1, 0, 0]set</strong> would indicate that the given tweet had been labeled as expressing joy and love. We will use the CARER dataset to illustrate how to convert our datasets into, as near as possible, the format required by the <span class="No-Break"><strong class="source-inline">sklearn</strong></span><span class="No-Break"> packages.</span></p>
+<p>Initially, we will represent a dataset as a DATASET, as defined in <a href="B18714_05.xhtml#_idTextAnchor116"><span class="No-Break"><em class="italic">Chapter 5</em></span></a>,<em class="italic"> Sentiment </em><span class="No-Break"><em class="italic">Lexicons and</em></span><em class="italic">
+Vector Space Models.</em> To convert a dataset into a form that is suitable for <strong class="source-inline">sklearn</strong>, we have to convert the one-hot encoding of the assignment of labels to a tweet into a single numerical label and the tokens that represent a tweet into a sparse matrix. The first of these is straightforward: we just enumerate the list of values until we hit a non-zero case, at which point the index of that case is the required value. If there is more than one non-zero column, this encoding will just record the first that is found – this will distort the data, but it is inevitable if we use a one-hot encoding for data with multiple labels. The only complication arises when<a id="_idIndexMarker577"/> it is possible for a tweet to have no label assigned to it because in that case, we will get to the<a id="_idIndexMarker578"/> end of the list without returning a value. If <strong class="source-inline">allowZeros</strong> is set to <strong class="source-inline">True</strong>, then we will return a column beyond the actual range of possible cases – that is, we will encode the absence of a value as a new <span class="No-Break">explicit value:</span></p>
+<pre class="source-code">
+def onehot2value(l, allowZeros=False):    for i, x in enumerate(l):
+        if x == 1:
+            return i
+    if allowZeros:
+        return len(l)
+    else:
+        raise Exception("No non-zero value found")</pre>
+<p>We can use this to help construct the sparse matrix representation of the training set, as discussed in the <em class="italic">Vector spaces</em> section in <a href="B18714_05.xhtml#_idTextAnchor116"><span class="No-Break"><em class="italic">Chapter 5</em></span></a>, <em class="italic">Sentiment Lexicons and Vector Space Models.</em> To make a sparse matrix, you must collect parallel lists of rows, columns, and data for all cases where the data is non-zero. So, what we have to do is go through the tweets one by one (tweet number = row number), and then go through the tokens in the tweet; we must look the token up in the index (token index = column number), work out what value we want to use for that token (either 1 or its <strong class="source-inline">idf</strong>), and add those to <strong class="source-inline">rows</strong>, <strong class="source-inline">columns</strong>, and <strong class="source-inline">data</strong>. Once we have these three lists, we can just invoke the constructor for sparse matrices. There are several forms of sparse matrices: <strong class="source-inline">csc_matrix</strong> makes a representation that is suitable when each row contains only a few entries. We must exclude words that occur no more than <strong class="source-inline">wthreshold</strong> times because including very rare words makes the matrix less sparse, and hence slows things down, without improving the performance of <span class="No-Break">the algorithms:</span></p>
+<pre class="source-code">
+from scipy import sparsedef tweets2sparse(train, wthreshold=1):
+    rows = []
+    data = []
+    columns = []
+    for i, tweet in enumerate(train.tweets):
+        t = sum(train.idf[token] for token in tweet.tokens)
+        for token in tweet.tokens:
+            if train.df[token] &gt; wthreshold:
+                rows.append(i)
+                columns.append(train.index[token])
+                if useDF:
+                    s = train.idf[token]/t
+                else:
+                    s = 1
+                data.append(s)
+    return sparse.csc_matrix((data, (rows, columns)),
+                             (len(train.tweets[:N]),
+                              len(train.index)))</pre>
+<p>Once we can<a id="_idIndexMarker579"/> convert the representation of the labels assigned to a tweet into a one-hot format and we can convert a set of tweets with Gold Standard labels<a id="_idIndexMarker580"/> into a sparse matrix, we have all we need for making a classifier. Exactly what we do with these structures will depend on the type of classifier and the one-hot values for the data points to single class identifiers. All our <strong class="source-inline">sklearn</strong> classifiers will be subclasses of a generic class called <strong class="source-inline">SKLEARNCLASSIFIER</strong>: the definition of <strong class="source-inline">SKLEARNCLASSIFIER</strong> does not include a constructor. We will only ever make instances of subclasses of this class, so it is in some ways like an abstract class – it provides some methods that will be shared by several subclasses, such as for making Naïve Bayes classifiers, support vector machine classifiers, or deep <span class="No-Break">neural network</span></p>
+<p>classifiers, but we will never actually make a <strong class="source-inline">SKLEARNCLASSIFIER</strong> class. The first thing we will need in <strong class="source-inline">SKLEARNCLASSIFIER</strong> is something for reading the training data and converting it into a sparse matrix. <strong class="source-inline">readTrainingData</strong> does this by using <strong class="source-inline">makeDATASET</strong> from <a href="B18714_05.xhtml#_idTextAnchor116"><span class="No-Break"><em class="italic">Chapter 5</em></span></a>, <em class="italic">Sentiment Lexicons and Vector-Space Models</em>, and then converting the training data into <a id="_idIndexMarker581"/>a sparse <a id="_idIndexMarker582"/>matrix and the labels associated with the training data into <span class="No-Break">one-hot format:</span></p>
+<pre class="source-code">
+class SKLEARNCLASSIFIER(classifiers.BASECLASSIFIER):    def readTrainingData(self, train, N=sys.maxsize,
+                         useDF=False):
+        if isinstance(train, str):
+            train = tweets.makeDATASET(train)
+        self.train = train
+        self.matrix = tweets.tweets2sparse(self.train, N=N,
+                                           useDF=useDF)
+        # Convert the one-hot representation of the Gold
+        # Standard for each tweet to a class identifier
+        emotions = self.train.emotions
+        self.values = [tweets.onehot2value(tweet.GS,
+                                           emotions)
+                       for tweet in train.tweets[:N]]</pre>
+<p>We will need a function to apply a classifier to a tweet. The default value for this, defined as a method of <strong class="source-inline">SKLEARNCLASSIFIER</strong>, wraps up the <strong class="source-inline">predict</strong> method for the underlying <strong class="source-inline">sklearn</strong> class and returns the result in one of several formats, depending on what <span class="No-Break">is wanted:</span></p>
+<pre class="source-code">
+    def applyToTweet(self, tweet, resultAsOneHot):        p = self.clsf.predict(tweets.tweet2sparse(tweet,
+                                                  self))[0]
+        if resultAsOneHot:
+            k = [0 for i in self.train.emotions]+[0]
+            k[p] = 1
+            return k
+        else:
+            return p</pre>
+<p>All our<a id="_idIndexMarker583"/> classifiers that make use of <strong class="source-inline">sklearn</strong> will be subclasses<a id="_idIndexMarker584"/> of this generic type. They will all make use of <strong class="source-inline">readTrainingData</strong> – that is, the machinery for converting sets of tweets into sparse matrices – and they will all require a version of <strong class="source-inline">applyToTweet</strong>. <strong class="source-inline">SKLEARNCLASSIFIER</strong> provides the default versions of these, though some of the classifiers may override them. The first classifier that we will develop using <strong class="source-inline">SKLEARNCLASSIFIER</strong> as a base class will involve using Bayes’ theorem as a way of assigning probabilities to events. First, we will look at the theory behind Bayes’ theorem and its use for classification before turning to the details of how this may <span class="No-Break">be implemented.</span></p>
+<h1 id="_idParaDest-96"><a id="_idTextAnchor137"/>Naïve Bayes as a machine learning algorithm</h1>
+<p>The key idea behind the <a id="_idIndexMarker585"/>Naïve Bayes algorithm is that you can estimate the likelihood of some outcome given a set of observations by <a id="_idIndexMarker586"/>using <strong class="bold">conditional probabilities</strong> and linking the individual observations to the outcome. Defining what conditional probability is turns out to be surprisingly slippery because the notion of probability itself is very slippery. Probabilities are often defined as something similar to proportions, but this view becomes difficult to maintain when you are looking at unique or unbounded sets, which is usually the case when you want to make use <span class="No-Break">of them.</span></p>
+<p>Suppose, for instance, that I am trying to work out how likely it is that France will win the FIFA 2022 World Cup (this is being written 2 days before the final, between France and Argentina, is to be played). In some sense, it is reasonable to ask about this probability – if the bookmakers are offering 3 to 1 against France and the probability that they will win is 0.75, then I should place a bet on that outcome. But this probability <em class="italic">cannot</em> be defined as <em class="italic">#(times that France win the 2022 World Cup)/#(times that France play in the 2022 World Cup final)</em>. Right now, both those numbers are 0, so the probability appears to be 0/0, which is undefined. By the time you are reading this, the first of them will be either 0 or 1 and the second will be 1, so the probability that France has won the World Cup <a id="_idIndexMarker587"/>will be either 0 or 1. Bookmakers and gamblers will make estimates of this likelihood, but they cannot do so by actually counting the proportion of times the outcome of this yet-to-be-played match comes out in <span class="No-Break">France’s favor.</span></p>
+<p>So, we cannot define the likelihood of an outcome for a future one-off event in terms of the proportion of times that the event has the given outcome since we have not yet observed the outcome, and we cannot sensibly define the likelihood of an outcome for a past one-off event this way either, since it is bound to be either 0 or 1 once the event <span class="No-Break">has occurred.</span></p>
+<p>But we also cannot define the likelihood of an outcome, for instance, of a series of apparently similar events as a proportion. The fact that I have seen it become lighter in the morning every day of my life – that is, 25,488 out of 25,488 times – does not mean that the likelihood of it getting lighter tomorrow morning is 1. Tomorrow morning might be different. The sun may have turned into a black hole and have stopped emitting radiation. There may have been an enormous volcanic eruption and the sky might be completely blotted out. <em class="italic">Tomorrow may not be the same </em><span class="No-Break"><em class="italic">as today</em></span><span class="No-Break">.</span></p>
+<p>And we also can’t define the likelihood that a member of an unbounded set satisfies some property in terms of the proportion of times that members of a finite subset of that property satisfy it. Consider the likelihood that a randomly chosen integer is prime. If we plot the number of occurrences of a prime number in the first few integers, we get a plot similar to <span class="No-Break">the following:</span></p>
+<div>
+<div class="IMG---Figure" id="_idContainer078">
+<img alt="Figure 6.1 – The number of primes in the first N integers" height="429" src="image/B18714_06_01.jpg" width="572"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.1 – The number of primes in the first N integers</p>
+<p>It looks as though<a id="_idIndexMarker588"/> the number of primes in the first 10,000 integers goes up linearly, with about 10% of numbers being prime. If we look at the first 100,000,000, then about 6% are prime. What is the true probability? It cannot be defined as the ratio of the number of primes to the number of integers because these two are both infinite and ∞/∞ is undefined. It looks as though the proportion declines as we look at more cases, so it probably tends to 0, but it isn’t 0. It turns out to be very hard to either define or estimate probabilities involving <span class="No-Break">unbounded sets.</span></p>
+<p>We can <em class="italic">estimate</em> the probability of the first two kinds of events. We can look at all football matches between teams that we believe to be similar to the current French and Argentinian teams and use the number of times that the team that is like the current French one beat the one that is like the current Argentinian one. I can look back at all the days of my life and say that if tomorrow is just like all the others <em class="italic">in all relevant respects</em>, then my estimate of the likelihood that it will get lighter in the morning is 1. But these are just estimates and they depend on the next event being the same as the previous ones in all <span class="No-Break">relevant respects.</span></p>
+<p>This has been a thorny issue in probability theory and statistics since the 19th century. Due to this, Thomas Bayes, among other people, defined probability as being, essentially, the odds that someone might reasonably assign <a id="_idTextAnchor138"/>for an outcome (Bayes, T, 1958). Counting previous experience might well be an important part of the information that such a person might use in coming up with their reasonable assignment, but since it is not possible to know that the next event will be similar to past ones in all relevant aspects, it cannot be used as <span class="No-Break">the definition.</span></p>
+<p>So, we cannot say what the probability of a given outcome is. What we can do, however, is define how such a probability should behave if we had it. If your reasonable estimate does not obey these constraints, then you should <span class="No-Break">revise it!</span></p>
+<p>What should a <a id="_idIndexMarker589"/>probability distribution be like? Assuming that we have a finite set, <em class="italic">{O1, ... On}</em>, of distinct possible outcomes, any probability distribution should satisfy the <span class="No-Break">following constraints:</span></p>
+<ul>
+<li><em class="italic">p(Oi) &gt;= 0</em> for all <span class="No-Break">outcomes </span><span class="No-Break"><em class="italic">Oi</em></span></li>
+<li><em class="italic">p(O1) + ... +p(On) = 1</em></li>
+<li><em class="italic">p(Oi or Oj) = p(Oi)+p(Oj)</em> for <em class="italic">i ≠ j</em></li>
+</ul>
+<p>The first two constraints taken together mean that <em class="italic">p(Oi) &lt;= 1</em> for all <em class="italic">Oi</em>, and the second and third mean that <em class="italic">p(not(Oi)) = 1-p(Oi)</em> (since <em class="italic">not(Oi)</em> is <em class="italic">O1</em> or <em class="italic">O2</em> or ... or <em class="italic">Oi-1</em> or <em class="italic">Oi+1</em> or .. <span class="No-Break">or </span><span class="No-Break"><em class="italic">On</em></span><span class="No-Break">).</span></p>
+<p>These constraints say nothing about the likelihood of <em class="italic">Oi</em> and <em class="italic">Oj</em> both occurring. Given the initial conditions, this is not possible since <em class="italic">O1</em>, ... On were specified as distinct possible outcomes. The most that we can say about multiple outcomes is that if we have two <em class="italic">completely distinct and unconnected</em> sets of events, each with a set of possible outcomes, <em class="italic">O1</em>, ... <em class="italic">On</em> and <em class="italic">Q1</em>, ..., <em class="italic">Qm</em>, then the probability of <em class="italic">Oi</em> and <em class="italic">Qj</em> occurring must be <em class="italic">p(Oi) X p(Qj)</em>. In the same way that we could not tell whether the event we are concerned with is like all the others in the set in all relevant ways, we cannot tell whether two sets of events are indeed unconnected, so, again, this is a constraint on how a probability measure should behave rather than <span class="No-Break">a definition.</span></p>
+<p>Given all this, we can define the conditional probability of some event, <em class="italic">A</em>, given that we know that some other event, <em class="italic">B</em>, has occurred (or indeed that we know that <em class="italic">B</em> <span class="No-Break">will occur):</span></p>
+<ul>
+<li><em class="italic">p(A | B) = p(A &amp; </em><span class="No-Break"><em class="italic">B)/p(B)</em></span></li>
+</ul>
+<p>How likely is <em class="italic">A</em> given that we know <em class="italic">B</em>? Well, it’s how likely that they occur together divided by how likely <em class="italic">B</em> is by itself (so, if they occur together 5% of the time and B occurs 95% of the time, then seeing B will not make us much more likely to expect <em class="italic">A</em>, since <em class="italic">A</em> only occurs 1 in 19 times that <em class="italic">B</em> does; however, if they occur together 5% of the time but <em class="italic">B</em> itself only occurs 6%, then seeing B will be a strong clue that <em class="italic">A</em> will happen since <em class="italic">A</em> occurs 5 in 6 times that <span class="No-Break"><em class="italic">B</em></span><span class="No-Break"> does).</span></p>
+<p>This definition leads very <a id="_idIndexMarker590"/>straightforwardly to <span class="No-Break"><strong class="bold">Bayes’ theorem</strong></span><span class="No-Break">:</span></p>
+<ul>
+<li><em class="italic">p(A | B) = p(A &amp; B)/p(B)</em> <span class="No-Break">definition</span></li>
+<li><em class="italic">p(B | A) = p(B &amp; A)/p(A)</em> <span class="No-Break">definition</span></li>
+<li><em class="italic">p(A &amp; B)= p(B &amp;A)</em>                                     constraint on <em class="italic">A</em> <span class="No-Break">and </span><span class="No-Break"><em class="italic">B</em></span></li>
+<li><em class="italic">p(B &amp; A) = p(B | A)×p(A)</em> <span class="No-Break">rearrange (</span><span class="No-Break"><em class="italic">2</em></span><span class="No-Break">)</span></li>
+<li><em class="italic">p(A | B) = p(B | A)×p(A)/p(B)</em>                    substitute (<em class="italic">4</em>) <span class="No-Break">into (</span><span class="No-Break"><em class="italic">1</em></span><span class="No-Break">)</span></li>
+</ul>
+<p>If we have a set of events, <em class="italic">B1</em>, ... <em class="italic">Bn</em>, then we can use Bayes’ theorem to say that <em class="italic">p(A | B1 &amp; ... Bn) = p(B1 &amp; ...Bn | A)×p(A)/p(B1 &amp; ...&amp; Bn)</em>. And <em class="italic">if the B</em><em class="italic">i</em><em class="italic"> are completely unconnected</em>, we can say that <em class="italic">p(A | B1 &amp; ... Bn) = p(B1 | A) ×p(Bn | </em><span class="No-Break"><em class="italic">A)×p(A)/(p(B1) ×p(Bn))</em></span><span class="No-Break">.</span></p>
+<p>This can be very<a id="_idIndexMarker591"/> convenient. Suppose that <em class="italic">A</em> is “this tweet is labeled as angry” and <em class="italic">B1</em>, ..., <em class="italic">Bn</em> are “this tweet contains the word <em class="italic">furious</em>,” “this tweet contains the word <em class="italic">cross</em>,” ..., “this tweet contains the word <em class="italic">irritated</em>.” We may have never seen a tweet that contains these three words before, so we cannot estimate the likelihood of <em class="italic">A</em> by counting. However, we will have seen tweets that contain these words individually, and we can count how many tweets that have been labeled as <strong class="bold">angry</strong> contain <em class="italic">furious</em> (or <em class="italic">cross</em> or <em class="italic">irritated</em>), how many in total have been labeled as <strong class="bold">angry</strong>, ignoring what words they contain, and how many contain <strong class="bold">furious</strong> (or <em class="italic">cross</em> or <em class="italic">irritated</em>), ignoring how they are labeled. So, we can make sensible estimates of these, and we can then use Bayes’ theorem to estimate <em class="italic">p(A | B1 &amp; .. </em><span class="No-Break"><em class="italic">Bn)</em></span><span class="No-Break">.</span></p>
+<p>This way of applying Bayes’ theorem assumes that the events, <em class="italic">B1</em>, ... <em class="italic">Bn</em>, are completely unconnected. This is rarely true: a tweet that contains the word <em class="italic">cross</em> is much more likely to also contain <em class="italic">irritated</em> than one that doesn’t. So, while we can indeed <em class="italic">naively</em> misuse Bayes’ theorem in this way to get usable estimates of some outcome given a set of observations, we should never lose sight of the fact that these estimates are intrinsically unreliable. In the next section, we’ll look at how to implement this kind of naïve application of Bayes’ theorem as a classifier and investigate how well it works with our various datasets. The key to the success of this approach is that while the estimates of the likelihood of some outcome are not reliable, the ranking of different outcomes is often sensible – if the estimates of the probability that some tweet is <strong class="bold">angry</strong> or <strong class="bold">sad</strong> are 0.6 and 0.3, respectively, then it is indeed more likely to be <strong class="bold">angry</strong> than <strong class="bold">sad</strong>, even if the actual numbers cannot be <span class="No-Break">relied on.</span></p>
+<h2 id="_idParaDest-97"><a id="_idTextAnchor139"/>Naively applying Bayes’ theorem as a classifier</h2>
+<p><strong class="source-inline">sklearn.naive_bayes.MultinomialNB</strong> does <a id="_idIndexMarker592"/>these sums for us (they are not very difficult sums, but it is handy to have a package that does them very fast). Given this, the class of <strong class="source-inline">NBCLASSIFIER</strong> is very simple <span class="No-Break">to define:</span></p>
+<pre class="source-code">
+class NBCLASSIFIER(sklearnclassifier.SKLEARNCLASSIFIER):    def __init__(self, train, N=sys.maxsize, args={}):
+        # Convert the training data to sklearn format
+        self.readTrainingData(train, N=N, args=args)
+        # Make a naive bayes classifier
+        self.clsf = naive_bayes.MultinomialNB()
+        # Train it on the dataset
+        self.clsf.fit(self.matrix, self.values)</pre>
+<p>That’s all we need to make a Naïve Bayes classifier: make <strong class="source-inline">SKLEARNCLASSIFIER</strong> <span class="No-Break">using </span><span class="No-Break"><strong class="source-inline">sklearn.naive_bayes.MultinomialNB.</strong></span></p>
+<p>How well does this work? We will try this out on our datasets, using stemming for the non-English datasets but not for the English ones (we will do this from here on since those seemed to be generally the right choices in <a href="B18714_05.xhtml#_idTextAnchor116"><span class="No-Break"><em class="italic">Chapter 5</em></span></a><em class="italic"> , Sentiment Lexicons and Vector </em><span class="No-Break"><em class="italic">Space Models</em></span><span class="No-Break">):</span></p>
+<table class="T---Table _idGenTablePara-1" id="table001-6">
+<colgroup>
+<col/>
+<col/>
+<col/>
+<col/>
+<col/>
+<col/>
+</colgroup>
+<thead>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Header"/>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Precision</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Recall</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Micro F1</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Macro F1</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Jaccard</strong></span></p>
+</td>
+</tr>
+</thead>
+<tbody>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">SEM4-EN</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.873</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.873</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.873</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.873</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.775</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">SEM11-EN</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.625</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.262</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.369</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.373</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.227</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">WASSA-EN</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.830</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.830</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.830</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.830</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.709</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">CARER-EN</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.874</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.874</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.874</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.874</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.776</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">IMDB-EN</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.849</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.849</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.849</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.849</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.738</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">SEM4-AR</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.694</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.694</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.694</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.694</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.531</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">SEM11-AR</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.628</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.274</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.381</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.393</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.236</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">KWT.M-AR</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.667</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.655</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.661</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.664</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.494</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">SEM4-ES</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.525</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.535</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.530</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.462</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.360</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">SEM11-ES</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.508</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.296</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.374</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.380</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.230</span></p>
+</td>
+</tr>
+</tbody>
+</table>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.2 – Naïve Bayes, one emotion per tweet</p>
+<p>The first <a id="_idIndexMarker593"/>thing to note is that both making and applying a Naïve Bayes classifier is very quick – 10K tweets can be classified per second, and even training on a dataset containing 400K tweets takes just under 10 seconds. But, as before, what matters is whether the classifier is any good at the task we want it to carry out. The preceding table shows that for most of the English datasets, the scores are better than the scores in <a href="B18714_05.xhtml#_idTextAnchor116"><span class="No-Break"><em class="italic">Chapter 5</em></span></a>, <em class="italic">Sentiment Lexicons and Vector Space Models</em> with the improvement for the CARER dataset being particularly marked and the score for SEM11-EN being substantially worse than in <a href="B18714_05.xhtml#_idTextAnchor116"><span class="No-Break"><em class="italic">Chapter 5</em></span></a><em class="italic">, Sentiment Lexicons and Vector </em><span class="No-Break"><em class="italic">Space Models</em></span><span class="No-Break">.</span></p>
+<p>Recall the main differences between CARER and the others: CARER is much bigger than the others, and, in contrast to SEM11, every tweet has exactly one label associated with it. To see whether the issue is the size of the training set, we will plot the accuracy for this dataset against an increasing <span class="No-Break">training size:</span></p>
+<div>
+<div class="IMG---Figure" id="_idContainer079">
+<img alt="" height="871" src="image/B18714_06_03.jpg" width="1644"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.3 – Jaccard score against training size, Naïve Bayes, with the CARER dataset</p>
+<p>The Jaccard <a id="_idIndexMarker594"/>score increases steadily from quite a low base, and while it is beginning to flatten out as we get to around 400K training tweets, it is clear that Naïve Bayes does require quite a lot of data. This is likely to be at least part of the reason why it is less effective for the other datasets: they simply do not contain <span class="No-Break">enough data.</span></p>
+<p>It is worth looking in some detail at the inner workings of this algorithm. Just like the lexicon-based classifiers, Naïve Bayes constructs a lexicon where each word has associated scores for the <span class="No-Break">various emotions:</span></p>
+<table class="T---Table _idGenTablePara-1" id="table002-3">
+<colgroup>
+<col/>
+<col/>
+<col/>
+<col/>
+<col/>
+<col/>
+<col/>
+</colgroup>
+<thead>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Header"/>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">anger</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">fear</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">joy</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">love</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">sadness</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">surprise</strong></span></p>
+</td>
+</tr>
+</thead>
+<tbody>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p>a</p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0187</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0194</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0203</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0201</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0190</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0172</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">and</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0291</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0284</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0311</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0286</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0308</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0247</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">the</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0241</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0238</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0284</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0275</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0245</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0230</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">angry</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0020</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0003</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0001</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0001</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0003</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0001</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">happy</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0005</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0003</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0014</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0004</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0005</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0004</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">hate</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0007</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0005</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0002</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0003</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0007</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0002</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">irritated</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0013</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0000</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0000</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0000</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0000</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0000</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">joy</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0001</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0001</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0002</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0002</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0001</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0001</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">love</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0009</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0009</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0019</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0030</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0011</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0011</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">sad</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0005</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0003</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0002</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0002</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0010</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0003</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">scared</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0001</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0019</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0001</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0001</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0002</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0001</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">terrified</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0000</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0014</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0000</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0000</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0000</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.0000</span></p>
+</td>
+</tr>
+</tbody>
+</table>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.4 – Scores for individual words, Naïve Bayes, with the CARER dataset</p>
+<p>As with the<a id="_idIndexMarker595"/> lexicon-based models, the scores for <em class="italic">a</em>, <em class="italic">and</em>, and <em class="italic">the</em> are quite high, reflecting the fact that these words occur in most tweets, and hence the conditional probability that they will occur in tweets that express the various emotions is also quite high. These words will get largely canceled out when we divide the contributions that they make by their overall frequencies. The others all have very small scores, but by and large, they do match the expected emotions – <em class="italic">angry</em> and <em class="italic">irritated</em> are most strongly linked to <strong class="bold">anger</strong>, <em class="italic">joy</em> is (just about) most strongly linked to <strong class="bold">joy</strong>, and so on. The differences in the levels of association to different emotions are much less marked than was the case for the simple lexicon-based algorithms, so the improved performance must be caused by the improvement in the way that Bayes’ theorem combines scores. It is clear that these words are not independently distributed: the proportion of tweets in the CARER dataset that contain <em class="italic">angry</em> and <em class="italic">irritated</em> and both <em class="italic">angry</em> and <em class="italic">irritated</em> are 0.008, 0.003, and 0.0001, respectively. If we take these as estimates of the respective probabilities, we will find that p(<em class="italic">angry</em> + <em class="italic">irritated</em>)/p(<em class="italic">angry</em>) X p(<em class="italic">irritated</em>) = 3.6, where it should be 1 if these words were distributed independently. This is hardly surprising – you are much more likely to use two words that express the same emotion in a single tweet than you are to use ones that express different emotions or that have nothing to do with each other. Nonetheless, Bayes’ theorem is robust enough to give us useful results even when the conditions for applying it soundly do not <a id="_idIndexMarker596"/>apply, so long as we have <span class="No-Break">enough data.</span></p>
+<h2 id="_idParaDest-98"><a id="_idTextAnchor140"/>Multi-label datasets</h2>
+<p>The key difference <a id="_idIndexMarker597"/>between SEM11 and the other datasets is that tweets in the SEM11 sets can be assigned any number of emotions – they are multi-label datasets, as defined in <a href="B18714_05.xhtml#_idTextAnchor116"><span class="No-Break"><em class="italic">Chapter 5</em></span></a>, <em class="italic">Sentiment Lexicons and Vector-Space Models</em>. The actual distributions are <span class="No-Break">as follows:</span></p>
+<table class="T---Table" id="table003-2">
+<colgroup>
+<col/>
+<col/>
+<col/>
+<col/>
+<col/>
+<col/>
+<col/>
+<col/>
+<col/>
+<col/>
+<col/>
+<col/>
+</colgroup>
+<thead>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Header"/>
+<td class="T---Table T---Body T---Header">
+<p><strong class="bold">0</strong></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><strong class="bold">1</strong></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><strong class="bold">2</strong></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><strong class="bold">3</strong></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><strong class="bold">4</strong></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><strong class="bold">5</strong></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><strong class="bold">6</strong></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><strong class="bold">7</strong></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><strong class="bold">8</strong></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><strong class="bold">9</strong></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">10</strong></span></p>
+</td>
+</tr>
+</thead>
+<tbody>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">SEM11-EN</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">205</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">997</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">2827</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">2151</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">662</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">100</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">11</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p>0</p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p>0</p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p>0</p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p>0</p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">SEM11-AR</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">17</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">544</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">1005</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">769</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">210</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">33</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p>3</p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p>0</p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p>0</p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p>0</p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p>0</p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">SEM11-ES</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">179</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">1499</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">1605</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">479</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">52</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p>1</p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p>1</p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p>0</p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p>0</p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p>0</p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p>0</p>
+</td>
+</tr>
+</tbody>
+</table>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.5 – Number of tweets with 0, 1, 2, ... emotion labels for each SEM11 dataset</p>
+<p>In each case, most tweets have two or more labels. This makes it all but impossible for any algorithm that assigns exactly one label to each tweet to score highly – there has to be a false positive for every tweet that has zero labels, and there have to be K-1 false negatives for every tweet that has K labels (since, at most, one of these, K, has been picked, and hence K-1 was not). Suppose we have <em class="italic">N</em> tweets, where <em class="italic">Z</em> has no labels, <em class="italic">O</em> has exactly one label, and <em class="italic">M</em> has more than one label. So, even if we assume that our classifier gets one of the labels right whenever a tweet has at least one label, the best Jaccard score that can be obtained is <em class="italic">(O+M)/(O+2*M+Z)</em> – there will be <em class="italic">O+M</em> true positives (all the cases that ought to be assigned one label, plus all the cases that ought to have more than one, by the assumption), at least <em class="italic">Z</em> false positives (one for each tweet that should have no labels), and at least <em class="italic">M</em> <span class="No-Break">false negatives.</span></p>
+<p>Thus, the best Jaccard score that can be obtained by an algorithm that assigns exactly one label per tweet for the SEM11-EN dataset is 0.41 (if every label that was assigned to any of the tweets that have one or more labels in their Gold Standards set was correct, then we would have 6,748 true positives, 205 false positives, and 9,570 false negatives). If that is the maximum possible Jaccard score for an algorithm, then the scores of around 0.2 that we obtained previously are not <span class="No-Break">too bad.</span></p>
+<p>But they are<a id="_idIndexMarker598"/> not as good as the scores we got for these datasets in <a href="B18714_05.xhtml#_idTextAnchor116"><span class="No-Break"><em class="italic">Chapter 5</em></span></a><em class="italic">, Sentiment Lexicons and Vector Space Models</em>. We need to somehow make Naïve Bayes return <span class="No-Break">multiple labels.</span></p>
+<p>This turns out to be fairly straightforward. We can use Bayes’ theorem to provide an estimate of the probability of each possible outcome. <strong class="source-inline">sklearn.naive_bayes.MultinomialNB</strong> usually picks the outcome with the highest probability, but it has a method, <strong class="source-inline">predict_log_proba</strong>, that returns the log of the probabilities for each possible outcome (it is often convenient to use the log of the probabilities since working with logs allows us to replace multiplications with additions, which are significantly faster). We can use this to pick, for instance, every outcome whose probability exceeds some threshold, or to pick the best two rather than just the best one. We will look at these two options in turn. For the first, we will use the same constructor as for <strong class="source-inline">NBCLASSIFIER</strong>, and we will just change <strong class="source-inline">applyToTweet</strong> so that it uses <strong class="source-inline">predict_log_proba</strong> rather <span class="No-Break">than </span><span class="No-Break"><strong class="source-inline">predict</strong></span><span class="No-Break">:</span></p>
+<pre class="source-code">
+class NBCLASSIFIER1(NBCLASSIFIER):    def applyToTweet(self, tweet, resultAsOneHot=True):
+        tweet = tweets.tweet2sparse(tweet, self)
+        # use predict_log_proba
+        p = self.clsf.predict_log_proba(tweet)[0]
+        # compare to previously defined threshold
+        threshold = numpy.log(self.threshold)
+        return [1 if i &gt; threshold else 0 for i in p]</pre>
+<p>The following table is just a copy of the earlier table for Naïve Bayes that deals with the multi-label cases for ease <span class="No-Break">of comparison:</span></p>
+<table class="T---Table" id="table004-2">
+<colgroup>
+<col/>
+<col/>
+<col/>
+<col/>
+<col/>
+<col/>
+</colgroup>
+<thead>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Header"/>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Precision</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Recall</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Micro F1</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Macro F1</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Jaccard</strong></span></p>
+</td>
+</tr>
+</thead>
+<tbody>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">SEM11-EN</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.625</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.262</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.369</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.373</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.227</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">SEM11-AR</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.628</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.274</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.381</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.393</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.236</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">KWT.M-AR</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.667</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.655</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.661</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.664</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.494</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">SEM11-ES</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.508</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.296</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.374</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.380</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.230</span></p>
+</td>
+</tr>
+</tbody>
+</table>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.6 – Naïve Bayes, one emotion per tweet, multi-class cases</p>
+<p>The following <a id="_idIndexMarker599"/>table shows what happens when we allow the classifier to assign more than one emotion to <span class="No-Break">a tweet:</span></p>
+<table class="T---Table" id="table005-2">
+<colgroup>
+<col/>
+<col/>
+<col/>
+<col/>
+<col/>
+<col/>
+</colgroup>
+<thead>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Header"/>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Precision</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Recall</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Micro F1</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Macro F1</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Jaccard</strong></span></p>
+</td>
+</tr>
+</thead>
+<tbody>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">SEM11-EN</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.515</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.356</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.421</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.424</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.267</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">SEM11-AR</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.494</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.381</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.430</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.444</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.274</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">KWT.M-AR</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.645</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.704</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.673</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.677</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.507</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">SEM11-ES</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.419</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.394</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.406</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.415</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.255</span></p>
+</td>
+</tr>
+</tbody>
+</table>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.7 – Naïve Bayes, multiple outcomes with an optimal threshold, SEM11 datasets</p>
+<p>In each case, we have improved the recall considerably (because we are now allowing more than one label per tweet to be picked), at the cost of worsening precision. The Jaccard scores have increased slightly, but not to the point where they are better than the scores obtained in <a href="B18714_05.xhtml#_idTextAnchor116"><span class="No-Break"><em class="italic">Chapter 5</em></span></a><em class="italic">, Sentiment Lexicons and Vector </em><span class="No-Break"><em class="italic">Space Models</em></span><span class="No-Break">.</span></p>
+<p>We can also simply demand to have two labels per tweet. Again, this will improve the recall since we have two labels for all the cases that should have two labels, two for all the cases that should have three, and two for all the cases that should have four – that is, we will potentially decrease the number <span class="No-Break">of false</span></p>
+<p>negatives. We will also inevitably increase the number of false positives since we will have two where we should have either none or one. This is an extremely simplistic algorithm since it pays no attention to when we should allow two labels – we just assume that this is the right thing to do in <span class="No-Break">every case:</span></p>
+<pre class="source-code">
+class NBCLASSIFIER2(NBCLASSIFIER):    def applyToTweet(self, tweet, resultAsOneHot=True):
+        tweet = tweets.tweet2sparse(tweet, self)
+        p = self.clsf.predict_log_proba(tweet)[0]
+        # pick the second highest score in p
+        threshold = list(reversed(sorted(list(p))))[2]
+        return [1 if i &gt; threshold else 0 for i in p]</pre>
+<p>This produces<a id="_idIndexMarker600"/> a further slight improvement for the SEM11 cases, but still not enough to improve over the <a href="B18714_05.xhtml#_idTextAnchor116"><span class="No-Break"><em class="italic">Chapter 5</em></span></a><em class="italic">, Sentiment Lexicons and Vector Space Models</em> results, and is disastrous for KWT.M-AR, where there are a small number of cases with multiple assignments and a large number with no assignments at all – forcing the classifier to choose two assignments when there should be none will have a major effect on <span class="No-Break">the precision!</span></p>
+<table class="T---Table _idGenTablePara-1" id="table006-2">
+<colgroup>
+<col/>
+<col/>
+<col/>
+<col/>
+<col/>
+<col/>
+</colgroup>
+<thead>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Header"/>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Precision</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Recall</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Micro F1</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Macro F1</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Jaccard</strong></span></p>
+</td>
+</tr>
+</thead>
+<tbody>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">SEM11-EN</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.477</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.404</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.437</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.429</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.280</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">SEM11-AR</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.474</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.413</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.441</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.440</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.283</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">KWT.M-AR</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.461</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.906</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.611</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.612</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.440</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">SEM11-ES</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.370</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.431</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.398</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.395</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.249</span></p>
+</td>
+</tr>
+</tbody>
+</table>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.8 – Naïve Bayes, best two outcomes, multi-label datasets</p>
+<p>So, we have two very simple ways of turning Naïve Bayes into a classifier with multiple (or zero) outcomes. In both cases, the improvement over the standard version is minor but useful. And in both cases, it requires us to know something about the training set – the first requires us to choose a threshold to compare the individual scores with, and the second requires us to know the distribution of the number of outcomes per tweet. This means that, in both cases, we have to use the training data for two things – to find the conditional probabilities, as in the standard case, and then to pick the best possible threshold or to look at the distribution of the number of outcomes; for this, we have to split the training data into two parts, a training section to find the basic probabilities and then a <strong class="bold">development</strong> section to find the extra information. This is common in situations where you have to tune a basic model. No rule says that you <em class="italic">must</em> keep the training and development sections distinct like you must keep the training and test sets distinct, but pragmatically, it turns out that doing so usually produces better results than using the training set as the <span class="No-Break">development set.</span></p>
+<p>The scores <a id="_idIndexMarker601"/>for the multi-label datasets are still, however, worse than in <a href="B18714_05.xhtml#_idTextAnchor116"><span class="No-Break"><em class="italic">Chapter 5</em></span></a><em class="italic">, Sentiment Lexicons and Vector Space Models</em>. We can try combinations of these two strategies, such as by demanding the best two outcomes so long as they both <span class="No-Break">satisfy some</span></p>
+<p>threshold, but no amount of fiddling around is going to transform Naïve Bayes into a good classifier for multi-label problems. We will return to this issue in <a href="B18714_10.xhtml#_idTextAnchor193"><span class="No-Break"><em class="italic">Chapter </em></span><span class="No-Break"><em class="italic">10</em></span></a><span class="No-Break">, </span><span class="No-Break"><em class="italic">Multiclassifiers</em></span><span class="No-Break">.</span></p>
+<p>We also need to try to work out why Naïve Bayes produces a considerable improvement over the lexicon-based approaches for the SEM4, CARER, and IMDB datasets but a worse performance for WASSA. We have already seen that the performance of Naïve Bayes improves substantially for CARER as we increase the training data. The dataset sizes for these three datasets are SEM4-EN 6812, WASSA-EN 3564, and CARER-EN 411809. What happens if we restrict the training data for all three cases to be the same as for WASSA? The following table is a copy of the relevant part of the original table, using the full dataset in <span class="No-Break">each case:</span></p>
+<table class="T---Table" id="table007-1">
+<colgroup>
+<col/>
+<col/>
+<col/>
+<col/>
+<col/>
+<col/>
+</colgroup>
+<thead>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Header"/>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Precision</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Recall</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Micro F1</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Macro F1</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Jaccard</strong></span></p>
+</td>
+</tr>
+</thead>
+<tbody>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">SEM4-EN</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.873</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.873</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.873</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.873</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.775</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">WASSA-EN</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.830</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.830</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.830</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.830</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.709</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">CARER-EN</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.874</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.874</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.874</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.874</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.776</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">IMDB-EN</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.849</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.849</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.849</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.849</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.738</span></p>
+</td>
+</tr>
+</tbody>
+</table>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.9 – Naïve Bayes, English single-class datasets – full training sets</p>
+<p>When we reduce the amount of data available to be the same as for WASSA, the results get worse, <span class="No-Break">as expected:</span></p>
+<table class="T---Table" id="table008-1">
+<colgroup>
+<col/>
+<col/>
+<col/>
+<col/>
+<col/>
+<col/>
+</colgroup>
+<thead>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Header"/>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Precision</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Recall</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Micro F1</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Macro F1</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Jaccard</strong></span></p>
+</td>
+</tr>
+</thead>
+<tbody>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">SEM4-EN</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.837</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.837</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.837</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.837</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.719</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">WASSA-EN</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.830</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.830</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.830</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.830</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.709</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">CARER-EN</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.732</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.732</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.732</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.732</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.577</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">IMDB-EN</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.825</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.825</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.825</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.825</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.703</span></p>
+</td>
+</tr>
+</tbody>
+</table>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.10 – Naïve Bayes, English single-class datasets – restricted training sets</p>
+<p>The<a id="_idIndexMarker602"/> improvements that we’ve made over the results from <a href="B18714_05.xhtml#_idTextAnchor116"><span class="No-Break"><em class="italic">Chapter 5</em></span></a><em class="italic">, Sentiment Lexicons and Vector Space Models</em> for the SEM4-EN, CARER-EN, and IMDB-EN datasets are now less marked, particularly for CARER-EN: the loss of information when we restrict the size of the dataset <span class="No-Break">is significant.</span></p>
+<p>Is there anything else that might explain the differences? Having more classes will make the problem more difficult. If you have, for instance, 10 classes, then making a random choice will get it right 10% </p>
+<p>of the time whereas with 5 classes, a random choice will get it right 20% of the time. However, both SEM4-EN and WASSA-EN have the same set of labels, namely <strong class="bold">anger</strong>, <strong class="bold">fear</strong>, <strong class="bold">joy</strong>, and <strong class="bold">sadness</strong>, with CARER-EN having these four plus <strong class="bold">love</strong> and <strong class="bold">surprise</strong>, so if this were the key factor, we would expect the versions of SEM4-EN and WASSA to produce similar results and CARER to be a bit worse, which is not what we find. It is also likely that having a set where the distribution between classes is very uneven may make a difference. However, the distributions of the various emotions between SEM4-EN and WASSA-EN are <span class="No-Break">fairly similar:</span></p>
+<p>SEM4-EN:  anger: 834, fear: 466, joy: 821, <span class="No-Break">sadness: 1443</span></p>
+<p>WASSA-EN:  anger: 857, fear: 1098, joy: 823, <span class="No-Break">sadness: 786</span></p>
+<p>SEM4-EN has more tweets that express sadness and WASSA-EN has more that express fear, but the differences are not of a kind that would lead you to expect a difference in the performance of a classifier. The two also have almost identical vocabulary sizes (75723 versus 75795) and almost identical average numbers of tokens per tweet (both 21.2). Sometimes, it just seems that one classifier is well suited to one task, and a different classifier is better suited <span class="No-Break">to another.</span></p>
+<h1 id="_idParaDest-99"><a id="_idTextAnchor141"/>Summary</h1>
+<p>In this chapter, we saw that Naïve Bayes can work extremely well as a classifier for finding emotions in tweets. It works particularly well with large training sets (and takes very little time to train since it simply counts occurrences of words and the emotions associated with the tweets they appear in). It can be adapted fairly straightforwardly to work with datasets where a single tweet may have any number of labels (including zero) but is outperformed on the test sets with this property by the lexicon-based approaches from <a href="B18714_05.xhtml#_idTextAnchor116"><span class="No-Break"><em class="italic">Chapter 5</em></span></a><em class="italic">, Sentiment Lexicons and Vector Space Models</em>. <span class="No-Break"><em class="italic">Figure 6</em></span><em class="italic">.11</em> shows the best classifiers so far for the <span class="No-Break">various datasets:</span></p>
+<table class="T---Table _idGenTablePara-1" id="table009-1">
+<colgroup>
+<col/>
+<col/>
+<col/>
+<col/>
+<col/>
+</colgroup>
+<thead>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Header"/>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">LEX</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">CP</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">NB (single)</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">NB (multi)</strong></span></p>
+</td>
+</tr>
+</thead>
+<tbody>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">SEM4-EN</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.503</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.593</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.775</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><strong class="bold">*</strong><span class="No-Break"><strong class="bold">0.778*</strong></span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">SEM11-EN</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.347</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><strong class="bold">*</strong><span class="No-Break"><strong class="bold">0.353*</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.227</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.267</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">WASSA-EN</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.445</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.505</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><strong class="bold">*</strong><span class="No-Break"><strong class="bold">0.709*</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.707</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">CARER-EN</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.350</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.395</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><strong class="bold">*</strong><span class="No-Break"><strong class="bold">0.776*</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.774</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">IMDB-EN</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.722</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.722</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.738</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><strong class="bold">*</strong><span class="No-Break"><strong class="bold">0.740*</strong></span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">SEM4-AR</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.506</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.513</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.531</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><strong class="bold">*</strong><span class="No-Break"><strong class="bold">0.532*</strong></span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">SEM11-AR</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.378</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><strong class="bold">*</strong><span class="No-Break"><strong class="bold">0.382*</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.236</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.274</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">KWT.M-AR</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><strong class="bold">*</strong><span class="No-Break"><strong class="bold">0.687*</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.666</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.494</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.507</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">SEM4-ES</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><strong class="bold">*</strong><span class="No-Break"><strong class="bold">0.425*</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.177</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.360</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.331</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">SEM11-ES</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.269</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><strong class="bold">*</strong><span class="No-Break"><strong class="bold">0.278*</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.230</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">0.255</span></p>
+</td>
+</tr>
+</tbody>
+</table>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.11 – Best classifiers so far</p>
+<p>In general, Naïve Bayes is the best classifier for datasets where each tweet has only one label, with marginal differences in these datasets between the version of Naïve Bayes that assumes there is only one label per tweet and the version that allows for multiple labels. For the multi-label datasets, the version that allows for multiple labels always outperforms the one that doesn’t, but in all these cases, one of the lexicon-based classifiers from <em class="italic">wwwwwwwwwww, Sentiment Lexicons and Vector Space Models</em> is best. For now, the biggest lesson from this chapter is that when trying to solve a classification problem, you should try various approaches and take the one that works best. We will see what happens when we look at more sophisticated machine learning algorithms in the <span class="No-Break">following chapters.</span></p>
+<h1 id="_idParaDest-100"><a id="_idTextAnchor142"/>References</h1>
+<p>To learn more about the topics that were covered in this chapter, take a look at the <span class="No-Break">following resources:</span></p>
+<ul>
+<li><a id="_idTextAnchor143"/>Bayes, T. (1958). <em class="italic">An essay towards solving a problem in the doctrine of chances</em>. Biometrika, 45(3–4), <span class="No-Break">296–315. </span><a href="https://doi.org/10.1093/biomet/45.3-4.296"><span class="No-Break">https://doi.org/10.1093/biomet/45.3-4.296</span></a><span class="No-Break">.</span></li>
+</ul>
+</div>
+</div></body></html>

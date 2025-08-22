@@ -1,0 +1,995 @@
+<html><head></head><body>
+		<div id="_idContainer187">
+			<h1 id="_idParaDest-196" class="chapter-number"><a id="_idTextAnchor279"/>10</h1>
+			<h1 id="_idParaDest-197"><a id="_idTextAnchor280"/>Model Calibration</h1>
+			<p>So far, we have explored various ways to handle the data imbalance. In this chapter, we will see the need to do some post-processing of the prediction scores that we get from the trained models. This can be helpful either during the real-time prediction from the model or during the offline training time evaluation of the model. We will also understand some ways of measuring how calibrated the model is and how imbalanced datasets make the model <span class="No-Break">calibration inevitable.</span></p>
+			<p>The following topics will be covered in <span class="No-Break">the chapter:</span></p>
+			<ul>
+				<li>Introduction to <span class="No-Break">model calibration</span></li>
+				<li>The influence of data balancing techniques on <span class="No-Break">model calibration</span></li>
+				<li>Plotting calibration curves for a model trained on a <span class="No-Break">real-world dataset</span></li>
+				<li>Model <span class="No-Break">calibration techniques</span></li>
+				<li>The impact of calibration on a <span class="No-Break">model’s performance</span></li>
+			</ul>
+			<p>By the end of this chapter, you will have a clear understanding of what model calibration means, how to measure it, and when and how to <span class="No-Break">apply it.</span></p>
+			<h1 id="_idParaDest-198"><a id="_idTextAnchor281"/>Technical requirements</h1>
+			<p>Similar to prior chapters, we will continue to utilize common libraries such as <strong class="source-inline">matplotlib</strong>, <strong class="source-inline">numpy</strong>, <strong class="source-inline">scikit-learn</strong>, <strong class="source-inline">xgboost</strong>, and <strong class="source-inline">imbalanced-learn</strong>. The code and notebooks for this chapter are available on GitHub at <a href="https://github.com/PacktPublishing/Machine-Learning-for-Imbalanced-Data/tree/master/chapter10">https://github.com/PacktPublishing/Machine-Learning-for-Imbalanced-Data/tree/master/chapter10</a>. You can open the GitHub notebook using Google Colab by clicking on the <strong class="bold">Open in Colab</strong> icon on the top of the chapter’s notebook or by launching it from <a href="https://colab.research.google.com">https://colab.research.google.com</a> using the GitHub URL of <span class="No-Break">the notebook.</span></p>
+			<h1 id="_idParaDest-199"><a id="_idTextAnchor282"/>Introduction to model calibration</h1>
+			<p>What is the difference between stating “<em class="italic">The model predicted the transaction as fraudulent</em>” and “<em class="italic">The </em><em class="italic">model estimated a 60% probability of the transaction being fraudulent</em>”? When would one statement be more useful than <span class="No-Break">the other?</span></p>
+			<p>The difference <a id="_idIndexMarker717"/>between the two is that the second statement represents likelihood. This likelihood can be useful in understanding the model’s confidence, which is needed in many applications, such as in medical diagnosis. For example, the prediction that a patient is 80% likely or 80% probable to have cancer is more useful to the doctor than just predicting whether the patient has cancer <span class="No-Break">or not.</span></p>
+			<p>A model is considered calibrated if there is a match between the number of positive classes and predicted probability. Let’s try to understand this further. Let’s say we have 10 observations, and for each of them, the model predicts a probability of 0.7 to be of the positive class. If the model is calibrated, then we expect 7 out of those 10 observations to belong to the <span class="No-Break">positive class.</span></p>
+			<p>However, surprisingly, most machine learning models are not calibrated, and their prediction values tend to be overconfident or underconfident. What does that mean? An overconfident model would predict the probability to be 0.9 (for example), while the actual probability might have been only 0.6. Similarly, an underconfident model would predict the probability to be 0.6 (for example) while the actual probability might have <span class="No-Break">been 0.9.</span></p>
+			<p><em class="italic">Do we always need to calibrate </em><span class="No-Break"><em class="italic">model probabilities?</em></span></p>
+			<p>Actually, it depends upon the problem at hand. If the problem inherently involves the ordering of certain items, say in search ranking, then all we need is relative scores and real probabilities <span class="No-Break">don’t matter.</span></p>
+			<p>Here is an example of an overconfident model where we can see that most of the time, the predicted probabilities from the model are much higher than the fraction of actual <span class="No-Break">positive examples:</span></p>
+			<div>
+				<div id="_idContainer171" class="IMG---Figure">
+					<img src="image/B17259_10_01.jpg" alt="" role="presentation"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 10.1 – The calibration curve of an overconfident model for which predicted probabilities are overestimated</p>
+			<h2 id="_idParaDest-200"><a id="_idTextAnchor283"/>Why bother with model calibration</h2>
+			<p>As we’ve discussed, model calibration may not be necessary if the primary goal is to obtain a <a id="_idIndexMarker718"/>relative ranking of items. However, there are several other scenarios where model calibration <span class="No-Break">becomes crucial:</span></p>
+			<ul>
+				<li><strong class="bold">Interpreting model predictions as confidence</strong>: Calibrated models allow the scores to be interpreted as the model’s confidence in its predictions. For example, in a spam detection system, a calibrated score of 0.9 could mean the model is 90% confident that an email <span class="No-Break">is spam.</span></li>
+				<li><strong class="bold">Interpreting model predictions as probabilities</strong>: These scores can also be viewed as probabilities, making them directly interpretable. In a weather prediction model, a calibrated score of 0.8 could be interpreted as an 80% chance <span class="No-Break">of rain.</span></li>
+				<li><strong class="bold">High-stake applications</strong>: Such calibrated probabilities are particularly useful in high-stake applications such as healthcare for disease prediction or in fraud detection. For instance, in predicting the likelihood of a patient having a certain disease, a calibrated score of 0.7 could mean there’s a 70% chance the patient has the disease, guiding further medical tests <span class="No-Break">or treatments.</span></li>
+				<li><strong class="bold">Enhancing human interpretability and trust</strong>: Human interpretability and trust in model predictions are enhanced when the model is calibrated. For example, in a loan approval system, a calibrated score could help loan officers understand the risk associated with a loan application, thereby aiding in the <span class="No-Break">decision-making process.</span></li>
+			</ul>
+			<p>It is particularly <a id="_idIndexMarker719"/>important to be aware of model calibration when working with deep learning models, as several common neural network hyperparameters can affect <span class="No-Break">model calibration:</span></p>
+			<ul>
+				<li><strong class="bold">Model capacity</strong>: More layers (depth) and more neurons (width) usually reduce <a id="_idIndexMarker720"/>the classification error but have been found to lower the calibration of the <span class="No-Break">model [1].</span></li>
+				<li><strong class="bold">Batch norm</strong>: Although <a id="_idIndexMarker721"/>batch norm typically improves training time, has a mild regularizing effect, and might even improve the accuracy of the model, it can also make the model more <span class="No-Break">miscalibrated [1].</span></li>
+				<li><strong class="bold">Weight decay</strong>: Weight decay is a regularization technique, and more weight decay <a id="_idIndexMarker722"/>typically helps calibrate the model. So, instead, if we have less weight decay, then we would expect the model to be more <span class="No-Break">miscalibrated [1].</span></li>
+			</ul>
+			<p>Let’s see what kind of model scores typically need to <span class="No-Break">be calibrated.</span></p>
+			<h2 id="_idParaDest-201"><a id="_idTextAnchor284"/>Models with and without well-calibrated probabilities</h2>
+			<p>The logistic regression model is often assumed to output calibrated probabilities, particularly <a id="_idIndexMarker723"/>when it is an appropriate fit for the data [2]. This assumption is based on the model’s optimization of the cross-entropy <a id="_idIndexMarker724"/>loss or log loss function. However, it’s worth noting that logistic regression can produce overconfident predictions, and regularization techniques such as L1/L2 can help the model be more conservative and thus <span class="No-Break">improve calibration.</span></p>
+			<p>Naïve Bayes models often push probabilities close to zero or one due to their assumption about feature independence, which can result in poor calibration [2]. On the other hand, bagging models (such as random forests) and boosting models generally produce probabilities that are away from the extremes of zero and one. This is due to the score-averaging nature of the individual decision trees or stumps they use, which often leads to <span class="No-Break">better calibration.</span></p>
+			<p>For neural networks, some research studies show that simple networks tend to give calibrated scores [2]. Still, since neural network models are getting more complex day by day, modern <a id="_idIndexMarker725"/>neural networks tend to be fairly uncalibrated [1] [3]. As <span class="No-Break"><em class="italic">Figure 10</em></span><em class="italic">.2</em> shows, a five-layer LeNet is well calibrated <a id="_idIndexMarker726"/>since its confidence levels closely mirror the expected accuracy, evident by the bars roughly aligning along the diagonal. In contrast, while a 110-layer ResNet boasts higher accuracy (lower error), its confidence scores don’t align as closely with this <span class="No-Break">accuracy [1].</span></p>
+			<div>
+				<div id="_idContainer172" class="IMG---Figure">
+					<img src="image/B17259_10_02.jpg" alt="" role="presentation"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 10.2 – Reliability diagrams for a five-layer LeNet (left) and a 110-layer ResNet (right) on CIFAR-100 (adapted from Guo et al. [1])</p>
+			<p>Next, we will learn how to measure whether a model is calibrated <span class="No-Break">or not.</span></p>
+			<h2 id="_idParaDest-202"><a id="_idTextAnchor285"/>Calibration curves or reliability plot</h2>
+			<p>Let’s see how we can understand if the model’s scores are calibrated or not. Let’s assume we have a model that predicts if an image is of a cat <span class="No-Break">or not.</span></p>
+			<p>A <strong class="bold">calibration curve</strong> is basically <a id="_idIndexMarker727"/>obtained by plotting the fraction of actual positive values (<em class="italic">y</em> axis) against predicted probability scores (<span class="No-Break"><em class="italic">x</em></span><span class="No-Break"> axis).</span></p>
+			<p>Let’s see how <a id="_idIndexMarker728"/>to plot the calibration curve, also known as a <span class="No-Break"><strong class="bold">reliability plot</strong></span><span class="No-Break">:</span></p>
+			<ol>
+				<li>Create a dataset with two columns: one with actual labels and another with <span class="No-Break">predicted probability.</span></li>
+				<li>Sort the data into ascending order using <span class="No-Break">predicted probability.</span></li>
+				<li>Divide the predicted probability dataset into fixed-size bins ranging from 0 to 1. For example, if we create 10 bins, we get 0.1, 0.2, 0.3, …, 0.9, 1.0. If there are too many examples in the dataset, we can use smaller-size bins and <span class="No-Break">vice versa.</span></li>
+				<li>Now compute the fraction of actual positives in each bin. These fraction values will be our <em class="italic">y</em> axis values. On the <em class="italic">x</em> axis, we plot the fixed bin value, i.e., 0.1, 0.2, <span class="No-Break">0.3, etc.</span></li>
+			</ol>
+			<p>We get a plot like the one in the <span class="No-Break">following diagram:</span></p>
+			<div>
+				<div id="_idContainer173" class="IMG---Figure">
+					<img src="image/B17259_10_03.jpg" alt="" role="presentation"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 10.3 – Plotting the probability predictions of an XGBoost classifier against the fraction of positives</p>
+			<p>We need to be careful with the number of bins chosen because of the <span class="No-Break">following reasons:</span></p>
+			<ul>
+				<li>If we choose too few bins, the plot may look linear and well-fitted, giving the impression that the model is calibrated. More importantly, the real danger of using too few bins is that the curve won’t have enough detail; it will essentially be just a few points <span class="No-Break">connected together.</span></li>
+				<li>Similarly, if we choose too many bins, then the plot may look noisy, and we may wrongly conclude the model to <span class="No-Break">be uncalibrated.</span></li>
+				<li>It might become particularly difficult to identify whether a model is calibrated or not if we are dealing with imbalanced datasets. If our dataset is not balanced and has a much smaller number of examples of positive classes to plot, then the calibration plot may look noisy or show that the model is underconfident <span class="No-Break">or overconfident.</span></li>
+			</ul>
+			<p>However, it’s worth <a id="_idIndexMarker729"/>noting that many models are not perfectly calibrated and their calibration curves may deviate from the perfect <span class="No-Break">calibration line:</span></p>
+			<div>
+				<div id="_idContainer174" class="IMG---Figure">
+					<img src="image/B17259_10_04.jpg" alt="" role="presentation"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 10.4 – A calibration curve plot when fitted via an XGBoost model; on the left is an overconfident model and on the right is an underconfident model</p>
+			<p><strong class="source-inline">scikit-learn</strong> provides a function called <strong class="source-inline">calibration_curve</strong> to easily plot <span class="No-Break">this curve:</span></p>
+			<pre class="source-code">
+fraction_of_positives, mean_pred_bin = calibration_curve( \
+    y_true,probs, n_bins=8)</pre>			<p>However, visually judging and comparing various calibration plots can be error-prone, and we might want to use a metric that can make some kind of numerical comparison of the calibrations of two <span class="No-Break">different models.</span></p>
+			<h2 id="_idParaDest-203"><a id="_idTextAnchor286"/>Brier score</h2>
+			<p>There is a <a id="_idIndexMarker730"/>commonly used measure called the <strong class="bold">Brier score</strong>, which is basically the mean squared error of the predicted probability obtained from the model <span class="No-Break">as follows:</span></p>
+			<p><span class="_-----MathTools-_Math_Variable">Brier</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Variable">score</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Operator">=</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Number">1</span><span class="_-----MathTools-_Math_Number"> </span><span class="_-----MathTools-_Math_Base">_</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">N</span><span class="_-----MathTools-_Math_Variable"> </span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">∑</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Base">(</span><span class="_-----MathTools-_Math_Variable">predicted</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">_</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">probability</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">−</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">actual</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">_</span><span class="_-----MathTools-_Math_Base"> </span><span class="No-Break"><span class="_-----MathTools-_Math_Variable">label</span></span><span class="No-Break"><span class="_-----MathTools-_Math_Variable">)</span></span><span class="No-Break"><span class="_-----MathTools-_Math_Base"> </span></span><span class="No-Break"><span class="_-----MathTools-_Math_Number">2</span></span></p>
+			<p>where <span class="_-----MathTools-_Math_Variable">N</span> is the number <span class="No-Break">of examples.</span></p>
+			<p>This score varies between 0 (best possible score) and 1 (worst possible score). This metric is very <a id="_idIndexMarker731"/>similar to the <strong class="bold">Mean Square Error</strong> (<strong class="bold">MSE</strong>) or <strong class="bold">Root Mean Square Error</strong> (<strong class="bold">RMSE</strong>) of linear <a id="_idIndexMarker732"/>regression. A lower Brier score is better. Again, <strong class="source-inline">scikit-learn</strong> makes our job a <span class="No-Break">bit easier:</span></p>
+			<pre class="source-code">
+import numpy as np
+from sklearn.metrics import brier_score_loss
+y_pred = np.array([0.1, 0.2,0.8,0.9])
+y_actual = np.array([1,0,0,1])
+brier_score_loss(y_actual, y_pred)
+# order of parameters here is important!</pre>			<p>This outputs the following Brier score <span class="No-Break">loss value:</span></p>
+			<pre class="source-code">
+0.37500000000000006</pre>			<p>The paper <em class="italic">Class Probability Estimates are Unreliable for Imbalanced Data (and How to Fix Them)</em> by Wallace and Dahabreh [4] argues that a lower Brier score for an imbalanced dataset might just mean that the calibration is good overall but not necessarily for minority or rare classes. In order to track the calibration of individual classes, they proposed a stratified <span class="No-Break">Brier score:</span></p>
+			<div>
+				<div id="_idContainer175" class="IMG---Figure">
+					<img src="image/B17259_10_05.jpg" alt="" role="presentation"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 10.5 – Stratified Brier scores for positive and negative classes [4]</p>
+			<p>where <span class="_-----MathTools-_Math_Variable">N</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">pos</span> denotes the number of positive class examples, <span class="_-----MathTools-_Math_Variable">N</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">neg</span> denotes the number of negative class examples, <span class="_-----MathTools-_Math_Variable">y</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">i</span> is the label, and <span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Base">ˆ</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">P</span><span class="_-----MathTools-_Math_Variable"> </span> is the model <span class="No-Break">prediction score.</span></p>
+			<p>Let’s look at <a id="_idIndexMarker733"/>an alternative metric to measure calibration that is more popular among deep <span class="No-Break">learning models.</span></p>
+			<h2 id="_idParaDest-204"><a id="_idTextAnchor287"/>Expected Calibration Error</h2>
+			<p><strong class="bold">Expected Calibration Error</strong> (<strong class="bold">ECE</strong>) [5] is another metric for measuring how calibrated a model is. Predicted probabilities <a id="_idIndexMarker734"/>from the model are grouped into <span class="_-----MathTools-_Math_Variable">M</span> bins of equal size. Let’s assume <span class="_-----MathTools-_Math_Variable">B</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">m</span> is the set of examples whose prediction scores fall into the <span class="No-Break"><em class="italic">m</em></span><span class="No-Break"><span class="superscript">th</span></span><span class="No-Break"> bin.</span></p>
+			<p>Then for each bin (<span class="_-----MathTools-_Math_Variable">B</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">m</span>), we calculate the difference between the average predicted probability (that is, <span class="_-----MathTools-_Math_Variable">conf</span><span class="_-----MathTools-_Math_Base">(</span><span class="_-----MathTools-_Math_Variable">B</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">m</span><span class="_-----MathTools-_Math_Base">)</span>) and accuracy (that is, the proportion of examples correctly classified). This difference is |<span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Variable_v-normal">a</span><span class="_-----MathTools-_Math_Variable">cc</span><span class="_-----MathTools-_Math_Base">(</span><span class="_-----MathTools-_Math_Variable">B</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">m</span><span class="_-----MathTools-_Math_Base">)</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">−</span><span class="_-----MathTools-_Math_Base"> </span><span class="No-Break"><span class="_-----MathTools-_Math_Variable_v-normal">c</span></span><span class="No-Break"><span class="_-----MathTools-_Math_Variable">onf</span></span><span class="No-Break"><span class="_-----MathTools-_Math_Base">(</span></span><span class="No-Break"><span class="_-----MathTools-_Math_Variable">B</span></span><span class="No-Break"><span class="_-----MathTools-_Math_Base"> </span></span><span class="No-Break"><span class="_-----MathTools-_Math_Variable">m</span></span><span class="No-Break"><span class="_-----MathTools-_Math_Base">)</span></span><span class="No-Break">|.</span></p>
+			<p>We also weigh these differences by the number of examples in each bin and finally sum them up to get the overall ECE value. This is equivalent to multiplying the difference by <span class="_-----MathTools-_Math_Variable">B</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">m</span>/<span class="_-----MathTools-_Math_Variable">n</span>, where <span class="_-----MathTools-_Math_Variable">n</span> is the total number of examples. Finally, we sum this over all the bins to get the <span class="No-Break">final formula:</span></p>
+			<p><span class="_-----MathTools-_Math_Variable">ECE</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Operator">=</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Base">∑</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">m</span><span class="_-----MathTools-_Math_Operator">=</span><span class="_-----MathTools-_Math_Number">1</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">M</span><span class="_-----MathTools-_Math_Variable"> </span><span class="_-----MathTools-_Math_Base">|</span><span class="_-----MathTools-_Math_Variable">B</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">m</span><span class="_-----MathTools-_Math_Base">|</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">/</span><span class="_-----MathTools-_Math_Variable">n</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Symbol_v-normal">*</span><span class="_-----MathTools-_Math_Base">|</span><span class="_-----MathTools-_Math_Variable">acc</span><span class="_-----MathTools-_Math_Base">(</span><span class="_-----MathTools-_Math_Variable">B</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">m</span><span class="_-----MathTools-_Math_Base">)</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">−</span><span class="_-----MathTools-_Math_Base"> </span><span class="No-Break"><span class="_-----MathTools-_Math_Variable">conf</span></span><span class="No-Break"><span class="_-----MathTools-_Math_Base">(</span></span><span class="No-Break"><span class="_-----MathTools-_Math_Variable">B</span></span><span class="No-Break"><span class="_-----MathTools-_Math_Base"> </span></span><span class="No-Break"><span class="_-----MathTools-_Math_Variable">m</span></span><span class="No-Break"><span class="_-----MathTools-_Math_Base">)</span></span><span class="No-Break"><span class="_-----MathTools-_Math_Base">|</span></span></p>
+			<p>Accuracy and confidence can be defined <span class="No-Break">as follows:</span></p>
+			<ul>
+				<li>Accuracy <span class="_-----MathTools-_Math_Variable">acc</span><span class="_-----MathTools-_Math_Base">(</span><span class="_-----MathTools-_Math_Variable">B</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">m</span><span class="_-----MathTools-_Math_Base">)</span> is the proportion of examples in bin <span class="_-----MathTools-_Math_Variable">B</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">m</span> correctly classified by <span class="No-Break">the model:</span></li>
+			</ul>
+			<p><span class="_-----MathTools-_Math_Variable_v-normal">acc</span><span class="_-----MathTools-_Math_Base">(</span><span class="_-----MathTools-_Math_Variable_v-normal">B</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable_v-normal">m</span><span class="_-----MathTools-_Math_Base">)</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">=</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Base">(</span><span class="_-----MathTools-_Math_Number">1</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">/</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Base">|</span><span class="_-----MathTools-_Math_Variable_v-normal">B</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable_v-normal">m</span><span class="_-----MathTools-_Math_Base">|</span><span class="_-----MathTools-_Math_Base">)</span><span class="_-----MathTools-_Math_Symbol_v-normal">*</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Base">∑</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable_v-normal">i</span><span class="_-----MathTools-_Math_Operator">=</span><span class="_-----MathTools-_Math_Number">1</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Base">|</span><span class="_-----MathTools-_Math_Variable_v-normal">B</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable_v-normal">m</span><span class="_-----MathTools-_Math_Base">|</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable_v-normal">I</span><span class="_-----MathTools-_Math_Base">(</span><span class="_-----MathTools-_Math_Variable_v-normal">y</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable_v-normal">i</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">=</span><span class="_-----MathTools-_Math_Base"> </span><span class="No-Break"><span class="_-----MathTools-_Math_Variable_v-normal">ŷ</span></span><span class="No-Break"><span class="_-----MathTools-_Math_Base"> </span></span><span class="No-Break"><span class="_-----MathTools-_Math_Variable_v-normal">i</span></span><span class="No-Break"><span class="_-----MathTools-_Math_Base">)</span></span></p>
+			<ul>
+				<li>Confidence is the average predicted probability of the examples in bin <span class="No-Break"><span class="_-----MathTools-_Math_Variable">B</span></span><span class="No-Break"><span class="_-----MathTools-_Math_Base"> </span></span><span class="No-Break"><span class="_-----MathTools-_Math_Variable">m</span></span><span class="No-Break">:</span></li>
+			</ul>
+			<p><span class="_-----MathTools-_Math_Variable">conf</span><span class="_-----MathTools-_Math_Base">(</span><span class="_-----MathTools-_Math_Variable">B</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">m</span><span class="_-----MathTools-_Math_Base">)</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">=</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Base">(</span><span class="_-----MathTools-_Math_Number">1</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">/</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Base">|</span><span class="_-----MathTools-_Math_Variable">B</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">m</span><span class="_-----MathTools-_Math_Base">|</span><span class="_-----MathTools-_Math_Base">)</span><span class="_-----MathTools-_Math_Symbol_v-normal">*</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Base">∑</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">i</span><span class="_-----MathTools-_Math_Operator">=</span><span class="_-----MathTools-_Math_Number">1</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Base">|</span><span class="_-----MathTools-_Math_Variable">B</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">m</span><span class="_-----MathTools-_Math_Base">|</span><span class="_-----MathTools-_Math_Base"> </span><span class="No-Break"><span class="_-----MathTools-_Math_Variable">p</span></span><span class="No-Break"><span class="_-----MathTools-_Math_Base"> </span></span><span class="No-Break"><span class="_-----MathTools-_Math_Variable">i</span></span></p>
+			<p>There is an <a id="_idIndexMarker735"/>extension of the previous metric called <strong class="bold">Maximum Calibration Error</strong> (<strong class="bold">MCE</strong>) that measures the largest difference between the <a id="_idIndexMarker736"/>accuracy and confidence <em class="italic">across all </em><span class="No-Break"><em class="italic">the bins</em></span><span class="No-Break">:</span></p>
+			<p><span class="_-----MathTools-_Math_Variable">MCE</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">=</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">ma</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">x</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">m</span><span class="_-----MathTools-_Math_Operator">=</span><span class="_-----MathTools-_Math_Number">1</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">M</span><span class="_-----MathTools-_Math_Variable"> </span><span class="_-----MathTools-_Math_Base">|</span><span class="_-----MathTools-_Math_Variable">acc</span><span class="_-----MathTools-_Math_Base">(</span><span class="_-----MathTools-_Math_Variable">B</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">m</span><span class="_-----MathTools-_Math_Base">)</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">−</span><span class="_-----MathTools-_Math_Base"> </span><span class="No-Break"><span class="_-----MathTools-_Math_Variable">conf</span></span><span class="No-Break"><span class="_-----MathTools-_Math_Base">(</span></span><span class="No-Break"><span class="_-----MathTools-_Math_Variable">B</span></span><span class="No-Break"><span class="_-----MathTools-_Math_Base"> </span></span><span class="No-Break"><span class="_-----MathTools-_Math_Variable">m</span></span><span class="No-Break"><span class="_-----MathTools-_Math_Base">)</span></span><span class="No-Break"><span class="_-----MathTools-_Math_Base">|</span></span></p>
+			<p>This can be useful in applications where it is important that the model be well calibrated in all bins, and MCE can then <span class="No-Break">be minimized.</span></p>
+			<p><span class="No-Break"><em class="italic">Figure 10</em></span><em class="italic">.6</em> shows a reliability diagram with the ECE and MCE values on the <span class="No-Break">MNIST dataset:</span></p>
+			<div>
+				<div id="_idContainer176" class="IMG---Figure">
+					<img src="image/B17259_10_06.jpg" alt="" role="presentation"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 10.6 – Reliability diagram with ECE and MCE values for the MNIST dataset</p>
+			<p class="callout-heading">🚀 Model calibration in production at Netflix</p>
+			<p class="callout"><strong class="bold">🎯</strong><strong class="bold"> Problem </strong><span class="No-Break"><strong class="bold">being solved:</strong></span></p>
+			<p class="callout">Netflix aimed to provide recommendations [6] that were closely aligned with a user’s varied interests rather than focusing solely on their <span class="No-Break">main preferences.</span></p>
+			<p class="callout"><strong class="bold">⚖️</strong><strong class="bold"> </strong><span class="No-Break"><strong class="bold">Data imbalance:</strong></span></p>
+			<p class="callout">Traditional recommendation systems can amplify a user’s primary interests, thereby overshadowing their secondary or tertiary preferences. This can be considered a form of <span class="No-Break">interest imbalance.</span></p>
+			<p class="callout"><strong class="bold">🎨</strong><strong class="bold"> Model </strong><span class="No-Break"><strong class="bold">calibration strategy:</strong></span></p>
+			<p class="callout">Netflix employed a greedy re-ranking approach to calibration. The initial model ranked movies based <a id="_idIndexMarker737"/>on the predicted likelihood of a user watching them. This ranking is then adjusted using a greedy algorithm to ensure that the top 10 recommended movies match the genre distribution in the user’s <span class="No-Break">watch history.</span></p>
+			<p class="callout"><strong class="bold">Example</strong>: If a user’s watch history comprises 50% action, 30% comedy, and 20% drama, the re-ranking algorithm reshuffles the top recommendations to reflect <span class="No-Break">this distribution.</span></p>
+			<p class="callout"><strong class="bold">📊</strong><strong class="bold"> </strong><span class="No-Break"><strong class="bold">Additional points:</strong></span></p>
+			<p class="callout">The greedy re-ranking algorithm was straightforward to implement. It was empirically shown to improve recommendation performance across <span class="No-Break">various datasets.</span></p>
+			<p class="callout">This approach ensured that Netflix’s recommendations cater to the full spectrum of a user’s interests, preventing any single interest from dominating <span class="No-Break">the suggestions.</span></p>
+			<p>In the next section, let’s try to understand how data balancing techniques can affect the calibration <span class="No-Break">of models.</span></p>
+			<h1 id="_idParaDest-205"><a id="_idTextAnchor288"/>The influence of data balancing techniques on model calibration</h1>
+			<p>The usual impact of applying data-level techniques, such as oversampling and undersampling, is that they change the distribution of the training data for the model. This means <a id="_idIndexMarker738"/>that the model sees an almost equal number of all the classes, which doesn’t reflect the actual data distribution. Because of this, the model becomes less calibrated against the true imbalanced distribution of data. Similarly, algorithm-level cost-sensitive techniques that use <strong class="source-inline">class_weight</strong> to account for the data imbalance have a similar degraded impact on degrading the calibration of the model against the true data distribution. <span class="No-Break"><em class="italic">Figure 10</em></span><em class="italic">.7</em> (log scale) from a recent study [7] shows the degrading calibration of a CNN-based model for pneumonia detection task, as <strong class="source-inline">class_weight</strong> increases from 0.5 to 0.9 to 0.99. The model becomes over-confident and hence less calibrated with the increase <span class="No-Break">in </span><span class="No-Break"><strong class="source-inline">class_weight</strong></span><span class="No-Break">.</span></p>
+			<div>
+				<div id="_idContainer177" class="IMG---Figure">
+					<img src="image/B17259_10_07.jpg" alt="" role="presentation"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 10.7 – Degrading calibration of a CNN model as class_weight changes from 0.5 to 0.9 to 0.99 (log scale) (image adapted from Caplin, et al. [7])</p>
+			<p>Similarly, in <span class="No-Break"><em class="italic">Figure 10</em></span><em class="italic">.8</em>, we show the calibration curve for the logistic regression model on the <strong class="source-inline">thyroid_sick</strong> UCI dataset. The corresponding notebook can be found in the GitHub repo of <span class="No-Break">this book.</span></p>
+			<div>
+				<div id="_idContainer178" class="IMG---Figure">
+					<img src="image/B17259_10_08.jpg" alt="" role="presentation"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 10.8 – A calibration curve using logistic regression with no sampling</p>
+			<p><span class="No-Break"><em class="italic">Figure 10</em></span><em class="italic">.9</em> and <span class="No-Break"><em class="italic">Figure 10</em></span><em class="italic">.10</em> demonstrate <a id="_idIndexMarker739"/>how oversampling techniques can worsen a <span class="No-Break">model’s calibration:</span></p>
+			<div>
+				<div id="_idContainer179" class="IMG---Figure">
+					<img src="image/B17259_10_09.jpg" alt="" role="presentation"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 10.9 – A calibration curve using logistic regression with random oversampling</p>
+			<div>
+				<div id="_idContainer180" class="IMG---Figure">
+					<img src="image/B17259_10_10.jpg" alt="" role="presentation"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 10.10 – A calibration curve using logistic regression with SMOTE</p>
+			<p>Similarly, <span class="No-Break"><em class="italic">Figure 10</em></span><em class="italic">.11</em> shows a <a id="_idIndexMarker740"/>similar effect for <span class="No-Break">undersampling techniques:</span></p>
+			<div>
+				<div id="_idContainer181" class="IMG---Figure">
+					<img src="image/B17259_10_11.jpg" alt="" role="presentation"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 10.11 – A calibration curve using logistic regression with random undersampling</p>
+			<p><span class="No-Break"><em class="italic">Figure 10</em></span><em class="italic">.12</em> shows how class weighting can negatively affect the <span class="No-Break">model calibration:</span></p>
+			<div>
+				<div id="_idContainer182" class="IMG---Figure">
+					<img src="image/B17259_10_12.jpg" alt="" role="presentation"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 10.12 – A calibration curve with no sampling technique (left) and class weighting (right) using logistic regression</p>
+			<p>In the plots that we just saw, both undersampling and oversampling made the model over-confident. Undersampling can make the model optimistic about its ability to classify the minority class while oversampling can lead the model to overestimate the likelihood of <a id="_idIndexMarker741"/>encountering minority instances. This overconfidence arises because the model assumes the altered training data represents the real-world distribution. To elaborate, when we undersample or oversample, we’re essentially telling the model that the minority class is more common (or less rare) than it actually is. The model can then generalize this skewed view to new, unseen data. As a result, it can become overconfident in its predictions for the minority class, thinking these outcomes are more likely than they actually are. This overconfidence doesn’t extend to the majority class because the model still sees plenty of those examples during training. Therefore, the model ends up being miscalibrated and tends to be overly sure of its predictions for the <span class="No-Break">minority class.</span></p>
+			<p>In the following section, we will utilize a real-world dataset, train a model using this dataset, and then determine the calibration of the model by plotting <span class="No-Break">calibration curves.</span></p>
+			<h1 id="_idParaDest-206"><a id="_idTextAnchor289"/>Plotting calibration curves for a model trained on a real-world dataset</h1>
+			<p>Model calibration <a id="_idIndexMarker742"/>should ideally be done on a dataset that is separate from the training and test set. Why? It’s to avoid overfitting because the model can become too tailored to the training/test set’s <span class="No-Break">unique characteristics.</span></p>
+			<p>We can have a hold-out dataset that has been specifically set aside for model calibration. In some cases, we may have too little data to justify splitting it further into a separate hold-out dataset for calibration. In such cases, a practical compromise might be to use the test set for calibration, assuming that the test set has the same distribution as the dataset on which the model will be used to make final predictions. However, we should keep in mind that after calibrating on the test set, we no longer have an <a id="_idIndexMarker743"/>unbiased estimate of the final performance of the model, and we need to be cautious about interpreting the model’s <span class="No-Break">performance metrics.</span></p>
+			<p>We use the <strong class="source-inline">HR Data for Analytics</strong> dataset from Kaggle (<a href="https://www.kaggle.com/datasets/jacksonchou/hr-data-for-analytics">https://www.kaggle.com/datasets/jacksonchou/hr-data-for-analytics</a>). This dataset contains employee profiles of a large company, where each record is <span class="No-Break">an employee.</span></p>
+			<p>The downloaded dataset <strong class="source-inline">HR_comma_sep.csv</strong> has been added to the GitHub repo of the book. Let’s load the dataset into a <span class="No-Break"><strong class="source-inline">pandas</strong></span><span class="No-Break"> DataFrame:</span></p>
+			<pre class="source-code">
+df = pd.read_csv('HR_comma_sep.csv')
+df</pre>			<p>This shows some sample rows from <span class="No-Break">the dataset:</span></p>
+			<table id="table001-9" class="No-Table-Style _idGenTablePara-1">
+				<colgroup>
+					<col/>
+					<col/>
+					<col/>
+					<col/>
+					<col/>
+					<col/>
+				</colgroup>
+				<tbody>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style"/>
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="source-inline">last_evaluation</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="source-inline">left</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>...</p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="source-inline">sales</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="source-inline">salary</strong></span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><strong class="source-inline">0</strong></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">0.53</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>1</p>
+						</td>
+						<td class="No-Table-Style">
+							<p>...</p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">sales</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">low</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><strong class="source-inline">1</strong></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">0.86</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>1</p>
+						</td>
+						<td class="No-Table-Style">
+							<p>...</p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">sales</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">medium</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><strong class="source-inline">2</strong></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">0.88</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>1</p>
+						</td>
+						<td class="No-Table-Style">
+							<p>...</p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">sales</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">medium</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><strong class="source-inline">3</strong></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">0.87</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>1</p>
+						</td>
+						<td class="No-Table-Style">
+							<p>...</p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">sales</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">low</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><strong class="source-inline">4</strong></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">0.52</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>1</p>
+						</td>
+						<td class="No-Table-Style">
+							<p>...</p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">sales</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">low</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><strong class="source-inline">...</strong></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>...</p>
+						</td>
+						<td class="No-Table-Style">
+							<p>...</p>
+						</td>
+						<td class="No-Table-Style">
+							<p>...</p>
+						</td>
+						<td class="No-Table-Style">
+							<p>...</p>
+						</td>
+						<td class="No-Table-Style">
+							<p>...</p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="source-inline">14994</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">0.57</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>1</p>
+						</td>
+						<td class="No-Table-Style">
+							<p>...</p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">support</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">low</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="source-inline">14995</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">0.48</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>1</p>
+						</td>
+						<td class="No-Table-Style">
+							<p>...</p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">support</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">low</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="source-inline">14996</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">0.53</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>1</p>
+						</td>
+						<td class="No-Table-Style">
+							<p>...</p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">support</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">low</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="source-inline">14997</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">0.96</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>1</p>
+						</td>
+						<td class="No-Table-Style">
+							<p>...</p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">support</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">low</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="source-inline">14998</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">0.52</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>1</p>
+						</td>
+						<td class="No-Table-Style">
+							<p>...</p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">support</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">low</span></p>
+						</td>
+					</tr>
+				</tbody>
+			</table>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Table 10.1 – Sample rows from the HR Data for Analytics dataset from Kaggle</p>
+			<p>It’s clear <a id="_idIndexMarker744"/>that some of the columns, such as <strong class="source-inline">sales</strong> and <strong class="source-inline">salary</strong>, are categorical. The <strong class="source-inline">left</strong> column is our labels column. Let’s get the imbalance in <span class="No-Break">the dataset:</span></p>
+			<pre class="source-code">
+import seaborn as sns
+print(df['left'].value_counts())
+df['left'].value_counts().plot(kind='bar')</pre>			<p>This gives us the count of <span class="No-Break">the labels:</span></p>
+			<pre class="source-code">
+0     11428
+1      3571</pre>			<p>We need to convert the categorical columns into ID labels using <strong class="source-inline">LabelEncoder</strong> and then standardize these columns using <strong class="source-inline">StandardScaler</strong> from <strong class="source-inline">sklearn</strong>. After preprocessing, we split the dataset into three subsets: 80% for the training set and 10% each for the validation and test sets. We’ll skip the code for these steps and jump straight into training the model. For the complete code, please refer to the accompanying <span class="No-Break">GitHub notebook.</span></p>
+			<p>As usual, we will train a random forest model on the training set and use the test set for evaluating the model. We will use a validation set for calibrating <span class="No-Break">the model.</span></p>
+			<pre class="source-code">
+model = RandomForestClassifier(n_estimators=100, random_state=49)
+model.fit(X_train, y_train)</pre>			<p>Let’s figure <a id="_idIndexMarker745"/>out how calibrated the model is. We print the Brier’s score and plot the <span class="No-Break">calibration curve:</span></p>
+			<pre class="source-code">
+# Get model probabilities on test set(uncalibrated model)
+probs_uncalibrated = model.predict_proba(X_test)[:, 1]
+# Calculate Brier score for the uncalibrated model
+brier_uncalibrated = brier_score_loss(y_test, probs_uncalibrated)
+print(f"Brier Score for Uncalibrated Model: \
+    {round(brier_uncalibrated, 4)}")
+# Compute the calibration curve for the uncalibrated model
+fraction_of_positives_uncalibrated,mean_predicted_value_uncalibrated=\
+    calibration_curve(y_test, probs_uncalibrated, n_bins=10)</pre>			<p>This gives the <span class="No-Break">following output:</span></p>
+			<pre class="source-code">
+Brier Score for Uncalibrated Model: 0.0447</pre>			<p>Let’s <a id="_idIndexMarker746"/>plot the <span class="No-Break">calibration curve:</span></p>
+			<pre class="source-code">
+plt.figure(figsize=(6, 4))
+plt.plot([0, 1], [0, 1], "k:", label="Perfectly calibrated")
+plt.plot(mean_predicted_value_uncalibrated, \
+    fraction_of_positives_uncalibrated, label="Uncalibrated")
+plt.xlabel('Mean Predicted Value')
+plt.ylabel('Fraction of Positives')
+plt.title('Calibration Curve (Test Set)')
+plt.legend()
+plt.show()</pre>			<div>
+				<div id="_idContainer183" class="IMG---Figure">
+					<img src="image/B17259_10_13_New.jpg" alt="" role="presentation"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 10.13 – A calibration curve of an uncalibrated random forest model</p>
+			<p><span class="No-Break"><em class="italic">Figure 10</em></span><em class="italic">.13</em> shows that the model is overconfident in the initial range of predictions (0 to ~0.4) and is then <span class="No-Break">underconfident afterward.</span></p>
+			<p>In the next section, we will look at some techniques to improve the calibration of <span class="No-Break">the models.</span></p>
+			<h1 id="_idParaDest-207"><a id="_idTextAnchor290"/>Model calibration techniques</h1>
+			<p>There are several ways to calibrate a model. There are two broad categorizations of the calibration <a id="_idIndexMarker747"/>techniques based on the nature of the method used to adjust the predicted probabilities to better align with the true probabilities: parametric <span class="No-Break">and non-parametric:</span></p>
+			<ul>
+				<li><strong class="bold">Parametric methods</strong>: These methods assume a specific functional form for the relationship between the predicted probabilities and the true probabilities. They have <a id="_idIndexMarker748"/>a set number of parameters that need to be estimated from the data. Once these parameters <a id="_idIndexMarker749"/>are estimated, the calibration function is fully specified. Examples include Platt scaling, which assumes a logistic function, and beta calibration, which assumes a beta distribution. We will also discuss temperature scaling and <span class="No-Break">label smoothing.</span></li>
+				<li><strong class="bold">Non-parametric methods</strong>: These methods do not assume a specific functional form for the calibration function. They are more flexible and can adapt to <a id="_idIndexMarker750"/>more complex relationships between the predicted and true probabilities. However, they often require more data to produce <a id="_idIndexMarker751"/>a reliable calibration. Examples include isotonic regression, which fits a piece-wise constant function, and spline calibration, which uses spline (piecewise-defined polynomial) functions to fit the <span class="No-Break">predicted probabilities.</span></li>
+			</ul>
+			<p>First, we will explore a theoretical, formula-based method for calibrating scores for models trained on sampled data, specifically in the context of imbalanced data. Next, we’ll examine popular methods such as Platt’s scaling and isotonic regression, which are commonly used with classical machine learning models. Finally, we’ll introduce supporting techniques such as temperature scaling and label smoothing, which are more prevalent among deep <span class="No-Break">learning models.</span></p>
+			<h2 id="_idParaDest-208"><a id="_idTextAnchor291"/>The calibration of model scores to account for sampling</h2>
+			<p>If we used <a id="_idIndexMarker752"/>oversampling or undersampling to balance a dataset, we can derive a theoretical calibration formula. As we saw in <a href="B17259_02.xhtml#_idTextAnchor042"><span class="No-Break"><em class="italic">Chapter 2</em></span></a>, <em class="italic">Oversampling Methods</em>, <a href="B17259_03.xhtml#_idTextAnchor079"><span class="No-Break"><em class="italic">Chapter 3</em></span></a>, <em class="italic">Undersampling Methods</em> (both based on sampling), and <a href="B17259_07.xhtml#_idTextAnchor205"><span class="No-Break"><em class="italic">Chapter 7</em></span></a>, <em class="italic">Data-Level Deep Learning Methods</em>, we can apply some (over/under) sampling techniques or data augmentation techniques to bump up the relative number of samples of the minority classes(s) in order to account for a data imbalance. As a result, we change the distribution of training data. Although downsampling enhances the model’s ability to distinguish between classes, it also leads to an overestimation of the predicted probabilities. Because of this, the model scores during inference (real-world prediction) time are still in the downsampled space, and we should bring <a id="_idIndexMarker753"/>the scores back to the <span class="No-Break">real distribution.</span></p>
+			<p>Typically, the goal of downsampling is to balance the dataset in terms of the number of instances of positive and <span class="No-Break">negative classes.</span></p>
+			<p>As an example, if there are 100 positive class instances and 200 negative class instances after downsampling, the ratio is <span class="_-----MathTools-_Math_Variable">w</span> = 100/200 = <span class="No-Break">0.5.</span></p>
+			<p>Assuming the number of negative class examples is more than the number of positive class examples, we define <span class="_-----MathTools-_Math_Variable">w</span> as <span class="No-Break">the ratio:</span></p>
+			<p><span class="_-----MathTools-_Math_Variable">w</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">=</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">Number</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Variable">of</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Variable">positive</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Variable">class</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Variable">instances</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Variable">in</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Variable">downsampled</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Variable">dataset</span><span class="_-----MathTools-_Math_Variable">    </span><span class="_-----MathTools-_Math_Base">________________________________________</span><span class="_-----MathTools-_Math_Base">    </span><span class="_-----MathTools-_Math_Variable">Number</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Variable">of</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Variable">negative</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Variable">class</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Variable">instances</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Variable">in</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Variable">downsampled</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Variable">dataset</span><span class="_-----MathTools-_Math_Variable"> </span></p>
+			<p>Now, let’s assume <span class="_-----MathTools-_Math_Variable">p</span> is the probability of selecting a positive class example from the original dataset (without any kind of <span class="No-Break">downsampling used).</span></p>
+			<p>If <span class="_-----MathTools-_Math_Variable">p</span> is the probability of selecting a positive class in the original dataset, then the probability <span class="_-----MathTools-_Math_Variable">p</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">d</span> of selecting a positive class from the downsampled dataset can be computed using the following <span class="No-Break">formula [8]:</span></p>
+			<p><span class="_-----MathTools-_Math_Variable">p</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">d</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">=</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">p</span><span class="_-----MathTools-_Math_Variable"> </span><span class="_-----MathTools-_Math_Base">_</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">p</span><span class="_-----MathTools-_Math_Operator">+</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Variable">w</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Base">(</span><span class="_-----MathTools-_Math_Number">1</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">−</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">p</span><span class="_-----MathTools-_Math_Base">)</span><span class="_-----MathTools-_Math_Base"> </span></p>
+			<p>Note that if <span class="_-----MathTools-_Math_Variable">w</span>=1, that is, when no downsampling is done, <span class="_-----MathTools-_Math_Variable">p</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">d</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Operator">=</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Variable">p</span>. You can refer to the paper by Moscatelli et al. [9] for a proof of this relationship between the original and downsampled <span class="No-Break">dataset probabilities.</span></p>
+			<h3>Explaining the denominator</h3>
+			<p>The following are <a id="_idIndexMarker754"/>the various terms in the denominator of the <span class="No-Break">previous formula:</span></p>
+			<ul>
+				<li><span class="_-----MathTools-_Math_Variable">p</span> is the probability of selecting a positive class instance in the <span class="No-Break">original dataset</span></li>
+				<li><span class="_-----MathTools-_Math_Base">(</span><span class="_-----MathTools-_Math_Number">1</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">−</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">p</span><span class="_-----MathTools-_Math_Base">)</span> is the probability of selecting a negative class instance in the <span class="No-Break">original dataset</span></li>
+				<li><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Variable">w</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Base">(</span><span class="_-----MathTools-_Math_Number">1</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">−</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">p</span><span class="_-----MathTools-_Math_Base">)</span> is the probability of selecting a negative class instance when downsampling <span class="No-Break">is used</span></li>
+				<li>The summation<span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Variable">p</span><span class="_-----MathTools-_Math_Operator">+</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Variable">w</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Base">(</span><span class="_-----MathTools-_Math_Number">1</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">−</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">p</span><span class="_-----MathTools-_Math_Base">)</span> is the total sum of probabilities for both the positive and downsampled negative classes in the dataset after downsampling the negative class by a factor <span class="No-Break">of </span><span class="No-Break"><span class="_-----MathTools-_Math_Variable">w</span></span></li>
+			</ul>
+			<p>Now that we <a id="_idIndexMarker755"/>understand the previous formula, we can flip it to find out the probability <span class="_-----MathTools-_Math_Variable">p</span> of selecting a positive class in the original <span class="No-Break">dataset [10]:</span></p>
+			<p><span class="_-----MathTools-_Math_Variable">p</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">=</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">p</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">d</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Base">_</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">p</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">d</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">+</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Number">1</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">−</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">p</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">d</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Base">_</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">w</span><span class="_-----MathTools-_Math_Variable"> </span><span class="_-----MathTools-_Math_Base"> </span></p>
+			<p><span class="No-Break">where:</span></p>
+			<ul>
+				<li><span class="_-----MathTools-_Math_Variable">w</span> is the ratio of positive class to negative class (called the negative <span class="No-Break">downsampling ratio)</span></li>
+				<li><span class="_-----MathTools-_Math_Variable">p</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">d</span> is the probability of selecting a positive class from the <span class="No-Break">downsampled dataset</span></li>
+			</ul>
+			<p>Let’s understand this with <span class="No-Break">some numbers:</span></p>
+			<ul>
+				<li>We have a total of 100,000 examples with 10,000 from the positive class and 90,000 from the <span class="No-Break">negative class.</span></li>
+				<li>Let’s say we use a downsampling rate <span class="_-----MathTools-_Math_Variable">w</span> = 0.5, which means that after downsampling, we have 10,000 positives and 20,000 negatives. This also implies that during downsampling, for every positive class example, we selected only two negative <span class="No-Break">class examples.</span></li>
+				<li>Let’s assume our prediction score from a model when trained on the downsampled dataset, <span class="_-----MathTools-_Math_Variable">p</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">d</span>, <span class="No-Break">is 0.9.</span></li>
+				<li>Let’s compute the prediction score in the original dataset. From the previous defined formula,<span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Variable">p</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">=</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">p</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">d</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Base">_</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">p</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">d</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">+</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Number">1</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">−</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">p</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">d</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Base">_</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">w</span><span class="_-----MathTools-_Math_Variable"> </span> = <span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Number">0.9</span><span class="_-----MathTools-_Math_Number"> </span><span class="_-----MathTools-_Math_Base">_</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Number">0.9</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Operator">+</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Number">1</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">−</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Number">0.9</span><span class="_-----MathTools-_Math_Number"> </span><span class="_-----MathTools-_Math_Base">_</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Number">0.5</span><span class="_-----MathTools-_Math_Number"> </span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Operator">=</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Number">0.9</span><span class="_-----MathTools-_Math_Number"> </span><span class="_-----MathTools-_Math_Base">_</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Number">0.9</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Operator">+</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Number">0.2</span> = <span class="No-Break">0.82.</span></li>
+				<li>So, a model prediction score of 0.9 in downsampled example changed to 0.82 in the original dataset. Notice how the probability <span class="No-Break">got lowered.</span></li>
+			</ul>
+			<p>A more generic and simpler formula [11] is the relationship between odds before and <span class="No-Break">after sampling:</span></p>
+			<p><span class="_-----MathTools-_Math_Variable">odds</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">_</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">after</span><span class="_-----MathTools-_Math_Space"> </span>= <span class="_-----MathTools-_Math_Variable">odds</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">_</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">before</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Symbol_v-normal">*</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">proportion</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">_</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">of</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">_</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Number">1</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">_</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">before</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">_</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">sampling</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Symbol_v-normal">*</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Base">(</span><span class="_-----MathTools-_Math_Number">1</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">−</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">proportion</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">_</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">of</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">_</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Number">1</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">_</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">after</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">_</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">sampling</span><span class="_-----MathTools-_Math_Base">)</span><span class="_-----MathTools-_Math_Base">     </span><span class="_-----MathTools-_Math_Base">_____________________________________________________</span><span class="_-----MathTools-_Math_Base">     </span><span class="_-----MathTools-_Math_Base">(</span><span class="_-----MathTools-_Math_Number">1</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">−</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">proportion</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">_</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">of</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">_</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Number">1</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">_</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">before</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">_</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">sampling</span><span class="_-----MathTools-_Math_Base">)</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Symbol_v-normal">*</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Base">(</span><span class="_-----MathTools-_Math_Variable">proportion</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">_</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">of</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">_</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Number">1</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">_</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">after</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">_</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">sampling</span><span class="_-----MathTools-_Math_Base">)</span><span class="_-----MathTools-_Math_Base"> </span></p>
+			<p>where <em class="italic">odds</em> are a way to express the probability of an event <span class="No-Break">as follows:</span></p>
+			<p><span class="_-----MathTools-_Math_Variable">odds</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Operator">=</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">probability</span><span class="_-----MathTools-_Math_Variable"> </span><span class="_-----MathTools-_Math_Base">___________</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Number">1</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">−</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">probability</span><span class="_-----MathTools-_Math_Variable"> </span></p>
+			<p><span class="No-Break"><em class="italic">Figure 10</em></span><em class="italic">.14</em> and <span class="No-Break"><em class="italic">Figure 10</em></span><em class="italic">.15</em> show the model calibration plots before and after applying the <a id="_idIndexMarker756"/>previous calibration formula, respectively, when using random undersampling on the <strong class="source-inline">thyroid_sick</strong> UCI dataset available from the <strong class="source-inline">imblearn.datasets</strong> package. You can find the complete notebook <span class="No-Break">on GitHub.</span></p>
+			<div>
+				<div id="_idContainer184" class="IMG---Figure">
+					<img src="image/B17259_10_14.jpg" alt="" role="presentation"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 10.14 – A model calibration plot before calibration when using undersampling</p>
+			<div>
+				<div id="_idContainer185" class="IMG---Figure">
+					<img src="image/B17259_10_15.jpg" alt="" role="presentation"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 10.15 – A model calibration plots after calibration when using undersampling</p>
+			<p class="callout-heading">🚀 Model calibration in production at Meta</p>
+			<p class="callout"><strong class="bold">🎯</strong><strong class="bold"> Problem </strong><span class="No-Break"><strong class="bold">being solved:</strong></span></p>
+			<p class="callout">Meta aimed to <a id="_idIndexMarker757"/>accurately predict <strong class="bold">Click-Through Rates</strong> (<strong class="bold">CTR</strong>) for ads to optimize online bidding and auctions in Meta’s advertising system [10]. Accurate click prediction is crucial for optimizing online bidding <span class="No-Break">and auctions.</span></p>
+			<p class="callout"><strong class="bold">⚖️</strong><strong class="bold"> Data </strong><span class="No-Break"><strong class="bold">imbalance issue:</strong></span></p>
+			<p class="callout">Meta dealt with massive volumes of data, which inherently contained imbalances. A full day of Facebook ad impression data contained a huge number of instances. Meta used negative downsampling to speed up training and improve <span class="No-Break">model performance.</span></p>
+			<p class="callout"><strong class="bold">🎨</strong><strong class="bold"> Model </strong><span class="No-Break"><strong class="bold">calibration strategy:</strong></span></p>
+			<p class="callout">Since Meta used downsampling, they used the formula from the <span class="No-Break">previous section,</span></p>
+			<p class="callout"><span class="_-----MathTools-_Math_Variable">p</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">=</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">p</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">d</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Base">_</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">p</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">d</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">+</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Number">1</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">−</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">p</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">d</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Base">_</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">w</span><span class="_-----MathTools-_Math_Variable"> </span> , to re-calibrate the model <span class="No-Break">prediction score.</span></p>
+			<p class="callout"><strong class="bold">📊</strong><strong class="bold"> Additional </strong><span class="No-Break"><strong class="bold">important points:</strong></span></p>
+			<p class="callout">They explored the impact of data freshness and online learning on prediction accuracy. The efficiency of an ads auction depended on the accuracy and calibration of click prediction. They also used normalized cross-entropy loss and calibration as their major <span class="No-Break">evaluation metrics.</span></p>
+			<h2 id="_idParaDest-209"><a id="_idTextAnchor292"/>Platt’s scaling</h2>
+			<p>With this <a id="_idIndexMarker758"/>technique, we try to map the classifier’s probabilities to the perfect calibration line. More precisely, we just fit a logistic regression model, with the input being the original model’s probability scores and the labels being the actual labels. The <strong class="source-inline">CalibratedClassifierCV</strong> API in <strong class="source-inline">sklearn</strong> already facilitates the implementation of <span class="No-Break">this technique:</span></p>
+			<pre class="source-code">
+# Calibrate the model on the validation data using Platt's scaling
+platt_scaling = CalibratedClassifierCV(model, \
+    method='sigmoid', cv='prefit')
+platt_scaling.fit(X_val, y_val)
+# Get model probabilities on test set (calibrated model)
+probs_ps = platt_scaling.predict_proba(X_test)[:, 1]
+# Compute Brier score for Platt's scaling calibrated model
+brier_platt = brier_score_loss(y_test, probs_ps)
+print(f"Brier Score for Platt's Scaled Model: \
+    {round(brier_platt, 4)}")
+# Compute the calibration curve for Platt's scaling
+fraction_of_positives_ps, mean_predicted_value_ps = \
+    calibration_curve(y_test, probs_ps, n_bins=10)</pre>			<p>Here is <a id="_idIndexMarker759"/>the Brier <span class="No-Break">score output:</span></p>
+			<pre class="source-code">
+Brier Score for Platt's Scaled Model: 0.032</pre>			<p>The Brier score for Platt’s scaled model is smaller than that of the uncalibrated model, which was 0.0447, meaning that the Platt’s scaled model is <span class="No-Break">calibrated better.</span></p>
+			<h2 id="_idParaDest-210"><a id="_idTextAnchor293"/>Isotonic regression</h2>
+			<p>Isotonic regression <a id="_idIndexMarker760"/>is particularly <a id="_idIndexMarker761"/>useful when we expect a monotonic relationship between the input variables and the output. In this context, a monotonic function is one that is either entirely non-decreasing or entirely non-increasing. The monotonicity here refers to the relationship between the model’s raw output and the true probabilities, not the arrangement of the <span class="No-Break">data points.</span></p>
+			<p>If the model’s output does not follow this expected monotonic behavior, isotonic regression <a id="_idIndexMarker762"/>can be applied to enforce it. Isotonic regression can be used in cases such as credit scoring or medical diagnosis, where <a id="_idIndexMarker763"/>a higher score should consistently indicate a higher likelihood of a <span class="No-Break">particular outcome.</span></p>
+			<pre class="source-code">
+isotonic_regression = CalibratedClassifierCV(model, \
+    method='isotonic', cv='prefit')
+isotonic_regression.fit(X_val, y_val)
+probs_ir = isotonic_regression.predict_proba(X_test)[:, 1]
+brier_isotonic = brier_score_loss(y_test, probs_ir)
+print(f"Brier Score for Isotonic Regression Calibrated \
+    Model: {round(brier_isotonic, 4)}")
+fraction_of_positives_ir, mean_predicted_value_ir = \
+    calibration_curve(y_test, probs_ir, n_bins=10)</pre>			<p>Here is <span class="No-Break">the output:</span></p>
+			<pre class="source-code">
+Brier Score for Isotonic Regression Calibrated Model: 0.0317</pre>			<p>This Brier score value is a further improvement over Platt’s <span class="No-Break">scaling method.</span></p>
+			<p>Let’s plot the calibration curves for both <span class="No-Break">the techniques:</span></p>
+			<pre class="source-code">
+plt.figure(figsize=(6, 4))
+plt.plot([0, 1], [0, 1], "k:", label="Perfectly calibrated")
+plt.plot(mean_predicted_value_uncalibrated, \
+    fraction_of_positives_uncalibrated, label="Uncalibrated")
+plt.plot(mean_predicted_value_ps, fraction_of_positives_ps, \
+    label="Platt's scaling", linestyle='-.')
+plt.plot(mean_predicted_value_ir, fraction_of_positives_ir, \
+    label="Isotonic regression", linestyle='--')
+plt.xlabel('Mean predicted value')
+plt.ylabel('Fraction of positives')
+plt.title('Calibration curves (Test Set)')
+plt.legend()
+plt.show()</pre>			<div>
+				<div id="_idContainer186" class="IMG---Figure">
+					<img src="image/B17259_10_16.jpg" alt="" role="presentation"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 10.16 – Calibration curves for a random forest model</p>
+			<p>As <span class="No-Break"><em class="italic">Figure 10</em></span><em class="italic">.16</em> shows, the <a id="_idIndexMarker764"/>isotonic regression <a id="_idIndexMarker765"/>is the closest to the perfectly calibrated curve; hence, it performed the best for our model and data. Platt’s scaling did pretty well at calibrating the <span class="No-Break">model, too.</span></p>
+			<h2 id="_idParaDest-211"><a id="_idTextAnchor294"/>Choosing between Platt’s scaling and Isotonic regression</h2>
+			<p>Platt’s scaling is considered more apt for problems where the model predictions follow the sigmoid curve. This makes sense because logistic regression (which is used by Platt’s scaling) uses a <a id="_idIndexMarker766"/>sigmoid to fit the data points. Isotonic regression has a much broader coverage of distortions that it can cover for the predicted probabilities. However, some research <a id="_idIndexMarker767"/>studies [2] show that isotonic regression is <a id="_idIndexMarker768"/>more prone to overfitting the predicted probabilities. Hence, its performance can be worse than Platt’s scaling when we only have a limited dataset since it doesn’t generalize well with the <span class="No-Break">limited dataset.</span></p>
+			<p class="callout-heading">A general rule to follow</p>
+			<p class="callout">When the dataset at hand is very small or limited, choose Platt’s scaling. However, when data is sufficient enough not to have an overfitted model, isotonic regression usually does better than <span class="No-Break">Platt’s scaling.</span></p>
+			<p>For the calibration <a id="_idIndexMarker769"/>of a multi-class classifier, we can use the <strong class="bold">one-vs-rest</strong> approach with individual calibration plots per class. We can apply techniques such as Platt’s scaling or Isotonic regression for enhanced predictability, just like <span class="No-Break">binary classification.</span></p>
+			<h2 id="_idParaDest-212"><a id="_idTextAnchor295"/>Temperature scaling</h2>
+			<p>Temperature scaling is <a id="_idIndexMarker770"/>a post-processing technique used to improve the calibration of neural networks. It works by scaling the logits (the output of the final layer <a id="_idIndexMarker771"/>of the network before applying the softmax function) using a temperature parameter. This has the effect of sharpening or softening the probabilities assigned to each class depending on the temperature value. By adjusting the temperature parameter, it is possible to achieve better calibration of the model’s confidence estimates, which can be useful in applications such as classification <span class="No-Break">or ranking.</span></p>
+			<p>Temperature scaling can be considered a multi-class extension of Platt’s scaling with only one hyper-parameter of temperature <em class="italic">T</em> &gt; 0 for <span class="No-Break">all classes.</span></p>
+			<h2 id="_idParaDest-213"><a id="_idTextAnchor296"/>Label smoothing</h2>
+			<p>Label smoothing [12] is a regularization technique that’s known to improve model calibration. It modifies the training data that is used to train the model and is usually handled as <a id="_idIndexMarker772"/>a part of the model training. It is not a post-processing technique like temperature scaling and <span class="No-Break">previous techniques.</span></p>
+			<p>When neural <a id="_idIndexMarker773"/>networks are trained, they often develop excessive confidence in their predictions, which can hinder their ability to generalize and perform well on new, unseen data. Therefore, it is beneficial to introduce a form of <strong class="bold">regularization</strong> that reduces the network’s level of certainty and improves its performance on <span class="No-Break">new data.</span></p>
+			<p>Let’s say we have a binary classification problem where the true labels can be either 0 or 1. Without label smoothing, the training labels would be one-hot encoded, meaning the true label would be 1 for positive examples and 0 for <span class="No-Break">negative examples.</span></p>
+			<p>With label smoothing, we add a small amount of <strong class="bold">noise</strong> to the true labels. For example, we can set a smoothing factor <span class="No-Break">of 0.1.</span></p>
+			<p>Here is an example of the original and smoothed labels for a positive example in <span class="No-Break">binary classification:</span></p>
+			<pre class="source-code">
+Original one-hot encoded label: [1, 0]
+Smoothed one-hot encoded label: [0.9, 0.1]</pre>			<p>By adding this noise to the labels, the model is encouraged to be less confident in its predictions and to be more robust to small changes in the input data. This can lead to improved performance on <span class="No-Break">unseen data.</span></p>
+			<p>In large datasets, mislabeled data can be a concern. Neural networks should be designed to approach the correct answer cautiously to mitigate the impact of incorrect labels. Label smoothing helps in this regard by slightly adjusting the target labels, making the model less confident about its predictions. This can prevent the model from overfitting to noisy or <span class="No-Break">incorrect labels.</span></p>
+			<p>According to the paper by Müller [13], label smoothing can improve model calibration by automatically adjusting the network’s output probabilities. This eliminates the need for manual <span class="No-Break">temperature scaling.</span></p>
+			<p>Label smoothing can help improve accuracy in various domains, such as image classification, text, and speech recognition problems. Most of the modern machine learning frameworks, including TensorFlow, PyTorch, and Transformers (from Hugging Face), provide built-in implementations for label smoothing in some form in <span class="No-Break">their APIs.</span></p>
+			<p>In PyTorch, it’s implemented in the cross-entropy <span class="No-Break">loss function:</span></p>
+			<pre class="source-code">
+torch.nn.CrossEntropyLoss(label_smoothing=0.1, …)</pre>			<p>Here we can <a id="_idIndexMarker774"/>specify the amount of smoothing (as a floating-point value between 0 and 1) when computing the loss and where a value of 0.0 (default) means <span class="No-Break">no smoothing.</span></p>
+			<p>In general, it can be helpful to add label smoothing to the loss functions if you are looking to add some regularization to <span class="No-Break">your network.</span></p>
+			<h3>Arguments against label smoothing</h3>
+			<p>There are some arguments against label smoothing. It’s just another hyperparameter to tune, and when <a id="_idIndexMarker775"/>there are few better regularization techniques such as weight decay and L1 regularization, it may be overkill to make your network more complex and implicitly modify the labels of your training data. Another point to consider is that since it adds random noise to the labels, it’s possible that the network might underfit in <span class="No-Break">certain cases.</span></p>
+			<p>There are <a id="_idIndexMarker776"/>some further improved variants of label smoothing, such as <strong class="bold">label-aware smoothing</strong>, as mentioned in Zhong et al.’s <em class="italic">Improving Calibration for Long-Tailed </em><span class="No-Break"><em class="italic">Recognition</em></span><span class="No-Break"> [14].</span></p>
+			<p>The following table shows a comparison of the four techniques we just discussed for <span class="No-Break">model calibration:</span></p>
+			<table id="table002-6" class="No-Table-Style _idGenTablePara-1">
+				<colgroup>
+					<col/>
+					<col/>
+					<col/>
+					<col/>
+					<col/>
+				</colgroup>
+				<thead>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="bold">Theme</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="bold">Temperature scaling</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="bold">Label smoothing</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="bold">Platt’s scaling</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="bold">Isotonic Regression</strong></span></p>
+						</td>
+					</tr>
+				</thead>
+				<tbody>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Change in <span class="No-Break">label values</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>No change in label values of <span class="No-Break">training data</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Change in label values of <span class="No-Break">training data</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>No change in the label values of the <span class="No-Break">training data</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>No change in the label values of the <span class="No-Break">training data</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><span class="No-Break">Timing</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>After training has been completed, the value of the hyperparameter T is computed on a <span class="No-Break">validation dataset</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Done during the actual training of <span class="No-Break">the model</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Applied <span class="No-Break">after training</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Applied <span class="No-Break">after training</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Prediction value <span class="No-Break">adjustment</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Prediction values from the model are <span class="No-Break">manually adjusted</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Predicted values are changed by applying <span class="No-Break">label smoothing</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Prediction values from the model are <span class="No-Break">manually adjusted</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Prediction values from the model are <span class="No-Break">manually adjusted</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><span class="No-Break">Role</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Acts as <span class="No-Break">a regularizer</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Acts as <span class="No-Break">a regularizer</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Acts as a model calibrator or prediction <span class="No-Break">score transformer</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Acts as a model calibrator or prediction <span class="No-Break">score transformer</span></p>
+						</td>
+					</tr>
+				</tbody>
+			</table>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Table 10.2 – Comparing temperature scaling, label smoothing, Platt’s scaling, and isotonic regression</p>
+			<p>There are other <a id="_idIndexMarker777"/>model calibration techniques that we didn’t get <a id="_idIndexMarker778"/>a chance to explore. For instance, <strong class="bold">spline calibration</strong> [15][16] is a non-parametric method that employs a spline function, a piece-wise polynomial function that is smooth and continuous. This technique is somewhat similar to isotonic regression in its <span class="No-Break">non-parametric nature.</span></p>
+			<p>On the <a id="_idIndexMarker779"/>other hand, <strong class="bold">beta calibration</strong> [17] is a parametric method that fits a beta distribution to the model’s predictions. This technique is conceptually similar to Platt’s scaling, as both are parametric methods. Beta calibration is particularly useful for modeling probabilities, such as click-through rates or customer <span class="No-Break">conversion rates.</span></p>
+			<p><strong class="bold">Focal loss</strong>, discussed in <a href="B17259_08.xhtml#_idTextAnchor235"><span class="No-Break"><em class="italic">Chapter 8</em></span></a>, <em class="italic">Algorithm-Level Deep Learning Techniques</em>, is another method commonly <a id="_idIndexMarker780"/>used in deep learning models. As demonstrated in the paper by Mukhoti et al. [3], focal loss produces well-calibrated models and is <a id="_idIndexMarker781"/>often combined with temperature scaling for optimal results. Given that neural networks with multiple layers tend to be overconfident in their predictions, focal loss serves as a regularizing effect. It forces the model to focus on harder examples, thereby reducing overconfidence and improving <span class="No-Break">calibration [3].</span></p>
+			<p class="callout-heading">🚀 Model calibration with focal loss at Amazon</p>
+			<p class="callout"><strong class="bold">🎯</strong><strong class="bold"> Problem </strong><span class="No-Break"><strong class="bold">being solved:</strong></span></p>
+			<p class="callout">When Amazon deployed conversational bots [18] to handle customer requests, the calibration of the underlying ML models proved to be of importance. In one instance, Amazon’s chatbot was tasked with automatically classifying return reason codes. These return reason codes exhibited class imbalance. When a customer wanted to return an item, determining the appropriate reason became pivotal for efficient return processing. For instance, if a customer expressed dissatisfaction with an item’s size or color, it was classified under “Customer Preference.” In such cases, Amazon understood that offering a replacement wasn’t the optimal solution; rather, a refund was <span class="No-Break">more appropriate.</span></p>
+			<p class="callout"><strong class="bold">🎨</strong><strong class="bold"> Model </strong><span class="No-Break"><strong class="bold">calibration strategy:</strong></span></p>
+			<p class="callout">Through rigorous testing, they uncovered the robustness of focal loss in addressing model miscalibration in such real-world tasks. Focal loss was used as a calibration method. Moreover, it wasn’t merely about adopting focal loss; the value of <em class="italic">γ</em> within the loss function played a crucial role in enhancing <span class="No-Break">model calibration.</span></p>
+			<p class="callout"><strong class="bold">📊</strong><strong class="bold"> </strong><span class="No-Break"><strong class="bold">Additional points:</strong></span></p>
+			<p class="callout">Focal loss outperformed traditional cross-entropy loss in achieving better-calibrated models. The technique was tested in an internal A/B experiment at Amazon. The results showed improvements in automation rate and customer experience, meaning the bot could resolve more queries without human intervention and receive more positive responses <span class="No-Break">from customers.</span></p>
+			<p>Next, let’s see in what ways calibration might impact the performance of <span class="No-Break">a model.</span></p>
+			<h1 id="_idParaDest-214"><a id="_idTextAnchor297"/>The impact of calibration on a model’s performance</h1>
+			<p>Accuracy, log-loss, and Brier scores usually improve because of calibration. However, since the model <a id="_idIndexMarker782"/>calibration still involves approximately fitting a model to the calibration curve plotted on the held-out calibration dataset, it may sometimes worsen the accuracy or other performance metrics by small amounts. Nevertheless, the benefits of having calibrated probabilities in terms of giving us actual interpretable probability values that represent likelihood far outweigh the slight <span class="No-Break">performance impact.</span></p>
+			<p>As discussed in <a href="B17259_01.xhtml#_idTextAnchor015"><span class="No-Break"><em class="italic">Chapter 1</em></span></a>, <em class="italic">Introduction to Data Imbalance in Machine Learning</em>, ROC-AUC is a rank-based metric, meaning it evaluates the model’s ability to distinguish between classes based on the ranking of predicted scores rather than their absolute values. ROC-AUC doesn’t make any claim about accurate probability estimates. Strictly monotonic calibration functions, which continuously increase or decrease without any flat regions, preserve this ranking; they adjust the scale of the probabilities without altering their relative order. For instance, if one score is higher than another before calibration, it remains higher afterward. Because ROC-AUC is concerned with the ranking of predictions rather than the actual probability values, it remains unaffected by such monotonic <span class="No-Break">calibration functions.</span></p>
+			<p>However, in rare cases, closely ranked predictions might become tied due to calibration, especially if the calibration function is loosely monotonic and has flat stretches. This could slightly affect <span class="No-Break">the ROC-AUC.</span></p>
+			<h1 id="_idParaDest-215"><a id="_idTextAnchor298"/>Summary</h1>
+			<p>In this chapter, we went through the basic concepts of model calibration, why we should care about it, how to measure whether a model is calibrated, how data imbalance affects the model calibration, and, finally, how to calibrate an uncalibrated model. Some of the calibration techniques we talked about include Platt’s scaling, isotonic regression, temperature scaling, and <span class="No-Break">label smoothing.</span></p>
+			<p>With this, we come to the end of this book. Thank you for dedicating your time to reading the book. We trust that it has broadened your knowledge of handling imbalanced datasets and their practical applications in machine learning. As we draw this book to a close, we’d like to offer some concluding advice on how to effectively utilize the <span class="No-Break">techniques discussed.</span></p>
+			<p>Like other machine learning techniques, the methods discussed in this book can be highly useful under the right conditions, but they also come with their own set of challenges. Recognizing when and where to apply these techniques is essential, as overly complex solutions can lead to <span class="No-Break">less-than-optimal performance.</span></p>
+			<p>Establishing a sound baseline solution is crucial. Implementing various methods, such as those in cost-sensitive learning and algorithm-level deep learning techniques, can offer insights into handling imbalanced datasets effectively. Each method has its pros <span class="No-Break">and cons.</span></p>
+			<p>For specialized problems, the book provides targeted solutions. For small datasets, the oversampling methods can help manage computational resources. For large datasets, the chapter on undersampling methods offers <span class="No-Break">suitable techniques.</span></p>
+			<p>Occasionally, more modern approaches such as graph machine learning algorithms can be applied to the problem at hand. The model calibration and threshold tuning techniques are useful for decision-making based on <span class="No-Break">model predictions.</span></p>
+			<p>Sometimes, data imbalance may not be a problem at all, and we highly encourage you to establish the baseline performance with the imbalanced data without applying any of the techniques discussed in this book. A lot of the real-world data also tends to be tabular, where tree-based models such as XGBoost can be robust to certain kinds of <span class="No-Break">data imbalance.</span></p>
+			<p>We encourage you to apply this knowledge, experiment with new approaches, and continue to expand your expertise as you progress in this field. The landscape of machine learning is constantly changing, and your skills will only increase in value as you keep up with its evolution. We hope that the knowledge you’ve gained will empower you to pick up any research paper that you feel interested in and be able to reproduce its results. We appreciate your commitment to reading this book, and we wish you success in all your <span class="No-Break">future endeavors<a id="_idTextAnchor299"/>.</span></p>
+			<h1 id="_idParaDest-216"><a id="_idTextAnchor300"/>Questions</h1>
+			<ol>
+				<li>Can a well-calibrated model have low accuracy? What about the reverse: can a model with high accuracy be <span class="No-Break">poorly calibrated?</span></li>
+				<li>Take a limited classification dataset with, say, only 100 data points. Train a decision tree model using this dataset and then assess <span class="No-Break">its calibration.</span><ol><li class="Alphabets">Calibrate the model using Platt’s scaling. Measure the Brier score <span class="No-Break">after calibration.</span></li><li class="Alphabets">Calibrate the model using isotonic regression. Measure the Brier score <span class="No-Break">after calibration</span></li><li class="Alphabets">How do the Brier scores differ in (A) <span class="No-Break">and (B)?</span></li><li class="Alphabets">Measure the AUC, accuracy, precision, recall, and F1 score of the model before and <span class="No-Break">after calibration.</span></li></ol></li>
+				<li>Take a balanced dataset, say with 10,000 points. Train a decision tree model using it. Then check how calibrated <span class="No-Break">it is.</span><ol><li class="Alphabets" value="1">Calibrate the model using Platt’s scaling. Measure the Brier score <span class="No-Break">after calibration.</span></li><li class="Alphabets">Calibrate the model using isotonic regression. Measure the Brier score <span class="No-Break">after calibration.</span></li><li class="Alphabets">How do the Brier scores differ in (a) <span class="No-Break">and (b)?</span></li><li class="Alphabets">Measure the AUC, accuracy, precision, recall, and F1 score of the model before and after calibration and compare <span class="No-Break">their values.</span></li></ol></li>
+				<li>Given a classification dataset, compare how calibrated the following models are by default without applying any calibration techniques by comparing their <span class="No-Break">Brier scores:</span><ol><li class="Alphabets" value="1"><span class="No-Break">Logistic regression</span></li><li class="Alphabets"><span class="No-Break">Decision tree</span></li><li class="Alphabets"><span class="No-Break">XGBoost</span></li><li class="Alphabets"><span class="No-Break">Random forest</span></li><li class="Alphabets"><span class="No-Break">AdaBoost</span></li><li class="Alphabets"><span class="No-Break">Neural network</span></li></ol></li>
+				<li>Take an imbalanced dataset and train three models with logistic regression, a random forest model, and an XGBoost model, respectively. Measure the calibration of these models using the calibration curve and Brier scores. Finally, apply these techniques to handle data imbalance and measure the <span class="No-Break">calibration again:</span><ol><li class="Alphabets" value="1"><span class="No-Break">Undersampling</span></li><li class="Alphabets"><span class="No-Break">Oversampling</span></li><li class="Alphabets">Cost-sensitive learning: increase the <strong class="source-inline">class_weight</strong> by doubling the previous value. Did the model get less calibrated because of doubling <span class="No-Break">the </span><span class="No-Break"><strong class="source-inline">class_weight</strong></span><span class="No-Break">?</span></li></ol></li>
+			</ol>
+			<h1 id="_idParaDest-217"><a id="_idTextAnchor301"/>References</h1>
+			<ol>
+				<li value="1">C. Guo, G. Pleiss, Y. Sun, and K. Q. Weinberger, “<em class="italic">On Calibration of Modern Neural Networks</em>.” arXiv, Aug. 03, 2017. Accessed: Nov. 21, <span class="No-Break">2022, </span><a href="http://arxiv.org/abs/1706.04599"><span class="No-Break">http://arxiv.org/abs/1706.04599</span></a></li>
+				<li>A. Niculescu-Mizil and R. Caruana, “<em class="italic">Predicting good probabilities with supervised learning</em>,” in Proceedings of the 22nd International Conference on Machine Learning - ICML ‘05, Bonn, Germany, 2005, pp. 625–632. <span class="No-Break">doi: 10.1145/1102351.1102430.</span></li>
+				<li>J. Mukhoti, V. Kulharia, A. Sanyal, S. Golodetz, P. H. S. Torr, and P. K. Dokania, “<em class="italic">Calibrating Deep Neural Networks using Focal Loss</em>”. Feb <span class="No-Break">2020, </span><a href="https://doi.org/10.48550/arXiv.2002.09437"><span class="No-Break">https://doi.org/10.48550/arXiv.2002.09437</span></a></li>
+				<li>B. C. Wallace and I. J. Dahabreh, “<em class="italic">Class Probability Estimates are Unreliable for Imbalanced Data (and How to Fix Them)</em>,” in 2012 IEEE 12th International Conference on Data Mining, Brussels, Belgium, Dec. 2012, pp. 695–704. <span class="No-Break">doi: 10.1109/ICDM.2012.115.</span></li>
+				<li>M. Pakdaman Naeini, G. Cooper, and M. Hauskrecht, “<em class="italic">Obtaining Well Calibrated Probabilities Using Bayesian Binning</em>,” AAAI, vol. 29, no. 1, Feb. 2015, <span class="No-Break">doi: 10.1609/aaai.v29i1.9602.</span></li>
+				<li>H. Steck, “<em class="italic">Calibrated recommendations</em>,” in Proceedings of the 12th ACM Conference on Recommender Systems, Vancouver British Columbia Canada: ACM, Sep. 2018, pp. 154–162. <span class="No-Break">doi: </span><span class="No-Break">10.1145/3240323.3240372</span><span class="No-Break">.</span></li>
+				<li>A. Caplin, D. Martin, and P. Marx, “<em class="italic">Calibrating for Class Weights by Modeling Machine Learning</em>.” arXiv, Jul. 31, 2022. Accessed: Dec. 09, 2022. [Online]. Available <span class="No-Break">at </span><a href="http://arxiv.org/abs/2205.04613"><span class="No-Break">http://arxiv.org/abs/2205.04613</span></a></li>
+				<li>A. D. Pozzolo, O. Caelen, R. A. Johnson, and G. Bontempi, “<em class="italic">Calibrating Probability with Undersampling for Unbalanced Classification</em>,” in 2015 IEEE Symposium Series on Computational Intelligence, Cape Town, South Africa, Dec. 2015, pp. 159–166. doi: <span class="No-Break">10.1109/SSCI.2015.33, </span><a href="https://dalpozz.github.io/static/pdf/SSCI_calib_final_noCC.pdf"><span class="No-Break">https://dalpozz.github.io/static/pdf/SSCI_calib_final_noCC.pdf</span></a></li>
+				<li>M. Moscatelli, S. Narizzano, F. Parlapiano, and G. Viggiano, <em class="italic">Corporate default forecasting with machine learning</em>. IT: Banca d’Italia, 2019. Accessed: Oct. 14, 2023. [Online]. Available <span class="No-Break">at </span><a href="https://doi.org/10.32057/0.TD.2019.1256"><span class="No-Break">https://doi.org/10.32057/0.TD.2019.1256</span></a></li>
+				<li>X. He et al., “<em class="italic">Practical Lessons from Predicting Clicks on Ads at Facebook</em>,” in Proceedings of the Eighth International Workshop on Data Mining for Online Advertising, New York NY USA, Aug. 2014, pp. 1–9. <span class="No-Break">doi: 10.1145/2648584.2648589.</span></li>
+				<li>G. King and L. Zeng, “<em class="italic">Logistic Regression in Rare Events </em><span class="No-Break"><em class="italic">Data</em></span><span class="No-Break">,” 2001.</span></li>
+				<li>Szegedy, V. Vanhoucke, S. Ioffe, J. Shlens, and Z. Wojna, “<em class="italic">Rethinking the Inception Architecture for Computer Vision</em>.” arXiv, Dec. 11, 2015. Accessed: Dec. 17, 2022. [Online]. Available <span class="No-Break">at </span><a href="http://arxiv.org/abs/1512.00567"><span class="No-Break">http://arxiv.org/abs/1512.00567</span></a></li>
+				<li>R. Müller, S. Kornblith, and G. Hinton, “<em class="italic">When Does Label Smoothing Help?</em>” arXiv, Jun. 10, 2020. Accessed: Dec. 11, 2022. [Online]. Available <span class="No-Break">at </span><a href="http://arxiv.org/abs/1906.02629"><span class="No-Break">http://arxiv.org/abs/1906.02629</span></a></li>
+				<li>Zhong et al., Improving Calibration for Long-Tailed Recognition. CVPR <span class="No-Break">2021. </span><a href="https://arxiv.org/abs/2104.00466"><span class="No-Break">https://arxiv.org/abs/2104.00466</span></a></li>
+				<li>B. Lucena, “<em class="italic">Spline-Based Probability Calibration</em>.” arXiv, Sep. 20, 2018. Accessed: Jul. 22, 2023. [Online]. Available <span class="No-Break">at </span><a href="http://arxiv.org/abs/1809.07751"><span class="No-Break">http://arxiv.org/abs/1809.07751</span></a></li>
+				<li>K. Gupta, A. Rahimi, T. Ajanthan, T. Mensink, C. Sminchisescu, and R. Hartley, “<em class="italic">Calibration of Neural Networks using Splines</em>.” arXiv, Dec. 29, 2021. Accessed: Jul. 22, 2023. [Online]. Available <span class="No-Break">at </span><a href="http://arxiv.org/abs/2006.12800"><span class="No-Break">http://arxiv.org/abs/2006.12800</span></a></li>
+				<li>M. Kull and P. Flach, “<em class="italic">Beta calibration: a well-founded and easily implemented improvement on logistic calibration for binary classiﬁers</em>,” in Proceedings of the twentieth International Conference on Artificial Intelligence and Statistics (<span class="No-Break">pp. 623–631).</span></li>
+				<li>C. Wang, J. Balazs, G. Szarvas, P. Ernst, L. Poddar, and P. Danchenko, “Calibrating Imbalanced Classifiers with Focal Loss: An Empirical Study,” in Proceedings of the 2022 Conference on Empirical Methods in Natural Language Processing: Industry Track, Abu Dhabi, UAE: Association for Computational Linguistics, 2022, pp. 145–153. <span class="No-Break">doi: </span><span class="No-Break">10.18653/v1/2022.emnlp-industry.14</span><span class="No-Break">.</span></li>
+			</ol>
+		</div>
+	
+
+		<div id="_idContainer190">
+			<h1 id="_idParaDest-218" class="chapter-number"><a id="_idTextAnchor302"/>Appendix</h1>
+			<h1 id="_idParaDest-219"><a id="_idTextAnchor303"/>Machine Learning Pipeline in Production</h1>
+			<p>In this appendix, we will look at when and at which step we incorporate the data imbalance-handling techniques within a production machine learning pipeline. This mainly applies to supervised <span class="No-Break">classification problems.</span></p>
+			<h1 id="_idParaDest-220"><a id="_idTextAnchor304"/>Machine learning training pipeline</h1>
+			<p>A machine learning pipeline is the end-to-end process of training one or more machine learning models and then deploying them to a live environment. It may involve stages such as data collection, model training, validation, deployment, monitoring, and iterative improvement, with a focus on scalability, efficiency, <span class="No-Break">and robustness.</span></p>
+			<p>Various steps during the offline training are shown in <em class="italic">Figure A.1</em>. Please note that some of the steps may not be necessary depending on the problem <span class="No-Break">at hand.</span></p>
+			<div>
+				<div id="_idContainer188" class="IMG---Figure">
+					<img src="image/B17259_App_01.jpg" alt="" role="presentation"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure A.1 – High-level steps in a machine learning training pipeline</p>
+			<p>The following is the sequence of steps involved in building a model that can handle <span class="No-Break">data imbalance:</span></p>
+			<ol>
+				<li><strong class="bold">Gather data</strong>: The first step involves gathering the necessary data for training the machine learning model. This data can be sourced from various places such as databases, files, APIs, or through web scraping. Immediately after gathering, it’s often beneficial to perform <strong class="bold">data validation</strong>. During this phase, the data schema and data range can be verified, along with any custom data validation checks. Subsequently, the data is partitioned into a training set, a validation set, and a test set. Many production systems often do not prioritize producing validation sets. The primary function of producing these validation sets is to aid in model-tuning activities, such as hyperparameter adjustment, early stopping, model calibration, threshold tuning, and so on. Such tuning often takes place during the model development phase, outside of the main production pipeline. <strong class="bold">It’s crucial to split the data prior to executing any data transformations or imbalance handling techniques</strong>. This precaution ensures data leakage is avoided, which could otherwise lead to a biased <span class="No-Break">model performance.</span></li>
+				<li><strong class="bold">Data transformation</strong>: The next step is to transform the data into a format that can be easily fed into the machine learning model. This may involve tasks such as data cleaning, feature selection, normalization, and scaling. These transformation steps may need to be stored in order to apply them during model prediction time. It can be helpful to store these transformations somewhere (for example, a file or database) so that they can be retrieved later <span class="No-Break">during inferencing.</span></li>
+				<li><strong class="bold">Handle data imbalance (if needed)</strong>: The machine learning model might underperform on a minority class(es) due to a bias toward the majority class. Throughout this book, we’ve delved into both data-level and algorithm-level techniques. To summarize, data-level techniques focus on resampling the dataset to achieve balanced samples across each class, whereas algorithm-level techniques modify the learning algorithm to address imbalanced data. For a deeper understanding, please refer to the relevant chapters in <span class="No-Break">the book.</span></li>
+				<li><strong class="bold">Train model</strong>: After the data has been preprocessed, it’s time to train the machine learning model. This step involves <span class="No-Break">the following:</span><ol><li class="upper-roman">Selecting an <span class="No-Break">appropriate algorithm</span></li><li class="upper-roman">Setting <span class="No-Break">its hyperparameters</span></li><li class="upper-roman">Feeding the preprocessed data into <span class="No-Break">the algorithm</span></li></ol><p class="list-inset">The training process may require several iterations to fine-tune the model until it produces satisfactory results. The trained model binary should be versioned and stored for future use, including deploying to a production environment for <span class="No-Break">online inferencing.</span></p><p class="list-inset">If any data imbalance handling technique was applied, it could miscalibrate the model. If calibrated prediction scores are expected from the model, it’s crucial to recalibrate the prediction scores. For more information on various model calibration techniques, please refer to <a href="B17259_10.xhtml#_idTextAnchor279"><span class="No-Break"><em class="italic">Chapter 10</em></span></a>, <span class="No-Break"><em class="italic">Model Calibration</em></span><span class="No-Break">.</span></p></li>
+				<li><strong class="bold">Evaluate model</strong>: This step involves assessing the performance of the trained model on the test set produced in <em class="italic">step 1</em>. For classification problems, metrics such as accuracy, precision, and recall are typically used, while for other types of problems, appropriate metrics should be chosen. If the model’s performance doesn’t meet the desired benchmarks, you may need to not only revisit the data transformations (as outlined in <em class="italic">step 2</em>) but also consider adjusting the model’s architecture, hyperparameters, or even the problem formulation. For binary classification models specifically, you’ll want to determine an appropriate threshold for classifying predictions. For more in-depth information on threshold tuning techniques, please refer to <a href="B17259_05.xhtml#_idTextAnchor151"><span class="No-Break"><em class="italic">Chapter 5</em></span></a>, <span class="No-Break"><em class="italic">Cost-Sensitive Learning.</em></span></li>
+			</ol>
+			<p>After successfully evaluating the model, its fitness for deployment as a service is assessed, enabling it to handle live traffic or make batch predictions. We will delve deeper into inferencing in the <span class="No-Break">following section.</span></p>
+			<h1 id="_idParaDest-221"><a id="_idTextAnchor305"/>Inferencing (online or batch)</h1>
+			<p>Inferencing is a process of using a trained machine learning model to make predictions on new unseen data. <strong class="bold">Online inferencing</strong> refers to making predictions in real time on live data as it arrives. Latency is of utmost importance during online inferencing in order to prevent any lags to the <span class="No-Break">end user.</span></p>
+			<p>There is another type called <strong class="bold">batch inferencing</strong>, where predictions are made on a large set of already collected data in an <span class="No-Break">offline fashion.</span></p>
+			<div>
+				<div id="_idContainer189" class="IMG---Figure">
+					<img src="image/B17259_App_02.jpg" alt="" role="presentation"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure A.2 – Process flow when live data comes to the model for scoring (inferencing)</p>
+			<p>Inferencing is a <a id="_idIndexMarker783"/>process of using a trained machine learning model to make predictions on new input (unseen) data in real time. The following are the steps involved in the <span class="No-Break">inferencing process:</span></p>
+			<ol>
+				<li><strong class="bold">Input data</strong>: The first <a id="_idIndexMarker784"/>step is to receive new input data that needs to be classified or predicted. This data could be in the form of text, images, audio, or any other <span class="No-Break">data format.</span></li>
+				<li><strong class="bold">Transform data</strong>: Before <a id="_idIndexMarker785"/>predicting, the input data needs to undergo transformations (such as normalization and scaling) to make it compatible with the trained model. It’s crucial to apply the same transformations that were used <span class="No-Break">during training.</span></li>
+				<li><strong class="bold">Model prediction</strong>: Once <a id="_idIndexMarker786"/>the input data has been transformed, it is fed into the trained model to generate a predicted score. The predicted score represents the likelihood of the input belonging to a particular class <span class="No-Break">or category.</span></li>
+				<li><strong class="bold">Calibrate score (if needed)</strong>: Model calibration can be essential when model predictions <a id="_idIndexMarker787"/>are not reliable. Notably, when any data imbalance handling techniques are used, the risk of model miscalibration increases. For a comprehensive understanding of this topic, please refer to <a href="B17259_10.xhtml#_idTextAnchor279"><span class="No-Break"><em class="italic">Chapter 10</em></span></a>, <span class="No-Break"><em class="italic">Model Calibration</em></span><span class="No-Break">.</span></li>
+				<li><strong class="bold">Final prediction using threshold</strong>: The calibrated score is then used to make the final <a id="_idIndexMarker788"/>prediction using an appropriate threshold and take any action—for example, notification to the customer, human reviews, and <span class="No-Break">so on.</span></li>
+			</ol>
+			<p class="callout-heading">🌟 Monitoring data as well as model in production</p>
+			<p class="callout">Monitoring data and its distribution is crucial as it can change over time, potentially impacting the <a id="_idIndexMarker789"/>effectiveness of any initially applied imbalance-handling techniques. Such shifts can affect model performance and evaluation metrics, necessitating a re-evaluation and potential recalibration of strategies. Beyond just data imbalance, phenomena such as model drift and data drift—where there is a change in the model’s performance or the nature of incoming data—pose significant concerns. Implementing automated mechanisms to track these variations is essential for ensuring optimal model performance and <span class="No-Break">consistent predictions.</span></p>
+			<p>In conclusion, inferencing entails transforming new input data, producing a predicted score using a trained machine learning model, calibrating that score, and determining a final prediction using a threshold. This procedure is reiterated for every incoming data point requiring <span class="No-Break">a prediction.</span></p>
+		</div>
+	
+
+		<div id="_idContainer194">
+			<h1 id="_idParaDest-222"><a id="_idTextAnchor306"/>Assessments</h1>
+			<h1 id="_idParaDest-223"><a id="_idTextAnchor307"/>Chapter 1 – Introduction to Data Imbalance in  Machine Learning</h1>
+			<ol>
+				<li>The choice of loss function when training a model can greatly affect the performance of the model on imbalanced datasets. Some loss functions may be more sensitive to class imbalance than others. For instance, a model trained with a loss function such as cross-entropy might be heavily influenced by the majority class and perform poorly on the <span class="No-Break">minority class.</span></li>
+				<li>The PR curve is more informative than the ROC curve when dealing with highly skewed datasets because it focuses on the performance of the classifier on the positive (minority) class, which is often the class of interest in imbalanced datasets. The ROC curve, on the other hand, considers both the TPR and the FPR and thus might give an overly optimistic view of the model’s performance when the negative class dominates <span class="No-Break">the dataset.</span></li>
+				<li>Accuracy can be a misleading metric for model performance on imbalanced datasets because it does not take into account the distribution of classes. A model that always predicts the majority class will have high accuracy, but it is not useful if our goal is to correctly classify instances of the <span class="No-Break">minority class.</span></li>
+				<li>In the context of imbalanced datasets, feature engineering poses a unique challenge due to the limited number of instances in the minority class. With so few examples, it becomes difficult even for human experts to identify features that are truly indicative of the minority class. Poorly chosen features can worsen the problem: if the features capture noise rather than the underlying pattern, the model is likely to overfit. Conversely, if the features are too generic and fail to capture the nuances of the minority class, the model may underfit, leading to poor performance on new, <span class="No-Break">unseen data.</span></li>
+				<li>The choice of “k” in k-fold cross-validation can impact the model’s performance on imbalanced datasets. With imbalanced datasets, some folds may contain very few or even no examples from the minority classes, potentially leading to misleading evaluations of the model. A solution to this issue is to use stratified k-fold cross-validation, available through the <strong class="source-inline">sklearn.model_selection.StratifiedKFold</strong> API, which ensures that each fold maintains a similar distribution of the <span class="No-Break">various classes.</span></li>
+				<li>Usually, the greater the imbalance in the test set, the more negatively the PR curve is affected. In contrast, the ROC curve is not affected by the class distribution in the <span class="No-Break">test set.</span><p class="list-inset">In <em class="italic">Figures 1.13</em> and <em class="italic">1.14</em>, we presented three test sets with imbalance ratios of 1:9, 1:3, and 1:1. The ROC-AUC for all these cases is 0.96, as shown in <span class="No-Break"><em class="italic">Figure 1</em></span><em class="italic">.13</em>. On the other hand, the average precision value is inversely proportional to the level of imbalance in the test set, as illustrated in <span class="No-Break"><em class="italic">Figure 1</em></span><em class="italic">.14</em> (that is, greater imbalance results in lower <span class="No-Break">average precision):</span></p></li>
+			</ol>
+			<div>
+				<div id="_idContainer191" class="IMG---Figure">
+					<img src="image/B17259_01_13.jpg" alt="" role="presentation"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure B.1 – ROC curves remain the same when the imbalance ratio changes in the test set</p>
+			<div>
+				<div id="_idContainer192" class="IMG---Figure">
+					<img src="image/B17259_01_14.jpg" alt="" role="presentation"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure B.2 – The PR curve changes considerably when the imbalance ratio changes in the test set</p>
+			<ol>
+				<li value="7">Having a high AUC-ROC but a low AUC-PR in the context of an imbalanced dataset could indicate that the model is performing well in distinguishing between the classes overall (as indicated by the high AUC-ROC), but it is not doing a good job at identifying the positive (minority) class (as indicated by the <span class="No-Break">low AUC-PR).</span></li>
+				<li>Sampling bias can contribute to the challenge of imbalanced datasets in machine learning because it can lead to an overrepresentation of one class and an underrepresentation of another. This can skew the model’s learning and result in poor performance in the <span class="No-Break">underrepresented class.</span></li>
+				<li>Labeling errors can contribute to the challenge of imbalanced datasets in machine learning because they can lead to an incorrect representation of the classes in the data. If instances of the minority class are mistakenly labeled as the majority class, the model might learn incorrect patterns and perform poorly on the <span class="No-Break">minority class.</span></li>
+				<li>There are many real-world scenarios where dealing with imbalanced datasets is inherently part of the problem. Some examples include fraud detection (where fraudulent transactions are rare compared to legitimate ones), medical diagnosis (where diseases are often rare compared to healthy cases), and spam detection (where spam emails are typically fewer than non-spam emails). Can you think of <span class="No-Break">any others?</span></li>
+				<li>Here are <span class="No-Break">the answers:</span><ol><li class="Alphabets">Its value ranges from -1 (worst value) to +1 (<span class="No-Break">best value).</span></li><li class="Alphabets">The dummy model always predicts class 1, so here are our various confusion <span class="No-Break">matrix </span><span class="No-Break">values:</span></li></ol><p class="list-inset">TP = 90, TN = 0, FP=10, FN = 0</p><p class="list-inset">MCC = <span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">TP</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">·</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">TN</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">−</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">FP</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">·</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">FN</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Space">   </span><span class="_-----MathTools-_Math_Base">__________________________________</span><span class="_-----MathTools-_Math_Base">    </span><span class="_-----MathTools-_Math_Base">√</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Base">______________________________________</span><span class="_-----MathTools-_Math_Base">    </span><span class="_-----MathTools-_Math_Base">(</span><span class="_-----MathTools-_Math_Variable">TP</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">+</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">FP</span><span class="_-----MathTools-_Math_Variable">)</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">·</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Base">(</span><span class="_-----MathTools-_Math_Variable">TP</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">+</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">FN</span><span class="_-----MathTools-_Math_Variable">)</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">·</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Base">(</span><span class="_-----MathTools-_Math_Variable">TN</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">+</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">FP</span><span class="_-----MathTools-_Math_Variable">)</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">·</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Base">(</span><span class="_-----MathTools-_Math_Variable">TN</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">+</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">FN</span><span class="_-----MathTools-_Math_Variable">)</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Base"> </span></p><p class="list-inset">The  confusion matrix values are <span class="No-Break">as follows:</span></p><ul><li>TP = <span class="No-Break">90</span></li><li>TN = 0</li><li>FP = <span class="No-Break">10</span></li><li>FN = 0</li></ul><p class="list-inset">By plugging these values into the formula, we get <span class="No-Break">the </span><span class="No-Break">following:</span></p><p class="list-inset"><span class="_-----MathTools-_Math_Text">MCC</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">=</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Base">(</span><span class="_-----MathTools-_Math_Number">90</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">×</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Number">0</span><span class="_-----MathTools-_Math_Number">)</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">−</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Base">(</span><span class="_-----MathTools-_Math_Number">10</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">×</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Number">0</span><span class="_-----MathTools-_Math_Number">)</span><span class="_-----MathTools-_Math_Base">  </span><span class="_-----MathTools-_Math_Base">_____________________________</span><span class="_-----MathTools-_Math_Base">   </span><span class="_-----MathTools-_Math_Base">√</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Base">_________________________________</span><span class="_-----MathTools-_Math_Base">   </span><span class="_-----MathTools-_Math_Base">(</span><span class="_-----MathTools-_Math_Number">90</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">+</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Number">10</span><span class="_-----MathTools-_Math_Number">)</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">×</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Base">(</span><span class="_-----MathTools-_Math_Number">90</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">+</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Number">0</span><span class="_-----MathTools-_Math_Number">)</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">×</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Base">(</span><span class="_-----MathTools-_Math_Number">0</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">+</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Number">10</span><span class="_-----MathTools-_Math_Number">)</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">×</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Base">(</span><span class="_-----MathTools-_Math_Number">0</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">+</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Number">0</span><span class="_-----MathTools-_Math_Number">)</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Base"> </span></p><p class="list-inset"><span class="_-----MathTools-_Math_Operator">=</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Number">0</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">−</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Number">0</span><span class="_-----MathTools-_Math_Number"> </span><span class="_-----MathTools-_Math_Base">______________</span><span class="_-----MathTools-_Math_Base">  </span><span class="_-----MathTools-_Math_Base">√</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Base">_______________</span><span class="_-----MathTools-_Math_Base">  </span><span class="_-----MathTools-_Math_Number">100</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">×</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Number">90</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">×</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Number">10</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">×</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Number">0</span><span class="_-----MathTools-_Math_Number"> </span><span class="_-----MathTools-_Math_Base"> </span></p><p class="list-inset">Since the denominator becomes zero (because of the term <span class="_-----MathTools-_Math_Base">(</span><span class="_-----MathTools-_Math_Variable">TN</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Operator">+</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Variable">FN</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Operator">=</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Number">0</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Operator">+</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Number">0</span><span class="_-----MathTools-_Math_Base">)</span><span class="_-----MathTools-_Math_Base">)</span>, the MCC <span class="No-Break">is undefined.</span></p><p class="list-inset">We can compute the other metrics <span class="No-Break">as follows:</span></p><ul><li>Accuracy = TP+TN/ (TP+TN+FP+FN) = <span class="No-Break">0.90</span></li><li>Precision = TP/(TP+FP) = 90/(90+10) = <span class="No-Break">0.90</span></li><li>Recall = TP/(TP+FN) = 90/(90+0) = 1</li><li>F1 score = 2*Precision*Recall/(Precision+Recall) = 2*0.90*1/(0.90+1) = <span class="No-Break">0.95</span></li></ul><p class="list-inset">Let’s compute MCC for the previous values. It’s undefined (0/0), which would mean something is wrong with the model, and we should go back and fix any issues with the data or <span class="No-Break">the model.</span></p><ol><li class="Alphabets" value="3">In summary, MCC is a metric that generates a high score only if the model does well on both positive and negative class examples from the test set. Also, MCC can help inform the user about ongoing <span class="No-Break">prediction issues.</span></li><li class="Alphabets">This is left as an exercise <span class="No-Break">for you.</span></li></ol></li>
+			</ol>
+			<h1 id="_idParaDest-224"><a id="_idTextAnchor308"/>Chapter 2 – Oversampling Methods</h1>
+			<ol>
+				<li value="1">This is left as an exercise <span class="No-Break">for you.</span></li>
+				<li>One approach is to oversample the minority class by 20x to balance both classes. It’s important to note that achieving the perfect balance between the classes is not always necessary; a slight imbalance may be acceptable, depending on the specific requirements and constraints. This technique is not applied at test time as the test data should remain representative of what we would encounter in the <span class="No-Break">real world.</span></li>
+				<li>The primary concern with oversampling before splitting the data into training, test, and validation sets is data leakage. This occurs when duplicate samples end up in both the training and test/validation sets, leading to overly optimistic performance metrics. The model may perform well during evaluation because it has already seen the same examples during training, but this can result in poor generalization to new, unseen data. To mitigate this risk, it’s crucial to first split the data into training, test, and validation sets and then apply balancing techniques such as oversampling exclusively to the <span class="No-Break">training set.</span></li>
+				<li>Data normalization can help indirectly in dealing with data imbalance by ensuring that all features have the same scale, which can lead to better model performance. However, normalization may not directly address the imbalance between the classes in the dataset. To tackle data imbalance, other techniques can be employed, such as various sampling techniques, cost-sensitive approaches, or threshold <span class="No-Break">adjustment techniques.</span></li>
+				<li>This has been left as an exercise <span class="No-Break">for you.</span></li>
+			</ol>
+			<h1 id="_idParaDest-225"><a id="_idTextAnchor309"/>Chapter 3 – Undersampling Methods</h1>
+			<ol>
+				<li value="1">This has been left as an exercise <span class="No-Break">for you.</span></li>
+				<li>This has been left as an exercise <span class="No-Break">for you.</span></li>
+				<li>This has been left as an exercise <span class="No-Break">for you.</span></li>
+				<li><strong class="source-inline">TomekLinksNCR</strong> is a custom undersampling method that combines Tomek links and NCR. It removes Tomek links and then applies NCR to remove more noisy and borderline samples from the majority class. This aims to create a more balanced dataset while retaining the underlying structure of <span class="No-Break">the data.</span></li>
+			</ol>
+			<h1 id="_idParaDest-226"><a id="_idTextAnchor310"/>Chapter 4 – Ensemble Methods</h1>
+			<ol>
+				<li value="1">This has been left as an exercise <span class="No-Break">for you.</span></li>
+				<li>The main difference between <strong class="source-inline">BalancedRandomForestClassifier</strong> and <strong class="source-inline">BalancedBaggingClassifier</strong> is the base classifier and the ensemble learning method they employ. <strong class="source-inline">BalancedRandomForestClassifier</strong> uses decision trees as base classifiers and follows a random forest as the estimator, while <strong class="source-inline">BalancedBaggingClassifier</strong> can use any base classifier that supports sample weighting and follows a <span class="No-Break">bagging approach.</span><p class="list-inset">Random forest can be considered an extension of bagging that incorporates an additional layer of randomness by also randomly selecting a subset of features at each split in the decision tree. This helps create more diverse trees and generally results in better performance of random <span class="No-Break">forest models.</span></p></li>
+			</ol>
+			<h1 id="_idParaDest-227"><a id="_idTextAnchor311"/>Chapter 5 – Cost-Sensitive Learning</h1>
+			<p>This chapter’s questions have been left as exercises <span class="No-Break">for you.</span></p>
+			<h1 id="_idParaDest-228"><a id="_idTextAnchor312"/>Chapter 6 – Data Imbalance in Deep Learning</h1>
+			<ol>
+				<li>The main challenge stems from the different types of data these models handle. Classical machine learning models typically work with structured, tabular data, while deep learning models handle unstructured data such as images, text, audio, <span class="No-Break">and video.</span></li>
+				<li>An imbalanced version of the MNIST dataset can be created by randomly selecting a certain percentage of examples for each class. This process involves choosing indices of the samples to remove and then actually removing these samples from the <span class="No-Break">training set.</span></li>
+				<li>This has been left as an exercise <span class="No-Break">for you.</span></li>
+				<li>Random oversampling is used to address imbalance in the dataset. It works by duplicating samples from the minority classes until each class has an equal number of samples. This technique is usually considered to perform better than <span class="No-Break">no sampling.</span></li>
+				<li>Data augmentation techniques can include rotating, scaling, cropping, blurring, adding noise to the image, and much more. However, ensuring these augmentations preserve the original labels and avoiding inadvertently removing important details from the data is crucial. Please refer to <a href="B17259_07.xhtml#_idTextAnchor205"><span class="No-Break"><em class="italic">Chapter 7</em></span></a>, <em class="italic">Data-Level Deep Learning Methods</em>, for a detailed discussion of the various data <span class="No-Break">augmentation techniques.</span></li>
+				<li>Undersampling reduces the instances of the majority class to balance the dataset. However, this method has a significant limitation: important information might be lost if instances from the majority class are randomly removed, especially when the majority class has a lot <span class="No-Break">of variation.</span></li>
+				<li>The data augmentation techniques must preserve the original labels because the model learns to associate the features of the data with these labels. If the labels change due to augmentation, the model might learn incorrect associations, which would degrade its performance when <span class="No-Break">making predictions.</span></li>
+			</ol>
+			<h1 id="_idParaDest-229"><a id="_idTextAnchor313"/>Chapter 7 – Data-Level Deep Learning Methods</h1>
+			<p>This chapter’s questions have been left as exercises <span class="No-Break">for you.</span></p>
+			<h1 id="_idParaDest-230"><a id="_idTextAnchor314"/>Chapter 8 – Algorithm-Level Deep Learning Techniques</h1>
+			<ol>
+				<li>This has been left as an exercise <span class="No-Break">for you.</span></li>
+				<li>This has been left as an exercise <span class="No-Break">for you.</span></li>
+				<li>Tversky loss is based on the Tversky index, which is defined by the <span class="No-Break">following </span><span class="No-Break">formula:</span><p class="list-inset"><span class="_-----MathTools-_Math_Variable">TverskyIndex</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Operator">=</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">TruePositive</span><span class="_-----MathTools-_Math_Variable">   </span><span class="_-----MathTools-_Math_Base">_______________________________________</span><span class="_-----MathTools-_Math_Base">    </span><span class="_-----MathTools-_Math_Variable">TruePositive</span><span class="_-----MathTools-_Math_Operator">+</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Variable">α</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Symbol_v-normal">*</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Variable">FalsePositive</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Operator">+</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Base">(</span><span class="_-----MathTools-_Math_Number">1</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">−</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">α</span><span class="_-----MathTools-_Math_Base">)</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Symbol_v-normal">*</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Variable">FalseNegative</span><span class="_-----MathTools-_Math_Space"> </span><span class="_-----MathTools-_Math_Space"> </span></p><p class="list-inset">A smoothing factor is added to both the numerator and denominator to avoid division by zero. <strong class="source-inline">alpha</strong> is a hyperparameter that can <span class="No-Break">be tuned:</span></p><pre class="source-code">
+import torch
+import torch.nn.functional as F
+def Tversky(y_true, y_pred, smooth=1, alpha=0.8):
+    y_true_pos = y_true.view(-1)
+    y_pred_pos = y_pred.view(-1)
+    true_pos = torch.sum(y_true_pos * y_pred_pos)
+    false_neg = torch.sum(y_true_pos * (1 - y_pred_pos))
+    false_pos = torch.sum((1 - y_true_pos) * y_pred_pos)
+    return (true_pos + smooth) / (true_pos + alpha * false_pos \
+        + (1 - alpha) * false_neg + smooth)</pre></li>				<li>This has been left as an exercise <span class="No-Break">for you.</span></li>
+			</ol>
+			<h1 id="_idParaDest-231"><a id="_idTextAnchor315"/>Chapter 9 – Hybrid Deep Learning Methods</h1>
+			<ol>
+				<li value="1">We don’t provide a full answer here, but only some functions that will help you with the <span class="No-Break">main task.</span><p class="list-inset">We could use <strong class="source-inline">torch.nn.functional.triplet_margin_loss()</strong>, or we could implement it <span class="No-Break">from scratch:</span></p><pre class="source-code">
+import torch
+import torch.nn as nn
+from torch.nn import functional as F
+class TripletLoss(nn.Module):
+    def __init__(self, margin=1.0):
+        super(TripletLoss, self).__init__()
+        self.margin = margin
+    def forward(self, anchor, pos, neg):
+        pos_dist = F.pairwise_distance(anchor, pos)
+        neg_dist = F.pairwise_distance(anchor, neg)
+        loss = torch.relu(pos_dist - neg_dist + self.margin)
+        return loss.mean()</pre><p class="list-inset">You would want to generate triplets for the imbalanced MNIST dataset. The following function generates a list of triplets (anchor, positive, and negative) for a batch of images. It generates one triplet per class present in the batch. We assume that there are at least two examples for each class in <span class="No-Break">the batch:</span></p><pre class="source-code">def generate_triplets(images, labels):
+    triplets = []
+    classes_present = labels.unique()
+    for c in classes_present:
+        # Find indices of anchor and positive examples
+        pos_indices = (labels == c).nonzero(as_tuple=True)[0]
+        anchor_idx, positive_idx = \
+            torch.choice(pos_indices, 2, replace=False)
+        anchor, positive = images[anchor_idx], \
+            images[positive_idx]
+        # Find index of negative example
+        neg_indices = (labels != c).nonzero(as_tuple=True)[0]
+        negative_idx = torch.choice(neg_indices)
+        negative = images[negative_idx]
+        # Add the triplet to the list
+        triplets.append((anchor, positive, negative))
+    return triplets</pre></li>				<li>This has been left as an exercise <span class="No-Break">for you.</span></li>
+			</ol>
+			<h1 id="_idParaDest-232"><a id="_idTextAnchor316"/>Chapter 10 – Model Calibration</h1>
+			<ol>
+				<li value="1">Yes, a well-calibrated model can have low accuracy and vice-versa. Let’s take a dumb model that always outputs 0.1 probability for any input example. This model is perfectly calibrated, but its accuracy is only 90%, which is quite low for an imbalanced dataset with a 1:9 imbalance ratio. Here is the implementation of such <span class="No-Break">a model:</span><pre class="source-code">
+from sklearn.datasets import make_classification
+from sklearn.calibration import calibration_curve
+import matplotlib.pyplot as plt
+import numpy as np
+# Make an imbalanced binary classification dataset
+y = np.array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, \
+    1, 0, 0, 0, 0, 0, 0])
+# Dummy model always predicts not-1 (i.e., 0) with full confidence
+y_pred = np.array([0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1,\
+    0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1,\
+    0.1, 0.1, 0.1, 0.1, 0.1, 0.1])
+y_pred_labels = np.array([0, 0, 0, 0, 0, 0, 0, 0, 0, \
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+# Calculate the calibration curve
+fraction_of_positives, mean_predicted_value = \
+    calibration_curve(y, y_pred)
+# Calculate accuracy
+accuracy = (y == y_pred_labels).mean()
+print('accuracy: ', accuracy)
+# Plot calibration curves
+plt.plot([0, 1], [0, 1], "k:", label="Perfectly calibrated")
+plt.plot(mean_predicted_value, fraction_of_positives,\
+    "s-", label="Model A")
+plt.legend()
+plt.show()</pre><p class="list-inset">This produces the accuracy value and <span class="No-Break">calibration plot:</span></p><pre class="source-code">accuracy:  0.9</pre></li>			</ol>
+			<div>
+				<div id="_idContainer193" class="IMG---Figure">
+					<img src="image/B17259_10_17.jpg" alt="" role="presentation"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure B.3 – A dummy model with perfect calibration but a low accuracy score</p>
+			<ol>
+				<li value="2">This has been left as an exercise <span class="No-Break">for you.</span></li>
+				<li>This has been left as an exercise <span class="No-Break">for you.</span></li>
+				<li>This has been left as an exercise <span class="No-Break">for you.</span></li>
+				<li>This has been left as an exercise <span class="No-Break">for you.</span></li>
+			</ol>
+		</div>
+	</body></html>

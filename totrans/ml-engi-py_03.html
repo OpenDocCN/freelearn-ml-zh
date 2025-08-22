@@ -1,0 +1,1100 @@
+<html><head></head><body>
+<div id="sbo-rt-content"><div class="Basic-Text-Frame" id="_idContainer072">
+<h1 class="chapterNumber">3</h1>
+<h1 class="chapterTitle" id="_idParaDest-56">From Model to Model Factory</h1>
+<p class="normal">This chapter is all about one of the most important concepts in ML engineering: how do you take the difficult task of training and fine-tuning your models and make it something you can automate, reproduce, and scale for production systems?</p>
+<p class="normal">We will recap the main ideas behind training different ML models at a theoretical and practical level, before providing motivation for retraining, namely the idea that ML models will not perform well forever. This concept is also <a id="_idIndexMarker239"/>known as <strong class="keyWord">drift</strong>. Following this, we will cover some of the main concepts behind feature engineering, which is a key part of any ML task. Next, we will deep dive into how ML works and how it is, at heart, a series of optimization problems. We will explore how when setting out to tackle these optimization problems, you can do so with a variety of tools at various levels of abstraction. In particular, we will discuss how you can provide the direct definition of the model you want to train, which I term <em class="italic">hand cranking</em>, or how you can perform hyperparameter <a id="_idIndexMarker240"/>tuning or <strong class="keyWord">automated ML</strong> (<strong class="keyWord">AutoML</strong>). We will look at examples of using different libraries and tools that do all of these, before exploring how to implement them for later use in your training workflow. We will then build on the introductory work we did in <em class="chapterRef">Chapter 2</em>, <em class="italic">The Machine Learning Development Process</em>, on MLflow by showing you how to interface with the different MLflow APIs to manage your models and update their status in MLflow’s Model Registry.</p>
+<p class="normal">We will end this chapter by discussing the utilities that allow you to chain all of your ML model training steps into single units<a id="_idIndexMarker241"/> known as <strong class="keyWord">pipelines</strong>, which can help act as more compact representations of all the steps we have discussed previously. The summary at the end will recap the key messages and also outline how what we have done here will be built upon further in <em class="chapterRef">Chapter 4</em>, <em class="italic">Packaging Up</em>, and <em class="chapterRef">Chapter 5</em>, <em class="italic">Deployment Patterns and Tools</em>.</p>
+<p class="normal">In essence, this chapter will tell you <em class="italic">what</em> you need to stick together in your solution, while later chapters will tell you <em class="italic">how</em> to stick them together robustly. We will cover this in the following sections:</p>
+<ul>
+<li class="bulletList">Defining the model factory</li>
+<li class="bulletList">Learning about learning</li>
+<li class="bulletList">Engineering features for machine learning</li>
+<li class="bulletList">Designing your training system</li>
+<li class="bulletList">Retraining required</li>
+<li class="bulletList">Persisting your models</li>
+<li class="bulletList">Building the model factory with pipelines</li>
+</ul>
+<h1 class="heading-1" id="_idParaDest-57">Technical requirements</h1>
+<p class="normal">As in the previous chapters, the required packages for this chapter are contained within a conda environment <code class="inlineCode">.yml</code> file in the repository folder for <code class="inlineCode">Chapter03</code>, so to create the conda environment for this chapter, simply run the following command:</p>
+<pre class="programlisting con"><code class="hljs-con">conda env create –f mlewp-chapter03.yml
+</code></pre>
+<p class="normal">This will install packages including MLflow, AutoKeras, Hyperopt Optuna, auto-sklearn, Alibi Detect, and Evidently.</p>
+<div class="packt_tip">
+<p class="normal">Note that if you are running these examples on a Macbook with Apple Silicon, a straight <code class="inlineCode">pip</code> or <code class="inlineCode">conda</code> install of TensorFlow and <code class="inlineCode">auto-sklearn</code> may not work out of the box. Instead, you will need to install the following packages to work with TensorFlow:</p>
+<pre class="programlisting con"><code class="hljs-con">pip install tensorflow-macos
+</code></pre>
+<p class="normal">And then</p>
+<pre class="programlisting con"><code class="hljs-con">pip install tensorflow-metal
+</code></pre>
+<p class="normal">To install <code class="inlineCode">auto-sklearn</code>, you will need to run</p>
+<pre class="programlisting con"><code class="hljs-con">brew install swig
+</code></pre>
+<p class="normal">Or install <code class="inlineCode">swig</code> using whatever Mac package manager you use, then you can run</p>
+<pre class="programlisting con"><code class="hljs-con">pip install auto-sklearn
+</code></pre>
+</div>
+<h1 class="heading-1" id="_idParaDest-58">Defining the model factory</h1>
+<p class="normal">If we want to<a id="_idIndexMarker242"/> develop solutions that move away from ad hoc, manual, and inconsistent execution and toward ML systems that can be automated, robust, and scalable, then we have to tackle the question of how we will create and curate the star of the show: the models themselves.</p>
+<p class="normal">In this section, we will discuss the key components that have to be brought together to move toward this vision and provide some examples of what these may look like in code. These examples are not the only way to implement these concepts, but they will enable us to start building up our ML solutions toward the level of sophistication we will need if we want to deploy in the <em class="italic">real world</em>.</p>
+<p class="normal">The main components we are talking about here are as follows:</p>
+<ul>
+<li class="bulletList"><strong class="keyWord">Training system</strong>: A system<a id="_idIndexMarker243"/> for robustly training our models on the data we have in an automated way. This consists of all the code we have developed to train our ML models on data.</li>
+<li class="bulletList"><strong class="keyWord">Model store</strong>: A place to persist successfully trained models and a place to share production-ready models with components that will run the predictions.</li>
+<li class="bulletList"><strong class="keyWord">Drift detector</strong>: A system for detecting changes in model performance to trigger training runs.</li>
+</ul>
+<p class="normal">These components, combined with their interaction with the deployed prediction system, encompass the idea of a model factory. This is shown schematically in the following diagram:</p>
+<figure class="mediaobject"><img alt="Figure 3.1 – The components of the model factory " height="313" src="../Images/B19525_03_01.png" width="553"/></figure>
+<p class="packt_figref">Figure 3.1: The components of the model factory.</p>
+<p class="normal">For the rest of <a id="_idIndexMarker244"/>this chapter, we will explore the three components we mentioned previously in detail. <strong class="keyWord">Prediction systems</strong> will <a id="_idIndexMarker245"/>be the focus of later chapters, especially <em class="chapterRef">Chapter 5</em>, <em class="italic">Deployment Patterns and Tools</em>.</p>
+<p class="normal">First, let’s explore what it means to train an ML model and how we can build systems to do so.</p>
+<h1 class="heading-1" id="_idParaDest-59">Learning about learning</h1>
+<p class="normal">At their heart, ML algorithms <a id="_idIndexMarker246"/>all contain one key feature: an optimization of some kind. The fact that these algorithms <em class="italic">learn</em> (meaning that they iteratively improve their performance concerning an appropriate metric upon exposure to more observations) is what makes them so powerful and exciting. This process of learning is what we refer to when we say <em class="italic">training</em>.</p>
+<p class="normal">In this section, we will cover the key concepts underpinning training, the options we can select in our code, and what these mean for the potential performance and capabilities of our training system.</p>
+<h2 class="heading-2" id="_idParaDest-60">Defining the target</h2>
+<p class="normal">We have just stated <a id="_idIndexMarker247"/>that training is an optimization, but what exactly are we optimizing? Let’s consider supervised learning. In training, we provide the labels or values that we would want to predict for the given feature so that the algorithms can learn the relationship between the features and the target. To optimize the internal parameters of the algorithm during training, it needs to know how <em class="italic">wrong</em> it would be with its current set of parameters. The optimization is then all about updating the parameters so that this measure of <em class="italic">wrongness</em> gets smaller and smaller. This is exactly what is captured by the concept of a loss function.</p>
+<p class="normal">Loss functions come in a<a id="_idIndexMarker248"/> variety of forms, and you can even define your own if you need to with a lot of packages, but there are some standard ones that it helps to be aware of. The names of some of these are mentioned here.</p>
+<p class="normal">For regression problems, you can use the following:</p>
+<ul>
+<li class="bulletList">Mean squared error/L2 loss</li>
+<li class="bulletList">Mean absolute error/L1 loss</li>
+</ul>
+<p class="normal">For binary classification problems, you can use the following:</p>
+<ul>
+<li class="bulletList">Log loss/logistic loss/cross-entropy loss</li>
+<li class="bulletList">Hinge loss</li>
+</ul>
+<p class="normal">For multi-class classification problems, you can use the following:</p>
+<ul>
+<li class="bulletList">Multi-class across entropy loss</li>
+<li class="bulletList">Kullback Leibler divergence loss</li>
+</ul>
+<p class="normal">In unsupervised learning, the concept of a loss function still applies but now the target is the correct distribution of the input data. After defining your loss function, you then need to optimize it. This is what we will look at in the next section.</p>
+<h2 class="heading-2" id="_idParaDest-61">Cutting your losses</h2>
+<p class="normal">At this point, we <a id="_idIndexMarker249"/>know that training is all about optimizing, and we know what to optimize, but we have not covered <em class="italic">how</em> to optimize yet.</p>
+<p class="normal">As usual, there are plenty of options to choose from. In this section, we will look at some of the main approaches.</p>
+<p class="normal">The following are the <strong class="keyWord">constant learning rate</strong> approaches:</p>
+<ul>
+<li class="bulletList"><strong class="keyWord">Gradient descent</strong>: This algorithm <a id="_idIndexMarker250"/>works<a id="_idIndexMarker251"/> by calculating the <a id="_idIndexMarker252"/>derivative of our loss function regarding our parameters, and then uses this to construct an update that moves us in the direction of decreasing loss.</li>
+<li class="bulletList"><strong class="keyWord">Batch gradient descent</strong>: The gradient<a id="_idIndexMarker253"/> that we use to make our move in the parameter<a id="_idIndexMarker254"/> space is found by taking the average of all the gradients found. It does this by looking at each data point in our training set and checking that the dataset is not too large and the loss function is relatively smooth and convex. This can pretty much reach the global minimum.</li>
+<li class="bulletList"><strong class="keyWord">Stochastic gradient descent</strong>: The gradient<a id="_idIndexMarker255"/> is calculated using one randomly selected data<a id="_idIndexMarker256"/> point at each iteration. This is faster at getting to the global minimum of the loss function, but it is more susceptible to sudden fluctuations in the loss after each optimization step.</li>
+<li class="bulletList"><strong class="keyWord">Mini-batch gradient descent</strong>: This is a mixture of both the batch and stochastic cases. In <a id="_idIndexMarker257"/>this<a id="_idIndexMarker258"/> case, updates to the gradient for each update to the parameters use several points greater than one but smaller than the entire dataset. This means that the size of the batch is now a parameter that needs to be tuned. The larger the batch, the more we approach batch gradient descent, which provides a better gradient estimate but is slower. The smaller the batch, the more we approach stochastic gradient descent, which is faster but not as robust. Mini-batch allows us to decide where in between the two we want to be. Batch sizes may be selected with a variety of criteria in mind. These can take on a range of memory considerations. Batches processed in parallel and larger batches will consume more memory while providing improved generalization performance for smaller batches. See <em class="chapterRef">Chapter 8</em> of the book <em class="italic">Deep Learning</em> by Ian Goodfellow, Yoshua Bengio, and Aaron Courville at <a href="https://www.deeplearningbook.org/"><span class="url">https://www.deeplearningbook.org/</span></a> for more details.</li>
+</ul>
+<p class="normal">Then, there are <a id="_idIndexMarker259"/>the <strong class="keyWord">adaptive learning rate methods</strong>. Some of the most common are as follows:</p>
+<ul>
+<li class="bulletList"><strong class="keyWord">AdaGrad</strong>: The learning <a id="_idIndexMarker260"/>rate parameters <a id="_idIndexMarker261"/>are dynamically updated based on the properties of the learning updates during the optimization process.</li>
+<li class="bulletList"><strong class="keyWord">AdaDelta</strong>: This is an <a id="_idIndexMarker262"/>extension <a id="_idIndexMarker263"/>of <code class="inlineCode">AdaGrad</code> that does not use all the previous gradient updates. Instead, it uses a rolling window on the updates.</li>
+<li class="bulletList"><strong class="keyWord">RMSprop</strong>: This works by <a id="_idIndexMarker264"/>maintaining <a id="_idIndexMarker265"/>a moving average of the square of all the gradient steps. It then divides the latest gradient by the square root of this.</li>
+<li class="bulletList"><strong class="keyWord">Adam</strong>: This is an<a id="_idIndexMarker266"/> algorithm <a id="_idIndexMarker267"/>that is<a id="_idIndexMarker268"/> supposed to combine the benefits of <code class="inlineCode">AdaGrad</code> and <code class="inlineCode">RMSprop</code>.</li>
+</ul>
+<p class="normal">The limits and capabilities of all these optimization approaches are important for us, as ML engineers, because we want to ensure that our training systems use the right tool for the job and are optimal for the problem at hand. Just having the awareness that there are multiple<a id="_idIndexMarker269"/> options for your internal optimization will also help you focus your efforts and increase performance.</p>
+<figure class="mediaobject"><img alt="Figure 3.5 – Simple representation of training as the optimization of a loss function " height="386" src="../Images/B19525_03_02.png" width="394"/></figure>
+<p class="packt_figref">Figure 3.2: Simple representation of training as the optimization of a loss function.</p>
+<p class="normal">Now, let’s discuss how we prepare the raw material that the model factory needs to do its work, the data, through <a id="_idIndexMarker270"/>the process of feature engineering.</p>
+<h2 class="heading-2" id="_idParaDest-62">Preparing the data</h2>
+<p class="normal">Data can <a id="_idIndexMarker271"/>come in all varieties of types and quality. It can be tabular and from a relational database, unstructured text from a crawled website, a formatted response from a REST API, an image, an audio file, or any other form you can think of. </p>
+<p class="normal">If you want to run machine learning algorithms on this data though, the first thing you have to do is make it readable by these algorithms. This process is known as <em class="italic">feature engineering</em>, and that is what the next few sections will discuss to give you some grounding in the main principles. There are many excellent resources on feature engineering that can go into a lot of depth, so we will only touch on some of the<a id="_idIndexMarker272"/> main concepts here. For more information, you could check out a book like <em class="italic">Feature Engineering Cookbook</em> by Soledad Galli, Packt, 2022.</p>
+<h1 class="heading-1" id="_idParaDest-63">Engineering features for machine learning</h1>
+<p class="normal">Before we<a id="_idIndexMarker273"/> feed any data into an ML model, it has to be transformed into a state that can be <em class="italic">understood</em> by our models. We also need to make sure we only do this on the data we deem useful for improving the performance of the model, as it is far too easy to explode the number of features and fall victim to the <em class="italic">curse of dimensionality</em>. This refers to a series of related observations where, in high-dimensional problems, data becomes increasingly sparse in the feature space, so achieving statistical significance can require exponentially more data. In this section, we will not cover the theoretical basis of feature engineering. Instead, we will focus on how we, as ML engineers, can help automate some of the steps in production. To this end, we will quickly recap the main types of feature preparation and feature engineering steps so that we have the necessary pieces to add to our pipelines later in this chapter.</p>
+<h2 class="heading-2" id="_idParaDest-64">Engineering categorical features</h2>
+<p class="normal">Categorical<a id="_idIndexMarker274"/> features <a id="_idIndexMarker275"/>are those that form a non-numerical set of distinct objects, such as the day of the week or hair color. They can be distributed in a variety of ways throughout your data.</p>
+<p class="normal">For an ML algorithm to be able to <em class="italic">digest</em> a categorical feature, we need to translate the feature into something numerical, while also ensuring that the numerical representation <em class="italic">does not produce bias or weigh our values inappropriately</em>. An example of this would be if we had a feature that contained different products sold in a supermarket:</p>
+<pre class="programlisting code"><code class="hljs-code">data = [[<span class="hljs-string">'Bleach'</span>], [<span class="hljs-string">'Cereal'</span>], [<span class="hljs-string">'Toilet Roll'</span>]]
+</code></pre>
+<p class="normal">Here, we can map each to a positive integer using <code class="inlineCode">sklearn</code>'s <code class="inlineCode">OrdinalEncoder</code>:</p>
+<pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">from</span> sklearn <span class="hljs-keyword">import</span> preprocessing
+ordinal_enc = preprocessing.OrdinalEncoder()
+ordinal_enc.fit(data)
+<span class="hljs-comment"># Print returns [[0.]</span>
+<span class="hljs-comment">#    [1.]</span>
+<span class="hljs-comment">#    [2.]]</span>
+<span class="hljs-built_in">print</span>(ordinal_enc.transform(data))
+</code></pre>
+<p class="normal">This is what is<a id="_idIndexMarker276"/> called <strong class="keyWord">ordinal encoding</strong>. We have mapped these features to numbers, so there’s a big tick there, but is the representation appropriate? Well, if you think about it for a second, not really. These numbers seem to suggest that cereal is to bleach as toilet roll is to cereal, and that the average of toilet roll and bleach is cereal. These statements don’t make <a id="_idIndexMarker277"/>sense (and I <a id="_idIndexMarker278"/>don’t want bleach and toilet roll for breakfast), so this suggests we should try a different approach. This representation would be appropriate, however, in cases where we wanted to maintain the notion of ordering in the categorical features. An excellent example would be if we had a survey and the participants were asked their opinion of the statement <em class="italic">breakfast is the most important meal of the day</em>. If the participants were then told to select one option from the list <em class="italic">Strongly Disagree</em>, <em class="italic">Disagree</em>, <em class="italic">Neither</em> <em class="italic">Disagree</em> <em class="italic">nor</em> <em class="italic">Agree</em>, <em class="italic">Agree</em>, and <em class="italic">Strongly Agree</em> and we ordinally encoded this data to map to the numerical list of <em class="italic">1</em>, <em class="italic">2</em>, <em class="italic">3</em>, <em class="italic">4</em>, and <em class="italic">5</em>, then we could more intuitively answer questions such as <em class="italic">Was the average response more in agreement or disagreement?</em> and <em class="italic">How widespread was the opinion on this statement?</em> Ordinal encoding would help here, but as we mentioned previously, it’s not necessarily correct in this case.</p>
+<p class="normal">What we could do is consider the list of items in this feature, and then provide a binary number to represent whether the value is or isn’t that particular value in the original list. So, here, we will decide to use <code class="inlineCode">sklearn</code>'s <code class="inlineCode">OneHotEncoder</code>:</p>
+<pre class="programlisting code"><code class="hljs-code">onehot_enc = preprocessing.OneHotEncoder()
+onehot_enc.fit(data)
+<span class="hljs-comment"># Print returns [[1. 0. 0.]</span>
+<span class="hljs-comment">#    [0. 1. 0.]</span>
+<span class="hljs-comment">#    [0. 0. 1.]]</span>
+<span class="hljs-built_in">print</span>(onehot_enc.transform(data).toarray())
+</code></pre>
+<p class="normal">This representation is <a id="_idIndexMarker279"/>known as a <strong class="keyWord">one-hot encoding</strong>. There are a few benefits to this method of encoding, including the following:</p>
+<ul>
+<li class="bulletList">There are no enforced orderings of the values.</li>
+<li class="bulletList">All the feature vectors have unit norms (more on this later).</li>
+<li class="bulletList">Every unique feature is orthogonal to the others, so there are no weird averages or distance statements that are implicit in the representation.</li>
+</ul>
+<p class="normal">One of the disadvantages of this approach is that if your categorical list contains a lot of instances, then the size of your feature vector will easily blow up, and we have to both store and work<a id="_idIndexMarker280"/> with<a id="_idIndexMarker281"/> extremely sparse vectors and matrices at the algorithmic level. This can very easily lead to issues in several implementations and is another manifestation of the dreaded curse of dimensionality.</p>
+<p class="normal">In the next section, numerical features are discussed.</p>
+<h2 class="heading-2" id="_idParaDest-65">Engineering numerical features</h2>
+<p class="normal">Preparing <a id="_idIndexMarker282"/>numerical <a id="_idIndexMarker283"/>features is slightly easier since we already have numbers, but there are a few steps we still need to take to prepare for many algorithms. For most ML algorithms, the features must be all on similar scales; for example, they must have a magnitude between -1 and 1 or 0 and 1. This is for the relatively obvious reason that some algorithms taking in a feature for house price values of up to a million dollars and another for the square footage of the house will automatically weigh the larger dollar values more. This also means that we lose the helpful notion of where specific values sit in their distributions. For example, some algorithms will benefit from scaling features so that the median dollar value and the median square footage value are both represented by 0.5 rather than 500,000 and 350. Or we may want all of our distributions to have the same meaning if they were normally distributed, which allows our algorithms to focus on the shape of the distributions rather than their locations.</p>
+<p class="normal">So, what do we do? Well, as always, we are not starting from scratch and there are some standard techniques we can apply. Some very common ones are listed here, but there are far too many to include all of them:</p>
+<ul>
+<li class="bulletList"><strong class="keyWord">Standardization</strong>: This is a transformation of a numerical feature and assumes that the distribution of values is normal or Gaussian before scaling the variance to be 1 and the average to be 0. If your data is indeed normal or Gaussian, then this is a good technique to use. The mathematical formula for standardization is very simple, so I’ve provided it here, where <em class="italic">z</em> represents the transformed value, <em class="italic">x</em> is the original value, and <img alt="" height="17" role="presentation" src="../Images/B19525_03_001.png" width="14"/> and <img alt="" height="14" role="presentation" src="../Images/B19525_03_002.png" width="16"/> are the average and standard deviation, respectively:</li>
+</ul>
+<figure class="mediaobject"><img alt="" height="55" role="presentation" src="../Images/B19525_03_003.png" width="130"/></figure>
+<ul>
+<li class="bulletList"><strong class="keyWord">Min-max normalization</strong>: In this case, we want to scale the numerical features so that they’re always between 0 and 1, irrespective of the type of distribution<a id="_idIndexMarker284"/> that <a id="_idIndexMarker285"/>they follow. </li>
+</ul>
+<p class="bulletList">This is intuitively easy to do, as you just need to subtract the minimum of the distribution from any given value and then divide by the range of the data (maximum minus minimum). You can think of this first step as making sure that all the values are greater than or equal to 0. The second step involves making sure that their maximum size is 1. This can be written with a simple formula, where the transformed number, <img alt="" height="19" role="presentation" src="../Images/B19525_03_004.png" width="16"/> is the original number, and <img alt="" height="19" role="presentation" src="../Images/B19525_03_004.png" width="16"/> represents the entire distribution of that feature:</p>
+<figure class="mediaobject"><img alt="" height="66" role="presentation" src="../Images/B19525_03_006.png" width="243"/></figure>
+<ul>
+<li class="bulletList"><strong class="keyWord">Feature vector normalization</strong>: Here, you scale every single sample in your dataset so that they have norms equal to 1. This can be very important if you are using algorithms where the distance or cosine similarity between features is an important component, such as in clustering. It is also commonly used in text classification in combination with other feature engineering methods, such<a id="_idIndexMarker286"/> as the <strong class="keyWord">TF-IDF</strong> <strong class="keyWord">statistic</strong>. In this case, assuming your entire feature is numerical, you just calculate the appropriate norm for your feature vector and then divide every component by that value. For example, if we use the Euclidean or L2-norm of the feature vector, <img alt="" height="24" role="presentation" src="../Images/B19525_03_007.png" width="32"/>, then we would transform each component, <img alt="" height="21" role="presentation" src="../Images/B19525_03_008.png" width="17"/> via the following formula:</li>
+</ul>
+<figure class="mediaobject"><img alt="" height="59" role="presentation" src="../Images/B19525_03_009.png" width="96"/></figure>
+<p class="normal">To highlight the <a id="_idIndexMarker287"/>improvements<a id="_idIndexMarker288"/> these simple steps can make to your model’s performance, we will look at a simple example from the <code class="inlineCode">sklearn</code> wine dataset. Here, we <a id="_idIndexMarker289"/>will be training a Ridge classifier on data that has not been standardized and then on data that has been standardized. Once we’ve done this, we will compare the results:</p>
+<ol class="numberedList" style="list-style-type: decimal;">
+<li class="numberedList" value="1">First, we must import the relevant libraries and set up our training and test data:
+        <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">from</span> sklearn.model_selection <span class="hljs-keyword">import</span> train_test_split
+<span class="hljs-keyword">from</span> sklearn.preprocessing <span class="hljs-keyword">import</span> StandardScaler
+<span class="hljs-keyword">from</span> sklearn.linear_model <span class="hljs-keyword">import</span> RidgeClassifier
+<span class="hljs-keyword">from</span> sklearn <span class="hljs-keyword">import</span> metrics
+<span class="hljs-keyword">from</span> sklearn.datasets <span class="hljs-keyword">import</span> load_wine
+<span class="hljs-keyword">from</span> sklearn.pipeline <span class="hljs-keyword">import</span> make_pipeline
+X, y = load_wine(return_X_y=<span class="hljs-literal">True</span>)
+</code></pre>
+</li>
+<li class="numberedList">Then, we must make a typical 70/30 train/test split:
+        <pre class="programlisting code"><code class="hljs-code">X_train, X_test, y_train, y_test =\
+train_test_split(X, y, test_size=<span class="hljs-number">0.30</span>, random_state=<span class="hljs-number">42</span>)
+</code></pre>
+</li>
+<li class="numberedList">Next, we must train a model without any standardization in the features and predict on the test set:
+        <pre class="programlisting code"><code class="hljs-code">no_scale_clf = make_pipeline(RidgeClassifier(tol=<span class="hljs-number">1e-2</span>,
+                                             solver=<span class="hljs-string">"sag"</span>))
+no_scale_clf.fit(X_train, y_train)
+y_pred_no_scale = no_scale_clf.predict(X_test)
+</code></pre>
+</li>
+<li class="numberedList">Finally, we must do the same but with a standardization step added in:
+        <pre class="programlisting code"><code class="hljs-code">std_scale_clf = make_pipeline(StandardScaler(), RidgeClassifier(tol=<span class="hljs-number">1e-2</span>, solver=<span class="hljs-string">"sag"</span>))
+std_scale_clf.fit(X_train, y_train)
+y_pred_std_scale = std_scale_clf.predict(X_test)
+</code></pre>
+</li>
+<li class="numberedList">Now, if we <a id="_idIndexMarker290"/>print <a id="_idIndexMarker291"/>some performance metrics, we will see that without scaling, the accuracy of the predictions is at <code class="inlineCode">0.76</code>, while the other metrics, such as the weighted averages of <code class="inlineCode">precision</code>, <code class="inlineCode">recall</code>, and <code class="inlineCode">f1-score</code>, are <code class="inlineCode">0.83</code>, <code class="inlineCode">0.76</code>, and <code class="inlineCode">0.68</code>, respectively:
+        <pre class="programlisting code"><code class="hljs-code"><span class="hljs-built_in">print</span>(<span class="hljs-string">'\nAccuracy [no scaling]'</span>)
+<span class="hljs-built_in">print</span>(<span class="hljs-string">'{:.2%}\n'</span>.<span class="hljs-built_in">format</span>(metrics.accuracy_score(y_test, y_pred_no_
+       scale)))
+<span class="hljs-built_in">print</span>(<span class="hljs-string">'\nClassification Report [no scaling]'</span>)
+<span class="hljs-built_in">print</span>(metrics.classification_report(y_test, y_pred_no_scale))
+</code></pre>
+</li>
+<li class="numberedList">This produces the following output:
+        <pre class="programlisting con"><code class="hljs-con">Accuracy [no scaling]75.93%
+Classification Report [no scaling]
+              precision    recall  f1-score   support
+           0       0.90      1.00      0.95        19
+           1       0.66      1.00      0.79        21
+           2       1.00      0.07      0.13        14
+    accuracy                           0.76        54
+   macro avg       0.85      0.69      0.63        54
+weighted avg       0.83      0.76      0.68        54
+</code></pre>
+</li>
+<li class="numberedList">In the case where we standardized the data, the metrics are far better across the board, with the accuracy and weighted averages of the <code class="inlineCode">precision</code>, <code class="inlineCode">recall</code>, and <code class="inlineCode">f1-score</code> all at <code class="inlineCode">0.98</code>:
+        <pre class="programlisting code"><code class="hljs-code"><span class="hljs-built_in">print</span>(<span class="hljs-string">'\nAccuracy [scaling]'</span>)
+<span class="hljs-built_in">print</span>(<span class="hljs-string">'{:.2%}\n'</span>.<span class="hljs-built_in">format</span>(metrics.accuracy_score(y_test, y_pred_std_scale)))
+<span class="hljs-built_in">print</span>(<span class="hljs-string">'\nClassification Report [scaling]'</span>)
+<span class="hljs-built_in">print</span>(metrics.classification_report(y_test, y_pred_std_scale))
+</code></pre>
+</li>
+<li class="numberedList">This produces the following output:
+        <pre class="programlisting con"><code class="hljs-con">Accuracy [scaling]
+98.15%
+Classification Report [scaling]
+              precision    recall  f1-score   support
+           0       0.95      1.00      0.97        19
+           1       1.00      0.95      0.98        21
+           2       1.00      1.00      1.00        14
+    accuracy                           0.98        54
+   macro avg       0.98      0.98      0.98        54
+weighted avg       0.98      0.98      0.98        54
+</code></pre>
+</li>
+</ol>
+<p class="normal">Here, we can see a significant jump in performance, just by adding one simple step to our ML<a id="_idIndexMarker292"/> training<a id="_idIndexMarker293"/> process.</p>
+<p class="normal">Now, let’s look at how training is designed and works at its core. This will help us make sensible choices for our algorithms and training approaches.</p>
+<h1 class="heading-1" id="_idParaDest-66">Designing your training system</h1>
+<p class="normal">Viewed at the<a id="_idIndexMarker294"/> highest level, ML models go through a life cycle with two stages: a <strong class="keyWord">training</strong> phase <a id="_idIndexMarker295"/>and<a id="_idIndexMarker296"/> an <strong class="keyWord">output</strong> phase. During the training phase, the model is fed data to learn from the dataset. In the prediction phase, the model, complete with its optimized parameters, is fed new data in order and returns the desired output.</p>
+<p class="normal">These two phases have very different computational and processing requirements. In the training phase, we have to expose the model to as much data as we can to gain the best performance, all while ensuring subsets of data are kept aside for testing and validation. Model training is fundamentally an optimization problem, which requires several incremental steps to get to a solution. </p>
+<p class="normal">Therefore, this is computationally demanding, and in cases where the data is relatively large (or compute resources are relatively low), it can take a long time. Even if you had a small dataset and a lot of computational resources, training is still not a low-latency process. Also, it is a process that is often run in batches and where small additions to the dataset will not make that much difference to model performance (there are exceptions to this). Prediction, on the other hand, is a more straightforward process and can be thought of in the same way as running any calculation or function in your code: inputs go in, a calculation occurs, and the result comes out. This (in general) is not computationally demanding and is low latency.</p>
+<p class="normal">Taken together, this means that, firstly, it makes sense to separate these two steps (training and prediction) both logically and in code. Secondly, it means we have to consider the different execution requirements for these two stages and build this into our solution <a id="_idIndexMarker297"/>designs. Finally, we need to make choices about our training regime, including whether we schedule training in batches, use incremental learning, or should trigger training based on model performance criteria. These are the key parts of your training system.</p>
+<h2 class="heading-2" id="_idParaDest-67">Training system design options</h2>
+<p class="normal">Before we create <a id="_idIndexMarker298"/>any detailed designs of our training system, some general questions will always apply:</p>
+<ul>
+<li class="bulletList">Is there infrastructure available that is appropriate to the problem?</li>
+<li class="bulletList">Where is the data and how will we feed it to the algorithm?</li>
+<li class="bulletList">How am I testing the performance of the model?</li>
+</ul>
+<p class="normal">In terms of infrastructure, this can be very dependent on the model and data you are using for training. If you are going to train a linear regression on data with three features and your dataset contains only 10,000 tabular records, you can likely run this on laptop-scale hardware without much thought. This is not a lot of data, and your model does not have a lot of free parameters. If you are training on a far larger dataset, such as one that contains 100 million tabular records, then you could benefit from parallelization across something such as a Spark cluster. If, however, you are training a 100-layer deep convolutional neural network on 1,000 images, then you are likely going to want to use a GPU. There are plenty of options, but the key is choosing the right thing for the job.</p>
+<p class="normal">Regarding the question of how we feed data to the algorithm, this can be non-trivial. Are we going to run a SQL query against a remotely hosted database? If so, how are we connecting to it? Does the machine we’re running the query on have enough RAM to store the data? </p>
+<p class="normal">If not, do we need to consider using an algorithm that can learn incrementally? For classic algorithmic performance testing, we need to employ the well-known tricks of the ML trade and perform train/test/validation splits on our data. We also need to decide what cross-validation strategies we may want to employ. We then need to select our model performance metric of choice and calculate it appropriately. As ML engineers, however, we will also be interested in <em class="italic">other</em> measures of performance, such as training time, efficient use of memory, latency, and (dare I say it) cost. We will need to understand how we can measure and then optimize these as well.</p>
+<p class="normal">So long as we bear these things in mind as we proceed, we will be in a good position. Now, onto the design.</p>
+<p class="normal">As we mentioned<a id="_idIndexMarker299"/> in the introduction to this section, we have two fundamental pieces to consider: the training and output processes. There are two ways in which we can put these together for our solution. We will discuss this in the next section.</p>
+<h2 class="heading-2" id="_idParaDest-68">Train-run</h2>
+<p class="normal"><em class="italic">Option 1</em> is to perform<a id="_idIndexMarker300"/> training and prediction in the same process, with training <a id="_idIndexMarker301"/>occurring in either batch or incremental mode. This is shown schematically in the following diagram. This pattern is called <em class="italic">train-run</em>:</p>
+<figure class="mediaobject"><img alt="Figure 3.2 – The train-run process " height="255" src="../Images/B19525_03_03.png" width="544"/></figure>
+<p class="packt_figref">Figure 3.3: The train-run process.</p>
+<p class="normal">This pattern is the<a id="_idIndexMarker302"/> simpler of the two but also the least desirable for real-world problems since it does not embody the <em class="italic">separation of concerns</em> principle we mentioned previously. This does not mean it is an invalid pattern, and it does have the advantage of often being simpler to implement. Here, we run our entire training process before making our predictions, with no real <em class="italic">break</em> in between. Given our previous discussions, we can automatically rule out this approach if we have to serve prediction in a very low-latency fashion; for example, through an event-driven or streaming solution (more on these later).</p>
+<p class="normal">Where this approach <em class="italic">could</em> be completely valid, though (and I’ve seen this a few times in practice), is either in cases where the algorithms you are applying are actually very lightweight to train <a id="_idIndexMarker303"/>and you need to keep using very recent data, or where you are running a large batch process relatively infrequently.</p>
+<p class="normal">Although this is a simple approach and does not apply to all cases, it does have distinct advantages:</p>
+<ul>
+<li class="bulletList">Since you are training as often as you predict, you are doing everything you can to protect against modern performance degradation, meaning that you are combatting <em class="italic">drift</em> (see later sections in this chapter).</li>
+<li class="bulletList">You are significantly reducing the complexity of your solution. Although you are tightly coupling two components, which should generally be avoided, the training and prediction stages may be so simple to code that if you just stick them together, you will save a lot of development time. This is a non-trivial point because <em class="italic">development time costs money</em>.</li>
+</ul>
+<p class="normal">Now, let’s look at the other case.</p>
+<h2 class="heading-2" id="_idParaDest-69">Train-persist</h2>
+<p class="normal"><em class="italic">Option 2</em> is that training<a id="_idIndexMarker304"/> runs in batch, while prediction runs in<a id="_idIndexMarker305"/> whatever mode is deemed appropriate, with the prediction solution reading in the trained model from a store. We will call this design pattern <em class="italic">train-persist</em>. This is shown in the following diagram:</p>
+<figure class="mediaobject"><img alt="Figure 3.3 – The train-persist process " height="281" src="../Images/B19525_03_04.png" width="512"/></figure>
+<p class="packt_figref">Figure 3.4: The train-persist process.</p>
+<p class="normal">If we are going to train our model and then persist the model so that it can be picked up later by a prediction process, then we need to ensure a few things are in place:</p>
+<ul>
+<li class="bulletList">What are our model storage options?</li>
+<li class="bulletList">Is there a clear mechanism for accessing our model store (writing to and reading from)?</li>
+<li class="bulletList">How often should we train versus how often will we predict?</li>
+</ul>
+<p class="normal">In our case, we will solve the first two questions by using MLflow, which we introduced in <em class="chapterRef">Chapter 2</em>, <em class="italic">The Machine Learning Development Process</em>, but will revisit in later sections. There are also lots of other solutions available. The key point is that no matter what you use as a model store and <em class="italic">handover</em> point between your train and predict processes, it should be used in a way that is robust and accessible.</p>
+<p class="normal">The third point is trickier. You could potentially just decide at the outset that you want to train on a schedule, and you stick to that. Or you could be more sophisticated and develop trigger criteria that must be met before training occurs. Again, this is a choice that you, as an ML engineer, need to make with your team. Later in this chapter, we will discuss <a id="_idIndexMarker306"/>mechanisms<a id="_idIndexMarker307"/> for scheduling your training runs.</p>
+<p class="normal">In the next section, we will explore what you have to do if you want to trigger your training runs based on how your model’s performance could be degrading over time.</p>
+<h1 class="heading-1" id="_idParaDest-70">Retraining required</h1>
+<p class="normal">You wouldn’t expect <a id="_idIndexMarker308"/>that after finishing your education, you never read a paper or book or speak to anyone again, which would mean you wouldn’t be able to make informed decisions about what is happening in the world. So, you shouldn’t expect an ML model to be trained once and then be performant forever afterward.</p>
+<p class="normal">This idea is intuitive, but it represents a formal problem for ML models known<a id="_idIndexMarker309"/> as <strong class="keyWord">drift</strong>. Drift is a term that covers a variety of reasons for your model’s performance dropping over time. It can be<a id="_idIndexMarker310"/> split into two main types:</p>
+<ul>
+<li class="bulletList"><strong class="keyWord">Concept drift</strong>: This<a id="_idIndexMarker311"/> happens when there is a change in the<a id="_idIndexMarker312"/> fundamental relationship between the features of your data and the outcome you are trying to predict. Sometimes, this is also known as <em class="italic">covariate drift</em>. An example could be that at the time of training, you only have a subsample of data that seems to show a linear relationship between the features and your outcome. If it turns out that, after gathering a lot more data post-deployment, the relationship is non-linear, then concept drift has occurred. The mitigation against this is retraining with data that is more representative of the correct relationship.</li>
+<li class="bulletList"><strong class="keyWord">Data drift</strong>: This happens <a id="_idIndexMarker313"/>when there is a change in the statistical <a id="_idIndexMarker314"/>properties of the variables you are using as your features. For example, you could be using <em class="italic">age</em> as a feature in one of your models but at training time, you only have data for 16–24-year-olds. </li>
+</ul>
+<p class="bulletList">If the model gets deployed and your system starts ingesting data for a wider age demographic, then you have data drift.</p>
+<p class="normal">The truth is that drift is part of life as an ML engineer, so we will spend a good bit of time getting to know how to detect and mitigate against it. But why does it happen? As you would expect, there are a variety of reasons for drift that it is important to consider. Let us consider some examples. Say the mechanism you used for sampling your training data is not appropriate in some way; perhaps you have subsampled for a specific geographic region or demographic, but you want the model to be applied in more general circumstances. </p>
+<p class="normal">There may be seasonal effects in the problem domain in which we are operating, as can be expected in sales forecasting or weather prediction. Anomalies could be introduced by “black swan” or rare events, like geopolitical events or even the Covid-19 pandemic. The data-gathering process may at some point introduce errors, for example, if there is a bug in an upstream system or the process itself is not being followed or has changed. This last example can be particularly prevalent in processes where manual inputs of data are required. If a salesperson is to be trusted with correctly labeling the state of a sale in the <strong class="keyWord">Customer Resource Management</strong> (<strong class="keyWord">CRM</strong>) system, then <a id="_idIndexMarker315"/>salespeople with less training or experience may not label the data as accurately or in as timely a manner. Despite advances in so many areas of software development, this sort of data-gathering process is still very prevalent and so you must guard against this in your own machine learning system development. It can be mitigated slightly by trying to enforce more automation of data gathering or in providing guides to those entering data (think drop-down menus), but it is almost certain that a lot of data is still gathered in this way and will be for the foreseeable future.</p>
+<p class="normal">That drift is an important aspect of your system to consider should be clear now, but dealing with it is actually a multi-step process. We first need to detect the drift. Detecting drift in <a id="_idIndexMarker316"/>your deployed models is a key part of MLOps and should be at the forefront of your mind as an ML engineer. We then need to diagnose the source of the drift; this will usually involve some sort of offline investigation by those responsible for monitoring. The tools and techniques we will mention will help you to define workflows that start to automate this, though, so that any repeatable tasks are taken care of when an issue is detected. Finally, we need to implement some action to remediate the effects of the drift: this will often be retraining the model using an updated or corrected dataset but may require a redevelopment or rewrite of key components of your model. In general, if you can build your training systems so that retraining is triggered based on an informed understanding of the drift in your models, you will save a lot of computational resources by only training when required.</p>
+<p class="normal">The next section will discuss some of the ways we can detect drift in our models. This will help us start building up a smart retraining strategy in our solution.</p>
+<h2 class="heading-2" id="_idParaDest-71">Detecting data drift</h2>
+<p class="normal">So far, we have<a id="_idIndexMarker317"/> defined drift, and we <a id="_idIndexMarker318"/>know that detecting it is going to be important if we want to build sophisticated training systems. The next logical question is, <em class="italic">how do we do this?</em></p>
+<p class="normal">The definitions of drift we gave in the previous section were very qualitative; we can start to make these statements a bit more quantitative as we explore the calculations and concepts that can help us detect drift.</p>
+<p class="normal">In this section, we will rely heavily on the <code class="inlineCode">alibi-detect</code> Python package from Seldon, which, at the time of writing, is not available from <strong class="keyWord">Anaconda.org</strong> but is available on PyPI. To acquire this package, use the following commands:</p>
+<pre class="programlisting con"><code class="hljs-con">pip install alibi
+pip install alibi-detect
+</code></pre>
+<p class="normal">It is very easy to use the <code class="inlineCode">alibi-detect</code> package. In the following example, we will work with the <code class="inlineCode">wine</code> dataset from <code class="inlineCode">sklearn</code>, which will be used elsewhere in this chapter. In this first example, we will split the data 50/50 and call one set the <em class="italic">reference</em> set and the other the <em class="italic">test</em> set. We will then use the Kolmogorov-Smirnov test to show that there hasn’t been data drift between these two datasets, as expected, and then artificially add some drift to show that it has been successfully detected:</p>
+<ol class="numberedList" style="list-style-type: decimal;">
+<li class="numberedList" value="1">First, we must import the <code class="inlineCode">TabularDrift</code> detector from the <code class="inlineCode">alibi-detect</code> package, as well as the relevant packages for loading and splitting the data:
+        <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">from</span> sklearn.datasets <span class="hljs-keyword">import</span> load_wine
+<span class="hljs-keyword">from</span> sklearn.model_selection <span class="hljs-keyword">import</span> train_test_split
+<span class="hljs-keyword">import</span> alibi
+<span class="hljs-keyword">from</span> alibi_detect.cd <span class="hljs-keyword">import</span> TabularDrift
+</code></pre>
+</li>
+<li class="numberedList">Next, we must get and split the data:
+        <pre class="programlisting code"><code class="hljs-code">wine_data = load_wine()
+feature_names = wine_data.feature_names
+X, y = wine_data.data, wine_data.target
+X_ref, X_test, y_ref, y_test = train_test_split(X, y, test_size=<span class="hljs-number">0.50</span>,
+                                               random_state=<span class="hljs-number">42</span>)
+</code></pre>
+</li>
+<li class="numberedList">Next, we must initialize our drift detector using the reference data and by providing the <code class="inlineCode">p-value</code> we want to be used by the statistical significance tests. If you want to make your drift detector trigger when smaller differences occur in the data distribution, you must select a larger <code class="inlineCode">p_val</code>:
+        <pre class="programlisting code"><code class="hljs-code">cd = TabularDrift(X_ref=X_ref, p_val=<span class="hljs-number">.05</span> )
+</code></pre>
+</li>
+<li class="numberedList">We can now check for drift in the test dataset against the reference dataset:
+        <pre class="programlisting code"><code class="hljs-code">preds = cd.predict(X_test)
+labels = [<span class="hljs-string">'No'</span>, <span class="hljs-string">'Yes'</span>]
+<span class="hljs-built_in">print</span>(<span class="hljs-string">'Drift: {}'</span>.<span class="hljs-built_in">format</span>(labels[preds[<span class="hljs-string">'data'</span>][<span class="hljs-string">'is_drift'</span>]]))
+</code></pre>
+</li>
+<li class="numberedList">This returns <code class="inlineCode">'Drift: No'</code>.</li>
+<li class="numberedList">So, we have not detected drift here, as expected (see the following <em class="italic">IMPORTANT NOTE</em> for more on this).</li>
+<li class="numberedList">Although there was no drift in this case, we can easily simulate a scenario where the chemical apparatus being used for measuring the chemical properties <a id="_idIndexMarker319"/>experienced a<a id="_idIndexMarker320"/> calibration error, and all the values are recorded as 10% higher than their true values. In this case, if we run drift detection again on the same reference dataset, we will get the following output:
+        <pre class="programlisting code"><code class="hljs-code">X_test_cal_error = <span class="hljs-number">1.1</span>*X_test
+preds = cd.predict(X_test_cal_error)
+labels = [<span class="hljs-string">'No'</span>, <span class="hljs-string">'</span><span class="hljs-string">Yes'</span>]
+<span class="hljs-built_in">print</span>(<span class="hljs-string">'Drift: {}'</span>.<span class="hljs-built_in">format</span>(labels[preds[<span class="hljs-string">'data'</span>][<span class="hljs-string">'is_drift'</span>]]))
+</code></pre>
+</li>
+<li class="numberedList">This returns <code class="inlineCode">'Drift: Yes'</code>, showing that the drift has been successfully detected.</li>
+</ol>
+<div class="note">
+<p class="normal">IMPORTANT NOTE</p>
+<p class="normal">This example is very artificial but is useful for illustrating the point. In a standard dataset like this, there won’t be data drift between 50% of the randomly sampled data and the other 50% of the data. This is why we have to artificially <em class="italic">shift</em> some of the points to show that the detector does indeed work. In real-world scenarios, data drift can occur naturally due to everything from updates to sensors being used for measurements; to changes in consumer behavior; all the way through to changes in database software or schemas. So, be on guard as many drift cases won’t be as easy to spot as in this case!</p>
+</div>
+<p class="normal">This example shows how, with a few simple lines of Python, we can detect a change in our dataset, which means our ML model may start to degrade in performance if we do not retrain to take the new properties of the data into account. We can also use similar techniques to track when the performance metrics of our model, for example, accuracy or mean squared error, are drifting as well. In this case, we have to make sure we periodically calculate performance on new test or validation datasets.</p>
+<p class="normal">The first drift detection example was very simple and showed us how to detect a basic case of one-off data drift, specifically feature drift. We will now show an example of detecting <strong class="keyWord">label drift</strong>, which is<a id="_idIndexMarker321"/> basically the same but now we simply use the labels as the reference and comparison dataset. We will ignore the first few steps as they are identical, and <a id="_idIndexMarker322"/>resume<a id="_idIndexMarker323"/> from the point where we have reference and test datasets available.</p>
+<ol class="numberedList" style="list-style-type: decimal;">
+<li class="numberedList" value="1">As in the example for the drift in the features, we can configure the tabular drift detector, but now we will use the initial label as our baseline dataset:
+        <pre class="programlisting code"><code class="hljs-code">cd = TabularDrift(X_ref=y_ref, p_val=<span class="hljs-number">.05</span> )
+</code></pre>
+</li>
+<li class="numberedList">We can now check for drift in the test labels against the reference dataset:
+        <pre class="programlisting code"><code class="hljs-code">preds = cd.predict(y_test)
+labels = [<span class="hljs-string">'No'</span>, <span class="hljs-string">'Yes'</span>]
+<span class="hljs-built_in">print</span>(<span class="hljs-string">'Drift: {}'</span>.<span class="hljs-built_in">format</span>(labels[preds[<span class="hljs-string">'data'</span>][<span class="hljs-string">'is_drift'</span>]]))
+</code></pre>
+</li>
+<li class="numberedList">This returns <code class="inlineCode">'Drift: No'</code>.</li>
+<li class="numberedList">So, we have not detected drift here, as expected. Note that this method can also be used as a good sanity check that training and test data labels follow similar distributions and our sampling of test data is representative.</li>
+<li class="numberedList">As in the previous example, we can simulate some drift in the data, and then check that this is indeed detected:
+        <pre class="programlisting code"><code class="hljs-code">y_test_cal_error = <span class="hljs-number">1.1</span>*y_test
+preds = cd.predict(y_test_cal_error)
+labels = [<span class="hljs-string">'No'</span>, <span class="hljs-string">'Yes'</span>]
+<span class="hljs-built_in">print</span>(<span class="hljs-string">'Drift: {}'</span>.<span class="hljs-built_in">format</span>(labels[preds[<span class="hljs-string">'data'</span>][<span class="hljs-string">'is_drift'</span>]]))
+</code></pre>
+</li>
+</ol>
+<p class="normal">We will now move on to a far more complex scenario, which is detecting concept drift.</p>
+<h2 class="heading-2" id="_idParaDest-72">Detecting concept drift</h2>
+<p class="normal">Concept drift was<a id="_idIndexMarker324"/> described in<a id="_idIndexMarker325"/> this section, and there it was emphasized that this type of drift is really all about a change in the relationships between the variables in our model. This means by definition that it is far more likely that cases of this type will be complex and potentially quite hard to diagnose.</p>
+<p class="normal">The most common way that you can catch concept drift is by monitoring the performance of your model through time. For example, if we are working with the <code class="inlineCode">wine</code> classification problem again, we can look at metrics that tell us the model’s classification performance, plot these through time, and then build logic around the trends and outliers that we might see in these values.</p>
+<p class="normal">The <code class="inlineCode">alibi_detect</code> package, which we have already been using, has several useful methods for online drift detection that can be used to find concept drift as it happens and impacts model performance. Online here refers to the fact that the drift detection takes place at the level of a single data point, so this can happen even if data comes in completely sequentially in production. Several of these methods assume that either PyTorch or TensorFlow are available as backends since the methods use <strong class="keyWord">Untrained AutoEncoders</strong> (<strong class="keyWord">UAEs</strong>) as <a id="_idIndexMarker326"/>out-of-the-box pre-processing methods.</p>
+<p class="normal">As an example, let us walk through an example of creating and using one of these online detectors, the Online Maximum Mean Discrepancy method. The following example assumes that in addition to the reference dataset, <code class="inlineCode">X_ref</code>, we have also defined variables for the expected run time, <code class="inlineCode">ert</code>, and the window size, <code class="inlineCode">window_size</code>. The expected run time is a variable that states the average number of data points the detector should run before it raises false positive detection. The idea here is that you want the expected run time to be larger but as it gets larger the detector becomes more insensitive to actual drift, so a balance must be struck. The <code class="inlineCode">window_size</code> is the size of the sliding window of data used in order to calculate the appropriate drift test statistic. A smaller <code class="inlineCode">window_size</code> means you are tuning the detector to find sharp changes in the data or performance in a small time-frame, whereas longer window sizes will mean you are tuning to look for more subtle drift effects over longer periods of time.</p>
+<ol class="numberedList" style="list-style-type: decimal;">
+<li class="numberedList" value="1">First we import the method:
+        <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">from</span> alibi_detect.cd <span class="hljs-keyword">import</span> MMDDriftOnline
+</code></pre>
+</li>
+<li class="numberedList">We then initialize the drift detector with some variable settings as discussed in the previous paragraph. We also include the number of bootstrapped simulations we want to apply in order for the method to calculate some thresholds for detecting the drift. 
+    <p class="numberedList">Depending on your hardware settings for the deep learning library used and the size of the data, this may take some time.</p>
+<pre class="programlisting code"><code class="hljs-code">ert = <span class="hljs-number">50</span>
+window_size = <span class="hljs-number">10</span>
+cd = MMDDriftOnline(X_ref, ert, window_size, backend=<span class="hljs-string">'pytorch'</span>,
+                    n_bootstraps=<span class="hljs-number">2500</span>)
+</code></pre></li>
+</ol>
+<ol class="numberedList" style="list-style-type: decimal;">
+<li class="numberedList" value="3">We can then simulate the drift detection in a production setting by taking the test data from <a id="_idIndexMarker327"/>the <strong class="keyWord">Wine</strong> dataset and feeding it in one feature vector at a time. If the feature vector for any given instance of data is given by <code class="inlineCode">x</code>, we can then call the <code class="inlineCode">predict</code> method of the drift detector and retrieve the <code class="inlineCode">'is_drift'</code> value from the returned metadata like so:
+        <pre class="programlisting code"><code class="hljs-code">cd.predict(x)[<span class="hljs-string">'data'</span>] [<span class="hljs-string">'is_drift'</span>]
+</code></pre>
+</li>
+<li class="numberedList">Performing<a id="_idIndexMarker328"/> step 2 on all of the rows<a id="_idIndexMarker329"/> of the test data and plotting a vertical orange bar wherever we find drift detected gives the plot in <em class="italic">Figure 3.5</em>.
+    <figure class="mediaobject"><img alt="" height="387" role="presentation" src="../Images/B19525_03_05.png" width="766"/></figure>
+<p class="packt_figref">Figure 3.5: The features of the test set from the wine dataset, which we have used to run some simulated drift detection.</p></li>
+</ol>
+<p class="normal">In this example, we can see in the plots of the simulated data that the accuracy of the data has changed over time. If we want to automate the detection of behaviors like this though, we will need to not simply plot this data but start to analyze it in a systematic way that we can fold into our model monitoring processes running in production.</p>
+<div class="note">
+<p class="normal">Note: The test data<a id="_idIndexMarker330"/> for the <strong class="keyWord">Wine</strong> dataset was used in the drift example only as an example. In production, this drift detection will be running on data that has never been seen before, but the principle is the same.</p>
+</div>
+<p class="normal">Now that you know drift is happening, we’ll move on to discuss how you can start to decide which<a id="_idIndexMarker331"/> limits to set on your drift detectors <a id="_idIndexMarker332"/>and then cover some processes and techniques for helping you to diagnose the type and source of your drift.</p>
+<h2 class="heading-2" id="_idParaDest-73">Setting the limits</h2>
+<p class="normal">Many of the<a id="_idIndexMarker333"/> techniques we have been describing in this section on drift are very much aligned with standard techniques from statistics and machine learning. You can get very far using these techniques almost “out of the box” to diagnose a series of different types of issues, but we have not discussed how we can bring these together into a coherent set of drift detection mechanisms. One of the most important things to consider before setting out to do this is setting the boundaries of acceptable behavior of the data and the model so that you know when your system should raise an alarm or take some action. We will call this “setting the limits” for your drift detection system.</p>
+<p class="normal">So, where do you start? This is where things become a bit less technical and definitely more centered around operating within a business environment, but let’s cover some of the key points. First, it is important to understand what is important to alert on. Alerting on deviations in all of the metrics that you can think of might sound like a good idea, but it may just create a super noisy system where it is hard to find issues that are genuinely of concern. So, we have to be judicious in our selection of what we want to track and monitor. Next, we need to understand the timeliness required for detecting issues. This relates very strongly to the notion in <a id="_idIndexMarker334"/>software of <strong class="keyWord">Service-Level Agreements</strong> (<strong class="keyWord">SLAs</strong>), which write down the demanded and expected performance of the system in question. If your business is running real-time anomaly detection and predictive maintenance models on equipment used in hazardous conditions, it may be that the requirement for timeliness in alarms being raised and action being taken is quite high. However, if your machine learning system is performing a financial forecast once a week, then it could be that the timeliness constraints are a lot less severe. Finally, you need to set the limits. This means that you need to think carefully about the metrics you are tracking and think “What constitutes bad here?” or “What do we want to be notified of?” It may be that as part of your Discovery phase in the project, you know that the business is happy with a regression model that can have wide variability in the accuracy of its prediction, as long as it provides suitable confidence intervals. </p>
+<p class="normal">In another scenario, it could be that the classification<a id="_idIndexMarker335"/> model you are building must have a recall that fluctuates only within a relatively tight band; otherwise, it will jeopardize the efficacy of processes downstream.</p>
+<h2 class="heading-2" id="_idParaDest-74">Diagnosing the drift</h2>
+<p class="normal">Although we have<a id="_idIndexMarker336"/> discussed in another section<a id="_idIndexMarker337"/> how there can be a variety of reasons for drift in our model, when it comes down to it, we must remember that machine learning models only act on features to create predictions. This then means that if we want to diagnose the source of the drift, we need to look no further than our features.</p>
+<p class="normal">So, where do we start? The first thing we should consider is that any feature could realistically have drifted, but not all the features will be equally important in terms of the model. This means we need to understand how important the features are before prioritizing which ones need remedial action.</p>
+<p class="normal">Feature importance can be calculated in ways that are either model dependent or model independent. The model-dependent methods refer specifically to tree-based models, such as decision trees or random forests. In these cases, feature importance can often be extracted from the model for inspection, depending on the package used for developing the model. As an example, if we take a random forest classifier trained in Scikit-Learn, we can extract its feature importances using syntax like that given below. In this example, we retrieve the default feature importances for the random forest model, which are calculated <a id="_idIndexMarker338"/>using <strong class="keyWord">Mean Decrease in Impurity</strong> (<strong class="keyWord">MDI</strong>), equivalently known as “Gini importance,” and put them in an ordered pandas series for later analysis:</p>
+<pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">import</span> pandas <span class="hljs-keyword">as</span> pd
+feature_names = rf[:-<span class="hljs-number">1</span>].get_feature_names_out()
+mdi_importances = pd.Series(rf[-<span class="hljs-number">1</span>].feature_importances_,
+                            index=feature_names).sort_values(ascending=<span class="hljs-literal">True</span>)
+</code></pre>
+<p class="normal">Although this is extremely simple, it can sometimes give erroneous results for a couple of reasons. The feature importances here have been calculated using an impurity measure, which is a class of measures that can exhibit bias toward features with high cardinality (e.g., numerical) and are computed only on training set data, meaning they do not take into account any generalizability of the model onto unseen test data. This should always be kept in mind when using this sort of importance measure.</p>
+<p class="normal">Another standard measure of feature importance, which is model agnostic and alleviates some of the issues for MDI or Gini importance, is the permutation importance. </p>
+<p class="normal">This works by taking the feature we are interested in, shuffling it (i.e., moving the values in the column of the feature matrix up, down, or via some other method of reorganization), and then recalculating the model accuracy or error. The change in the accuracy or error can then be used as a measure of the importance of this feature, as fewer importance features should mean less change in model performance upon shuffling. Below is an example of this method, again using Scikit-Learn, on the same model we used in the previous example:</p>
+<pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">from</span> sklearn.inspection <span class="hljs-keyword">import</span> permutation_importance
+result = permutation_importance(
+    rf, X_test, y_test, n_repeats=<span class="hljs-number">10</span>, random_state=<span class="hljs-number">42</span>, n_jobs=<span class="hljs-number">2</span>
+    )
+sorted_importances_idx = result.importances_mean.argsort()
+importances = pd.DataFrame(
+    result.importances[sorted_importances_idx].T,
+    columns=X.columns[sorted_importances_idx])
+</code></pre>
+<p class="normal">Finally, one <a id="_idIndexMarker339"/>other<a id="_idIndexMarker340"/> very popular method for determining feature importance is the calculation of <strong class="keyWord">SHAP</strong> (<strong class="keyWord">SHapley Additive exPlanation</strong>) values<a id="_idIndexMarker341"/> for the features. This uses ideas from game theory to consider how the features combine to inform the prediction. SHAP values are calculated by training the model on all permutations of features that include or exclude the considered feature and then calculating the marginal contribution to the predicted value of that feature. This is different from permutation importance because we are no longer simply permuting the feature values; we are now actually running through a series of different potential sets of features including or excluding the feature.</p>
+<p class="normal">You can start calculating SHAP values on your models by installing the <code class="inlineCode">shap</code> package:</p>
+<pre class="programlisting con"><code class="hljs-con">pip install shap
+</code></pre>
+<p class="normal">And then we can execute syntax like the following, using the same random forest model in the previous examples to define a <em class="italic">shap explainer</em> object and calculate the SHAP values for the features in the test dataset. We assume here the <code class="inlineCode">X_test</code> is a pandas DataFrame with the feature names as the column names:</p>
+<pre class="programlisting code"><code class="hljs-code">explainer = shap.Explainer(rf, predict, X_test)
+shap_values = explainer(X_test)
+</code></pre>
+<p class="normal">Note that the calculation of the SHAP values can take some time due to running all the permutations. The <code class="inlineCode">shap_values</code> themselves are not feature importances, but contain the SHAP values calculated for each feature in all the different feature combination experiments. In order to determine feature importances, you should take the average of the absolute magnitudes of the <code class="inlineCode">shap_values</code> for each feature. This is done for you and the result plotted if you use the following command:</p>
+<pre class="programlisting code"><code class="hljs-code">shap.plots.bar(shap_values)
+</code></pre>
+<p class="normal">We have now covered three different ways to calculate feature importances for your models, two of them completely model agnostic. Feature importance is extremely helpful to help you get to the root of drift very quickly. If you see the performance of your model drifting or breaching a threshold you have set, you can use the feature importances to focus your diagnostic efforts on where the most important features are and ignore drift in features that are not as critical.</p>
+<p class="normal">Now that we<a id="_idIndexMarker342"/> have covered a useful way to help <a id="_idIndexMarker343"/>dig into the drift, we will now discuss how you can go about remediating it once you spot the feature or features that seem to be causing the most trouble.</p>
+<h2 class="heading-2" id="_idParaDest-75">Remediating the drift</h2>
+<p class="normal">There are a few ways we can take action against drift in order to maintain the performance of our system:</p>
+<ul>
+<li class="bulletList"><strong class="keyWord">Remove features and retrain</strong>: If certain features are drifting or exhibiting degradation of some other kind, we can try removing them and retraining the model. This can become time consuming as our data scientists potentially need to re-run some analysis and testing to ensure that this approach still makes sense from a modeling point of view. We also have to take into account things like the importance of the features we are removing.</li>
+<li class="bulletList"><strong class="keyWord">Retrain with more data</strong>: If we are seeing concept drift, we may simply be noticing that the model has become stale with respect to the distributions and the relationships between these distributions in the data. It could be that retraining the model and including more recent data may create an uptick in performance. There is also the option of retraining the model on some selected portion of more recent data. This can be especially useful if you are able to diagnose some dramatic event or shift in the data, for example, the introduction of Covid-19 lockdowns. This approach can be hard to automate though, so sometimes it is also an option to introduce a time-windowed approach, where you train on some preselected amount of data up to the present time.</li>
+<li class="bulletList"><strong class="keyWord">Roll back the model</strong>: We can replace the current model with a previous version or even a go-to baseline model. This can be a very good approach if your baseline model is more simple but also more predictable in terms of performance, because it applies some simple business logic, for example. The ability<a id="_idIndexMarker344"/> to roll back to previous<a id="_idIndexMarker345"/> versions of models requires that you have built up a good set of automated processes around your model registry. This is very reminiscent of rollbacks in general software engineering, a key component of building robust systems.</li>
+<li class="bulletList"><strong class="keyWord">Rewrite or debug the solution</strong>: It may be the case that the drift we are dealing with is so substantial that the model as it stands cannot cope with any of the above approaches. The idea of rewriting the model may seem drastic but this can be more common than you think. As an example, consider that initially you deploy a well-tuned LightGBM model that performs binary classification on a set of five features daily. After running the solution for months, it could be that after detecting drift in the model performance several times, you decide that it is better to perform an investigation to see if there is a better approach. This can be especially helpful in this scenario as now you know more about the data you will see in production. You may then discover that actually, a random forest classifier is not as performant on the same production data scenarios on average but that <em class="italic">it is</em> more stable, behaving more consistently and triggering drift alarms less often. You may then decide that actually, it is better for the business to deploy this different model into the same system as it will reduce operational overheads from dealing with the drift alarms and it will be something the business can trust more. It is important to note that if you need to write a new pipeline or model, it is often important to roll back to a previous model while the team does this work.</li>
+<li class="bulletList"><strong class="keyWord">Fix the data source</strong>: Sometimes, the most challenging issues do not actually have anything to do with the underlying model but are more to do with changes in how data is collected and fed downstream to your system. There are so many business scenarios where the collection of data, the transformation of data, or the characteristics of data may be changed due to the introduction of new processes, updates to systems, or even due to changes in the personnel responsible for entering some source data. A great example from the author’s own experience is when it comes to <strong class="keyWord">customer resource management </strong>(<strong class="keyWord">CRM</strong>) systems, the quality of the data being input from the <a id="_idIndexMarker346"/>sales team can depend on<a id="_idIndexMarker347"/> so many factors that it can be reasonable to expect slow or sudden changes in data quality, consistency, and timeliness. </li>
+</ul>
+<p class="bulletList">In this case, the right answer may not actually be an engineering one, but a process one, working with the appropriate teams and stakeholders to ensure that data quality is maintained, and standard processes are followed. This will benefit customers and the business, but it can still be a hard sell.</p>
+<p class="normal">Now, we can start to build this into solutions that will automatically trigger our ML model being retrained, as shown in <em class="italic">Figure 3.6</em>:</p>
+<figure class="mediaobject"><img alt="Figure 3.4 – An example of drift detection and the training system process " height="635" src="../Images/B19525_03_06.png" width="402"/></figure>
+<p class="packt_figref">Figure 3.6: An example of drift detection and the training system process.</p>
+<h2 class="heading-2" id="_idParaDest-76">Other tools for monitoring</h2>
+<p class="normal">The examples in this <a id="_idIndexMarker348"/>chapter have mainly used the alibi-detect package, but we are now in somewhat of a golden age of open <a id="_idIndexMarker349"/>source <strong class="keyWord">MLOps</strong> tools. There are several different packages and solutions available that you can start using to build your monitoring solutions without spending a penny. </p>
+<p class="normal">In this section, we will quickly cover some of these tools and show some basic points on their syntax, so that if you want to develop monitoring pipelines, then you can just get started right away and know where is best to use these different tools.</p>
+<p class="normal">First, we will cover <strong class="keyWord">Evidently AI</strong> (<a href="https://www.evidentlyai.com/"><span class="url">https://www.evidentlyai.com/</span></a>), which is a very easy-to-use Python package <a id="_idIndexMarker350"/>that allows users to not only monitor their models but also create customizable dashboards in a few lines of syntax. Below is an adaptation of the getting started guide from the documentation.</p>
+<ol class="numberedList" style="list-style-type: decimal;">
+<li class="numberedList" value="1">First, install Evidently:
+        <pre class="programlisting con"><code class="hljs-con">pip install evidently
+</code></pre>
+</li>
+<li class="numberedList">Import the <code class="inlineCode">Report</code> functionality. The <code class="inlineCode">Report</code> is an object that collects calculations across several metrics to allow for visualizations or outputs as a JSON object. We will show this latter behavior later:
+        <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">from</span> evidently.report <span class="hljs-keyword">import</span> Report
+</code></pre>
+</li>
+<li class="numberedList">Next, import what is known as a metric preset, in this case for data drift. We can think of this as a templated report object that we can later customize:
+        <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">from</span> evidently.metric_preset <span class="hljs-keyword">import</span> DataDriftPreset
+</code></pre>
+</li>
+<li class="numberedList">Next, assuming you have the data to hand, you can then run the data drift report. Let’s <a id="_idIndexMarker351"/>assume you have the <strong class="keyWord">Wine</strong> dataset from the previous examples to hand. If we split the wine data 50/50 using <code class="inlineCode">scikit-learn</code>'s <code class="inlineCode">train_test_split()</code> method, we will have two datasets, which we again use to simulate the reference dataset, <code class="inlineCode">X_ref</code>, and the current dataset, <code class="inlineCode">X_curr</code>:
+        <pre class="programlisting code"><code class="hljs-code">data_drift_report = Report(metrics=[
+DataDriftPreset(), 
+    ])
+report.run(
+    reference_data=X_ref,
+   current_data=X_ref
+)
+</code></pre>
+</li>
+<li class="numberedList">Evidently then provides some really nice functionality for visualizing the results in the report. You can export or view these using a few different methods. You can export the report to JSON or HTML objects for consumption or to review downstream or in other applications. <em class="italic">Figures 3.7</em> and <em class="italic">3.8</em> show snippets of the results when you create these outputs with the following commands:
+        <pre class="programlisting code"><code class="hljs-code">data_drift_report.save_json(<span class="hljs-string">'data_drift_report.json'</span>)
+data_drift_report.save_html(<span class="hljs-string">'data_drift_report.xhtml'</span>)
+</code></pre>
+<figure class="mediaobject"><img alt="" height="833" role="presentation" src="../Images/B19525_03_07.png" width="703"/></figure>
+<p class="packt_figref">Figure 3.7: JSON output from the Evidently report on the 50/50 split Wine feature set.</p></li>
+</ol>
+<figure class="mediaobject"><img alt="" height="455" role="presentation" src="../Images/B19525_03_08.png" width="822"/></figure>
+<p class="packt_figref">Figure 3.8: HTML version of the drift report generated by Evidently on the 50/50 split Wine feature set.</p>
+<p class="normal">One of the nice things about the rendered HTML report is that you can dynamically drill down into some <a id="_idIndexMarker352"/>useful information. As an example, <em class="italic">Figure 3.9</em> shows that if you click down into any of the features, you are provided with a plot of data drift through time, and <em class="italic">Figure 3.10</em> shows that you can also get a plot of the distributions of the features in the same way.</p>
+<figure class="mediaobject"><img alt="" height="299" role="presentation" src="../Images/B19525_03_09.png" width="829"/></figure>
+<p class="packt_figref">Figure 3.9: The automatically generated data drift plot when you drill down in the Evidently report for the Wine features.</p>
+<figure class="mediaobject"><img alt="" height="304" role="presentation" src="../Images/B19525_03_10.png" width="825"/></figure>
+<p class="packt_figref">Figure 3.10: The automatically generated histogram showing the distribution of the feature when you drill down in the Evidently report for the Wine feature set.</p>
+<p class="normal">This has only scratched the surface of what you can do with Evidently. There is a lot of functionality available for generating your own model test suites and monitoring functionality as well as visualizing it all nicely like we have seen.</p>
+<p class="normal">Now that we have explored the concepts of model and data drift and how to detect them, we can now move on to a discussion about how we can take a lot of the concepts we covered <a id="_idIndexMarker353"/>earlier in the chapter and automate them.</p>
+<p class="normal">The next couple of sections will provide deep dives into different aspects of the training process and, in particular, how this process can be automated using a variety of tools.</p>
+<h2 class="heading-2" id="_idParaDest-77">Automating training</h2>
+<p class="normal">The training <a id="_idIndexMarker354"/>process is an integral part of the model factory and one of the main differentiators between ML engineering and traditional software engineering. The next few sections will discuss in detail how we can start to use some excellent open source tooling to streamline, optimize, and, in some cases, fully automate elements of this process.</p>
+<h2 class="heading-2" id="_idParaDest-78">Hierarchies of automation</h2>
+<p class="normal">One of the main <a id="_idIndexMarker355"/>reasons that ML is now a common part of software development, as well as a major business and academic activity, is because of the plethora of tools available. All of the packages and libraries containing working and optimized implementations of sophisticated algorithms have allowed people to build on top of these, rather than have to reimplement the basics every time there is a problem to solve. </p>
+<p class="normal">This is a powerful expression of the idea of <strong class="keyWord">abstraction</strong> in software development, where lower-level units can be leveraged and engaged with at higher levels of implementation.</p>
+<p class="normal">This idea can be extended even further to the entire enterprise of training itself. At the lowest level of implementation (but still a very high level in the sense of the underlying algorithms), we can provide details about how we want the training process to go. We can manually define the exact set of hyperparameters (see the next section on <em class="italic">Optimizing hyperparameters</em>) to use in the training run in our code. I call this <strong class="keyWord">hand cranking</strong>. We <a id="_idIndexMarker356"/>can then move one level of abstraction up and supply ranges and bounds for our hyperparameters to tools designed to efficiently sample and test our model’s performance for each of these; for instance, <em class="italic">automated hyperparameter tuning</em>. Finally, there is one higher level of abstraction that has created a lot of media excitement over the past few years, where we optimize over which algorithm to run. This is <a id="_idIndexMarker357"/>known<a id="_idIndexMarker358"/> as <strong class="keyWord">automated ML</strong> or <strong class="keyWord">AutoML</strong>.</p>
+<p class="normal">There can be a lot of hype surrounding AutoML, with some people proclaiming the eventual automation of all ML development job roles. In my opinion, this is just not realistic, as selecting your model and hyperparameters is only one aspect of a hugely complex engineering challenge (hence this being a book and not a leaflet!). AutoML is, however, a very powerful tool that should be added to your arsenal of capabilities when you go into your next ML project.</p>
+<p class="normal">We can summarize all of this quite handily as a <em class="italic">hierarchy of automation</em>; basically, how much control do you, as the ML engineer, want in the training process? I once heard this described in terms of gear control in a car (credit: <em class="italic">Databricks at Spark AI 2019</em>). Hand cranking is the equivalent of driving a manual car with full control over the gears: there’s more to think about, but it can be very efficient if you know what you’re doing. One level up, you have automatic cars: there’s less to worry about so that you can focus more on getting to your destination, traffic, and other challenges. This is a good option for a lot of people but still requires you to have sufficient knowledge, skills, and understanding. Finally, we have self-driving cars: sit back, relax, and don’t even worry about how to get where you’re going. You can focus on what you are going to do once you get there.</p>
+<p class="normal">This <em class="italic">hierarchy of automation</em> is shown in the following diagram:</p>
+<figure class="mediaobject"><img alt="Figure 3.6 – The hierarchy of automation of ML model optimization, with AutoML as the most automated possibility " height="392" src="../Images/B19525_03_11.png" width="821"/></figure>
+<p class="packt_figref">Figure 3.11: The hierarchy of automation of ML model optimization, with AutoML as the most automated possibility.</p>
+<p class="normal">That, in a nutshell, is how the different levels of training abstraction link together.</p>
+<p class="normal">In the next few <a id="_idIndexMarker359"/>sections, we will discuss how to get started building out implementations of hyperparameter optimization and AutoML. We will not cover “hand cranking” as that is self-explanatory.</p>
+<h2 class="heading-2" id="_idParaDest-79">Optimizing hyperparameters</h2>
+<p class="normal">When you<a id="_idIndexMarker360"/> fit some sort of <a id="_idIndexMarker361"/>mathematical function to data, some values are tuned during the fitting or training procedure: these <a id="_idIndexMarker362"/>are called <strong class="keyWord">parameters</strong>. For ML, there is a further level of abstraction where we have to define the values that tell the algorithms we are employing <em class="italic">how they should update the parameters</em>. These values are called <strong class="keyWord">hyperparameters</strong>, and their selection is one of the important <em class="italic">dark arts</em> of training ML algorithms.</p>
+<p class="normal">The following tables list some hyperparameters that are used for common ML algorithms to show you the different forms they may take. These lists are not exhaustive but are there to <a id="_idIndexMarker363"/>highlight that <a id="_idIndexMarker364"/>hyperparameter optimization is not a trivial exercise:</p>
+<table class="table-container" id="table001-2">
+<tbody>
+<tr>
+<td class="table-cell">
+<p class="normal"><strong class="keyWord">Algorithm</strong></p>
+</td>
+<td class="table-cell">
+<p class="normal"><strong class="keyWord">Hyperparameters</strong></p>
+</td>
+<td class="table-cell">
+<p class="normal"><strong class="keyWord">What This Controls</strong></p>
+</td>
+</tr>
+<tr>
+<td class="table-cell">
+<p class="normal">Decision Trees and</p>
+<p class="normal">Random Forests</p>
+</td>
+<td class="table-cell">
+<ul>
+<li class="bulletList">Tree depth.</li>
+<li class="bulletList">Min/max leaves.</li>
+</ul>
+</td>
+<td class="table-cell">
+<ul>
+<li class="bulletList">How many levels are in your trees.</li>
+<li class="bulletList">How much branching can occur at each level.</li>
+</ul>
+</td>
+</tr>
+<tr>
+<td class="table-cell">
+<p class="normal">Support Vector Machines</p>
+</td>
+<td class="table-cell">
+<ul>
+<li class="bulletList">C</li>
+<li class="bulletList">Gamma</li>
+</ul>
+</td>
+<td class="table-cell">
+<ul>
+<li class="bulletList">Penalty for misclassification.</li>
+<li class="bulletList">The radius of influence of the training points for <strong class="keyWord">Radial Basis Function</strong> (<strong class="keyWord">RBF</strong>) kernels.</li>
+</ul>
+</td>
+</tr>
+<tr>
+<td class="table-cell">
+<p class="normal">Neural Networks</p>
+<p class="normal">(numerous architectures)</p>
+</td>
+<td class="table-cell">
+<ul>
+<li class="bulletList">Learning rate.</li>
+<li class="bulletList">Number of hidden layers.</li>
+<li class="bulletList">Activation function.</li>
+<li class="bulletList">Many more.</li>
+</ul>
+</td>
+<td class="table-cell">
+<ul>
+<li class="bulletList">Update step sizes.</li>
+<li class="bulletList">How deep your network is.</li>
+<li class="bulletList">The firing conditions of your neurons.</li>
+</ul>
+</td>
+</tr>
+<tr>
+<td class="table-cell">
+<p class="normal">Logistic Regression</p>
+</td>
+<td class="table-cell">
+<ul>
+<li class="bulletList">Solver</li>
+<li class="bulletList">Regularization type.</li>
+<li class="bulletList">Regularization prefactor.</li>
+</ul>
+</td>
+<td class="table-cell">
+<ul>
+<li class="bulletList">How to minimize the loss.</li>
+<li class="bulletList">How to prevent overfitting/make the problem well behaved.</li>
+<li class="bulletList">The strength of the regularization type.</li>
+</ul>
+</td>
+</tr>
+</tbody>
+</table>
+<p class="packt_figref">Table 3.1: Some hyperparameters and what they control for some supervised algorithms.</p>
+<p class="normal">Further examples can be seen in the following table:</p>
+<table class="table-container" id="table002-1">
+<tbody>
+<tr>
+<td class="table-cell">
+<p class="normal"><strong class="keyWord">Algorithm</strong></p>
+</td>
+<td class="table-cell">
+<p class="normal"><strong class="keyWord">Hyperparameters</strong></p>
+</td>
+<td class="table-cell">
+<p class="normal"><strong class="keyWord">What This Controls</strong></p>
+</td>
+</tr>
+<tr>
+<td class="table-cell">
+<p class="normal">K-Nearest Neighbors</p>
+</td>
+<td class="table-cell">
+<ul>
+<li class="bulletList">K</li>
+<li class="bulletList">Distance metric.</li>
+</ul>
+</td>
+<td class="table-cell">
+<ul>
+<li class="bulletList">The number of clusters.</li>
+<li class="bulletList">How to define the distance between points.</li>
+</ul>
+</td>
+</tr>
+<tr>
+<td class="table-cell">
+<p class="normal">DBSCAN</p>
+</td>
+<td class="table-cell">
+<ul>
+<li class="bulletList">Epsilon</li>
+<li class="bulletList">Minimum number of samples.</li>
+<li class="bulletList">Distance metric.</li>
+</ul>
+</td>
+<td class="table-cell">
+<ul>
+<li class="bulletList">The max distance to be considered neighbors.</li>
+<li class="bulletList">How many neighbors are required to be considered core.</li>
+<li class="bulletList">How to define the distance between points.</li>
+</ul>
+</td>
+</tr>
+</tbody>
+</table>
+<p class="packt_figref">Table 3.2: Some hyperparameters and what they control for some unsupervised algorithms.</p>
+<p class="normal">All of these hyperparameters have their own specific set of values they can take. This range of hyperparameter values for the different potential algorithms you want to apply to your ML solution means that there are a lot of ways to define a <em class="italic">working</em> model (meaning one that doesn’t break the implementation you are using), but how do you find the <em class="italic">optimal</em> model?</p>
+<p class="normal">This is<a id="_idIndexMarker365"/> where<a id="_idIndexMarker366"/> hyperparameter search comes in. The concept is that for a finite number of hyperparameter value combinations, we want to find the set that gives the best model performance. This is another optimization problem that’s similar to that of training in the first place!</p>
+<p class="normal">In the following sections, we will discuss two very popular hyperparameter optimization libraries and show you how to implement them in a few lines of Python.</p>
+<div class="note">
+<p class="normal">IMPORTANT NOTE</p>
+<p class="normal">It is important to understand which algorithms are being used for optimization in these hyperparameter libraries, as you may want to use a couple of different implementations from each to compare different approaches and assess performance. If you didn’t look at how they were working under the hood, you could easily make unfair comparisons – or worse, you could be comparing almost the same thing without knowing it! If you have some deeper knowledge of how these solutions work, you will also be able to make better judgment calls as to when they will be beneficial and when they will be overkill. Aim to have a working knowledge of a few of these algorithms and approaches, since this will help you design more holistic training systems with algorithm-tuning approaches that complement one another.</p>
+</div>
+<h3 class="heading-3" id="_idParaDest-80">Hyperopt</h3>
+<p class="normal"><strong class="keyWord">Hyperopt</strong> is an open<a id="_idIndexMarker367"/> source Python package that bills itself as being <em class="italic">for serial and parallel optimization over awkward search spaces, which may include real-valued, discrete, and conditional dimensions</em>. Check out the following link for more information: <a href="https://github.com/Hyperopt/Hyperopt"><span class="url">https://github.com/Hyperopt/Hyperopt</span></a>. At the time of writing, version 0.2.5 comes packaged with three algorithms for performing optimization over user-provided search spaces:</p>
+<ul>
+<li class="bulletList"><strong class="keyWord">Random search</strong>: This algorithm essentially selects random numbers within your provided ranges of parameter values and tries them. It then evaluates which sets of numbers provide the best performance according to your chosen objective function.</li>
+<li class="bulletList"><strong class="keyWord">Tree of Parzen Estimators</strong> (<strong class="keyWord">TPE</strong>): This is a Bayesian <a id="_idIndexMarker368"/>optimization approach that models distributions of hyperparameters below and above a threshold for the objective function (roughly <em class="italic">good</em> and <em class="italic">bad</em> scorers), and then aims to draw more values from the <em class="italic">good</em> hyperparameter distribution.</li>
+<li class="bulletList"><strong class="keyWord">Adaptive TPE</strong>: This is a modified version of TPE that allows for some optimization of the search, as well as the ability to create an ML model to help guide the optimization process.</li>
+</ul>
+<p class="normal">The Hyperopt repository and documentation contain several nice and detailed worked examples. We will not go through these here. Instead, we will learn how to use this for a simple classification model, such as the one we defined in <em class="chapterRef">Chapter 1</em>, <em class="italic">Introduction to ML Engineering</em>. Let’s get started:</p>
+<ol class="numberedList" style="list-style-type: decimal;">
+<li class="numberedList" value="1">In Hyperopt, we must define the hyperparameters that we want to optimize across. For example, for a typical logistic regression problem, we could define the space of hyperparameters to cover, whether we want to reuse parameters that were learned from the previous model runs each time (<code class="inlineCode">warm_start</code>), whether we want the model to include a bias in the decision function (<code class="inlineCode">fit_intercept</code>), the tolerance set for deciding when to stop the optimization (<code class="inlineCode">tol</code>), the regularization parameter (<code class="inlineCode">C</code>), which <code class="inlineCode">solver</code> we want to try, and the maximum number of iterations, <code class="inlineCode">max_iter</code>, in any training run:
+        <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">from</span> Hyperopt <span class="hljs-keyword">import</span> hp
+
+space = {
+    <span class="hljs-string">'warm_start'</span> : hp.choice(<span class="hljs-string">'warm_start'</span>, [<span class="hljs-literal">True</span>, <span class="hljs-literal">False</span>]),
+    <span class="hljs-string">'fit_intercept'</span> : hp.choice(<span class="hljs-string">'fit_intercept'</span>, [<span class="hljs-literal">True</span>, <span class="hljs-literal">False</span>]),
+    <span class="hljs-string">'tol'</span> : hp.uniform(<span class="hljs-string">'tol'</span>, <span class="hljs-number">0.00001</span>, <span class="hljs-number">0.0001</span>),
+    <span class="hljs-string">'C'</span> : hp.uniform(<span class="hljs-string">'C'</span>, <span class="hljs-number">0.05</span>, <span class="hljs-number">2.5</span>),
+    <span class="hljs-string">'solver'</span> : hp.choice(<span class="hljs-string">'solver'</span>, [<span class="hljs-string">'newton-cg'</span>, <span class="hljs-string">'lbfgs'</span>,
+                                    <span class="hljs-string">'liblinear'</span>]),
+    <span class="hljs-string">'max_iter'</span> : hp.choice(<span class="hljs-string">'max_iter'</span>, <span class="hljs-built_in">range</span>(<span class="hljs-number">10</span>,<span class="hljs-number">500</span>))
+    }
+</code></pre>
+</li>
+<li class="numberedList">Then, we have to define an objective function to optimize. In the case of our classification algorithm, we can simply define the <code class="inlineCode">loss</code> function we want to minimize as 1 minus the <code class="inlineCode">f1-score</code>. Note that Hyperopt allows your objective function to supply<a id="_idIndexMarker369"/> run statistics and metadata via your return statement if you are using the <code class="inlineCode">fmin</code> functionality. The only requirement if you do this is that you return a value labeled <code class="inlineCode">loss</code> and a valid status value from the list of <code class="inlineCode">Hyperopt.STATUS_STRING</code> (<code class="inlineCode">ok</code> by default and <code class="inlineCode">fail</code> if there is an issue in the calculation that you want to call out as a failure):
+        <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">def</span> <span class="hljs-title">objective</span>(<span class="hljs-params">params, n_folds, X, y</span>):
+    <span class="hljs-comment"># Perform n_fold cross validation with hyperparameters</span>
+    clf = LogisticRegression(**params, random_state=<span class="hljs-number">42</span>)
+    scores = cross_val_score(clf, X, y, cv=n_folds, scoring=
+                             <span class="hljs-string">'f1_macro'</span>)
+    <span class="hljs-comment"># Extract the best score</span>
+    max_score = <span class="hljs-built_in">max</span>(scores)
+    <span class="hljs-comment"># Loss must be minimized</span>
+    loss = <span class="hljs-number">1</span> - max_score
+    <span class="hljs-comment"># Dictionary with information for evaluation</span>
+    <span class="hljs-keyword">return</span> {<span class="hljs-string">'loss'</span>: loss, <span class="hljs-string">'params'</span>: params, <span class="hljs-string">'status'</span>: STATUS_OK}
+</code></pre>
+</li>
+<li class="numberedList">Now, we must optimize using the <code class="inlineCode">fmin</code> method with the <strong class="keyWord">TPE</strong> algorithm:
+        <pre class="programlisting code"><code class="hljs-code"><span class="hljs-comment"># Trials object to track progress</span>
+trials = Trials()
+<span class="hljs-comment"># Optimize</span>
+best = fmin(
+    fn=partial(objective, n_folds=n_folds, X=X_train, y=y_train),
+    space=space,
+    algo=tpe.suggest,
+    max_evals=<span class="hljs-number">16</span>,
+    trials=trials
+    )
+</code></pre>
+</li>
+<li class="numberedList">The content of <code class="inlineCode">best</code> is a dictionary containing all the best hyperparameters in the search space you defined. So, in this case, we have the following:
+        <pre class="programlisting con"><code class="hljs-con">{'C': 0.26895003542493234,
+'fit_intercept': 1,
+'max_iter': 452,
+'solver': 2,
+'tol': 1.863336145787027e-05,
+'warm_start': 1}
+</code></pre>
+</li>
+</ol>
+<p class="normal">You can then use<a id="_idIndexMarker370"/> these hyperparameters to define your model for training on the data.</p>
+<h3 class="heading-3" id="_idParaDest-81">Optuna</h3>
+<p class="normal"><strong class="keyWord">Optuna </strong>is a software <a id="_idIndexMarker371"/>package that has an extensive series of capabilities based on some core design principles, such as its <strong class="keyWord">define-by-run</strong> API and modular architecture. <em class="italic">Define-by-run</em> here refers to the fact that, when using Optuna, the user does not have to define the full set of parameters to test, which is <em class="italic">define-and-run</em>. Instead, they can provide some initial values and ask Optuna to suggest its own set of experiments to run. This saves the user time and reduces the code footprint (two big pluses for me!).</p>
+<p class="normal">Optuna contains four <a id="_idIndexMarker372"/>basic<a id="_idIndexMarker373"/> search algorithms: <strong class="keyWord">grid search</strong>, <strong class="keyWord">random search</strong>, <strong class="keyWord">TPE</strong>, and the <strong class="keyWord">Covariance Matrix Adaptation Evolution Strategy</strong> (<strong class="keyWord">CMA-ES</strong>) algorithm. We covered the first three<a id="_idIndexMarker374"/> previously, but CMA-ES is an important addition to the mix. As its name suggests, this is based on an evolutionary algorithm and draws samples of hyperparameters from a multivariate Gaussian distribution. Then, it uses the rankings of the evaluated scores for the given objective function to dynamically update the parameters of the Gaussian distribution (the covariance matrix being one set of these) to help find an optimum over the search space quickly and robustly.</p>
+<p class="normal">The key thing that makes Optuna’s optimization process different from Hyperopt, however, is in its application of <strong class="keyWord">pruning</strong> or <strong class="keyWord">automated early stopping</strong>. During optimization, if Optuna detects evidence that a trial of a set of hyperparameters will not lead to a better overall trained algorithm, it terminates that trial. The developers of the package suggest that this leads to overall efficiency gains in the hyperparameter optimization process by reducing unnecessary computation.</p>
+<p class="normal">Here, we’re looking at the same example we looked at previously, but we are now using Optuna instead of Hyperopt:</p>
+<ol class="numberedList" style="list-style-type: decimal;">
+<li class="numberedList" value="1">First, when using Optuna, we can work using an object known as <code class="inlineCode">Study</code>, which provides us with <a id="_idIndexMarker375"/>a convenient way to fold our search space into our <code class="inlineCode">objective</code> function:
+        <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">def</span> <span class="hljs-title">objective</span>(<span class="hljs-params">trial, n_folds, X, y</span>):
+    <span class="hljs-string">"""Objective function for tuning logistic regression hyperparameters"""</span>
+    params = {
+        <span class="hljs-string">'warm_start'</span>: 
+        trial.suggest_categorical(<span class="hljs-string">'warm_start'</span>, [<span class="hljs-literal">True</span>, <span class="hljs-literal">False</span>]),
+        <span class="hljs-string">'fit_intercept'</span>: 
+        trial.suggest_categorical(<span class="hljs-string">'fit_intercept'</span>, [<span class="hljs-literal">True</span>, <span class="hljs-literal">False</span>]),
+        <span class="hljs-string">'</span><span class="hljs-string">tol'</span>: trial.suggest_uniform(<span class="hljs-string">'tol'</span>, <span class="hljs-number">0.00001</span>, <span class="hljs-number">0.0001</span>),
+        <span class="hljs-string">'C'</span>: trial.suggest_uniform(<span class="hljs-string">'C'</span>, <span class="hljs-number">0.05</span>, <span class="hljs-number">2.5</span>),
+        <span class="hljs-string">'solver'</span>: trial.suggest_categorical(<span class="hljs-string">'solver'</span>, [<span class="hljs-string">'</span><span class="hljs-string">newton-cg'</span>,
+                                            <span class="hljs-string">'lbfgs'</span>, <span class="hljs-string">'liblinear'</span>]),
+        <span class="hljs-string">'max_iter'</span>: trial.suggest_categorical(<span class="hljs-string">'max_iter'</span>, 
+                                               <span class="hljs-built_in">range</span>(<span class="hljs-number">10</span>, <span class="hljs-number">500</span>))
+    }
+    <span class="hljs-comment"># Perform n_fold cross validation with hyperparameters</span>
+    clf = LogisticRegression(**params, random_state=<span class="hljs-number">42</span>)
+    scores = cross_val_score(clf, X, y, cv=n_folds, 
+                             scoring=<span class="hljs-string">'</span><span class="hljs-string">f1_macro'</span>)
+    <span class="hljs-comment"># Extract the best score</span>
+    max_score = <span class="hljs-built_in">max</span>(scores)
+    <span class="hljs-comment"># Loss must be minimized</span>
+    loss = <span class="hljs-number">1</span> - max_score
+    <span class="hljs-comment"># Dictionary with information for evaluation</span>
+    <span class="hljs-keyword">return</span> loss
+</code></pre>
+</li>
+<li class="numberedList">Now, we must set up the data in the same way as we did in the Hyperopt example:
+        <pre class="programlisting code"><code class="hljs-code">n_folds = <span class="hljs-number">5</span>
+X, y = datasets.make_classification(n_samples=<span class="hljs-number">100000</span>, n_features=<span class="hljs-number">20</span>,n_informative=<span class="hljs-number">2</span>, n_redundant=<span class="hljs-number">2</span>)
+train_samples = <span class="hljs-number">100</span>  <span class="hljs-comment"># Samples used for training the models</span>
+X_train = X[:train_samples]
+X_test = X[train_samples:]
+y_train = y[:train_samples]
+y_test = y[train_samples:]
+</code></pre>
+</li>
+<li class="numberedList">Now, we can define this <code class="inlineCode">Study</code> object that we mentioned and tell it how we wish to optimize the value that’s returned by our <code class="inlineCode">objective</code> function, complete with guidance on how many trials to run in the <code class="inlineCode">study</code>. Here, we will use the TPE sampling algorithm again:
+        <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">from</span> optuna.samplers <span class="hljs-keyword">import</span> TPESampler
+study = optuna.create_study(direction=<span class="hljs-string">'minimize'</span>, sampler=TPESampler())
+study.optimize(partial(objective, n_folds=n_folds, X=X_train, y=y_
+                       train), n_trials=<span class="hljs-number">16</span>)
+</code></pre>
+</li>
+<li class="numberedList">Now, we can <a id="_idIndexMarker376"/>access the best parameters via the <code class="inlineCode">study.best_trial.params</code> variable, which gives us the following values for the best case:
+        <pre class="programlisting con"><code class="hljs-con">{'warm_start': False,
+'fit_intercept': False,
+'tol': 9.866562116436095e-05,
+'C': 0.08907657649508408,
+'solver': 'newton-cg',
+'max_iter': 108}
+</code></pre>
+</li>
+</ol>
+<p class="normal">As you can see, Optuna is also very simple to use and very powerful. Now, let’s look at the final level of the hierarchy of automation: AutoML.</p>
+<div class="note">
+<p class="normal">IMPORTANT NOTE</p>
+<p class="normal">You will notice that these values are different from the ones returned by Hyperopt. This is because we have only run 16 trials in each case, so we are not effectively subsampling the space. If you run either of the Hyperopt or Optuna samples a few times in a row, you can get quite different results for the same reason. The example given here is just to show the syntax, but if you are keen, you can set the number of iterations to be very high (or create smaller spaces to sample), and the results of the two approaches should roughly converge.</p>
+</div>
+<h2 class="heading-2" id="_idParaDest-82">AutoML</h2>
+<p class="normal">The final level of<a id="_idIndexMarker377"/> our hierarchy is the one where we, as the<a id="_idIndexMarker378"/> engineer, have the least direct control over the training process, but where we also potentially get a good answer for very little effort!</p>
+<p class="normal">The development time that’s required to search through many hyperparameters and algorithms for your problem can be large, even when you code up reasonable-looking search parameters and loops.</p>
+<p class="normal">Given this, the past few years have seen the deployment of several <strong class="keyWord">AutoML</strong> libraries and tools in a variety of languages and software ecosystems. The hype surrounding these techniques has meant they have had a lot of airtime, which has led to several data scientists questioning when their jobs will be automated away. As we mentioned previously in this chapter, in my opinion, declaring the death of data science is extremely premature and also dangerous from an organizational and business performance standpoint. These tools have been given such a pseudo-mythical status that many companies could believe that simply using them a few times will solve all their data science and ML problems.</p>
+<p class="normal">They are wrong, but they are also right.</p>
+<p class="normal">These tools and techniques <em class="italic">are</em> very powerful and <em class="italic">can</em> help make some things better, but they are not a magical <em class="italic">plug-and-play</em> panacea. Let’s explore these tools and start to think about how to incorporate them into our ML engineering workflow and solutions.</p>
+<h3 class="heading-3" id="_idParaDest-83">auto-sklearn</h3>
+<p class="normal">One of our favorite <a id="_idIndexMarker379"/>libraries, good old Scikit-Learn, was always going to <a id="_idIndexMarker380"/>be one of the first targets for building a popular AutoML library. One of the very powerful features of auto-sklearn is that its API has been designed so that the main objects that optimize and section models and hyperparameters can be swapped seamlessly into your code.</p>
+<p class="normal">As usual, an example will show this more clearly. In the following example, we will assume that the <code class="inlineCode">Wine</code> dataset (a favorite for this chapter) has already been retrieved and split into train and test samples in line with other examples, such as the one in the <em class="italic">Detecting drift</em> section:</p>
+<ol class="numberedList" style="list-style-type: decimal;">
+<li class="numberedList" value="1">First, since this is a classification problem, the main thing we need to get from <code class="inlineCode">auto-sklearn</code> is the <code class="inlineCode">autosklearn.classification</code> object:
+        <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">import</span> numpy <span class="hljs-keyword">as</span> np
+<span class="hljs-keyword">import</span> sklearn.datasets
+<span class="hljs-keyword">import</span> sklearn.metrics
+<span class="hljs-keyword">import</span> autosklearn.classification
+</code></pre>
+</li>
+<li class="numberedList">We must then define our <code class="inlineCode">auto-sklearn</code> object. This provides several parameters that help us define how the model and hyperparameter tuning process will proceed. In this example, we will provide an upper time limit in seconds for running the overall optimization and an upper time limit in seconds for any single call to the ML model:
+        <pre class="programlisting code"><code class="hljs-code">automl = autosklearn.classification.AutoSklearnClassifier(
+    time_left_for_this_task=<span class="hljs-number">60</span>,
+    per_run_time_limit=<span class="hljs-number">30</span>
+    )
+</code></pre>
+</li>
+<li class="numberedList">Then, just <a id="_idIndexMarker381"/>like we would fit a normal <code class="inlineCode">sklearn</code> classifier, we<a id="_idIndexMarker382"/> can fit the <code class="inlineCode">auto-sklearn</code> object. As we mentioned previously, the <code class="inlineCode">auto-sklearn</code> API has been designed so that this looks familiar:
+        <pre class="programlisting code"><code class="hljs-code">automl.fit(X_train, y_train, dataset_name=<span class="hljs-string">'</span><span class="hljs-string">wine'</span>)
+</code></pre>
+</li>
+<li class="numberedList">Now that we’ve fit the object, we can start to dissect what has been achieved by the object during its optimization run.</li>
+<li class="numberedList">First, we can see which models were tried and which were kept in the object as part of the final ensemble:
+        <pre class="programlisting code"><code class="hljs-code"><span class="hljs-built_in">print</span>(automl.show_models())
+</code></pre>
+</li>
+<li class="numberedList">We can then get a readout of the main statistics from the run:
+        <pre class="programlisting code"><code class="hljs-code"><span class="hljs-built_in">print</span>(automl.sprint_statistics())
+</code></pre>
+</li>
+<li class="numberedList">Then, we can predict some text features, as expected:
+        <pre class="programlisting code"><code class="hljs-code">predictions = automl.predict(X_test)
+</code></pre>
+</li>
+<li class="numberedList">Finally, we can check how well we did by using our favorite metric calculators – in this case, the <code class="inlineCode">sklearn metrics</code> module:
+        <pre class="programlisting code"><code class="hljs-code">sklearn.metrics.accuracy_score(y_test, predictions)
+</code></pre>
+</li>
+<li class="numberedList">As you can see, it is very straightforward to start using this powerful library, especially if you are already comfortable working with <code class="inlineCode">sklearn</code>.</li>
+</ol>
+<p class="normal">Next, let’s <a id="_idIndexMarker383"/>discuss<a id="_idIndexMarker384"/> how we extend this concept to neural networks, which have an extra layer of complexity due to their different potential model architectures.</p>
+<h3 class="heading-3" id="_idParaDest-84">AutoKeras</h3>
+<p class="normal">A particular<a id="_idIndexMarker385"/> area where AutoML has been a big hit is neural networks. This is<a id="_idIndexMarker386"/> because for a neural network, the question of <em class="italic">what is the best model?</em> is a very complicated one. For our typical classifiers, we can usually think of a relatively short, finite list of algorithms to try. For a neural network, we don’t have this finite list. Instead, we have an essentially infinite set of possible neural network <em class="italic">architectures</em>; for instance, for organizing the neurons into layers and the connections between them. Searching for the optimal neural network architecture is a problem in which powerful optimization can make your life, as an ML engineer or data scientist, a whole lot easier.</p>
+<p class="normal">In this instance, we are going to explore an AutoML solution built on top of the very popular neural network API library known as Keras. Unbelievably, the name of this package is – you guessed it – AutoKeras!</p>
+<p class="normal">For this example, we will, once again, assume that the <code class="inlineCode">Wine</code> dataset has been loaded so that we can focus on the details of the implementation. Let’s get started:</p>
+<ol class="numberedList" style="list-style-type: decimal;">
+<li class="numberedList" value="1">First, we must import the <code class="inlineCode">autokeras</code> library:
+        <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">import</span> autokeras <span class="hljs-keyword">as</span> ak
+</code></pre>
+</li>
+<li class="numberedList">Now, it’s time for the fun and, for <code class="inlineCode">autokeras</code>, the extremely simple bit! Since our data is structured (tabular with a defined schema), we can use the <code class="inlineCode">StructuredDataClassifier</code> object, which wraps the underlying mechanisms for automated neural network architecture and hyperparameter search:
+        <pre class="programlisting code"><code class="hljs-code">clf = ak.StructuredDataClassifier(max_trials=<span class="hljs-number">5</span>)
+</code></pre>
+</li>
+<li class="numberedList">Then, all we have to do is fit this classifier object, noticing its similarity to the <code class="inlineCode">sklearn</code> API. Remember that we assume that the training and test data exist in <code class="inlineCode">pandas DataFrames</code>, as in the other examples in this chapter:
+        <pre class="programlisting code"><code class="hljs-code">clf.fit(x=X_train, y=y_train)
+</code></pre>
+</li>
+<li class="numberedList">The training objects in AutoKeras have a convenient evaluation method wrapped within them. Let’s use this to see how accurate our solution was:
+        <pre class="programlisting code"><code class="hljs-code">accuracy=clf.evaluate(x=X_train, y=y_train)
+</code></pre>
+</li>
+<li class="numberedList">With that, we have successfully performed a neural network architecture and hyperparameter search in a few lines of Python. As always, read the solution documentation for more information <a id="_idIndexMarker387"/>on the parameters you can provide to the different<a id="_idIndexMarker388"/> methods.</li>
+</ol>
+<p class="normal">Now that we’ve covered how to create performant models, in the next section, we will learn how to persist these models so that they can be used in other programs.</p>
+<h1 class="heading-1" id="_idParaDest-85">Persisting your models</h1>
+<p class="normal">In the previous chapter, we introduced some of the<a id="_idIndexMarker389"/> basics of model version control using MLflow. In particular, we discussed how to log metrics for your ML experiments using the MLflow Tracking API. We are now going to build on this knowledge and consider the touchpoints our training systems should have with model control systems in general.</p>
+<p class="normal">First, let’s recap what we’re trying to do with the training system. We want to automate (as far as possible) a lot of the work that was done by the data scientists in finding the first working model, so that we can continually update and create new model versions that still solve the problem in the future. We would also like to have a simple mechanism that allows the results of the training process to be shared with the part of the solution that will carry out the prediction when in production. We can think of our model version control system as a bridge between the different stages of the ML development process we discussed in <em class="chapterRef">Chapter 2</em>, <em class="italic">The Machine Learning Development Process</em>. In particular, we can see that the ability to track experiment results allows us to keep the results of the <strong class="keyWord">Play</strong> phase and build on these during the <strong class="keyWord">Develop</strong> phase. We can also track more experiments, test runs, and hyperparameter optimization results in the same place during the <strong class="keyWord">Develop</strong> phase. Then, we can start to tag the performant models as ones that are good candidates for deployment, thus bridging the gap between the <strong class="keyWord">Develop</strong> and <strong class="keyWord">Deploy</strong> development phases. </p>
+<p class="normal">If we focus on MLflow for now (though plenty of other solutions are available that fulfill the need for a model version control system), then MLflow’s Tracking and Model Registry functionalities nicely slot into these bridging roles. This is represented schematically in the following diagram:</p>
+<figure class="mediaobject"><img alt="Figure 3.9 – How the MLflow Tracking and Model Registry functionalities can help us progress through the different stages of the ML development process " height="215" src="../Images/B19525_03_12.png" width="725"/></figure>
+<p class="packt_figref">Figure 3.12: How the MLflow Tracking and Model Registry functionalities can help us progress through the different stages of the ML development process.</p>
+<p class="normal">In <em class="chapterRef">Chapter 2</em>, <em class="italic">The Machine Learning Development Process</em>, we only explored the basics of the MLflow Tracking<a id="_idIndexMarker390"/> API for storing experimental model run metadata. Now, we will briefly dive into how to store production-ready models in a very organized way so that you can start to perform model staging. This is the process whereby models can be progressed through stages of readiness, and you can swap models in and out of production if you wish to. This is an extremely important part of any training system that supplies models and will run as part of a deployed solution, which is what this book is all about!</p>
+<p class="normal">As alluded to previously, the functionality that we need in MLflow is called <strong class="keyWord">Model Registry</strong>, which<a id="_idIndexMarker391"/> enables you to manage the staging of models across your development life cycle. Here, we will walk through examples of how to take a logged model and push it to the registry, how to update information such as the model version number in the registry, and then how to progress your model through different life cycle stages. We will finish this section by learning how to retrieve a given model from the registry in other programs – a key point if we are to share our models between separate training and prediction services.</p>
+<p class="normal">Before we dive into the Python code for interacting with Model Registry, we have one important piece of setup to perform. The registry only works if a database is being used to store the model metadata and parameters. This is different from the basic Tracking API, which works with just a file backend store. This means that before pushing models to Model Registry, we have to fire up an MLflow server with a database backend. You can do this with a <strong class="keyWord">SQLite</strong> database <a id="_idIndexMarker392"/>running locally by executing the following command in your terminal. </p>
+<p class="normal">You will have to run this before the code snippets in the rest of this section (this command is stored in a short Bash script in this book’s GitHub repository, under <a href="https://github.com/PacktPublishing/Machine-Learning-Engineering-with-Python/blob/main/Chapter03/mlflow-advanced/start-mlflow-server.sh"><span class="url">https://github.com/PacktPublishing/Machine-Learning-Engineering-with-Python/blob/main/Chapter03/mlflow-advanced/start-mlflow-server.sh</span></a>):</p>
+<pre class="programlisting code"><code class="hljs-code">mlflow server \
+    --backend-store-uri sqlite:///mlflow.db \
+    --default-artifact-root ./artifacts \
+    --host <span class="hljs-number">0.0.0.0</span>
+</code></pre>
+<p class="normal">Now that the <a id="_idIndexMarker393"/>backend database is up and running, we can use it as part of our model workflow. Let’s get started:</p>
+<ol class="numberedList" style="list-style-type: decimal;">
+<li class="numberedList" value="1">Let’s begin by logging some metrics and parameters for one of the models we trained earlier in this chapter:
+        <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">with</span> mlflow.start_run(run_name=<span class="hljs-string">"YOUR_RUN_NAME"</span>) as run:
+    params = {<span class="hljs-string">'tol'</span>: <span class="hljs-number">1e-2</span>, <span class="hljs-string">'</span><span class="hljs-string">solver'</span>: <span class="hljs-string">'sag'</span>}
+    std_scale_clf = make_pipeline(StandardScaler(),
+                                  RidgeClassifier(**params))
+    std_scale_clf.fit(X_train, y_train)
+    y_pred_std_scale = std_scale_clf.predict(X_test)
+    mlflow.log_metrics({
+             <span class="hljs-string">"accuracy"</span>:
+              metrics.accuracy_score(y_test, y_pred_std_scale),
+             <span class="hljs-string">"precision"</span>:
+              metrics.precision_score(y_test, y_pred_std_scale, 
+                                      average=<span class="hljs-string">"macro"</span>),
+             <span class="hljs-string">"f1"</span>: 
+              metrics.f1_score(y_test, y_pred_std_scale,
+                               average=<span class="hljs-string">"macro"</span>),
+             <span class="hljs-string">"recall"</span>:
+              metrics.recall_score(y_test, y_pred_std_scale, 
+                                   average=<span class="hljs-string">"macro"</span>),
+    })
+mlflow.log_params(params)
+</code></pre>
+</li>
+<li class="numberedList">Inside the same code block, we can now log the model to Model Registry, providing a name for the model to reference later:
+        <pre class="programlisting code"><code class="hljs-code">        mlflow.sklearn.log_model(
+            sk_model=std_scale_clf,
+            artifact_path=<span class="hljs-string">"</span><span class="hljs-string">sklearn-model"</span>,
+            registered_model_name=<span class="hljs-string">"sk-learn-std-scale-clf"</span>
+        )
+</code></pre>
+</li>
+<li class="numberedList">Now, let’s assume we are running a prediction service and we want to retrieve the model and predict using it. Here, we have to write the following:
+        <pre class="programlisting code"><code class="hljs-code">model_name = <span class="hljs-string">"sk-learn-std-scale-clf"</span>
+model_version = <span class="hljs-number">1</span>
+model = mlflow.pyfunc.load_model(
+    model_uri=<span class="hljs-string">f"models:/</span><span class="hljs-subst">{model_name}</span><span class="hljs-string">/</span><span class="hljs-subst">{model_version}</span><span class="hljs-string">"</span>
+    )
+model.predict(X_test)
+</code></pre>
+</li>
+<li class="numberedList">By default, newly <a id="_idIndexMarker394"/>registered models in Model Registry are assigned the <code class="inlineCode">'Staging'</code> stage value. Therefore, if we want to retrieve the model based on knowing the stage but not the model version, we could execute the following code:
+        <pre class="programlisting code"><code class="hljs-code">stage = <span class="hljs-string">'</span><span class="hljs-string">Staging'</span>
+model = mlflow.pyfunc.load_model(
+    model_uri=<span class="hljs-string">f"models:/</span><span class="hljs-subst">{model_name}</span><span class="hljs-string">/</span><span class="hljs-subst">{stage}</span><span class="hljs-string">"</span>
+    )
+</code></pre>
+</li>
+<li class="numberedList">Based on all of our discussions in this chapter, the result of our training system must be able to produce a model we are happy to deploy to production. The following piece of code promotes the model to a different stage, called <code class="inlineCode">"Production"</code>:
+        <pre class="programlisting code"><code class="hljs-code">client = MlflowClient()
+client.transition_model_version_stage(
+    name=<span class="hljs-string">"sk-learn-std-scale-clf"</span>,
+    version=<span class="hljs-number">1</span>,
+    stage=<span class="hljs-string">"Production"</span>
+    )
+</code></pre>
+</li>
+<li class="numberedList">These are the most important ways to interact with Model Registry and we have covered the basics of how to register, update, promote, and retrieve your models in your training (and prediction) systems.</li>
+</ol>
+<p class="normal">Now, we will learn how to chain our main training steps together into single units called <strong class="keyWord">pipelines</strong>. We <a id="_idIndexMarker395"/>will cover some of the standard ways of doing this inside single scripts, which will allow us to build our first training pipelines. In <em class="chapterRef">Chapter 5</em>, <em class="italic">Deployment Patterns and Tools</em>, we will cover tools for building more generic software pipelines for your ML solution (of which your training pipeline may be a single component).</p>
+<h1 class="heading-1" id="_idParaDest-86">Building the model factory with pipelines</h1>
+<p class="normal">The concept of a<a id="_idIndexMarker396"/> software pipeline is intuitive enough. If you have a series of steps chained together in your code, so that the next step consumes or uses the output of the previous step or steps, then you have a pipeline.</p>
+<p class="normal">In this section, when we refer to a pipeline, we will be specifically dealing with steps that contain processing or calculations that are appropriate to ML. For example, the following diagram shows how this concept may apply to some of the steps the marketing classifier mentioned in <em class="chapterRef">Chapter 1</em>, <em class="italic">Introduction to ML Engineering</em>:</p>
+<figure class="mediaobject"><img alt="Figure 3.10 – The main stages of any training pipeline and how this maps to a specific case from Chapter 1, Introduction to ML Engineering " height="476" src="../Images/B19525_03_13.png" width="689"/></figure>
+<p class="packt_figref">Figure 3.13: The main stages of any training pipeline and how this maps to a specific case from Chapter 1, Introduction to ML Engineering.</p>
+<p class="normal">Let’s discuss some <a id="_idIndexMarker397"/>of the standard tools for building up your ML pipelines in code.</p>
+<h2 class="heading-2" id="_idParaDest-87">Scikit-learn pipelines</h2>
+<p class="normal">Our old friend <strong class="keyWord"><a id="_idIndexMarker398"/></strong><strong class="keyWord">Scikit-Learn</strong> comes packaged <a id="_idIndexMarker399"/>with some nice pipelining functionality. The API is extremely easy to use, as you would expect from <strong class="keyWord">Scikit-Learn</strong>, but has some concepts we should understand before proceeding:</p>
+<ul>
+<li class="bulletList"><strong class="keyWord">The pipeline object</strong>: This is the <a id="_idIndexMarker400"/>object that will bring together all the steps we require, in particular, <code class="inlineCode">sklearn</code> demands that instantiated pipeline objects are composed of sequences of transformers and estimators, with all intermediate objects having the <code class="inlineCode">.fit()</code> and <code class="inlineCode">.transform()</code> methods and the last step being an estimator with at least the <code class="inlineCode">.fit()</code> method. We will explain these terms in the next two points. The reason for this condition is that the <code class="inlineCode">pipeline</code> object will inherit the methods from the last item in the sequence provided, so we must make sure to have <code class="inlineCode">.fit()</code> present in the last object.</li>
+<li class="bulletList"><strong class="keyWord">Estimators</strong>: The estimator class is the base object in <code class="inlineCode">scikit-learn</code> and anything in the package that can be fit on data and then predict on data, therefore the <code class="inlineCode">.fit()</code> and <code class="inlineCode">.predict()</code> methods, is a subclass of the estimator class.</li>
+<li class="bulletList"><strong class="keyWord">Transformers</strong>: In <strong class="keyWord">Scikit-Learn</strong>, transformers are any estimators that have a <code class="inlineCode">.transform()</code> or <code class="inlineCode">.fit_transform()</code> method and, as you can guess, are mainly focused on <a id="_idIndexMarker401"/>transforming datasets from one form to another rather than performing predictions.</li>
+</ul>
+<p class="normal">The use of the <code class="inlineCode">pipeline</code> object really helps facilitate the simplification of your code, as rather than writing <a id="_idIndexMarker402"/>several different<a id="_idIndexMarker403"/> fitting, transforming, and predicting steps as their own function calls with datasets and then managing the flow of that data, you can simply compose them all in one object that manages this for you and uses the same simple API.</p>
+<p class="normal">There are new transformers and features being added to Scikit-Learn all the time, which means that it become possible to build more and more useful pipelines. For example, at the time of writing, Scikit-Learn versions greater than 0.20 also contain the <code class="inlineCode">ColumnTransformer</code> object, which allows you to build pipelines that perform different actions on specific columns. This is exactly what we want to do with the logistic regression marketing model example we were discussing previously, where we want to standardize our numerical values and one-hot encode our categorical variables. Let’s get started:</p>
+<ol class="numberedList" style="list-style-type: decimal;">
+<li class="numberedList" value="1">To create this pipeline, you need to import the <code class="inlineCode">ColumnTransformer</code> and <code class="inlineCode">Pipeline</code> objects:
+        <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">from</span> sklearn.compose <span class="hljs-keyword">import</span> ColumnTransformer
+<span class="hljs-keyword">from</span> sklearn.pipeline <span class="hljs-keyword">import</span> Pipeline
+</code></pre>
+</li>
+<li class="numberedList">To show you how to chain steps inside the transformers that make up the pipeline, we will add some imputation later. For this, we need to import the <code class="inlineCode">SimpleImputer</code> object:
+        <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">from</span> sklearn.impute <span class="hljs-keyword">import</span> SimpleImputer
+</code></pre>
+</li>
+<li class="numberedList">Now, we must define the numerical transformer sub-pipeline, which contains the two steps for imputation and scaling. We must also define the names of the numerical columns this will apply to so that we can use them later:
+        <pre class="programlisting code"><code class="hljs-code">numeric_features = [<span class="hljs-string">'age'</span>, <span class="hljs-string">'balance'</span>]
+numeric_transformer = Pipeline(steps=[
+    (<span class="hljs-string">'imputer'</span>, SimpleImputer(strategy=<span class="hljs-string">'median'</span>)),
+    (<span class="hljs-string">'scaler'</span>, StandardScaler())])
+</code></pre>
+</li>
+<li class="numberedList">Next, we<a id="_idIndexMarker404"/> must perform similar<a id="_idIndexMarker405"/> steps for the categorical variables, but here, we only have one transformation step to define for the <code class="inlineCode">one-hot</code> encoder:
+        <pre class="programlisting code"><code class="hljs-code">categorical_features = [<span class="hljs-string">'</span><span class="hljs-string">job'</span>, <span class="hljs-string">'marital'</span>, <span class="hljs-string">'education'</span>, <span class="hljs-string">'contact'</span>,
+                        <span class="hljs-string">'housing'</span>, <span class="hljs-string">'loan'</span>, <span class="hljs-string">'default'</span>,<span class="hljs-string">'day'</span>]
+categorical_transformer = OneHotEncoder(handle_unknown=<span class="hljs-string">'ignore'</span>)
+</code></pre>
+</li>
+<li class="numberedList">We must bring all of these preprocessing steps together into a single object, called <code class="inlineCode">preprocessor</code>, using the <code class="inlineCode">ColumnTransformer</code> object. This will apply our <code class="inlineCode">transformers</code> to the appropriate columns of our DataFrame:
+        <pre class="programlisting code"><code class="hljs-code">preprocessor = ColumnTransformer(
+    transformers=[
+        (<span class="hljs-string">'num'</span>, numeric_transformer, numeric_features),
+        (<span class="hljs-string">'cat'</span>, categorical_transformer, categorical_features)])
+</code></pre>
+</li>
+<li class="numberedList">Finally, we want to add the ML model step at the end of the previous steps and finalize the pipeline. We will call this <code class="inlineCode">clf_pipeline</code>:
+        <pre class="programlisting code"><code class="hljs-code">clf_pipeline = Pipeline(steps=[(<span class="hljs-string">'preprocessor'</span>, preprocessor),
+                   (<span class="hljs-string">'classifier'</span>, LogisticRegression())])
+</code></pre>
+</li>
+<li class="numberedList">This is our first ML training pipeline. The beauty of the <code class="inlineCode">scikit-learn</code> API is that the <code class="inlineCode">clf_pipeline</code> object can now be called as if it were a standard algorithm from the rest of the library. So, this means we can write the following:
+        <pre class="programlisting code"><code class="hljs-code">clf_pipeline.fit(X_train, y_train)
+</code></pre>
+</li>
+</ol>
+<p class="normal">This will run the <code class="inlineCode">fit</code> methods of all of the pipeline steps in turn.</p>
+<p class="normal">The previous example was relatively basic, but there are a few ways you can make this sort of pipeline more sophisticated if your use case requires it. One of the simplest and most extensible is the ability in Scikit-Learn to create custom transformer objects that inherit from the base classes. You can do this for a class transformer by inheriting from the <code class="inlineCode">BaseEstimator</code> and <code class="inlineCode">TransformerMixIn</code> classes and defining your own transformation logic. As a simple example, let’s build a transformer that takes in the specified columns and adds a float. This is just a simple schematic to show you how it’s done; I can’t<a id="_idIndexMarker406"/> imagine that adding a single <a id="_idIndexMarker407"/>float to your columns will be that helpful in most cases!</p>
+<pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">from</span> sklearn.base <span class="hljs-keyword">import</span> BaseEstimator, TransformerMixin
+ 
+<span class="hljs-keyword">class</span> <span class="hljs-title">AddToColumsTransformer</span>(BaseEstimator, TransformerMixin):
+    <span class="hljs-keyword">def</span> <span class="hljs-title">__init__</span>(<span class="hljs-params">self, addition = </span><span class="hljs-number">0.0</span><span class="hljs-params">, columns=</span><span class="hljs-literal">None</span>):
+        self.addition = addition
+        self.columns = columns
+    
+    <span class="hljs-keyword">def</span> <span class="hljs-title">fit</span>(<span class="hljs-params">self, X, y=</span><span class="hljs-literal">None</span>):
+        <span class="hljs-keyword">return</span> self
+ 
+    <span class="hljs-keyword">def</span> <span class="hljs-title">transform</span>(<span class="hljs-params">self, X, y=</span><span class="hljs-literal">None</span>):
+        transform_columns = <span class="hljs-built_in">list</span>(X.columns)
+        <span class="hljs-keyword">if</span> self.columns:
+            transform_columns = self.columns
+        X[transform_columns] = X[transform_columns] + self.addition
+        <span class="hljs-keyword">return</span> X
+</code></pre>
+<p class="normal">You could then add this transformer to your <code class="inlineCode">pipeline</code>:</p>
+<pre class="programlisting code"><code class="hljs-code">pipeline = Pipeline(
+    steps=[
+        (<span class="hljs-string">"add_float"</span>, AddToColumnsTransformer(<span class="hljs-number">0.5</span>, columns=[<span class="hljs-string">"col1"</span>,<span class="hljs-string">"</span><span class="hljs-string">col2"</span>, 
+                                                            <span class="hljs-string">"col3"</span>]))
+    ]
+)
+</code></pre>
+<p class="normal">This example of adding a number is actually not the best use case for using this class-based transformer definition, as this operation is stateless. Since there is no training or complex manipulation of the values being fed in that requires the class to retain and update its state, we have actually just wrapped a function. The second way of adding your own custom steps takes advantage of this and uses the <code class="inlineCode">FunctionTransformer</code> class to wrap any function you provide:</p>
+<pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">from</span> sklearn.pipeline <span class="hljs-keyword">import</span> Pipeline
+<span class="hljs-keyword">from</span> sklearn.preprocessing <span class="hljs-keyword">import</span> FunctionTransformer
+
+<span class="hljs-keyword">def</span> <span class="hljs-title">add_number</span>(<span class="hljs-params">X, columns=</span><span class="hljs-literal">None</span><span class="hljs-params">, number=</span><span class="hljs-literal">None</span>):
+    if columns == <span class="hljs-literal">None</span> <span class="hljs-keyword">and</span> number == <span class="hljs-literal">None</span>:
+        <span class="hljs-keyword">return</span> X
+    X[columns] = X[columns] + number
+pipeline = Pipeline(
+    steps=[
+        (
+            <span class="hljs-string">"add_float"</span>,
+            FunctionTransformer(
+                add_number, kw_args={<span class="hljs-string">"columns"</span>: ["col1", "col2", "col3"],
+                                     <span class="hljs-string">"number"</span>: <span class="hljs-number">0.5</span>}),
+        )
+    ]
+)
+</code></pre>
+<p class="normal">By building on <a id="_idIndexMarker408"/>these examples, you <a id="_idIndexMarker409"/>can start to create complex pipelines that can perform any feature engineering task you want.</p>
+<p class="normal">To conclude this section, we can clearly see that the ability to abstract the steps that are performing feature engineering and training your model into a single object is very powerful, as it means you can reuse this object in various places and build even more complex workflows with it without constantly recoding the details of the implementation. Abstraction is a good thing!</p>
+<p class="normal">We will now turn to another way of writing pipelines, using Spark ML.</p>
+<h2 class="heading-2" id="_idParaDest-88">Spark ML pipelines</h2>
+<p class="normal">There is another <a id="_idIndexMarker410"/>toolset we have been <a id="_idIndexMarker411"/>using throughout this book that will be particularly important when we discuss scaling up our solutions: Apache Spark and its ML ecosystem. We will see that building a similar pipeline with Spark ML requires a slightly different set of syntax, but the key concepts look very similar to the Scikit-Learn case.</p>
+<p class="normal">There are a few important points to mention about PySpark pipelines. Firstly, in line with good programming practices in Scala, which Spark is written in, objects are treated as <strong class="keyWord">immutable</strong>, so transformations do not occur <em class="italic">in place</em>. Instead, new objects are created. This means that the output of any transformation will require new columns to be created in your original DataFrame (or indeed new columns in a new DataFrame).</p>
+<p class="normal">Secondly, the Spark ML estimators (that is, the ML algorithms) all require the features to be assembled into one tuple-like object in a single column. This contrasts with Scikit-Learn, where you can keep all the features in their columns in your data object. This means that you need to become comfortable with the use of <strong class="keyWord">assemblers</strong>, which are utilities for pulling disparate feature columns together, especially when you are working with mixed categorical and numerical features that must be transformed in different ways before being invested by the algorithm.</p>
+<p class="normal">Thirdly, Spark has many functions <a id="_idIndexMarker412"/>that use <strong class="keyWord">lazy evaluation</strong>, meaning that they are only executed when they’re triggered by specific actions. This means that you can build up your entire ML pipeline and not have to transform any data. The reason for lazy evaluation is that the computational steps in Spark are stored in a <strong class="keyWord">Directed Acyclic Graph</strong> (<strong class="keyWord">DAG</strong>) so <a id="_idIndexMarker413"/>that the execution plan can be optimized before you perform the computational steps, making Spark very efficient.</p>
+<p class="normal">Finally – and this is a small point – it is commonplace to write PySpark variables using <em class="italic">camel case</em> rather than the common <em class="italic">snake case</em>, which is often used for Python variables (for instance, <strong class="keyWord">variableName</strong> versus <code class="inlineCode">variable_name</code>). This is done to keep the code in line with the PySpark functions that inherit this convention from the underlying <strong class="keyWord">Scala</strong> code behind Spark.</p>
+<p class="normal">The Spark ML pipelines API utilizes concepts of Transformer and Estimator in a similar way to how the Scikit-Learn pipeline API did, with some important differences. The first difference is that Transformers in Spark ML implement <code class="inlineCode">.transform()</code> but not the <code class="inlineCode">.fit_transform()</code> method. Secondly, the Transformer and Estimator objects in Spark ML are stateless, so once you have trained them they do not change and they only contain model metadata. They don’t store anything about the original input data. One similarity is that pipelines are treated as Estimators in Spark ML as well.</p>
+<p class="normal">We will now build a basic example to show how to build a training pipeline using the Spark ML API.</p>
+<p class="normal"> Let’s take a look:</p>
+<ol class="numberedList" style="list-style-type: decimal;">
+<li class="numberedList" value="1">First, we must one-hot encode the categorical features for the previous example using the following syntax:
+        <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">from</span> pyspark.ml <span class="hljs-keyword">import</span> Pipeline, PipelineModel
+categoricalColumns = [<span class="hljs-string">"job"</span>, <span class="hljs-string">"</span><span class="hljs-string">marital"</span>, <span class="hljs-string">"education"</span>, <span class="hljs-string">"contact"</span>,
+                      <span class="hljs-string">"housing"</span>, <span class="hljs-string">"loan"</span>, <span class="hljs-string">"default"</span>, <span class="hljs-string">"day"</span>]
+
+<span class="hljs-keyword">for</span> categoricalCol <span class="hljs-keyword">in</span> categoricalColumns:
+    stringIndexer = StringIndexer(inputCol=categoricalCol,
+                                  outputCol=categoricalCol +
+<span class="hljs-string">                                  "Index"</span>).setHandleInvalid(<span class="hljs-string">"</span><span class="hljs-string">keep"</span>)
+    encoder = OneHotEncoder(
+              inputCols=[stringIndexer.getOutputCol()],
+              outputCols=[categoricalCol + <span class="hljs-string">"classVec"</span>]
+              )
+    stages += [stringIndexer, encoder]
+</code></pre>
+</li>
+<li class="numberedList">For the<a id="_idIndexMarker414"/> numerical columns, we<a id="_idIndexMarker415"/> must perform imputation:
+        <pre class="programlisting code"><code class="hljs-code">numericalColumns = [<span class="hljs-string">"age"</span>, <span class="hljs-string">"balance"</span>]
+numericalColumnsImputed = [x + <span class="hljs-string">"_imputed"</span> <span class="hljs-keyword">for</span> x <span class="hljs-keyword">in</span> numericalColumns]
+imputer = Imputer(inputCols=numericalColumns, outputCols=numericalColumnsImputed)
+stages += [imputer]
+</code></pre>
+</li>
+<li class="numberedList">Then, we must perform standardization. Here, we need to be a bit clever about how we apply <code class="inlineCode">StandardScaler</code> as it only applies to one column at a time. Therefore, we need to create a scaler for each numerical feature after pulling our numerically imputed features into a single feature vector:
+        <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">from</span> pyspark.ml.feature <span class="hljs-keyword">import</span> StandardScaler
+
+numericalAssembler = VectorAssembler(
+    inputCols=numericalColumnsImputed, 
+    outputCol=<span class="hljs-string">'numerical_cols_imputed'</span>)
+stages += [numericalAssembler]
+scaler = StandardScaler(inputCol=<span class="hljs-string">'numerical_cols_imputed'</span>,
+                        outputCol=<span class="hljs-string">"numerical_cols_imputed_scaled"</span>)
+stages += [scaler]
+</code></pre>
+</li>
+<li class="numberedList">Then, we have to assemble the numerical and categorical transformed features into one feature column:
+        <pre class="programlisting code"><code class="hljs-code">assemblerInputs = [c + <span class="hljs-string">"classVec"</span> <span class="hljs-keyword">for</span> c <span class="hljs-keyword">in</span> categoricalColumns] +\ [<span class="hljs-string">"numerical_cols_imputed_scaled"</span>]
+assembler = VectorAssembler(inputCols=assemblerInputs,
+                            outputCol=<span class="hljs-string">"features"</span>)
+stages += [assembler]
+</code></pre>
+</li>
+<li class="numberedList">Finally, we can define our model step, add this to the <code class="inlineCode">pipeline</code>, and then train on and transform:
+        <pre class="programlisting code"><code class="hljs-code">lr = LogisticRegression(labelCol=<span class="hljs-string">"label"</span>, featuresCol=<span class="hljs-string">"features"</span>,
+                        maxIter=<span class="hljs-number">10</span>)
+stages += [lr]
+(trainingData, testData) = data.randomSplit([<span class="hljs-number">0.7</span>, <span class="hljs-number">0.3</span>], seed=<span class="hljs-number">100</span>)
+clfPipeline = Pipeline().setStages(stages).fit(trainingData)
+clfPipeline.transform(testData)
+</code></pre>
+</li>
+</ol>
+<p class="normal">You can then<a id="_idIndexMarker416"/> persist the model pipeline as you <a id="_idIndexMarker417"/>would any <code class="inlineCode">Spark</code> object, for example, by using:</p>
+<pre class="programlisting code"><code class="hljs-code">clfPipeline.save(path)
+</code></pre>
+<p class="normal">Where <code class="inlineCode">path</code> is the path to your target destination. You would then read this pipeline into memory by using:</p>
+<pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">from</span> pyspark.ml <span class="hljs-keyword">import</span> Pipeline
+clfPipeline = Pipeline().load(path)
+</code></pre>
+<p class="normal">And that is how we can build a training pipeline in PySpark using <strong class="keyWord">Spark ML</strong>. This example shows you enough to get started with the API and build out your own, more sophisticated pipelines.</p>
+<p class="normal">We will now conclude this chapter with a brief summary of everything we have covered.</p>
+<h1 class="heading-1" id="_idParaDest-89">Summary</h1>
+<p class="normal">In this chapter, we learned about the important topic of how to build up our solutions for training and staging the ML models that we want to run in production. We split the components of such a solution into pieces that tackled training the models, the persistence of the models, serving the models, and triggering retraining for the models. I termed this the “Model Factory.”</p>
+<p class="normal">We got into the more technical details of some important concepts with a deep dive into what training an ML model really means, which we framed as learning about how ML models learn. Some time was then spent on the key concepts of feature engineering, or how you transform your data into something that a ML model can understand during this process. This was followed by sections on how to think about the different modes your training system can run in, which I termed “train-persist” and “train-run.”</p>
+<p class="normal">We then discussed how you can perform drift detection on your models and the data they are consuming using a variety of techniques. This included some examples of performing drift detection using the Alibi Detect and Evidently packages and a discussion of how to calculate feature importances.</p>
+<p class="normal">We then covered the concept of how the training process can be automated at various levels of abstraction, before explaining how to programmatically manage the staging of your models with MLflow Model Registry. The final section covered how to define training pipelines in the Scikit-Learn and Spark ML packages.</p>
+<p class="normal">In the next chapter, we will find out how to package up some of these concepts in a Pythonic way so that they can be deployed and reused seamlessly in other projects.</p>
+<h1 class="heading-1" id="_idParaDest-90">Join our community on Discord</h1>
+<p class="normal">Join our community’s Discord space for discussion with the author and other readers:</p>
+<p class="normal"><a href="https://packt.link/mle"><span class="url">https://packt.link/mle</span></a></p>
+<p class="normal"><img alt="" height="177" role="presentation" src="../Images/QR_Code102810325355484.png" width="177"/></p>
+</div>
+</div></body></html>

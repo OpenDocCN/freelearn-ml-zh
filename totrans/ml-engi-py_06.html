@@ -1,0 +1,802 @@
+<html><head></head><body>
+<div id="sbo-rt-content"><div class="Basic-Text-Frame" id="_idContainer178">
+<h1 class="chapterNumber">6</h1>
+<h1 class="chapterTitle" id="_idParaDest-141">Scaling Up</h1>
+<p class="normal">The previous chapter was all about starting the conversation around how we get our solutions out into the world using different deployment patterns, as well as some of the tools we can use to do this. This chapter will aim to build on that conversation by discussing the concepts and tools we can use to scale up our solutions to cope with large volumes of data or traffic.</p>
+<p class="normal">Running some simple <strong class="keyWord">machine learning</strong> (<strong class="keyWord">ML</strong>) models on a few thousand data points on your laptop is a good exercise, especially when you’re performing the discovery and proof-of-concept steps we outlined previously at the beginning of any ML development project. This approach, however, is not appropriate if we have to run millions upon millions of data points at a relatively high frequency, or if we have to train thousands of models of a similar scale at any one time. This requires a different approach, mindset, and toolkit.</p>
+<p class="normal">In the following pages, we will cover some details of two of the most popular frameworks for distributing data computations in use today: <strong class="keyWord">Apache Spark</strong> and <strong class="keyWord">Ray</strong>. In particular, we will discuss some of the key points about how these frameworks tick under the hood so that, in development, we can make some good decisions about how to use them. We will then move onto a discussion of how to use these in your ML workflows with some concrete examples, these examples being specifically aimed to help you when it comes to processing large batches of data. Next, a brief introduction to creating serverless applications that allow you to scale out inference endpoints will be provided. Finally, we will cover an introduction to scaling containerized ML applications with Kubernetes, which complements the work we did in <em class="chapterRef">Chapter 5</em>, <em class="italic">Deployment Patterns and Tools</em>, and will be built upon in detail with a full end-to-end example in <em class="chapterRef">Chapter 8</em>, <em class="italic">Building an Example ML Microservice</em>.</p>
+<p class="normal">This will help you build on some of the practical examples we already looked at earlier in this book, when we used Spark to solve our ML problems, with some more concrete theoretical understanding and further detailed practical examples. After this chapter, you should feel confident in how to use some of the best frameworks and techniques available to scale your ML solutions to larger and larger datasets.</p>
+<p class="normal">In this chapter, we will cover all of this in the following sections:</p>
+<ul>
+<li class="bulletList">Scaling with Spark</li>
+<li class="bulletList">Spinning up serverless infrastructure</li>
+<li class="bulletList">Containerizing at scale with Kubernetes</li>
+<li class="bulletList">Scaling with Ray</li>
+<li class="bulletList">Designing systems at scale</li>
+</ul>
+<h1 class="heading-1" id="_idParaDest-142">Technical requirements</h1>
+<p class="normal">As with the other chapters, you can set up your Python development environment to be able to run the examples in this chapter by using the supplied Conda environment <code class="inlineCode">yml</code> file or the <code class="inlineCode">requirements.txt</code> files from the book repository, under <em class="italic">Chapter06:</em></p>
+<pre class="programlisting con"><code class="hljs-con">conda env create –f mlewp-chapter06.yml
+</code></pre>
+<p class="normal">This chapter’s examples will also require some non-Python tools to be installed to follow the examples end to end; please see the respective documentation for each tool:</p>
+<ul>
+<li class="bulletList">AWS CLI v2</li>
+<li class="bulletList">Docker</li>
+<li class="bulletList">Postman</li>
+<li class="bulletList">Ray</li>
+<li class="bulletList">Apache Spark (version 3.0.0 or higher)</li>
+</ul>
+<h1 class="heading-1" id="_idParaDest-143">Scaling with Spark</h1>
+<p class="normal"><strong class="keyWord">Apache Spark</strong>, or just Spark, came from the work of some brilliant researchers at the <em class="italic">University of California, Berkeley</em> in 2012 and since then, it has revolutionized how we tackle problems with large datasets.</p>
+<p class="normal">Spark is <a id="_idIndexMarker736"/>a cluster computing framework, which means it works on the principle that several computers are linked together in a way that allows computational tasks to be shared. This allows us to coordinate these tasks effectively. Whenever we discuss running Spark jobs, we always talk about <em class="italic">the cluster</em> we are running on. </p>
+<p class="normal">This is the collection of computers that perform the tasks, the worker nodes, and the computer that hosts the organizational workload, known as the head node.</p>
+<p class="normal">Spark is <a id="_idIndexMarker737"/>written in Scala, a language with a strong functional flavor and that compiles down to <strong class="keyWord">Java Virtual Machines</strong> (<strong class="keyWord">JVMs</strong>). Since this is a book about ML engineering in Python, we won’t discuss too much about the underlying Scala components of Spark, except where they<a id="_idIndexMarker738"/> help us use it in our work. Spark has several popular APIs that allow programmers to develop with it in a variety of languages, including Python. This gives rise to the PySpark syntax we have used in several examples throughout this book.</p>
+<p class="normal">So, how is this all put together?</p>
+<p class="normal">Well, first of all, one of the<a id="_idIndexMarker739"/> things that makes Apache Spark so incredibly popular is the large array of connectors, components, and APIs it has available. For example, four main components interface with <em class="italic">Spark Core</em>:</p>
+<ul>
+<li class="bulletList"><strong class="keyWord">Spark SQL</strong>, <strong class="keyWord">DataFrames</strong>, <strong class="keyWord">and</strong> <strong class="keyWord">Datasets</strong>: This component allows you to create very scalable <a id="_idIndexMarker740"/>programs that deal with structured data. The ability to write SQL-compliant queries and create data tables that leverage the underlying <a id="_idIndexMarker741"/>Spark engine <a id="_idIndexMarker742"/>through one of the <a id="_idIndexMarker743"/>main <strong class="keyWord">structured APIs</strong> of Spark (Python, Java, Scala, or R) gives very easy access to the main bulk of Spark’s functionality.</li>
+<li class="bulletList"><strong class="keyWord">Spark Structured Streaming</strong>: This component allows engineers to work with streaming data that’s, for<a id="_idIndexMarker744"/> example, provided by a solution such as Apache Kafka. The design is incredibly simple and allows developers to simply work with streaming data as if it is a growing Spark structured table, with the same querying and manipulation functionality as for a standard one. This provides a low entry barrier for creating scalable streaming solutions.</li>
+<li class="bulletList"><strong class="keyWord">GraphX</strong>: This is a <a id="_idIndexMarker745"/>library that allows you to implement graph parallel processing and apply standard algorithms to graph-based data (for example, algorithms such as PageRank or Triangle Counting). The <strong class="keyWord">GraphFrames</strong> project<a id="_idIndexMarker746"/> from Databricks makes this functionality even easier to use by allowing us to work with DataFrame-based APIs in Spark and still analyze graph data.</li>
+<li class="bulletList"><strong class="keyWord">Spark ML</strong>: Last<a id="_idIndexMarker747"/> but not least, we have the component that’s most appropriate for us as ML engineers: Spark’s native library for ML. This library contains the implementation of many algorithms and feature engineering capabilities we have already seen in this book. Being able to use <strong class="keyWord">DataFrame</strong> APIs<a id="_idIndexMarker748"/> in the library makes this extremely easy to use, while still giving us a route to creating very powerful code. </li>
+</ul>
+<p class="bulletList">The potential speedups you can gain for your ML training by using Spark ML on a Spark cluster versus running another ML library on a single thread can be tremendous. There are other tricks we can apply to our favorite ML implementations and then use Spark to scale them out; we’ll look at this later.</p>
+<p class="normal">Spark’s architecture is based on the driver/executor architecture. The driver is the program that acts as the main entry point for the Spark application and is where the <strong class="keyWord">SparkContext</strong> object<a id="_idIndexMarker749"/> is created. <strong class="keyWord">SparkContext</strong> sends tasks to the executors (which run on their own JVMs) and communicates with the cluster manager in a manner appropriate to the given manager and what mode the solution is running in. One of the driver’s main<a id="_idIndexMarker750"/> tasks is to convert the code we write into a logical set of steps in a <strong class="keyWord">Directed Acyclic Graph</strong> (<strong class="keyWord">DAG</strong>) (the same concept that we used with Apache Airflow in <em class="chapterRef">Chapter 5</em>, <em class="italic">Deployment Patterns and Tools</em>), and then convert that DAG into a set of tasks that needs to be executed across the available compute resources.</p>
+<p class="normal">In the pages that follow, we will assume we are running Spark<a id="_idIndexMarker751"/> with the <strong class="keyWord">Hadoop YARN</strong> resource manager, which is one of the most popular options and is also used by the <strong class="keyWord">AWS</strong><em class="italic"> </em><strong class="keyWord">Elastic MapReduce</strong> (<strong class="keyWord">EMR</strong>) solution by default (more on this later). When running <a id="_idIndexMarker752"/>with YARN in <em class="italic">cluster mode</em>, the driver program runs in a container on the YARN cluster, which allows a client to submit jobs or requests through the driver and then exit (rather than requiring the client to remain connected to the cluster manager, which can happen when you’re running in so-called <em class="italic">client mode</em>, which we will not discuss here).</p>
+<p class="normal">The cluster manager is responsible for launching the executors across the resources that are available on the cluster.</p>
+<p class="normal">Spark’s architecture allows us, as ML engineers, to build solutions with the same API and syntax, regardless of whether we are working locally on our laptop or a cluster with thousands of nodes. The connection<a id="_idIndexMarker753"/> between the driver, the resource manager, and the executors is what allows this magic to happen.</p>
+<h2 class="heading-2" id="_idParaDest-144">Spark tips and tricks</h2>
+<p class="normal">In this subsection, we will cover some simple but effective tips for writing performant solutions with Spark. We will <a id="_idIndexMarker754"/>focus on key pieces of syntax for data manipulation and preparation, which are always the first steps in any ML pipeline. Let’s get started:</p>
+<ol class="numberedList" style="list-style-type: decimal;">
+<li class="numberedList" value="1">First, we will cover the basics of writing good Spark SQL. The entry point for any Spark program is the <code class="inlineCode">SparkSession</code> object, which we need to import an instance of in our application. 
+    <p class="numberedList">It is often instantiated with the <code class="inlineCode">spark</code> variable:</p>
+<pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">from</span> pyspark.sql <span class="hljs-keyword">import</span> SparkSession
+
+spark = SparkSession\
+    .builder\
+    .appName(<span class="hljs-string">"Spark SQL Example"</span>)\
+    .config(<span class="hljs-string">"spark.some.config.option"</span>, <span class="hljs-string">"some-value"</span>)\
+    .getOrCreate()
+</code></pre></li>
+</ol>
+<ol class="numberedList" style="list-style-type: decimal;">
+<li class="numberedList" value="2">You can then run Spark SQL commands against your available data using the <code class="inlineCode">spark</code> object and the <code class="inlineCode">sql</code> method:
+        <pre class="programlisting code"><code class="hljs-code">spark.sql(<span class="hljs-string">'''select * from data_table'''</span>)
+</code></pre>
+<p class="normal">There are a variety of ways to make the data you need available inside your Spark programs, depending on where they exist. The following example has been taken from some of the code we went through in <em class="chapterRef">Chapter 3</em>, <em class="italic">From Model to Model Factory</em>, and shows how to pull data into a DataFrame from a <code class="inlineCode">csv</code> file:</p>
+<pre class="programlisting code"><code class="hljs-code">data = spark.read.<span class="hljs-built_in">format</span>(<span class="hljs-string">"csv"</span>)\
+    .option(<span class="hljs-string">"sep"</span>, <span class="hljs-string">";"</span>)\
+    .option(<span class="hljs-string">"inferSchema"</span>, <span class="hljs-string">"true"</span>)\
+    .option(<span class="hljs-string">"header"</span>, <span class="hljs-string">"true"</span>).load(
+    <span class="hljs-string">"data/bank/bank.csv"</span>)
+</code></pre>
+</li>
+</ol>
+<ol class="numberedList" style="list-style-type: decimal;">
+<li class="numberedList" value="3">Now, we can create a temporary view of this data using the following syntax:
+        <pre class="programlisting code"><code class="hljs-code">data.createOrReplaceTempView(<span class="hljs-string">'data_view'</span>)
+</code></pre>
+</li>
+<li class="numberedList">Then, we can query against this data using the methods mentioned previously to see the records or to create new DataFrames:
+        <pre class="programlisting code"><code class="hljs-code">new_data = spark.sql(<span class="hljs-string">'''select …'''</span>)
+</code></pre>
+</li>
+</ol>
+<p class="normal">When writing Spark SQL, some standard practices<a id="_idIndexMarker755"/> help your code to be efficient:</p>
+<ul>
+<li class="bulletList">Try not to join big tables on the left with small tables on the right as this is inefficient. In general, try and make datasets used for joins as lean as possible, so, for example, do not join using unused columns or rows as much as possible.</li>
+<li class="bulletList">Avoid query syntax that will scan full datasets if they are very large; for example, <code class="inlineCode">select max(date_time_value)</code>. </li>
+</ul>
+<p class="bulletList">In this case, try and define logic that can filter the data more aggressively before finding min or max values and in general allow the solution to scan over a smaller dataset.</p>
+<p class="normal">Some other good practices when <a id="_idIndexMarker756"/>working with Spark are as follows:</p>
+<ul>
+<li class="bulletList"><strong class="keyWord">Avoid data skew</strong>: Do what you can to understand how your data will be split across executors. If your data is partitioned on a date column, this may be a good choice if volumes of data are comparable for each day but bad if some days have most of your data and others very little. Repartitioning using a more appropriate column (or on a Spark-generated ID from the <code class="inlineCode">repartition</code> command) will be required.</li>
+<li class="bulletList"><strong class="keyWord">Avoid data shuffling</strong>: This is when data is redistributed across different partitions. For example, we may have a dataset that is partitioned at the day level and then we ask Spark to sum over one column of the dataset for all of time. This will cause all of the daily partitions to be accessed and the result to be written to a new partition. For this to occur, disk writes and a network transfer have to occur, which can often lead to performance bottlenecks for your Spark job.</li>
+<li class="bulletList"><strong class="keyWord">Avoid actions in large datasets</strong>: For example, when you run the <code class="inlineCode">collect()</code> command, you will bring all of your data back onto the driver node. This can be very bad if it is a large dataset but may be needed to convert the result of a calculation into something else. Note that the <code class="inlineCode">toPandas()</code> command, which converts your Spark <code class="inlineCode">DataFrame</code> into a pandas <code class="inlineCode">DataFrame</code>, also collects all the data in the driver’s memory.</li>
+<li class="bulletList"><strong class="keyWord">Use UDFs when they make sense</strong>: Another excellent tool to have in your arsenal, as an ML engineer using Apache Spark, is the <strong class="keyWord">User-Defined Function</strong> (<strong class="keyWord">UDF</strong>). UDFs <a id="_idIndexMarker757"/>allow you to wrap up more complex and bespoke logic and apply it at scale in a variety of ways. An important aspect of this is that if you write a standard PySpark (or Scala) UDF, then you can apply this <em class="italic">inside</em> Spark SQL syntax, which allows you to efficiently reuse your code and even simplify the application of your ML models. The downside is that these are sometimes not the most efficient pieces of code, but if it helps to make your solution <a id="_idIndexMarker758"/>simpler and more maintainable, it may be the right choice.</li>
+</ul>
+<p class="normal">As a concrete example, let’s build a <a id="_idIndexMarker759"/>UDF that looks at the banking data we worked with in <em class="chapterRef">Chapter 3</em>, <em class="italic">From Model to Model Factory</em>, to create a new column called ‘<code class="inlineCode">month_as_int</code>' that converts the current string representation of the month into an integer for processing later. We will not concern ourselves with train/test splits or what this might be used for; instead, we will just highlight how to apply some logic to a PySpark UDF. </p>
+<p class="normal">Let’s get started:</p>
+<ol class="numberedList" style="list-style-type: decimal;">
+<li class="numberedList" value="1">First, we must read the data. Note that the relative path given here is consistent with the <code class="inlineCode">spark_example_udfs.py</code> script, which can be found in this book’s GitHub repository at <a href="https://github.com/PacktPublishing/Machine-Learning-Engineering-with-Python-Second-Edition/blob/main/Chapter06/mlewp2-spark/spark_example_udfs.py"><span class="url">https://github.com/PacktPublishing/Machine-Learning-Engineering-with-Python-Second-Edition/blob/main/Chapter06/mlewp2-spark/spark_example_udfs.py</span></a>:
+        <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">from</span> pyspark.sql <span class="hljs-keyword">import</span> SparkSession
+<span class="hljs-keyword">from</span> pyspark <span class="hljs-keyword">import</span> SparkContext
+<span class="hljs-keyword">from</span> pyspark.sql <span class="hljs-keyword">import</span> functions <span class="hljs-keyword">as</span> f
+
+sc = SparkContext(<span class="hljs-string">"local"</span>, <span class="hljs-string">"Ch6BasicExampleApp"</span>)
+<span class="hljs-comment"># Get spark session</span>
+spark = SparkSession.builder.getOrCreate()
+<span class="hljs-comment"># Get the data and place it in a spark dataframe</span>
+data = spark.read.<span class="hljs-built_in">format</span>(<span class="hljs-string">"csv"</span>).option(<span class="hljs-string">"sep"</span>, <span class="hljs-string">";"</span>).option(<span class="hljs-string">"inferSchema"</span>, <span class="hljs-string">"true"</span>).option(<span class="hljs-string">"header"</span>, <span class="hljs-string">"true"</span>).load(
+        <span class="hljs-string">"</span><span class="hljs-string">data/bank/bank.csv"</span>)
+</code></pre>
+<p class="normal">If we show the current data with the <code class="inlineCode">data.show()</code> command, we will see something like this:</p>
+<figure class="mediaobject"><img alt="Figure 6.1 – A sample of the data from the initial DataFrame in the banking dataset " height="151" src="../Images/B19525_06_01.png" width="759"/></figure>
+<p class="packt_figref">Figure 6.1: A sample of the data from the initial DataFrame in the banking dataset.</p></li>
+</ol>
+<ol class="numberedList" style="list-style-type: decimal;">
+<li class="numberedList" value="2">Now, we <a id="_idIndexMarker760"/>can double-check the schema of this DataFrame using the <code class="inlineCode">data.printSchema()</code> command. This confirms that <code class="inlineCode">month</code> is stored as a string currently, as shown here:
+        <pre class="programlisting con"><code class="hljs-con">|-- age: integer (nullable = true)
+|-- job: string (nullable = true)
+|-- marital: string (nullable = true)
+|-- education: string (nullable = true)
+|-- default: string (nullable = true)
+|-- balance: integer (nullable = true)
+|-- housing: string (nullable = true)
+|-- loan: string (nullable = true)
+|-- contact: string (nullable = true)
+|-- day: integer (nullable = true)
+|-- month: string (nullable = true)
+|-- duration: integer (nullable = true)
+|-- campaign: integer (nullable = true)
+|-- pdays: integer (nullable = true)
+|-- previous: integer (nullable = true)
+|-- poutcome: string (nullable = true)
+|-- y: string (nullable = true)
+</code></pre>
+</li>
+<li class="numberedList">Now, we can define our UDF, which will use the Python <code class="inlineCode">datetime</code> library to convert the string representation of the month into an integer:
+        <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">import</span> datetime
+
+<span class="hljs-keyword">def</span> <span class="hljs-title">month_as_int</span>(<span class="hljs-params">month</span>):
+    month_number = datetime.datetime.strptime(month, <span class="hljs-string">"%b"</span>).month
+    <span class="hljs-keyword">return</span> month_number
+</code></pre>
+</li>
+<li class="numberedList">If we want to apply our function inside Spark SQL, then we must register the function as a UDF. The arguments for the <code class="inlineCode">register()</code> function are the registered name of the function, the name of the Python function we have just written, and the return type. The return type is <code class="inlineCode">StringType()</code> by default, but we have made this explicit here:
+        <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">from</span> pyspark.sql.types <span class="hljs-keyword">import</span> StringType
+
+spark.udf.register(<span class="hljs-string">"monthAsInt"</span>, month_as_int, StringType())
+</code></pre>
+</li>
+<li class="numberedList">Finally, now that <a id="_idIndexMarker761"/>we have registered the function, we can apply it to our data. First, we will create a temporary view of the bank dataset and then run a Spark SQL query against it that references our UDF:
+        <pre class="programlisting code"><code class="hljs-code">data.createOrReplaceTempView(<span class="hljs-string">'bank_data_view'</span>)
+spark.sql(<span class="hljs-string">'''</span>
+<span class="hljs-string">select *, monthAsInt(month) as month_as_int from bank_data_view</span>
+<span class="hljs-string">'''</span>).show()
+</code></pre>
+<p class="normal">Running the preceding syntax with the <code class="inlineCode">show()</code> command shows that we have successfully calculated the new column. The last few columns of the resulting <code class="inlineCode">DataFrame</code> are shown here:</p>
+<figure class="mediaobject"><img alt="Figure 6.3 – The new column has been calculated successfully by applying our UDF " height="466" src="../Images/B19525_06_02.png" width="419"/></figure>
+<p class="packt_figref">Figure 6.2: The new column has been calculated succesfully by applying our UDF.</p></li>
+</ol>
+<ol class="numberedList" style="list-style-type: decimal;">
+<li class="numberedList" value="6">Alternatively, we can create our UDF with the following syntax and apply the result to a Spark <code class="inlineCode">DataFrame</code>. As mentioned before, using a UDF can sometimes allow you to wrap up relatively complex syntax quite simply. The syntax here is quite simple but I’ll show you it anyway. This gives us the same result that’s shown in the preceding screenshot:
+        <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">from</span> pyspark.sql.functions <span class="hljs-keyword">import</span> udf
+
+month_as_int_udf = udf(month_as_int, StringType())
+df = spark.table(<span class="hljs-string">"bank_data_view"</span>)
+df.withColumn(<span class="hljs-string">'month_as_int'</span>, month_as_int_udf(<span class="hljs-string">"month"</span>)).show()
+</code></pre>
+</li>
+<li class="numberedList">Finally, PySpark<a id="_idIndexMarker762"/> also provides a nice decorator syntax for creating our UDF, meaning that if you are indeed building some more complex functionality, you can just place this inside the Python function that is being decorated. The following code block also gives the same results as the preceding screenshot:
+        <pre class="programlisting code"><code class="hljs-code"><span class="hljs-meta">@udf(</span><span class="hljs-string">"string"</span><span class="hljs-meta">)</span>
+<span class="hljs-keyword">def</span> <span class="hljs-title">month_as_int_udf</span>(<span class="hljs-params">month</span>):
+    month_number = datetime.datetime.strptime(month, <span class="hljs-string">"</span><span class="hljs-string">%b"</span>).month
+    <span class="hljs-keyword">return</span> month_number
+df.withColumn(<span class="hljs-string">'month_as_int'</span>, month_as_int_udf(<span class="hljs-string">"month"</span>)).show()
+</code></pre>
+</li>
+</ol>
+<p class="normal">This shows how we can apply some simple logic in a UDF, but for us to deploy a model at scale using this approach, we have to put the ML logic inside the function and apply it in the same manner. This can become a bit tricky if we want to work with some of the standard tools we are used to from the data science world, such as Pandas and <strong class="keyWord">Scikit-learn</strong>. Luckily, there is another option we can use that has a few benefits. We will discuss this now.</p>
+<p class="normal">The UDFs currently being considered have a slight issue when we are working in Python in that translating data between the JVM and Python can take a while. One way to get around this is to use what is known <a id="_idIndexMarker763"/>as <strong class="keyWord">pandas UDFs</strong>, which use the Apache Arrow library under the hood to ensure that the data is read quickly for the execution of our UDFs. This gives us the flexibility of UDFs without any slowdown.</p>
+<p class="normal">pandas UDFs are also extremely powerful because they work with the syntax of – you guessed it – pandas <strong class="keyWord">Series</strong> and <strong class="keyWord">DataFrame</strong> objects. This means that a lot of data scientists who are used to working with pandas to build models locally can easily adapt their code to scale up using Spark.</p>
+<p class="normal">As an example, let’s walk through how to apply a simple classifier to the wine dataset that we used earlier in this book. Note that the model was not optimized for this data; we are just showing <a id="_idIndexMarker764"/>an example of applying a pre-trained classifier:</p>
+<ol class="numberedList" style="list-style-type: decimal;">
+<li class="numberedList" value="1">First, let’s create a simple <strong class="keyWord">Support Vector Machine</strong> (<strong class="keyWord">SVM</strong>)-based classifier on the wine dataset. We are not performing correct training/test splits, feature engineering, or other best practices here as we just want to show you how to apply any <code class="inlineCode">sklearn</code> model:
+        <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">import</span> sklearn.svm
+<span class="hljs-keyword">import</span> sklearn.datasets
+
+clf = sklearn.svm.SVC()
+X, y = sklearn.datasets.load_wine(return_X_y=<span class="hljs-literal">True</span>) clf.fit(X, y)
+</code></pre>
+</li>
+<li class="numberedList">We can then bring the feature data into a Spark DataFrame to show you how to apply the pandas UDF in later stages:
+        <pre class="programlisting code"><code class="hljs-code">df = spark.createDataFrame(X.tolist())
+</code></pre>
+</li>
+<li class="numberedList">pandas UDFs are very easy to define. We just write our logic in a function and then add the <code class="inlineCode">@pandas_udf</code> decorator, where we also have to provide the output type for the function. In the simplest case, we can just wrap the (normally serial or only locally parallelized) process of performing a prediction with the trained model:
+        <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">import</span> pandas <span class="hljs-keyword">as</span> pd
+<span class="hljs-keyword">from</span> pyspark.sql.types <span class="hljs-keyword">import</span> IntegerType
+<span class="hljs-keyword">from</span> pyspark.sql.functions <span class="hljs-keyword">import</span> pandas_udf
+
+<span class="hljs-meta">@pandas_udf(</span><span class="hljs-params">returnType=IntegerType()</span><span class="hljs-meta">)</span>
+<span class="hljs-keyword">def</span> <span class="hljs-title">predict_pd_udf</span>(<span class="hljs-params">*cols</span>):
+    X = pd.concat(cols, axis=<span class="hljs-number">1</span>)
+    <span class="hljs-keyword">return</span> pd.Series(clf.predict(X))
+</code></pre>
+</li>
+<li class="numberedList">Finally, we can apply this to the Spark <code class="inlineCode">DataFrame</code> containing the data by passing in the appropriate inputs we needed for our function. In this case, we will pass in the column names of the features, of which there are 13:
+        <pre class="programlisting code"><code class="hljs-code">col_names = [<span class="hljs-string">'_{}'</span>.<span class="hljs-built_in">format</span>(x) <span class="hljs-keyword">for</span> x <span class="hljs-keyword">in</span> <span class="hljs-built_in">range</span>(<span class="hljs-number">1</span>, <span class="hljs-number">14</span>)]
+df_pred = df.select(<span class="hljs-string">'*'</span>, predict_pd_udf(*col_names).alias(<span class="hljs-string">'class'</span>))
+</code></pre>
+</li>
+</ol>
+<p class="normal">Now, if you look at <a id="_idIndexMarker765"/>the results of this, you will see the following for the first few rows of the <code class="inlineCode">df_pred</code> DataFrame:</p>
+<figure class="mediaobject"><img alt="Figure 6.4 – The result of applying a simple pandas UDF " height="219" src="../Images/B19525_06_03.png" width="821"/></figure>
+<p class="packt_figref">Figure 6.3: The result of applying a simple pandas UDF.</p>
+<p class="normal">And that completes our whirlwind tour of UDFs and pandas UDFs in Spark, which allow us to take serial Python logic, such as data transformations or our ML models, and apply them in a manifestly parallel way.</p>
+<p class="normal">In the next section, we will focus on how to set ourselves up to perform Spark-based computations in the cloud.</p>
+<h2 class="heading-2" id="_idParaDest-145">Spark on the cloud</h2>
+<p class="normal">As should be clear <a id="_idIndexMarker766"/>from the preceding discussion, writing and deploying PySpark-based ML solutions can be done on your laptop, but for you to see the benefits when working at scale, you must have an appropriately sized computing cluster to hand. Provisioning this sort of infrastructure can be a long and painful process but as discussed already in this book, a plethora of options for infrastructure are available from the main public cloud providers.</p>
+<p class="normal">For Spark, AWS has a particularly nice solution <a id="_idIndexMarker767"/>called <strong class="keyWord">AWS Elastic MapReduce </strong>(<strong class="keyWord">EMR</strong>), which is a managed big data platform that allows you to easily configure clusters of a few different flavors across the big data ecosystem. In this book, we will focus on Spark-based solutions, so we will focus on creating and using clusters that have Spark tooling to hand.</p>
+<p class="normal">In the next section, we will go through a concrete example of spinning up a Spark cluster on EMR and then deploying a simple Spark ML-based application onto it.</p>
+<p class="normal">So, with that, let’s explore Spark on the cloud with <strong class="keyWord">AWS EMR</strong>!</p>
+<h3 class="heading-3" id="_idParaDest-146">AWS EMR example</h3>
+<p class="normal">To understand how <a id="_idIndexMarker768"/>EMR works, we will continue in the practical vein that the rest of this book will follow and dive into an example. We will begin by learning how to create a brand-new cluster before discussing how to write and deploy our first PySpark ML solution to it. Let’s get started:</p>
+<ol class="numberedList" style="list-style-type: decimal;">
+<li class="numberedList" value="1">First, navigate to the <strong class="screenText">EMR</strong> page on AWS and find the <strong class="screenText">Create Cluster</strong> button. You will then be brought to a page that allows you to input configuration data for your cluster. The first section is where you specify the name of the cluster and the applications you want to install on it. I will call this cluster <code class="inlineCode">mlewp2-cluster</code>, use the latest EMR release available at the time of writing, 6.11.0, and select the <strong class="screenText">Spark</strong> application bundle. </li>
+<li class="numberedList">All other configurations can remain as default in this first section. This is shown in <em class="italic">Figure 6.4</em>:
+    <figure class="mediaobject"><img alt="A screenshot of a computer program  Description automatically generated" height="575" src="../Images/B19525_06_04.png" width="759"/></figure>
+<p class="packt_figref">Figure 6.4: Creating our EMR cluster with some default configurations.</p></li>
+</ol>
+<ol class="numberedList" style="list-style-type: decimal;">
+<li class="numberedList" value="3">Next comes the configuration of the compute used in the cluster. You can just use the defaults here again but it is important to understand what is going on. First, there is the selection of whether to use “instance groups” or “instance fleets,” which refers to the strategy deployed for scaling up your compute given some constraints you provide. Instance groups are simpler and define the specific servers you want to run for each node type, more on this in a second, and you can choose between “on-demand” or “spot instances” for acquiring more servers if needed during the lifetime of the cluster. Instance fleets allow for a lot more complex acquisition strategies and for blends of different server instance types for each node type. For more information, read the AWS documentation to make sure you get a clear view of the different options, <a href="https://docs.aws.amazon.com/emr/index.xhtml"><span class="url">https://docs.aws.amazon.com/emr/index.xhtml</span></a>; we will proceed by using an instance group with default settings. Now, onto nodes. There are different nodes in an EMR cluster; primary, core and task. The primary node will run our YARN Resource Manager and will track job status and instance group health. The core nodes run some daemons and the Spark executors. Finally, the task nodes perform the actual distributed calculations. For now, let’s proceed with the defaults<a id="_idIndexMarker769"/> provided for the instance groups option, as shown for the <strong class="keyWord">Primary</strong> nodes in <em class="italic">Figure 6.5</em>.
+    <figure class="mediaobject"><img alt="A screenshot of a computer  Description automatically generated" height="431" src="../Images/B19525_06_05.png" width="762"/></figure>
+<p class="packt_figref">Figure 6.5: Compute configuration for our EMR cluster. We have selected the simpler “instance groups” option for the configuration and have gone with the server type defaults.</p></li>
+</ol>
+<ol class="numberedList" style="list-style-type: decimal;">
+<li class="numberedList" value="4">Next, we <a id="_idIndexMarker770"/>move onto defining the explicit cluster scaling behavior that we mentioned is used in the instance groups and instance fleet compute options in <em class="italic">step 2</em>. Again, select the defaults for now, but you can play around to make the cluster larger here in terms of numbers of nodes or you can define auto-scaling behaviour that will dynamically increase the cluster size upon larger workloads. <em class="italic">Figure 6.6</em> shows what this should look like.
+    <figure class="mediaobject"><img alt="A screenshot of a computer screen  Description automatically generated" height="358" src="../Images/B19525_06_06.png" width="758"/></figure>
+<p class="packt_figref">Figure 6.6: The cluster provisioning and scaling strategy selection. Here we have gone with the defaults of a specific, small cluster size, but you can increase these values to have a bigger cluster or use the auto-scaling option to provide min and max size limits.</p></li>
+</ol>
+<ol class="numberedList" style="list-style-type: decimal;">
+<li class="numberedList" value="5">Now, there is a <strong class="screenText">Networking</strong> section, which is easier if you have already created some <strong class="keyWord">virtual private clouds</strong> (<strong class="keyWord">VPCs</strong>) and <a id="_idIndexMarker771"/>subnets for the other examples in the book; see <em class="chapterRef">Chapter 5</em>, <em class="italic">Deployment Patterns and Tools</em> and the AWS documentation for more information. Just remember that VPCs are all about keeping the infrastructure you are provisioning isolated from other services in your own AWS account and even from the wider internet, so it’s definitely good to become familiar with them and their application. </li>
+<li class="numberedList">For completeness, <em class="italic">Figure 6.7</em> shows the setup I used for this example.
+    <figure class="mediaobject"><img alt="A screenshot of a computer  Description automatically generated" height="324" src="../Images/B19525_06_07.png" width="483"/></figure>
+<p class="packt_figref">Figure 6.7: The networking configuration requires the use of a VPC; it will automatically create a subnet for the cluster if there is not one selected.</p></li>
+</ol>
+<ol class="numberedList" style="list-style-type: decimal;">
+<li class="numberedList" value="7">We only have a<a id="_idIndexMarker772"/> couple more sections we need to input into to define our cluster. The next mandatory section is around cluster termination policies. I would always recommend having an automated teardown policy for infrastructure where possible as this helps to manage costs. There have been many stories across the industry of teams leaving un-used servers running and racking up huge bills! <em class="italic">Figure 6.8</em> shows that we are using such an automated cluster termination policy where the cluster will terminate after 1 hour of not being utilized.
+    <figure class="mediaobject"><img alt="A screenshot of a computer  Description automatically generated" height="343" src="../Images/B19525_06_08.png" width="668"/></figure>
+<p class="packt_figref">Figure 6.8: Defining a cluster termination policy like this one is considered best practice and can help avoid unnecessary costs.</p></li>
+</ol>
+<ol class="numberedList" style="list-style-type: decimal;">
+<li class="numberedList" value="8">The final<a id="_idIndexMarker773"/> required section for completion is the definition of the appropriate <strong class="keyWord">Identity and Access Management</strong> (<strong class="keyWord">IAM</strong>) roles, which<a id="_idIndexMarker774"/> defines what accounts can access the resources we are creating. If you already have IAM roles that you are happy to reuse as your EMR service role, then you can do this; for this example, however, let’s create a new service role specifically for this cluster. <em class="italic">Figure 6.9</em> shows that selecting the option to create a new role pre-populates the VPC, subnet, and security group with values matching what you have already selected through this process. You can add more to these. <em class="italic">Figure 6.10</em> shows that we can also select to create an “instance profile”, which is just the name given to a service role that applies to all server instances in an EC2 cluster at launch.
+    <figure class="mediaobject"><img alt="A screenshot of a computer  Description automatically generated" height="594" src="../Images/B19525_06_09.png" width="756"/></figure>
+<p class="packt_figref">Figure 6.9: Creating an AWS EMR service role.</p>
+<figure class="mediaobject"><img alt="A screenshot of a computer  Description automatically generated" height="283" src="../Images/B19525_06_10.png" width="759"/></figure>
+<p class="packt_figref">Figure 6.10: Creating an instance profile for the EC2 servers being used in this EMR cluster. An instance profile is just the name for the service role that is assigned to all cluster EC2 instances at spin-up time.</p></li>
+</ol>
+<ol class="numberedList" style="list-style-type: decimal;">
+<li class="numberedList" value="9">The sections <a id="_idIndexMarker775"/>discussed are all the mandatory ones required to create your cluster, but there are also some optional sections that I would like to briefly mention to guide your further exploration. There is the option to specify <strong class="screenText">steps</strong>, which is where you can define shell scripts, JAR applications, or Spark applications to run in sequence. This means you can spin up your cluster with your applications ready to start processing data in the sequence you desire, rather than submitting jobs after the infrastructure deployment. There is a section on <strong class="screenText">Bootstrap actions</strong>, which allows you to define custom installation or configuration steps that should run before any applications are installed or any data is processed on the EMR cluster. Cluster logs locations, tags, and some basic software considerations are also available for configuration. The final important point to mention is on the security configuration. <em class="italic">Figure 6.11</em> shows the options. Although we will deploy this cluster without specifying any EC2 key pair or security configuration, it is crucially important that you understand the security requirements and norms of your organization if you want to run this cluster in production. Please consult your security or networking teams to ensure this is all in line with expectations and<a id="_idIndexMarker776"/> requirements. For now, we can leave it blank and proceed to create the cluster.
+    <figure class="mediaobject"><img alt="A screenshot of a computer  Description automatically generated" height="279" src="../Images/B19525_06_11.png" width="759"/></figure>
+<p class="packt_figref">Figure 6.11: The security configuration for the cluster shown here is optional but should be considered carefully if you aim to run the cluster in production.</p></li>
+</ol>
+<ol class="numberedList" style="list-style-type: decimal;">
+<li class="numberedList" value="10">Now that we have selected all of the mandatory options, click the <strong class="screenText">Create cluster</strong> button to launch. Upon successful creation, you should see a review page like that shown in <em class="italic">Figure 6.12</em>. And that’s it; you have now created your own Spark cluster in the cloud!
+    <figure class="mediaobject"><img alt="A screenshot of a computer  Description automatically generated" height="298" src="../Images/B19525_06_12.png" width="763"/></figure>
+<p class="packt_figref">Figure 6.12: EMR cluster creation review page shown upon successful launch.</p></li>
+</ol>
+<p class="normal">After spinning up our<a id="_idIndexMarker777"/> EMR cluster, we want to be able to submit work to it. Here, we will adapt the example Spark ML pipeline we produced in <em class="chapterRef">Chapter 3</em>, <em class="italic">From Model to Model Factory</em>, to analyze the banking dataset and submit this as a step to our newly created cluster. We will do this as a standalone single PySpark script that acts as the only step in our application, but it is easy to build on this to make far more complex applications:</p>
+<ol class="numberedList" style="list-style-type: decimal;">
+<li class="numberedList" value="1">First, we will take the code from <em class="chapterRef">Chapter 3</em>, <em class="italic">From Model to Model Factory</em>, and perform some nice refactoring based on our discussions around good practices. We can more effectively modularize the code so that it contains a function that provides all our modeling steps (not all of the steps have been reproduced here, for brevity). We have also included a final step that writes the results of the modeling to a <code class="inlineCode">parquet</code> file:
+        <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">def</span> <span class="hljs-title">model_bank_data</span>(<span class="hljs-params">spark, input_path, output_path</span>):
+    data = spark.read.<span class="hljs-built_in">format</span>(<span class="hljs-string">"csv"</span>)\
+        .option(<span class="hljs-string">"sep"</span>, <span class="hljs-string">";"</span>)\
+        .option(<span class="hljs-string">"inferSchema"</span>, <span class="hljs-string">"true"</span>)\
+        .option(<span class="hljs-string">"header"</span>, <span class="hljs-string">"true"</span>)\
+        .load(input_path)
+    data = data.withColumn(<span class="hljs-string">'label'</span>, f.when((f.col(<span class="hljs-string">"y"</span>) == <span class="hljs-string">"yes"</span>),
+                                            <span class="hljs-number">1</span>).otherwise(<span class="hljs-number">0</span>))
+    <span class="hljs-comment"># ...</span>
+    data.write.<span class="hljs-built_in">format</span>(<span class="hljs-string">'parquet'</span>)\
+        .mode(<span class="hljs-string">'overwrite'</span>)\
+        .save(output_path)
+</code></pre>
+</li>
+<li class="numberedList">Building on this, we will wrap all of the main boilerplate code into a <code class="inlineCode">main</code> function that can be called at the <code class="inlineCode">if __name__=="__main__":</code> entry point to the program:
+        <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">def</span> <span class="hljs-title">main</span>():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        <span class="hljs-string">'--input_path'</span>, <span class="hljs-built_in">help</span>=<span class="hljs-string">'S3 bucket path for the input data.</span>
+        <span class="hljs-string">Assume to be csv for this case.'</span>
+    )
+    parser.add_argument(
+        <span class="hljs-string">'--output_path'</span>, <span class="hljs-built_in">help</span>=<span class="hljs-string">'S3 bucket path for the output data.</span>
+        <span class="hljs-string">Assume to be parquet for this case'</span>
+    )
+    args = parser.parse_args()
+    <span class="hljs-comment"># Create spark context</span>
+    sc = SparkContext(<span class="hljs-string">"local"</span>, <span class="hljs-string">"pipelines"</span>)
+    <span class="hljs-comment"># Get spark session</span>
+    spark = SparkSession\
+        .builder\
+        .appName(<span class="hljs-string">'MLEWP Bank Data Classifier EMR Example'</span>)\
+        .getOrCreate()
+    model_bank_data(
+        spark,
+        input_path=args.input_path,,
+        output_path=args.output_path
+    )
+</code></pre>
+</li>
+<li class="numberedList">We put the <a id="_idIndexMarker778"/>preceding functions into a script called <code class="inlineCode">spark_example_emr.py</code>, which we will submit to our EMR cluster later:
+        <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">import</span> argparse
+<span class="hljs-keyword">from</span> pyspark.sql <span class="hljs-keyword">import</span> SparkSession
+<span class="hljs-keyword">from</span> pyspark <span class="hljs-keyword">import</span> SparkContext
+<span class="hljs-keyword">from</span> pyspark.sql <span class="hljs-keyword">import</span> functions <span class="hljs-keyword">as</span> f
+<span class="hljs-keyword">from</span> pyspark.mllib.evaluation <span class="hljs-keyword">import</span> BinaryClassificationMetrics, MulticlassMetrics
+<span class="hljs-keyword">from</span> pyspark.ml.feature <span class="hljs-keyword">import</span> StandardScaler, OneHotEncoder, StringIndexer, Imputer, VectorAssembler
+<span class="hljs-keyword">from</span> pyspark.ml <span class="hljs-keyword">import</span> Pipeline, PipelineModel
+<span class="hljs-keyword">from</span> pyspark.ml.classification <span class="hljs-keyword">import</span> LogisticRegression
+
+<span class="hljs-keyword">def</span> <span class="hljs-title">model_bank_data</span>(<span class="hljs-params">spark, input_path, output_path</span>):
+    ...
+<span class="hljs-keyword">def</span> <span class="hljs-title">main</span>():
+    ...
+<span class="hljs-keyword">if</span> __name__ == <span class="hljs-string">"__main__"</span>:
+    main()
+</code></pre>
+</li>
+<li class="numberedList">Now, to submit this script to the EMR cluster we have just created, we need to find out the cluster ID, which we can get from the AWS UI or by running the following command:
+        <pre class="programlisting con"><code class="hljs-con">aws emr list-clusters --cluster-states WAITING
+</code></pre>
+</li>
+<li class="numberedList">Then, we need to send the <code class="inlineCode">spark_example_emr.py</code> script to S3 to be read in by the cluster. We can create an S3 bucket called <code class="inlineCode">s3://mlewp-ch6-emr-examples</code> to store this and our other artifacts using either the CLI or the AWS console (see <em class="chapterRef">Chapter 5</em>, <em class="italic">Deployment Patterns and Tools</em>). Once copied over, we are ready for the final step.</li>
+<li class="numberedList">Now, we must submit the script using the following command, with <code class="inlineCode">&lt;CLUSTER_ID&gt;</code> replaced <a id="_idIndexMarker779"/>with the ID of the cluster we just created. Note that if your cluster has been terminated due to the automated termination policy we set, you can’t restart it but you can clone it. After a few minutes, the step should have completed and the outputs should have been written to the <code class="inlineCode">results.parquet</code> file in the same S3 bucket:
+        <pre class="programlisting con"><code class="hljs-con">aws emr add-steps\
+--region eu-west-1 \
+--cluster-id &lt;CLUSTER_ID&gt; \
+--steps Type=Spark,Name="Spark Application Step",ActionOnFailure=CONTINUE,\
+Args=[--files,s3://mlewp-ch6-emr-examples/spark_example_emr.py,\
+--input_path,s3://mlewp-ch6-emr-examples/bank.csv,\
+--output_path,s3://mleip-emr-ml-simple/results.parquet]
+</code></pre>
+<p class="normal">And that is it – that is how we can start developing PySpark ML pipelines on the cloud using <strong class="keyWord">AWS EMR</strong>!</p> </li>
+</ol>
+<p class="normal">You will see that this previous process has worked successfully by navigating to the appropriate S3 <a id="_idIndexMarker780"/>bucket and confirming that the <code class="inlineCode">results.parquet</code> file was created succesfully; see <em class="italic">Figure 6.13</em>.</p>
+<figure class="mediaobject"><img alt="" height="430" role="presentation" src="../Images/B19525_06_13.png" width="825"/></figure>
+<p class="packt_figref">Figure 6.13: Successful creation of the results.parquet file upon submission of the EMR script.</p>
+<p class="normal">In the next section, we will explore another method of scaling up our solutions by using so-called serverless tools.</p>
+<h1 class="heading-1" id="_idParaDest-147">Spinning up serverless infrastructure</h1>
+<p class="normal">Whenever we do any ML or <a id="_idIndexMarker781"/>software engineering, we have to run the requisite tasks and computations on computers, often with appropriate networking, security, and other protocols and software already in place, which we have often referred to already as constituting our <em class="italic">infrastructure</em>. A big part of our infrastructure is the servers we use to run the actual computations. This might seem a bit strange, so let’s start by talking about <em class="italic">serverless</em> infrastructure (how can there be such a thing?). This section will explain this concept and show you how to use it to scale out your ML solutions.</p>
+<p class="normal"><strong class="keyWord">Serverless</strong> is a bit misleading as a term as it does not mean that no physical servers are running your programs. It does mean, however, that the programs you are running should not be thought of as being statically hosted on one machine, but as ephemeral instances on another layer on top of the underlying hardware.</p>
+<p class="normal">The benefits of serverless tools<a id="_idIndexMarker782"/> for your ML solution include (but are not limited to) the following:</p>
+<ul>
+<li class="bulletList"><strong class="keyWord">No servers</strong>: Don’t underestimate the savings in time and energy you can get by offloading infrastructure management to your cloud provider.</li>
+<li class="bulletList"><strong class="keyWord">Simplified scaling</strong>: It’s usually very easy to define the scaling behavior of your serverless components by using clearly defined maximum instances, for example.</li>
+<li class="bulletList"><strong class="keyWord">Low barrier to entry</strong>: These components are usually extremely easy to set up and run, allowing you and your team members to focus on writing high-quality code, logic, and models.</li>
+<li class="bulletList"><strong class="keyWord">Natural integration points</strong>: Serverless tools are often nice to use for handovers between other tools and components. Their ease of setup means you can be up and running with simple jobs that pass data or trigger other services in no time.</li>
+<li class="bulletList"><strong class="keyWord">Simplified serving</strong>: Some serverless tools are excellent for providing a serving layer to your ML models. The scaling and low barrier to entry mentioned previously mean you can quickly create a very scalable service that provides <a id="_idIndexMarker783"/>predictions upon request or upon being triggered by some other event.</li>
+</ul>
+<p class="normal">One of the best<a id="_idIndexMarker784"/> and most widely used examples of serverless functionality is <strong class="keyWord">AWS Lambda</strong>, which allows us to write programs in a variety of languages with a simple web browser interface or through our usual development tools, and then have them run completely independently of any infrastructure that’s been set up. </p>
+<p class="normal">Lambda is an<a id="_idIndexMarker785"/> amazing low-entry-barrier solution to getting some code up and running and scaling it up. However, it is very much aimed at creating simple APIs that can be hit over an HTTP request. Deploying your ML model with Lambda is particularly useful if you are aiming for an event- or request-driven system.</p>
+<p class="normal">To see this in action, let’s build a basic system that takes incoming image data as an HTTP request with a JSON body and returns a similar message containing the classification of the data using a pre-built Scikit-Learn model. This walkthrough is based on the AWS example at <a href="https://aws.amazon.com/blogs/compute/deploying-machine-learning-models-with-serverless-templates/"><span class="url">https://aws.amazon.com/blogs/compute/deploying-machine-learning-models-with-serverless-templates/</span></a>.</p>
+<p class="normal">For this, we can save a lot of time by leveraging templates already built and maintained as part of the<a id="_idIndexMarker786"/> AWS <strong class="keyWord">Serverless Application Model</strong> (<strong class="keyWord">SAM</strong>) framework (<a href="https://aws.amazon.com/about-aws/whats-new/2021/06/aws-sam-launches-machine-learning-inference-templates-for-aws-lambda/"><span class="url">https://aws.amazon.com/about-aws/whats-new/2021/06/aws-sam-launches-machine-learning-inference-templates-for-aws-lambda/</span></a>).</p>
+<p class="normal">To install the AWS SAM CLI on your relevant platform, follow the instructions at <a href="https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-cli-install.xhtml"><span class="url">https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-cli-install.xhtml</span></a>.</p>
+<p class="normal">Now, let’s perform the <a id="_idIndexMarker787"/>following steps to set up a template serverless deployment for hosting and serving a ML model that classifies images of handwritten digits:</p>
+<ol class="numberedList" style="list-style-type: decimal;">
+<li class="numberedList" value="1">First, we must run the <code class="inlineCode">sam init</code> command and select the AWS <code class="inlineCode">Quick Start Templates</code> option:
+        <pre class="programlisting con"><code class="hljs-con">Which template source would you like to use?
+        1 - AWS Quick Start Templates
+        2 - Custom Template Location
+Choice: 1
+</code></pre>
+</li>
+<li class="numberedList">You will then be offered a choice of <code class="inlineCode">AWS Quick Start</code> Application templates to use; select option 15, <code class="inlineCode">Machine Learning</code>:
+        <pre class="programlisting con"><code class="hljs-con">Choose an AWS Quick Start application template
+    1 - Hello World Example
+    2 - Data processing
+    3 - Hello World Example with Powertools for AWS Lambda
+    4 - Multi-step workflow
+    5 - Scheduled task
+    6 - Standalone function
+    7 - Serverless API
+    8 - Infrastructure event management
+    9 - Lambda Response Streaming
+    10 - Serverless Connector Hello World Example
+    11 - Multi-step workflow with Connectors
+    12 - Full Stack
+    13 - Lambda EFS example
+    14 - DynamoDB Example
+    15 - Machine Learning
+Template:
+</code></pre>
+</li>
+<li class="numberedList">Next are the options for the Python runtime you want to use; in line with the rest of the book, we will use the Python 3.10 runtime:
+        <pre class="programlisting con"><code class="hljs-con">Which runtime would you like to use?
+    1 - python3.9
+    2 - python3.8
+    3 - python3.10
+Runtime:
+</code></pre>
+</li>
+<li class="numberedList">At the time of writing, the SAM CLI will then auto-select some options based on these choices, first the package type and then the dependency manager. You will then be asked to confirm the ML starter template you want to use. For this example, select <code class="inlineCode">XGBoost Machine Learning API</code>:
+        <pre class="programlisting con"><code class="hljs-con">Based on your selections, the only Package type available is Image.
+We will proceed to selecting the Package type as Image.
+Based on your selections, the only dependency manager available is pip.
+We will proceed copying the template using pip.
+Select your starter template
+    1 - PyTorch Machine Learning Inference API
+    2 - Scikit-learn Machine Learning Inference API
+    3 - Tensorflow Machine Learning Inference API
+    4 - XGBoost Machine Learning Inference API
+Template: 4
+</code></pre>
+</li>
+<li class="numberedList">The SAM CLI <a id="_idIndexMarker788"/>then helpfully asks about some options for configuring request tracing and monitoring; you can select yes or no depending on your own preferences. I have selected no for the purposes of this example. You can then give the solution a name; here I have gone with <code class="inlineCode">mlewp-sam-ml-api</code>:
+        <pre class="programlisting con"><code class="hljs-con">Would you like to enable X-Ray tracing on the function(s) in your application? [y/N]: N
+Would you like to enable monitoring using CloudWatch Application Insights?
+For more info, please view: https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/cloudwatch-application-insights.xhtml [y/N]: N
+Project name [sam-app]: mlewp-sam-ml-api
+Cloning from https://github.com/aws/aws-sam-cli-app-templates (process may take a moment)
+</code></pre>
+</li>
+<li class="numberedList">Finally, your command line will provide some helpful information about the installation and next steps:
+        <pre class="programlisting con"><code class="hljs-con">    -----------------------
+    Generating application:
+    -----------------------
+    Name: mlewp-sam-ml-api
+    Base Image: amazon/python3.10-base
+    Architectures: x86_64
+    Dependency Manager: pip
+    Output Directory: .
+    Configuration file: mlewp-sam-ml-api/samconfig.toml
+    Next steps can be found in the README file at mlewp-sam-ml-api/README.md
+Commands you can use next
+=========================
+[*] Create pipeline: cd mlewp-sam-ml-api &amp;&amp; sam pipeline init --bootstrap
+[*] Validate SAM template: cd mlewp-sam-ml-api &amp;&amp; sam validate
+[*] Test Function in the Cloud: cd mlewp-sam-ml-api &amp;&amp; sam sync --stack-name {stack-name} --watch
+</code></pre>
+</li>
+</ol>
+<p class="normal">Note that the<a id="_idIndexMarker789"/> preceding steps have created a template for an XGBoost-based system that classifies handwritten digits. For other applications and project use cases, you will need to adapt the source code of the template as you require. If you want to deploy this example, follow the next few steps:</p>
+<ol class="numberedList" style="list-style-type: decimal;">
+<li class="numberedList" value="1">First, we must build the application container provided with the template. First, navigate to the top directory of your project, you can see the directory structure should be something like below. I have used the <code class="inlineCode">tree</code> command to provide a clean outline of the directory structure in the command line:
+        <pre class="programlisting con"><code class="hljs-con">cd mlewp-sam-ml-api
+ls
+tree
+├── README.md
+├── __init__.py
+├── app
+│   ├── Dockerfile
+│   ├── __init__.py
+│   ├── app.py
+│   ├── model
+│   └── requirements.txt
+├── events
+│   └── event.json
+├── samconfig.toml
+└── template.yaml
+3 directories, 10 files
+</code></pre>
+</li>
+<li class="numberedList">Now that we are in the top directory, we can run the <code class="inlineCode">build</code> command. This requires that Docker is running in the background on your machine:
+        <pre class="programlisting con"><code class="hljs-con">sam build
+</code></pre>
+</li>
+<li class="numberedList">Upon a <a id="_idIndexMarker790"/>successful build, you should receive a success message similar to the following in your terminal:
+        <pre class="programlisting con"><code class="hljs-con">Build Succeeded
+Built Artifacts  : .aws-sam/build
+Built Template   : .aws-sam/build/template.yaml
+Commands you can use next
+=========================
+[*] Validate SAM template: sam validate
+[*] Invoke Function: sam local invoke
+[*] Test Function in the Cloud: sam sync --stack-name {{stack-name}} --watch
+[*] Deploy: sam deploy --guided
+</code></pre>
+</li>
+<li class="numberedList">Now, we can test the service locally to ensure that everything is working well with the mock data that’s supplied with the repository. This uses a JSON file that encodes a basic image and runs the inference step for the service. If this has worked, you will see an output that looks something like the following for your service:
+        <pre class="programlisting con"><code class="hljs-con">sam local invoke  --event events/event.json
+Invoking Container created from inferencefunction:python3.10-v1
+Building image.................
+Using local image: inferencefunction:rapid-x86_64.
+START RequestId: de4a2fe1-be86-40b7-a59d-151aac19c1f0 Version: $LATEST
+END RequestId: de4a2fe1-be86-40b7-a59d-151aac19c1f0
+REPORT RequestId: de4a2fe1-be86-40b7-a59d-151aac19c1f0    Init Duration: 1.30 ms    Duration: 1662.13 ms    Billed Duration: 1663 ms    Memory Size: 5000 MB    Max Memory Used: 5000 MB
+{"statusCode": 200, "body": "{\"predicted_label\": 3}"}%
+</code></pre>
+</li>
+<li class="numberedList">In a real project, you would edit the source code for the solution in the <code class="inlineCode">app.py</code> and other files as required before deploying up to the cloud. We will do this using the SAM CLI , with the understanding that if you want to automate this process, you can use the CI/CD processes and tools we discussed in several places in this book, especially in <em class="chapterRef">Chapter 4</em>, <em class="italic">Packaging Up</em>. To deploy, you can use the guided deployment wizard with the CLI by running the <code class="inlineCode">deploy</code> command, which will return the below output:
+        <pre class="programlisting con"><code class="hljs-con">sam deploy --guided
+Configuring SAM deploy
+======================
+    Looking for config file [samconfig.toml] :  Found
+    Reading default arguments  :  Success
+    Setting default arguments for 'sam deploy'
+    =========================================
+    Stack Name [mlewp-sam-ml-api]:
+</code></pre>
+</li>
+<li class="numberedList">We then <a id="_idIndexMarker791"/>have to configure the application for each of the provided elements. I have selected the defaults in most cases, but you can refer to the AWS documentation and make the choices most relevant to your project:
+        <pre class="programlisting con"><code class="hljs-con">Configuring SAM deploy
+======================
+    Looking for config file [samconfig.toml] :  Found
+    Reading default arguments  :  Success
+    Setting default arguments for 'sam deploy'
+    =========================================
+    Stack Name [mlewp-sam-ml-api]:
+    AWS Region [eu-west-2]:
+    #Shows you resources changes to be deployed and require a 'Y' to initiate deploy
+    Confirm changes before deploy [Y/n]: y
+    #SAM needs permission to be able to create roles to connect to the resources in your template
+    Allow SAM CLI IAM role creation [Y/n]: y
+    #Preserves the state of previously provisioned resources when an operation fails
+    Disable rollback [y/N]: y
+    InferenceFunction has no authentication. Is this okay? [y/N]: y
+    Save arguments to configuration file [Y/n]: y
+    SAM configuration file [samconfig.toml]:
+    SAM configuration environment [default]:
+</code></pre>
+</li>
+<li class="numberedList">The previous step will generate a lot of data in the terminal; you can monitor this to see if there are any errors or issues. If the deployment was successful, then you should see some final metadata about the application that looks like this:
+        <pre class="programlisting con"><code class="hljs-con">CloudFormation outputs from deployed stack
+---------------------------------------------------------------------------------------------------------------------
+Outputs
+---------------------------------------------------------------------------------------------------------------------
+Key                 InferenceApi
+Description         API Gateway endpoint URL for Prod stage for Inference function
+Value               https://8qg87m9380.execute-api.eu-west-2.
+amazonaws.com/Prod/classify_digit/
+Key                 InferenceFunctionIamRole
+Description         Implicit IAM Role created for Inference function
+Value               arn:aws:iam::508972911348:role/mlewp-sam-ml-api-InferenceFunctionRole-1UE509ZXC1274
+Key                 InferenceFunction
+Description         Inference Lambda Function ARN
+Value               arn:aws:lambda:eu-west-2:508972911348:function:mlewp-sam-ml-api-InferenceFunction-ueFS1y2mu6Gz
+---------------------------------------------------------------------------------------------------------------------
+</code></pre>
+</li>
+<li class="numberedList">As a quick test to confirm the cloud-hosted solution is working, we can use a tool such as Postman to hit our shiny new ML API. Simply copy the <code class="inlineCode">InferenceApi</code> URL <a id="_idIndexMarker792"/>from the output screen from <em class="italic">step 8</em> as the destination for the request, select <strong class="screenText">POST</strong> for the request type, and then choose <strong class="screenText">binary</strong> as the body type. Note that if you need to get the inference URL, again you can run the <code class="inlineCode">sam list endpoints --output json</code> command in your terminal. Then, you can choose an image of a handwritten digit, or any other image for that matter, to send up to the API . You can do this in Postman either by selecting the <strong class="screenText">binary</strong> body option and attaching an image file or you can copy in the encoded string of an image. In <em class="italic">Figure 6.14</em>, I have used the encoded string for the <code class="inlineCode">body</code> key-value pair in the <code class="inlineCode">events/event.json</code> file we used to test the function locally:
+    <figure class="mediaobject"><img alt="A screenshot of a computer  Description automatically generated" height="371" src="../Images/B19525_06_14.png" width="760"/></figure>
+<p class="packt_figref">Figure 6.14: Calling our serverless ML endpoint with Postman. This uses an encoded example image as the body of the request that is provided with the SAM XGBoost ML API template.</p></li>
+</ol>
+<ol class="numberedList" style="list-style-type: decimal;">
+<li class="numberedList" value="9">You can also<a id="_idIndexMarker793"/> test this more programmatically with a <code class="inlineCode">curl</code> command like the following – just replace the encoded binary string of the image with the appropriate values, or indeed edit the command to point to a data binary if you wish, and you are good to go:
+        <pre class="programlisting con"><code class="hljs-con">curl --location --request POST 'https://8qg87m9380.execute-api.eu-west-2.amazonaws.com/Prod/classify_digit/' \
+--header 'Content-Type: raw/json' \
+--data '&lt;ENCODED_IMAGE_STRING&gt;'
+</code></pre>
+<p class="normal">In this step and <em class="italic">step 9</em>, the body of the response from the Lambda function is as follows:</p>
+<pre class="programlisting con"><code class="hljs-con">{
+    "predicted_label": 3
+}
+</code></pre>
+<p class="normal">And that’s it – we have just built and deployed a simple serverless ML inference service on AWS!</p> </li>
+</ol>
+<p class="normal">In the next section, we will touch upon the final way of scaling our solutions that we will discuss in this chapter, which is using Kubernetes (K8s) and Kubeflow to horizontally scale containerized applications.</p>
+<h1 class="heading-1" id="_idParaDest-148">Containerizing at scale with Kubernetes</h1>
+<p class="normal">We have already covered how to use containers for building and deploying our ML solutions. The next step is understanding how to orchestrate and manage several containers to deploy and run applications at scale. This is where the open source tool <strong class="keyWord">Kubernetes </strong>(<strong class="keyWord">K8s</strong>)<strong class="keyWord"> </strong>comes in.</p>
+<p class="normal">K8s is an <a id="_idIndexMarker794"/>extremely powerful tool that provides a variety of different functionalities that help us create and manage very scalable containerized applications, including (but not limited to) the following:</p>
+<ul>
+<li class="bulletList"><strong class="keyWord">Load Balancing</strong>: K8s <a id="_idIndexMarker795"/>will manage routing incoming traffic to your containers for you so that the load is split evenly.</li>
+<li class="bulletList"><strong class="keyWord">Horizontal Scaling</strong>: K8s<a id="_idIndexMarker796"/> provides simple interfaces so that you can control the number of container instances you have at any one time, allowing you to scale massively if needed.</li>
+<li class="bulletList"><strong class="keyWord">Self Healing</strong>: There<a id="_idIndexMarker797"/> is built-in management for replacing or rescheduling components that are not passing health checks.</li>
+<li class="bulletList"><strong class="keyWord">Automated Rollbacks</strong>: K8s<a id="_idIndexMarker798"/> stores the history of your system so that you can revert to a previous working version if something goes wrong.</li>
+</ul>
+<p class="normal">All of these features help ensure that your deployed solutions are robust and able to perform as required under all circumstances.</p>
+<p class="normal">K8s is designed to ensure the preceding features are embedded from the ground up by using a microservice architecture, with a control plane interacting with nodes (servers), each of which host pods (one or more containers) that run the components of your application.</p>
+<p class="normal">The key thing that K8s <a id="_idIndexMarker799"/>gives you is the ability to scale your application based on load by creating replicas of the base solution. This is extremely useful if you are building services with API endpoints that could feasibly face surges in demand at different times. To learn about some of the ways you can do this, see <a href="https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#scaling-a-deployment"><span class="url">https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#scaling-a-deployment</span></a>:</p>
+<figure class="mediaobject"><img alt="Figure 6.19 – The K8s architecture " height="519" src="../Images/B19525_06_15.png" width="821"/></figure>
+<p class="packt_figref">Figure 6.15: The K8s architecture.</p>
+<p class="normal">But what about ML? In this case, we can look to a <a id="_idIndexMarker800"/>newer piece of the K8s ecosystem: <strong class="keyWord">Kubeflow</strong>, which<a id="_idIndexMarker801"/> we learned how to use in <em class="chapterRef">Chapter 5</em>, <em class="italic">Deployment Patterns and Tools</em>.</p>
+<p class="normal">Kubeflow styles <a id="_idIndexMarker802"/>itself as the <em class="italic">ML toolkit for K8s</em> (<a href="https://www.kubeflow.org/"><span class="url">https://www.kubeflow.org/</span></a>), so as ML engineers, it makes sense for us to be aware of this rapidly developing solution. This is a very exciting tool and an active area of development. </p>
+<p class="normal">The concept of horizontal scaling for K8s generally still applies here, but Kubeflow provides some standardized tools for converting the pipelines you build into standard K8s resources, which can then be managed and resourced in the ways described previously. This can help reduce <em class="italic">boilerplate</em> and lets us, as ML engineers, focus on building our modelling logic rather than setting up the infrastructure. We leveraged this when we built some example pipelines in <em class="chapterRef">Chapter 5</em>.</p>
+<p class="normal">We will explore Kubernetes in far more detail in <em class="chapterRef">Chapter 8</em>, <em class="italic">Building an Example ML Microservice</em>, where we use it to scale out our own wrapped ML model in a REST API. This will complement nicely the work we have done in this chapter on higher-level abstractions that can be used for scaling out, especially in the <em class="italic">Spinning up serverless infrastructure</em> section. We will only touch on K8s and Kubeflow very briefly here, to make sure you are aware of these tools for your exploration. For more details on K8s and Kubeflow, consult the documentation. I would also recommend another Packt title called <em class="italic">Kubernetes in Production Best Practices</em> by <em class="italic">Aly Saleh</em> and <em class="italic">Murat Karslioglu</em>.</p>
+<p class="normal">Now, we will move on and discuss another very powerful toolkit for scaling out compute-intensive Python workloads, which has now become extremely popular across the ML engineering community and been used by organizations such as Uber, Amazon and even used by OpenAI for training their large<a id="_idIndexMarker803"/> language <strong class="keyWord">Generative Pre-trained Transformer</strong> (<strong class="keyWord">GPT</strong>) models, which we discuss at length in <em class="chapterRef">Chapter 7</em>, <em class="italic">Deep Learning, Generative AI, and LLMOps</em>. Let’s meet <strong class="keyWord">Ray</strong>.</p>
+<h1 class="heading-1" id="_idParaDest-149">Scaling with Ray</h1>
+<p class="normal"><strong class="keyWord">Ray</strong> is a <a id="_idIndexMarker804"/>Python native distributed computing framework that was specifically designed to help ML engineers meet the needs of massive data and massively scalable ML systems. Ray has an ethos of making scalable compute available to every ML developer, and in doing this in a way such that you can run anywhere by abstracting out all interactions with underlying infrastructure. One of the unique features of Ray that is particularly interesting is that it has a distributed scheduler, rather than a scheduler or DAG creation mechanism that runs in a central process, like in Spark. At its core, Ray has been developed with compute-intensive tasks such as ML model training in mind from the beginning, which is slightly different from Apache Spark, which has data intensity in mind. You can therefore think about this in a simplified manner: if you need to process lots of data a couple of times, Spark; if you need to process<a id="_idIndexMarker805"/> one piece of data lots of times, Ray. This is just a heuristic so should not be followed strictly, but hopefully it gives you a helpful rule of thumb. As an example, if you need to transform millions and millions of rows of data in a large batch process, then it makes sense to use Spark, but if you want to train an ML model on the same data, including hyperparameter tuning, then Ray may make a lot of sense. </p>
+<p class="normal">The two tools can be used together quite effectively, with Spark transforming the feature set before feeding this into a Ray workload for ML training. This is taken care of in particular <a id="_idIndexMarker806"/>by the <strong class="keyWord">Ray AI Runtime</strong> (<strong class="keyWord">AIR</strong>), which has a series of different libraries to help scale different pieces of an ML solution. These include:</p>
+<ul>
+<li class="bulletList"><strong class="keyWord">Ray Data</strong>: Focused <a id="_idIndexMarker807"/>on providing data pre-processing and transformation primitives.</li>
+<li class="bulletList"><strong class="keyWord">Ray Train</strong>: Facilitates <a id="_idIndexMarker808"/>large model training.</li>
+<li class="bulletList"><strong class="keyWord">Ray Tune</strong>: Helps <a id="_idIndexMarker809"/>with scalable hyperparameter training.</li>
+<li class="bulletList"><strong class="keyWord">Ray RLib</strong>: Supports <a id="_idIndexMarker810"/>methods for the development of reinforcement learning models.</li>
+<li class="bulletList"><strong class="keyWord">Ray Batch Predictor</strong>: For<a id="_idIndexMarker811"/> batch inference.</li>
+<li class="bulletList"><strong class="keyWord">Ray Serving</strong>: For re<a id="_idIndexMarker812"/> al-time inference.</li>
+</ul>
+<p class="normal">The AIR framework provides a unified API through which to interact with all of these capabilities and nicely integrates with a huge amount of the standard ML ecosystem that you will be used to, and that we have leveraged in this book.</p>
+<figure class="mediaobject"><img alt="A screenshot of a computer  Description automatically generated" height="550" src="../Images/B19525_06_16.png" width="787"/></figure>
+<p class="packt_figref">Figure 6.16: The Ray AI runtime, from a presentation by Jules Damji from Anyscale: https://microsites.databricks.com/sites/default/files/2022-07/Scaling%20AI%20Workloads%20with%20the%20Ray%20Ecosystem.pdf. Reproduced with permission.</p>
+<figure class="mediaobject"><img alt="A screenshot of a computer  Description automatically generated" height="340" src="../Images/B19525_06_17.png" width="820"/></figure>
+<p class="packt_figref">Figure 6.17: The Ray architecture including the Raylet scheduler. From a presentation by Jules Damji: https://microsites.databricks.com/sites/default/files/2022-07/Scaling%20AI%20Workloads%20with%20the%20Ray%20Ecosystem.pdf. Reproduced with permission.</p>
+<p class="normal">The Ray Core API<a id="_idIndexMarker813"/> has a series of different objects that you leverage when using Ray in order to distribute your solution. The first is tasks, which are asynchronous items of work for the system to perform. To define a task, you can take a Python function like:</p>
+<pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">def</span> <span class="hljs-title">add</span>(<span class="hljs-built_in">int</span><span class="hljs-params">: x, </span><span class="hljs-built_in">int</span><span class="hljs-params">: y</span>) -&gt; <span class="hljs-built_in">int</span>:
+    <span class="hljs-keyword">return</span> x+y
+</code></pre>
+<p class="normal">And then add the <code class="inlineCode">@remote</code> decorator and then use the <code class="inlineCode">.remote()</code> syntax in order to submit this task to the cluster. This is not a blocking function so will just return an ID that Ray uses to refer to the task in later computation steps (<a href="https://www.youtube.com/live/XME90SGL6Vs?feature=share&amp;t=832"><span class="url">https://www.youtube.com/live/XME90SGL6Vs?feature=share&amp;t=832</span></a>) :</p>
+<pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">import</span> ray
+
+<span class="hljs-meta">@remote</span>
+<span class="hljs-keyword">def</span> <span class="hljs-title">add</span>(<span class="hljs-built_in">int</span><span class="hljs-params">: x, </span><span class="hljs-built_in">int</span><span class="hljs-params">: y</span>) -&gt; <span class="hljs-built_in">int</span>:
+    <span class="hljs-keyword">return</span> x+y
+add.remote()
+</code></pre>
+<p class="normal">In the same vein, the Ray API can extend the same concepts to classes as well; in this case, these are called <code class="inlineCode">Actors</code>:</p>
+<pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">import</span> ray
+
+<span class="hljs-meta">@ray.remote</span>
+<span class="hljs-keyword">class</span> <span class="hljs-title">Counter</span>(<span class="hljs-title">object</span>):
+    <span class="hljs-keyword">def</span> <span class="hljs-title">__init__</span>(<span class="hljs-params">self</span>):
+        self.value = <span class="hljs-number">0</span>
+    <span class="hljs-keyword">def</span> <span class="hljs-title">increment</span>(<span class="hljs-params">self</span>):
+        self.value += <span class="hljs-number">1</span>
+        <span class="hljs-keyword">return</span> self.value
+    <span class="hljs-keyword">def</span> <span class="hljs-title">get_counter</span>(<span class="hljs-params">self</span>):
+        <span class="hljs-keyword">return</span> self.value
+<span class="hljs-comment"># Create an actor from this class.</span>
+counter = Counter.remote()
+</code></pre>
+<p class="normal">Finally, Ray<a id="_idIndexMarker814"/> also has a distributed immutable object store. This is a smart way to have one shared data store across all the nodes of the cluster without shifting lots of data around and using up bandwidth. You can write to the object store with the following syntax:</p>
+<pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">import</span> ray
+
+numerical_array = np.arange(<span class="hljs-number">1</span>,<span class="hljs-number">10e7</span>)
+obj_numerical_array = ray.put(numerical_array)
+new_numerical_array = <span class="hljs-number">0.5</span>*ray.get(obj_numerical_array)
+</code></pre>
+<div class="note">
+<p class="normal">IMPORTANT NOTE</p>
+<p class="normal">An Actor in this context is a service or stateful worker, a concept used in other distributed frameworks like Akka, which runs on the JVM and has bindings to Java and Scala.</p>
+</div>
+<h2 class="heading-2" id="_idParaDest-150">Getting started with Ray for ML</h2>
+<p class="normal">To get started you can install Ray with AI Runtime, as well as some the hyperparameter optimization package, the central dashboard and a Ray enhanced XGBoost implementation, by running:</p>
+<pre class="programlisting con"><code class="hljs-con">pip install "ray[air, tune, dashboard]" 
+pip install xgboost
+pip install xgboost_ray
+</code></pre>
+<div class="note">
+<p class="normal">IMPORTANT NOTE</p>
+<p class="normal">a reminder here that whenver you see <code class="inlineCode">pip install</code> in this book, you can also use Poetry as outlined in <em class="chapterRef">Chapter 4</em>, <em class="italic">Packaging Up</em>. So, in this case, you would have the following commands after running <code class="inlineCode">poetry new</code> <code class="inlineCode">project_name:</code></p>
+<pre class="programlisting con"><code class="hljs-con">poetry add "ray[air, tune, dashboard]"
+poetry add xgboost
+poetry add pytorch
+</code></pre>
+</div>
+<p class="normal">Let’s start by looking at Ray Train, which provides an API to a series of <code class="inlineCode">Trainer</code> objects that helps facilitate distributed training. At the time of writing, Ray 2.3.0 supports trainers across a variety of <a id="_idIndexMarker815"/>different frameworks including:</p>
+<ul>
+<li class="bulletList"><strong class="keyWord">Deep learning</strong>: Horovod, Tensorflow and PyTorch.</li>
+<li class="bulletList"><strong class="keyWord">Tree based</strong>: LightGBM and XGBoost.</li>
+<li class="bulletList"><strong class="keyWord">Other</strong>: Scikit-learn, HuggingFace, and Ray’s reinforcement learning library RLlib.</li>
+</ul>
+<figure class="mediaobject"><img alt="A diagram of a company  Description automatically generated" height="316" src="../Images/B19525_06_18.png" width="825"/></figure>
+<p class="packt_figref">Figure 6.18: Ray Trainers as shown in the Ray docs at https://docs.ray.io/en/latest/train/train.xhtml.</p>
+<p class="normal">We will first look at a tree-based learner example using XGBoost. Open up a script and begin adding to it; in the repo, this is called <code class="inlineCode">getting_started_with_ray.py</code>. What follows is based on an introductory example given in the Ray documentation. First, we can use Ray to download one of the standard datasets; we could also have used <code class="inlineCode">sklearn.datasets</code> or another source if we wanted to, like we have done elsewhere in the book:</p>
+<pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">import</span> ray
+
+dataset = ray.data.read_csv(<span class="hljs-string">"s3://anonymous@air-example-data/breast_</span>
+<span class="hljs-string">                             cancer.csv"</span>)
+train_dataset, valid_dataset = dataset.train_test_split(test_size=<span class="hljs-number">0.3</span>)
+test_dataset = valid_dataset.drop_columns(cols=[<span class="hljs-string">"target"</span>])
+</code></pre>
+<p class="normal">Note that here we use the <code class="inlineCode">ray.data.read_csv()</code> method, which returns a <code class="inlineCode">PyArrow</code> dataset. The Ray API has methods for reading from other data formats as well such as JSON or Parquet, as well as from databases like MongoDB or your own custom data sources.</p>
+<p class="normal">Next, we will define a preprocessing step that will standardize the features we want to use; for more information on feature engineering, you can check out <em class="chapterRef">Chapter 3</em>, <em class="italic">From Model to Model Factory</em>:</p>
+<pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">from</span> ray.data.preprocessors <span class="hljs-keyword">import</span> StandardScaler
+
+preprocessor = StandardScaler(columns=[<span class="hljs-string">"</span><span class="hljs-string">mean radius"</span>, <span class="hljs-string">"mean texture"</span>])
+</code></pre>
+<p class="normal">Then is the fun <a id="_idIndexMarker816"/>part where we define the <code class="inlineCode">Trainer</code> object for the XGBoost model. This has several different parameters and inputs we will need to define shortly:</p>
+<pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">from</span> ray.air.config <span class="hljs-keyword">import</span> ScalingConfig
+<span class="hljs-keyword">from</span> ray.train.xgboost <span class="hljs-keyword">import</span> XGBoostTrainer
+
+trainer = XGBoostTrainer(
+    scaling_config=ScalingConfig(...),
+    label_column=<span class="hljs-string">"target"</span>,
+    num_boost_round=<span class="hljs-number">20</span>,
+    params={...},
+    datasets={<span class="hljs-string">"train"</span>: train_dataset, <span class="hljs-string">"valid"</span>: valid_dataset},
+    preprocessor=preprocessor,
+)
+result = trainer.fit()
+</code></pre>
+<p class="normal">You’ll then see something like that shown in <em class="italic">Figure 6.19</em> as output if you run this code in a Jupyter notebook or Python script.</p>
+<figure class="mediaobject"><img alt="A screenshot of a computer  Description automatically generated" height="549" src="../Images/B19525_06_19.png" width="828"/></figure>
+<p class="packt_figref">Figure 6.19: Outptut from parallel training of an XGBoost model using Ray.</p>
+<p class="normal">The <code class="inlineCode">result</code> object contains tons <a id="_idIndexMarker817"/>of useful information; one of the attributes of it is called <code class="inlineCode">metrics</code> and you can print this to reveal details about the end state of the run. Execute <code class="inlineCode">print(result.metrics)</code> and you will see something like the following:</p>
+<pre class="programlisting con"><code class="hljs-con">{'train-logloss': 0.01849572773292735, 
+'train-error': 0.0, 'valid-logloss': 0.089797893552767,
+'valid-error': 0.04117647058823529, 
+'time_this_iter_s': 0.019704103469848633, 
+'should_checkpoint': True, 
+'done': True, 
+'timesteps_total': None, 
+'episodes_total': None, 
+'training_iteration': 21, 
+'trial_id': '6ecab_00000', 
+'experiment_id': '2df66fa1a6b14717bed8b31470d386d4', 
+'date': '2023-03-14_20-33-17', 
+'timestamp': 1678825997, 
+'time_total_s': 6.222438812255859, 
+'pid': 1713, 
+'hostname': 'Andrews-MacBook-Pro.local', 
+'node_ip': '127.0.0.1', 
+'config': {}, 
+'time_since_restore': 6.222438812255859,
+'timesteps_since_restore': 0, 
+'iterations_since_restore': 21, 
+'warmup_time': 0.003551006317138672, 'experiment_tag': '0'}
+</code></pre>
+<p class="normal">In the instantiation of the <code class="inlineCode">XGBoostTrainer</code>, we defined some important scaling information that was omitted in the previous example; here it is:</p>
+<pre class="programlisting code"><code class="hljs-code">scaling_config=ScalingConfig(
+    num_workers=<span class="hljs-number">2</span>,
+    use_gpu=<span class="hljs-literal">False</span>,
+    _max_cpu_fraction_per_node=<span class="hljs-number">0.9</span>,
+)
+</code></pre>
+<p class="normal">The <code class="inlineCode">num_workers</code> parameter tells <a id="_idIndexMarker818"/>Ray how many actors to launch, with each actor by default getting one CPU. The <code class="inlineCode">use_gpu</code> flag is set to false since we are not using GPU acceleration here. Finally, by setting the <code class="inlineCode">_max_cpu_fraction_per_node</code> parameter to <code class="inlineCode">0.9</code> we have left some spare capacity on each CPU, which can be used for other operations.</p>
+<p class="normal">In the previous example, there were also some XGBoost specific parameters we supplied:</p>
+<pre class="programlisting code"><code class="hljs-code">params={
+    <span class="hljs-string">"objective"</span>: <span class="hljs-string">"binary:logistic"</span>,
+    <span class="hljs-string">"eval_metric"</span>: [<span class="hljs-string">"logloss"</span>, <span class="hljs-string">"</span><span class="hljs-string">error"</span>],
+}
+</code></pre>
+<p class="normal">If you wanted to use GPU acceleration for the XGBoost training you would add <code class="inlineCode">tree_method</code>: <code class="inlineCode">gpu_hist</code> as a key-value pair in this <code class="inlineCode">params</code> dictionary.</p>
+<figure class="mediaobject"><img alt="A line graph with blue and orange lines  Description automatically generated" height="429" src="../Images/B19525_06_20.png" width="829"/></figure>
+<p class="packt_figref">Figure 6.20: A few experiments show how changing the number of workers and CPUs available per worker results in different XGBoost training times on the author’s laptop (an 8 core Macbook Pro).</p>
+<p class="normal">We will now discuss briefly how you can scale compute with Ray when working in environments other than your local machine.</p>
+<h3 class="heading-3" id="_idParaDest-151">Scaling your compute for Ray</h3>
+<p class="normal">The examples we’ve<a id="_idIndexMarker819"/> seen so far use a local Ray cluster that is automatically set<a id="_idIndexMarker820"/> up on the first call to the Ray API. This local cluster grabs all the available CPUs on your machine and makes them available to execute work. Obviously, this will only get you so far. The next stage is to work with clusters that can scale to far larger numbers of available workers in order to get more speedup. You have a few options if you want to do this:</p>
+<ul>
+<li class="bulletList"><strong class="keyWord">On the cloud</strong>: Ray provides the ability to deploy on to Google Cloud Platform and AWS resources, with Azure deployments handled by a community maintained solution. For more information on deploying and running Ray on AWS, you can check out its online documentation.</li>
+<li class="bulletList"><strong class="keyWord">Using Kubernetes</strong>: We have already met Kubeflow in <em class="chapterRef">Chapter 5</em>, <em class="italic">Deployment Patterns and Tools</em>, which is used to build Kubernetes enabled ML pipelines. And we have also discussed Kubernetes in the Containerizing at Scale with Kubernetes section in this chapter.. As mentioned there, Kubernetes<a id="_idIndexMarker821"/> is a container orchestration toolkit designed to create massively scalable solutions based on containers. If you want to work with <a id="_idIndexMarker822"/>Ray on Kubernetes, you can use the <strong class="keyWord">KubeRay</strong> project, <a href="https://ray-project.github.io/kuberay/"><span class="url">https://ray-project.github.io/kuberay/</span></a>.</li>
+</ul>
+<p class="normal">The setup of <a id="_idIndexMarker823"/>Ray on either the cloud or Kubernetes mainly involves defining the<a id="_idIndexMarker824"/> cluster configuration and its scaling behaviour. Once you have done this, the beauty of Ray is that scaling your solution is as simple as editing the <code class="inlineCode">ScalingConfig</code> object we used in the previous example, and you can keep all your other code the same. So, for example, if you have a 20-node CPU cluster, you could simply change the definition to the following and run it as before:</p>
+<pre class="programlisting code"><code class="hljs-code">scaling_config=ScalingConfig(
+    num_workers=<span class="hljs-number">20</span>,
+    use_gpu=<span class="hljs-literal">False</span>,
+    _max_cpu_fraction_per_node=<span class="hljs-number">0.9</span>,
+)
+</code></pre>
+<h3 class="heading-3" id="_idParaDest-152">Scaling your serving layer with Ray</h3>
+<p class="normal">We have <a id="_idIndexMarker825"/>discussed the ways you can use Ray to distributed <a id="_idIndexMarker826"/>ML training jobs but now let’s have a look at how you can use Ray to help you scale your application layer. As mentioned before, Ray AIR provides some nice functionality for this that is badged under <strong class="keyWord">Ray Serve</strong>. </p>
+<p class="normal">Ray Serve<a id="_idIndexMarker827"/> is a framework-agnostic library that helps you easily define ML endpoints based on your models. Like with the rest of the Ray API that we have interacted with, it has been built to provide easy interoperability and access to scaling without large development overheads.</p>
+<p class="normal">Building on the examples from the previous few sections, let us assume we have trained a model, stored it in our appropriate registry, such as MLflow, and we have retrieved this model and have it in memory.</p>
+<p class="normal">In Ray Serve, we create <strong class="keyWord">deployments</strong> by using the <code class="inlineCode">@ray.serve.deployments</code> decorator. These contain the logic we wish to use to process incoming API requests, including through any ML models we have built. As an example, let’s build a simple wrapper class that uses an XGBoost model like the one we worked with in the previous example to make a prediction based on some pre-processed feature data that comes in via the request object. First, the Ray documentation encourages the use of the Starlette requests library:</p>
+<pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">from</span> starlette.requests <span class="hljs-keyword">import</span> Request
+<span class="hljs-keyword">import</span> ray
+<span class="hljs-keyword">from</span> ray <span class="hljs-keyword">import</span> serve
+</code></pre>
+<p class="normal">Next we can define the simple class and use the <code class="inlineCode">serve</code> decorator to define the service. I will assume that logic for pulling from MLflow or any other model storage location is wrapped into the utility function <code class="inlineCode">get_model</code> in the following code block:</p>
+<pre class="programlisting code"><code class="hljs-code"><span class="hljs-meta">@serve.deployment</span>
+<span class="hljs-keyword">class</span> <span class="hljs-title">Classifier</span>:
+    <span class="hljs-keyword">def</span> <span class="hljs-title">__init__</span>(<span class="hljs-params">self</span>):
+        self.model = get_model()
+    <span class="hljs-keyword">async</span> <span class="hljs-keyword">def</span> <span class="hljs-title">__call__</span>(<span class="hljs-params">self, http_request: Request</span>) -&gt; <span class="hljs-built_in">str</span>:
+        request_payload = <span class="hljs-keyword">await</span> http_request.json()
+        input_vector = [
+            request_payload[<span class="hljs-string">"mean_radius"</span>],
+<span class="hljs-string">            </span>request_payload[<span class="hljs-string">"mean_texture"</span>]
+<span class="hljs-string">        </span>]
+        classification = self.model.predict([input_vector])[0]
+        <span class="hljs-keyword">return</span> {<span class="hljs-string">"result"</span>: classification}
+</code></pre>
+<p class="normal">You can then <a id="_idIndexMarker828"/>deploy<a id="_idIndexMarker829"/> this across an existing Ray cluster. </p>
+<p class="normal">This concludes our introduction to Ray. We will now finish with a final discussion on <em class="italic">designing systems at scale</em> and then a summary of everything we have learned.</p>
+<h1 class="heading-1" id="_idParaDest-153">Designing systems at scale</h1>
+<p class="normal">To <a id="_idIndexMarker830"/>build on the ideas presented in <em class="chapterRef">Chapter 5</em>, <em class="italic">Deployment Patterns and Tools,</em> and in this chapter, we should now consider some of the ways in which the scaling capabilities we have discussed can be employed to maximum effect in your ML engineering projects.</p>
+<p class="normal">The whole idea of scaling should be thought of in terms of providing an increase in the throughput of analyses or inferences or ultimate size of data that can be processed. There is no real difference in the kind of analyses or solution you can develop, at least in most cases. This means that applying scaling tools and techniques successfully is more dependent on selecting the correct processes that will benefit from them, even when we include any overheads that come from using these tools. That is what we will discuss now in this section, so that you have a few guiding principles to revisit when it comes to making your own scaling decisions.</p>
+<p class="normal">As <a id="_idIndexMarker831"/>discussed in several places throughout this book, the pipelines you develop for your ML projects will usually have to have stages that cover the following tasks:</p>
+<ul>
+<li class="bulletList">Ingestion/pre-processing</li>
+<li class="bulletList">Feature engineering (if different from above)</li>
+<li class="bulletList">Model training</li>
+<li class="bulletList">Model inference</li>
+<li class="bulletList">Application layer</li>
+</ul>
+<p class="normal">Parallelization or distribution can help in many of these steps but usually in some different ways. For ingestion/pre-processing, if you are operating in a large scheduled batch setting, then the ability to scale to larger datasets in a distrubuted manner is going to be of huge benefit. In this case, the use of Apache Spark will make sense. For feature engineering, similarly they main bottleneck is in processing large amounts of data once as we perform the transformations, so again Spark is useful for this. The compute-intensive steps for training ML models that we discussed in detail in <em class="chapterRef">Chapter 3</em>, <em class="italic">From Model to Model Factory</em>, are very amenable to frameworks that are optimized for this intensive computation, irrespective of the data size. This is where Ray comes in as discussed in the previous sections. Ray will mean that you can also neatly parallelize your hyperparameter tuning if you need to do that too. Note that you could run these steps in Spark as well but Ray’s low task overheads and its distributed state management mean that it is particularly amenable to splitting up these compute-intensive tasks. Spark on the other hand has centralized state and schedule management. Finally, when it comes to the inference and application layers, where we produce and surface the results of the ML model, we need to think about the requirements for the specific use case. As an example, if you want to serve your model as a REST API endpoint, we showed in the previous section how Ray’s distribution model and API can help facilitate this very easily, but this would not make sense to do in Spark. If, however, the model results are to be produced in large batches, then Spark or Ray may make sense. Also, as alluded to in the feature engineering and ingestion steps, if the end result should be transformed in large batches as well, perhaps into a specific data model such as a star schema, then performing that transformation in Spark may again make sense due to the data scale requirements of this task.</p>
+<p class="normal">Let’s make this a bit more concrete by considering a potential example taken from industry. Many organizations with a retail element will analyze transactions and customer data in order to determine whether the customer is likely to churn. Let’s explore some of the decisions we can make to design and develop this solution with a particular focus on the questions of scaling up using the tools and techniques we have covered in this chapter.</p>
+<p class="normal">First, we have the ingestion of the data. For this scenario, we will assume that the customer data, including interactions with different applications and systems, is processed at the end of the business day and numbers millions of records. This data contains numerical and categorical values and these need to be processed in order to feed into the downstream ML algorithm. If the data is partitioned by date, and maybe some other feature of the data, then this plays really naturally into the use of Spark, as you can read this into a Spark DataFrame and use the partitions to parallelize the data processing steps.</p>
+<p class="normal">Next, we<a id="_idIndexMarker832"/> have the feature engineering. If we are using a Spark DataFrame in the first step, then we can apply our transformation logic using the base PySpark syntax we have discussed earlier in this chapter. For example, if we want to apply some feature transformations available from Scikit-Learn or another ML library, we can wrap these in UDFs and apply at the scale we need to. The data can then be exported in our chosen data format using the PySpark API. For the customer churn model, this could mean a combination of encoding of categorical variables and scaling of numerical variables, in line with the techniques explored in <em class="chapterRef">Chapter 3</em>, <em class="italic">From Model to Model Factory</em>.</p>
+<p class="normal">Switching into the training of the model, now are moving from the data-intensive to the compute-intensive tasks. This means it is natural to start using Ray for model training, as you can easily set up parallel tasks to train models with different hyperparameter settings and distribute the training steps as well. There are particular benefits to using Ray for training deep learning or tree-based models as these are algorithms that are amenable to parallelization. So, if we are performing classification using one of the available models in Spark ML, then this can be done in a few lines, but if we are using something else, we will likely need to start wrapping in UDFs. Ray is far more library-agnostic but again the benefits really come if we are using a neural network in PyTorch or TensorFlow or using XGBoost or LightGBM, as these more naturally parallelize.</p>
+<p class="normal">Finally, onto the model inference step. In a batch setting, it is less clear who the winner is in terms of suggested framework here. Using UDFs or the core PySpark APIs, you can easily create a quite scalable batch prediction stage using Apache Spark and your Spark cluster. This is essentially because prediction on a large batch is really just another large-scale data transformation, where Spark excels. If, however, you wish to serve your model as an endpoint that can scale across a cluster, this is where Ray has very easy-to-use capabilities as shown in the <em class="italic">Scaling your serving layer with Ray</em> section. Spark does not have a facility for creating endpoints in this way and the scheduling and task overheads required to get a Spark job up and running mean that it would not be worth running Spark on small packets of data coming in as requests like this. </p>
+<p class="normal">For the customer churn example, this may mean that if we want to perform a churn classification on the whole customer base, Spark provides a nice way to process all of that data and leverage concepts like the underlying data partitions. You can still do this in Ray, but the lower-level API may mean it is slightly more work. Note that we can create this serving layer using many other mechanisms, as discussed in <em class="chapterRef">Chapter 5</em>, <em class="italic">Deployment Patterns and Tools</em>, and the section on <em class="italic">Spinning up serverless infrastructure</em> in this chapter. <em class="chapterRef">Chapter 8</em>, <em class="italic">Building an Example ML Microservice</em>, will also cover in detail how to use Kubernetes to scale out a deployment of an ML endpoint.</p>
+<p class="normal">Finally, I have called the<a id="_idIndexMarker833"/> last stage the <em class="italic">application layer</em> to cover any “last mile” integrations between the output system and downstream systems in the solution. In this case, Spark does not really have a role to play since it can really be thought of as as a large-scale data transformation engine. Ray, on the other hand, has more of a philosophy of general Python acceleration, so if there are tasks that would benefit from parallelization in the backend of your applications, such as data retrieval, general calculations, simulation, or some other process, then the likelihood is you can still use Ray in some capacity, although there may be other tools available. So, in the customer churn example, Ray could be used for performing analysis at the level of individual customers and doing this in parallel before serving the results through a <strong class="keyWord">Ray Serve</strong> endpoint.</p>
+<p class="normal">The point of going through this high-level example was to highlight the points along your ML engineering project where you can make choices about how to scale effectively. I like to say that there are often <em class="italic">no right answers, but very often wrong answers</em>. What I mean by this is that there are often several ways to build a good solution that are equally valid and may leverage different tools. The important thing is to avoid the biggest pitfalls and dead ends. Hopefully, the example gives some indication of how you can apply this thinking to scaling up your ML solutions.</p>
+<div class="note">
+<p class="normal">IMPORTANT NOTE</p>
+<p class="normal">Although I have presented a lot of questions here in terms of Spark vs. Ray, with a nod to Kubernetes as a more <em class="italic">base infrastructure</em> scaling option, there is now the ability to combine Spark and Ray through the use of <strong class="keyWord">RayDP</strong>. This toolkit now allows you to run Spark jobs on Ray clusters, so it nicely allows you to still use Ray as your base scaling layer but then leveRage the Spark APIs and capabilities where it excels. RayDP<a id="_idIndexMarker834"/> was introduced in 2021 and is in active development, so this is definitely a capability to watch. For more information, see the project repository here: <a href="https://github.com/oap-project/raydp"><span class="url">https://github.com/oap-project/raydp</span></a>.</p>
+</div>
+<p class="normal">This concludes our look at how we can start to apply some of the scaling techniques we have discussed to our ML use cases. </p>
+<p class="normal">We will now finish the chapter with a brief summary of what we have covered in the last few pages.</p>
+<h1 class="heading-1" id="_idParaDest-154">Summary</h1>
+<p class="normal">In this chapter, we looked at how to take the ML solutions we have built in the past few chapters and thought about how to scale them up to larger data volumes or higher numbers of requests for predictions. To do this, we mainly focused on <strong class="keyWord">Apache Spark</strong> as this is the most popular general-purpose engine for distributed computing. During our discussion of Apache Spark, we revisited some coding patterns and syntax we used previously in this book. By doing so, we developed a more thorough understanding of how and why to do certain things when developing in PySpark. We discussed the concept of <strong class="keyWord">UDFs</strong> in detail and how these can be used to create massively scalable ML workflows.</p>
+<p class="normal">After this, we explored how to work with Spark on the cloud, specifically through the <strong class="keyWord">EMR</strong> service provided by AWS. Then, we looked at some of the other ways we can scale our solutions; that is, through serverless architectures and horizontal scaling with containers. In the former case, we walked through how to build a service for serving an ML model using <strong class="keyWord">AWS Lambda</strong>. This used standard templates provided by the AWS SAM framework. We provided a high-level view of how to use K8s and Kubeflow to scale out ML pipelines horizontally, as well as some of the other benefits of using these tools. A section covering the Ray parallel computing framework then followed, showing how you can use its relatively simple API to scale compute on heterogenous clusters to supercharge your ML workflows. Ray is now one of the most important scalable computing toolkits for Python and has been used to train some of the largest models on the planet, including the GPT-4 model from OpenAI.</p>
+<p class="normal">In the next chapter, we are going to build on the ideas of scale here by discussing the largest ML models you can build: deep learning models, including <strong class="keyWord">large language models</strong> (<strong class="keyWord">LLM</strong>s). Everything we will discuss in this next chapter could only have been developed, and can often only be effectively utilized, by considering the techniques we have covered here. The question of scaling up your ML solutions will also be revisited in <em class="chapterRef">Chapter 8</em>, <em class="italic">Building an Example ML Microservice</em>, where we will focus on the use of Kubernetes to horizontally scale an ML microservice. This complements nicely the work we have done here on scaling large batch workloads by showing you how to scale more real-time workloads. Also, in <em class="chapterRef">Chapter 9</em>, <em class="italic">Building an Extract, Transform, Machine Learning Use Case</em>, many of the scaling discussions we have had here are prerequisites; so, everything we have covered here puts you in a good place to get the most from the rest of the book. So, armed with all this new knowledge, let’s go and explore the world of the largest models known.</p>
+</div>
+<div id="_idContainer180">
+<h1 class="heading-1" id="_idParaDest-155">Join our community on Discord</h1>
+<p class="normal">Join our community’s Discord space for discussion with the author and other readers:</p>
+<p class="normal"><a href="https://packt.link/mle"><span class="url">https://packt.link/mle</span></a></p>
+<p class="normal"><img alt="" height="177" role="presentation" src="../Images/QR_Code102810325355484.png" width="177"/></p>
+</div>
+</div></body></html>

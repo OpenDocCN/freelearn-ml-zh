@@ -1,0 +1,496 @@
+<html><head></head><body>
+<div id="book-content" class="calibre2">
+<div id="sbo-rt-content" class="calibre3"><div id="_idContainer087" class="calibre4">
+			<h1 id="_idParaDest-67" class="calibre8"><a id="_idTextAnchor069" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/>5</h1>
+			<h1 id="_idParaDest-68" class="calibre8"><a id="_idTextAnchor070" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/>Leveraging Active Learning for Big Data</h1>
+			<p class="calibre6">In this chapter, we will explore how to <a id="_idIndexMarker237" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/>use <strong class="bold">machine learning</strong> (<strong class="bold">ML</strong>) to deal with big data, such as videos. The task of developing ML models for video analysis comes with its own set of unique challenges. Videos, being inherently large, pose significant hurdles in terms of efficient processing. Video analysis using ML has become an increasingly important technique across many industries and applications. From autonomous vehicles that rely on computer vision models to analyze road conditions in real-time video feeds, to security systems that can automatically detect suspicious activity, ML is revolutionizing what’s possible with video data. These models can automate time-consuming manual analysis and provide scalable video understanding. Implementing performant and scalable video analysis pipelines involves surmounting key hurdles such as an enormous amount of <span>data labeling.</span></p>
+			<p class="calibre6">We will guide you through a cutting-edge ML method that will aid you in selecting the most informative frames for labeling, thereby enhancing the overall accuracy and efficacy of <span>the analysis.</span></p>
+			<p class="calibre6">In this chapter, we will cover the <span>following topics:</span></p>
+			<ul class="calibre16">
+				<li class="calibre20">Implementing ML models for <span>video analysis</span></li>
+				<li class="calibre20">Selecting the most informative frames <span>with Lightly</span></li>
+			</ul>
+			<h1 id="_idParaDest-69" class="calibre8"><a id="_idTextAnchor071" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/>Technical requirements</h1>
+			<p class="calibre6">In this chapter, you will need to install the <span>following packages:</span></p>
+			<pre class="source-code">
+pip install ultralytics lightly docker encord</pre>			<p class="calibre6">You will also need the <span>following imports:</span></p>
+			<pre class="source-code">
+import os
+from IPython.display import display, Markdown
+from ultralytics import YOLO
+from pathlib import Path
+import json
+import contextlib
+from typing import Iterator
+import docker
+from docker.models.containers import Container
+from lightly.api import ApiWorkflowClient
+from lightly.openapi_generated.swagger_client import DatasetType
+from lightly.openapi_generated.swagger_client import DatasourcePurpose
+from encord.orm.cloud_integration import CloudIntegration
+from encord.orm.dataset import AddPrivateDataResponse
+from encord.user_client import EncordUserClient
+from encord.orm.dataset import CreateDatasetResponse, StorageLocation</pre>			<p class="calibre6">Next, you need to create a Lightly account and set up your API token, <span>as follows:</span></p>
+			<pre class="source-code">
+lightly_token = "your_lightly_token"</pre>			<p class="calibre6">Then, you must set up the Lightly client to connect to <span>the API:</span></p>
+			<pre class="source-code">
+client = ApiWorkflowClient(token=lightly_token)</pre>			<p class="calibre6">This demo was run on an AWS SageMaker notebook (<strong class="source-inline">ml.g4dn.2xlarge instance</strong>). This instance has a GPU and enough memory to run this demo because we need access to Docker, which is not possible in <span>Google Colab.</span></p>
+			<p class="calibre6">An Encord account (<a href="https://app.encord.com/" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3">https://app.encord.com/</a>) is also required if you want to send the selected frames to an <span>annotation platform.</span></p>
+			<h1 id="_idParaDest-70" class="calibre8"><a id="_idTextAnchor072" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/>Implementing ML models for video analysis</h1>
+			<p class="calibre6">Active ML plays<a id="_idIndexMarker238" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> a transformative role in managing <a id="_idIndexMarker239" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/>big data projects by strategically optimizing the data annotation process, thereby enhancing model performance with less manual effort. For instance, in large-scale image recognition tasks, such as identifying specific objects across millions of social media photos, active learning can significantly reduce the workload by pinpointing images that are most likely to refine the model’s capabilities. Similarly, in <strong class="bold">natural language processing</strong> (<strong class="bold">NLP</strong>) applications, dealing with vast amounts of text data from sources<a id="_idIndexMarker240" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> such as news articles, forums, and customer feedback, active ML helps in selectively annotating documents that add the most value to understanding complex language nuances or sentiments. This approach not only streamlines the effort required in annotating massive datasets but also ensures that models trained on such data are more accurate, efficient, and capable of handling the real-world variability inherent in big data sources. Extending this methodology to video analysis, active ML becomes even more pivotal due to the added complexity and volume of data within video content. Active ML can be leveraged to identify key frames or segments that significantly contribute to the model’s learning, dramatically reducing the annotation burden while ensuring comprehensive understanding and analysis of video data. This targeted approach in video projects not only conserves resources but also accelerates the development of sophisticated video analysis models that are capable of performing tasks such as activity recognition, event detection, and sentiment analysis with higher precision <span>and efficiency.</span></p>
+			<p class="calibre6">In this section, we will explore how to leverage active ML for developing an ML model for videos. ML video analysis systems require implementing strategies to efficiently curate video frames. Videos are usually large files, and annotating all frames in the videos is impossible. Moreover, depending on the <strong class="bold">frames per second</strong> (<strong class="bold">FPS</strong>) rate, videos<a id="_idIndexMarker241" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> often contain a significant amount of duplicated data, which would be a waste of time and money to label. Common practice is to label at an FPS rate of 1, instead of 30 for example, to reduce the number of frames to label. However, this is not an optimal solution as it will lead to similar frames being annotated, an imbalance in the classes that are represented, and a lack of diversity in the data selected. Plus, many of the frames that will be labeled if such a pipeline is in place probably don’t need to be labeled in the first place because the model might already perform very well on some of those frames. Thus, labeling frames on which the model is confident and correct is a waste of time <span>and money.</span></p>
+			<p class="calibre6">In other words, it is infeasible to manually label all frames in video datasets for ML, making active learning crucial due to the <span>following factors:</span></p>
+			<ul class="calibre16">
+				<li class="calibre20"><strong class="bold">Data volume</strong>: Video data consists of a large number of frames, which makes comprehensive manual labeling extremely time-consuming and expensive. For instance, labeling objects in all frames of just 10 minutes of a 30 FPS video would require labeling <span>18,000 images.</span></li>
+				<li class="calibre20"><strong class="bold">Redundancy</strong>: Consecutive video frames are highly redundant as they contain almost identical content. It is inefficient to manually label this <span>repetitive data.</span></li>
+				<li class="calibre20"><strong class="bold">Cost</strong>: The expense of hiring human labelers to meticulously annotate video frames would be exorbitant, rendering the majority of projects economically unfeasible. Labeling fees for just 10 hours of video could amount to thousands <span>of dollars.</span></li>
+			</ul>
+			<p class="calibre6">This is where active ML is invaluable. It optimizes the labeling effort by identifying the most informative frames that are likely to improve the model, as we have seen in previous chapters. Human labelers can then focus exclusively on these high-value frames. By directing the labeling process to maximize performance gains, considerably fewer frames require manual annotation, making video ML viable <span>and cost-effective.</span></p>
+			<p class="calibre6">In summary, exhaustive manual video data labeling is impractical and economically unfeasible. Active<a id="_idIndexMarker242" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> learning provides crucial <a id="_idIndexMarker243" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/>optimization for labeling so that models can be trained to analyze video in a feasible, affordable, and <span>adaptable manner.</span></p>
+			<p class="calibre6">Now, let’s explore a real-world example with a<a id="_idIndexMarker244" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> commonly used active ML tool called <span><strong class="bold">Lightly</strong></span><span> (</span><a href="https://www.lightly.ai/" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"><span>https://www.lightly.ai/</span></a><span>).</span></p>
+			<h1 id="_idParaDest-71" class="calibre8"><a id="_idTextAnchor073" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/>Selecting the most informative frames with Lightly</h1>
+			<p class="calibre6">In this section, we <a id="_idIndexMarker245" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/>will use an active ML tool<a id="_idIndexMarker246" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> called <strong class="bold">Lightly</strong>. Lightly is a data curation tool that’s equipped with a web platform that enables users to choose the optimal subset of samples for maximizing model accuracy. Lightly’s algorithms can process substantial volumes of data, such as 10 million images or 10 thousand videos, in less than <span>24 hours.</span></p>
+			<p class="calibre6">The web app allows users to explore their datasets using filters such as sharpness, luminance, contrast, file size, and more. They can then use these filters to explore correlations between <span>these characteristics.</span></p>
+			<p class="calibre6">Users can also<a id="_idIndexMarker247" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> search<a id="_idIndexMarker248" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> for similar<a id="_idIndexMarker249" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> images or objects within the app and look into the embeddings (<strong class="bold">principal component analysis</strong> (<strong class="bold">PCA</strong>), <strong class="bold">T-distributed stochastic neighbor embedding</strong> (<strong class="bold">TSNE</strong>), and <strong class="bold">uniform manifold approximation and projection</strong> (<strong class="bold">UMAP</strong>)). Embeddings refers to vector representations of images that are learned by deep neural networks. They capture visual features and semantics of the images in a way that allows similarities and relationships between images to be analyzed. When images are passed through a convolutional neural network, the final layer before classification is typically a dense representation of the image features. This dense layer outputs a vector with hundreds or thousands of dimensions for each image. This vector is called an embedding. Images with similar features will have embeddings that are close or nearby when mapped in the embedding space. Images with very different features will be farther apart in the <span>embedding space.</span></p>
+			<p class="calibre6">There are a few techniques that can be used to visualize these high-dimensional embeddings in two or three dimensions for <span>human analysis:</span></p>
+			<ul class="calibre16">
+				<li class="calibre20"><strong class="bold">PCA</strong>: PCA reduces the dimensions of embeddings down to 2D or 3D so that they can be plotted. It projects them onto the dimensions that capture the most variance. Images with similar prominent visual features will appear closer together after <span>PCA projection.</span></li>
+				<li class="calibre20"><strong class="bold">TSNE</strong>: TSNE is a technique that represents high-dimensional embeddings in lower dimensions while keeping similar images close and dissimilar images apart. The 2D or 3D mappings attempt to model the local structure of the higher <span>dimensional space.</span></li>
+				<li class="calibre20"><strong class="bold">UMAP</strong>: UMAP is a more recent technique that can preserve global data structure in the projections better than TSNE in many cases. It maps images with similar embeddings nearby and dissimilar ones farther apart in <span>the projection.</span></li>
+			</ul>
+			<p class="calibre6">Embeddings capture image features and semantics in vectors. Techniques such as PCA, TSNE, and UMAP then project these high-dimensional vectors down to 2D or 3D so that they can be<a id="_idIndexMarker250" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> visualized <a id="_idIndexMarker251" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/>and analyzed for similarity relationships between images. The Lightly app leverages these projections to enable image <span>similarity searches.</span></p>
+			<h2 id="_idParaDest-72" class="calibre9"><a id="_idTextAnchor074" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/>Using Lightly to select the best frames to label for object detection</h2>
+			<p class="calibre6">To select the<a id="_idIndexMarker252" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> best frames, we need to conduct a series <span>of steps.</span></p>
+			<h3 class="calibre11">Dataset and pre-trained model</h3>
+			<p class="calibre6">In this example, we <a id="_idIndexMarker253" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/>will use a video of a dog running after a ball. We will only be using one video, as depicted in <span><em class="italic">Figure 5</em></span><em class="italic">.1</em>, for demo purposes. This video can be found in this book’s GitHub <span>repository (</span><a href="https://github.com/PacktPublishing/Active-Machine-Learning-with-Python/blob/main/Chapter_5/videos/project_demo/dog_running_ball.mp4" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"><span>https://github.com/PacktPublishing/Active-Machine-Learning-with-Python/blob/main/Chapter_5/videos/project_demo/dog_running_ball.mp4</span></a><span>):</span></p>
+			<div class="calibre18">
+				<div id="_idContainer065" class="img---figure">
+					<img src="image/B21789_05_1.jpg" alt="Figure 5.1 – Video used for testing our Lightly demo" class="calibre73"/>
+				</div>
+			</div>
+			<p class="calibre6" lang="en-US" xml:lang="en-US">Figure 5.1 – Video used for testing our Lightly demo</p>
+			<p class="calibre6">Our main goal in this section is to select the most informative frames in this video using the different sampling strategies that <span>Lightly offers.</span></p>
+			<p class="calibre6">Our video called <strong class="source-inline">dog_running_ball.mp4</strong> is stored in a subfolder called <strong class="source-inline">project_demo</strong> under a folder <span>called </span><span><strong class="source-inline">videos</strong></span><span>.</span></p>
+			<p class="calibre6">Once, we have the<a id="_idIndexMarker254" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> video in our <strong class="source-inline">videos/project_demo</strong> folder, the next step is to load a pre-trained object <span>detection model:</span></p>
+			<pre class="source-code">
+Model = YOLO("yolov8x.pt")</pre>			<p class="calibre6">This pre-trained model from <strong class="source-inline">ultralytics</strong> supports 80 classes that we can visualize with the <span>following command:</span></p>
+			<pre class="source-code">
+model.namesg</pre>			<p class="calibre6">This returns the <span>following output:</span></p>
+			<pre class="source-code">
+{0: 'person',
+ 1: 'bicycle',
+ 2: 'car',
+ 3: 'motorcycle',
+ ...
+ 32: 'sports ball',
+ 33: 'kite',
+ 34: 'baseball bat',
+...
+ 76: 'scissors',
+ 77: 'teddy bear',
+ 78: 'hair drier',
+ 79: 'toothbrush'}</pre>			<p class="calibre6">In our case, we know we are dealing with a video of a dog running after a ball, so we will focus on the <strong class="source-inline">dog</strong> and <strong class="source-inline">sports </strong><span><strong class="source-inline">ball</strong></span><span> classes.</span></p>
+			<p class="calibre6">Then, we must prepare some of the variables for our Lightly run, such as the path to the predictions output folder, the task’s name, and the important classes that we want to focus on in this run to improve our model (<strong class="source-inline">dog</strong> and <span><strong class="source-inline">sports ball</strong></span><span>):</span></p>
+			<pre class="source-code">
+important_classes = {"dog": 16, " sports ball": 32}
+classes = list(important_classes.values())</pre>			<p class="calibre6">Our classes <a id="_idIndexMarker255" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/>here are <strong class="source-inline">16</strong> <span>and </span><span><strong class="source-inline">32</strong></span><span>.</span></p>
+			<h3 class="calibre11">Creating the required Lightly files</h3>
+			<p class="calibre6">We will be saving <a id="_idIndexMarker256" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/>our inference predictions in a subfolder called <strong class="source-inline">predictions</strong>; our task name <span>is </span><span><strong class="source-inline">yolov8_demo_dog_detection</strong></span><span>:</span></p>
+			<pre class="source-code">
+predictions_rooth_path = Path("predictions")
+task_name = "yolov8_demo_dog_detection"
+predictions_path = Path(predictions_rooth_path / task_name)</pre>			<p class="calibre6">Then, we need to create all the configuration files that Lightly <span>will use:</span></p>
+			<ul class="calibre16">
+				<li class="calibre20">The <strong class="source-inline">tasks.json</strong> file, which specifies the name of our current task. A task name is the name of the corresponding subfolder in the <span>folder predictions.</span></li>
+				<li class="calibre20">The <strong class="source-inline">schema.json</strong> file, which allows Lightly to know the format of <span>the predictions.</span></li>
+				<li class="calibre20">The metadata <strong class="source-inline">schema.json</strong> file, which contains the names of the videos in our <span><strong class="source-inline">videos</strong></span><span> folder.</span></li>
+			</ul>
+			<p class="calibre6">The code to create these configuration files can be found in the <a href="B21789_05.xhtml#_idTextAnchor069" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"><span><em class="italic">Chapter 5</em></span></a> section in this book’s GitHub <span>repository (</span><a href="https://github.com/PacktPublishing/Active-Machine-Learning-with-Python/tree/main/Chapter_5" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"><span>https://github.com/PacktPublishing/Active-Machine-Learning-with-Python/tree/main/Chapter_5</span></a><span>).</span></p>
+			<p class="calibre6">We can now run <a id="_idIndexMarker257" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/>object detection inference using the pre-trained model we <span>loaded earlier.</span></p>
+			<h3 class="calibre11">Inference</h3>
+			<p class="calibre6">We’ll run object <a id="_idIndexMarker258" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/>detection inference on our test video with a low confidence threshold of 0.3 as we want to have lower confidence scores. The code has been set up to handle more than one video in the subfolder. However, for testing purposes, we only have one video. We will skip predictions that are not part of the <span>important classes:</span></p>
+			<pre class="source-code">
+videos = Path("videos/project_demo/").glob("*.mp4")
+for video in videos:
+    print(video)
+    results = model.predict(video, conf=0.3)
+    predictions = [result.boxes.data for result in results]
+    number_of_frames = len(predictions)
+    padding = len(str(number_of_frames))
+    fname = video
+    for idx, prediction in enumerate(predictions):
+        populate_predictions_json_files(prediction, fname, padding)</pre>			<p class="calibre6">The <strong class="source-inline">populate_predictions_json_files</strong> function is defined in the code in this book’s GitHub <span>repository (</span><a href="https://github.com/PacktPublishing/Active-Machine-Learning-with-Python/tree/main/Chapter_5" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"><span>https://github.com/PacktPublishing/Active-Machine-Learning-with-Python/tree/main/Chapter_5</span></a><span>).</span></p>
+			<p class="calibre6">Once we have run this code, we’ll receive the outputs of the inference run in the format supported by Lightly in the <strong class="source-inline">predictions</strong> subfolder, as shown in <span><em class="italic">Figure 5</em></span><span><em class="italic">.2</em></span><span>:</span></p>
+			<div class="calibre18">
+				<div id="_idContainer066" class="img---figure">
+					<img src="image/B21789_05_2.jpg" alt="Figure 5.2 – Lightly JSON predictions (snapshot)" class="calibre74"/>
+				</div>
+			</div>
+			<p class="calibre6" lang="en-US" xml:lang="en-US">Figure 5.2 – Lightly JSON predictions (snapshot)</p>
+			<p class="calibre6">If we take a look at<a id="_idIndexMarker259" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> one of those files, the information the JSON files contain is the result of the inference. This includes the coordinates of the bounding boxes, along with the corresponding class ID and confidence score, as shown in <span><em class="italic">Figure 5</em></span><span><em class="italic">.3</em></span><span>:</span></p>
+			<div class="calibre18">
+				<div id="_idContainer067" class="img---figure">
+					<img src="image/B21789_05_3.jpg" alt="Figure 5.3 – Prediction JSON file for the first frame in the format expected by Lightly" class="calibre75"/>
+				</div>
+			</div>
+			<p class="calibre6" lang="en-US" xml:lang="en-US">Figure 5.3 – Prediction JSON file for the first frame in the format expected by Lightly</p>
+			<p class="calibre6">We are now <a id="_idIndexMarker260" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/>ready to schedule the active Lightly <span>ML run.</span></p>
+			<h3 class="calibre11">Schedule the active ML run</h3>
+			<p class="calibre6">We can register<a id="_idIndexMarker261" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> the Lightly worker using the following code, which returns the ID of our <span>Lightly worker:</span></p>
+			<p class="callout-heading">Note</p>
+			<p class="callout">If a worker with this name already exists, the ID of the existing worker will <span>be returned.</span></p>
+			<pre class="source-code">
+worker_id = client.register_compute_worker(name="Demo")</pre>			<p class="calibre6">Lightly uses Docker to run active ML with the <strong class="source-inline">lightly/worker:latest</strong> image. It can be pulled using the <span>command line:</span></p>
+			<pre class="console">
+docker pull lightly/worker:latest</pre>			<p class="calibre6">Docker is an open platform for developing, shipping, and running applications within software containers. It allows code to be packaged with all its dependencies and libraries into a standardized unit for software development. Using Docker containers eliminates compatibility issues that arise from differences between environments. In short, it enables easy replicability when running scripts because the environment in the Docker image is already set up with the correct <span>installed packages.</span></p>
+			<p class="calibre6">Next, we need to schedule our active ML run. This process involves <span>several steps:</span></p>
+			<ol class="calibre16">
+				<li class="calibre17">Create a <a id="_idIndexMarker262" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/>Lightly dataset <span>called </span><span><strong class="source-inline">demo_dataset</strong></span><span>:</span><pre class="source-code">
+client.create_dataset(dataset_name="demo_dataset",
+    dataset_type=DatasetType.VIDEOS)
+dataset_id = client.dataset_id</pre></li>				<li class="calibre17">Set up the data sources by using the <strong class="source-inline">project_demo</strong> project as the input or output locations for data. In our case, we are using the local storage option (<a href="https://docs.lightly.ai/docs/local-storage" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3">https://docs.lightly.ai/docs/local-storage</a>) for demo purposes, but ideally, you should use the cloud service option (<a href="https://docs.lightly.ai/docs/cloud-storage" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3">https://docs.lightly.ai/docs/cloud-storage</a>), which uses either AWS, Azure, <span>or GCP:</span><pre class="source-code">
+client.set_local_config(
+    relative_path="project_demo",
+    purpose=DatasourcePurpose.INPUT
+)
+client.set_local_config(
+    relative_path="project_demo",
+    purpose=DatasourcePurpose.LIGHTLY
+)</pre></li>				<li class="calibre17">Schedule the active ML run with the selected strategies we want to use: a strategy to find diverse objects, a strategy to balance the class ratios, and a strategy to use a prediction score for the object’s frequencies and least confident results. We are sampling five samples in this example and are trying to reach<a id="_idIndexMarker263" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> a 50/50 balance between the <strong class="source-inline">dog</strong> and <strong class="source-inline">sports </strong><span><strong class="source-inline">ball</strong></span><span> classes:</span><pre class="source-code">
+scheduled_run_id = client.schedule_compute_worker_run(
+    worker_config={},
+    selection_config={
+        "n_samples": 5,
+        "strategies": [
+            {
+                # strategy to find diverse objects
+                "input": {
+                    "type": "EMBEDDINGS",
+                    "task": task_name,
+                },
+                "strategy": {
+                    "type": "DIVERSITY",
+                },
+            },
+            {
+                # strategy to balance the class ratios
+                "input": {
+                    "type": "PREDICTIONS",
+                    "name": "CLASS_DISTRIBUTION",
+                    "task": task_name,
+                },
+                "strategy": {
+                    "type": "BALANCE",
+                    "target": {
+                        dog: 0.50,
+                        'sports ball': 0.50,
+                    }
+                },
+            },
+            {
+                # strategy to use prediction score (Active Learning)
+                "input": {
+                    "type": "SCORES",
+                    "task": task_name,
+                    "score": "object_frequency"
+                },
+                "strategy": {
+                    "type": "WEIGHTS"
+                },
+            },
+            {
+                # strategy to use prediction score (Active Learning)
+                "input": {
+                    "type": "SCORES",
+                    "task": task_name,
+                    "score": "objectness_least_confidence"
+                },
+                "strategy": {
+                    "type": "WEIGHTS"
+                },
+            },
+        ],
+    },
+    lightly_config={},
+    runs_on=['Demo'],
+)</pre></li>				<li class="calibre17">Now, organize<a id="_idIndexMarker264" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> the local files so that they match what Lightly <span>is expecting:</span><pre class="source-code">
+!mkdir lightly &amp;&amp; mkdir lightly/project_demo &amp;&amp; mkdir lightly/project_demo/.lightly
+!mv metadata lightly/project_demo/.lightly &amp;&amp; mv predictions lightly/project_demo/.lightly</pre></li>				<li class="calibre17">When we take a look at the folders, we’ll see the <span>following structure:</span></li>
+			</ol>
+			<div class="calibre18">
+				<div id="_idContainer068" class="img---figure">
+					<img src="image/B21789_05_4.jpg" alt="Figure 5.4 – Folders organized for Lightly local storage" class="calibre76"/>
+				</div>
+			</div>
+			<p class="calibre6" lang="en-US" xml:lang="en-US">Figure 5.4 – Folders organized for Lightly local storage</p>
+			<p class="calibre6">We are now<a id="_idIndexMarker265" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> ready to start <span>the run.</span></p>
+			<h3 class="calibre11">Starting the worker and the active ML run</h3>
+			<p class="calibre6">We need to <a id="_idIndexMarker266" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/>create a function that will be used to initiate the worker with the organized folders that are mounted in the <span>Docker container:</span></p>
+			<pre class="source-code">
+@contextlib.contextmanager
+def start_worker(lightly_token, lightly_worker_id, image_name="lightly/worker:latest", WORKER_LABEL="Demo") -&gt; Iterator[Container]:
+    docker_client = docker.from_env()
+    volumes = ["/home/user/videos:/input_mount",
+              "/home/user/lightly:/lightly_mount"]
+    container = docker_client.containers.run(
+        image_name,
+        f"token={lightly_token} worker.worker_id={lightly_worker_id}",
+        detach=True,
+        labels={"lightly_worker_label": WORKER_LABEL},
+        volumes=volumes,
+    )
+    try:
+        yield container
+    finally:
+        try:
+            container.kill()
+        except docker.errors.APIError:
+            # if a container was killed from outside, we don't care
+            pass</pre>			<p class="calibre6">Let’s start<a id="_idIndexMarker267" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> <span>the run:</span></p>
+			<pre class="source-code">
+with start_worker(lightly_token, lightly_worker_id=worker_id):
+    print('Worker running ...')
+    last_run_info = None
+    no_update_count = 0
+    while True:
+        run_info = client.get_compute_worker_run_info(
+            scheduled_run_id=scheduled_run_id
+        )
+        print(run_info)
+        if run_info.in_end_state():
+            assert run_info.ended_successfully(), 
+                "Run did not end successfully"
+            break
+        if run_info != last_run_info:
+            no_update_count = 0
+        else:
+            no_update_count += 1
+            if no_update_count &gt;= 10000:
+                raise RuntimeError(
+                    f"Test timout: no run_info update\n"
+                    f"last_run_info: {str(last_run_info)}, 
+                        run_info: {str(run_info)}"
+                )
+        last_run_info = run_info</pre>			<p class="calibre6">We can check the<a id="_idIndexMarker268" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> progress of our run on the Lightly platform, as shown in <span><em class="italic">Figure 5</em></span><em class="italic">.5</em>, as well as by looking at the output of the <span>previous code:</span></p>
+			<div class="calibre18">
+				<div id="_idContainer069" class="img---figure">
+					<img src="image/B21789_05_5.jpg" alt=" Figure 5.5 – Lightly view of the active ML run" class="calibre77"/>
+				</div>
+			</div>
+			<p class="calibre6" lang="en-US" xml:lang="en-US"> Figure 5.5 – Lightly view of the active ML run</p>
+			<p class="calibre6">Once completed, we have access to a detailed report of the run and all the necessary logs, such as the memory log and default log. We can also view our dataset in the Lightly web <span>application (</span><a href="https://app.lightly.ai/dataset" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"><span>https://app.lightly.ai/dataset</span></a><span>).</span></p>
+			<p class="calibre6">Let’s explore our results. In <span><em class="italic">Figure 5</em></span><em class="italic">.6</em>, we can see that we have several new subfolders, including <strong class="source-inline">frames</strong> and <strong class="source-inline">crops</strong>. Those folders contain the selected frames and crops (cropped <span>bounding boxes):</span></p>
+			<p class="calibre6"> </p>
+			<div class="calibre18">
+				<div id="_idContainer070" class="img---figure">
+					<img src="image/B21789_05_6.jpg" alt="Figure 5.6 – Resulting folder after the Lightly active ML run" class="calibre78"/>
+				</div>
+			</div>
+			<p class="calibre6" lang="en-US" xml:lang="en-US">Figure 5.6 – Resulting folder after the Lightly active ML run</p>
+			<p class="calibre6">Let’s visualize<a id="_idIndexMarker269" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> the <span>selected frames:</span></p>
+			<pre class="source-code">
+most_informative_frames = glob('lightly/project_demo/.lightly/frames/*.png')
+for img_path in most_informative_frames:
+    plt.imshow(Image.open(img_path))
+    plt.show()</pre>			<p class="calibre6">This returns the images shown in <span><em class="italic">Figure 5</em></span><span><em class="italic">.7</em></span><span>:</span></p>
+			<div class="calibre18">
+				<div id="_idContainer071" class="img---figure">
+					<img src="image/B21789_05_7.jpg" alt="Figure 5.7 – The five most informative frames that were chosen by the Lightly active ML run" class="calibre79"/>
+				</div>
+			</div>
+			<p class="calibre6" lang="en-US" xml:lang="en-US">Figure 5.7 – The five most informative frames that were chosen by the Lightly active ML run</p>
+			<p class="calibre6">We can also explore<a id="_idIndexMarker270" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> the report, which gives us a lot of information about our new subset <span>of samples.</span></p>
+			<p class="calibre6">The report is saved under <strong class="source-inline">lightly/project_demo/.lightly/runs/run_id</strong>. We can view the run ID and then copy the <strong class="source-inline">report.pdf</strong> file locally, as shown in <span><em class="italic">Figure 5</em></span><span><em class="italic">.8</em></span><span>:</span></p>
+			<div class="calibre18">
+				<div id="_idContainer072" class="img---figure">
+					<img src="image/B21789_05_8.jpg" alt="Figure 5.8 – Copying the report document" class="calibre80"/>
+				</div>
+			</div>
+			<p class="calibre6" lang="en-US" xml:lang="en-US">Figure 5.8 – Copying the report document</p>
+			<p class="calibre6">There is a lot of information in the report, so we will only focus on <span>certain sections.</span></p>
+			<p class="calibre6">First, let’s take a quick look at what we started with and what we ended up with. As shown in <span><em class="italic">Figure 5</em></span><em class="italic">.9</em>, we had 290 frames and one video and created a subset of five frames only, which corresponds to our request for five samples. Note that the sample ratio can be selected with <strong class="source-inline">n_samples</strong>, but it can also be selected as a percentage of the data with <strong class="source-inline">proportionSamples</strong>. So, to select 30% of the data, we can set <span>the following:</span></p>
+			<pre class="source-code">
+"proportionSamples": 0.30</pre>			<p class="calibre6">We can do this instead of running <span>the following:</span></p>
+			<pre class="source-code">
+"n_samples": 5</pre>			<p class="calibre6">Here’s <span>the output:</span></p>
+			<div class="calibre18">
+				<div id="_idContainer073" class="img---figure">
+					<img src="image/B21789_05_9.jpg" alt="Figure 5.9 – Lightly report – dataset information" class="calibre81"/>
+				</div>
+			</div>
+			<p class="calibre6" lang="en-US" xml:lang="en-US">Figure 5.9 – Lightly report – dataset information</p>
+			<p class="calibre6">Now, let’s examine <a id="_idIndexMarker271" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/>the embeddings plots, as shown in <span><em class="italic">Figure 5</em></span><em class="italic">.10</em>. Upon examining both the UMAP and PCA embeddings plots, we’ll see the absence of distinct clusters, suggesting a lack of consistency among the frames. This inconsistency can be attributed to the video’s dynamic filming conditions, including varying angles, distances to the dog, and changes in lighting due to shaded and non-shaded areas being encountered while moving around and following the dog. These factors contribute to the diverse visual input captured in <span>the frames:</span></p>
+			<div class="calibre18">
+				<div id="_idContainer074" class="img---figure">
+					<img src="image/B21789_05_10.jpg" alt="Figure 5.10 – Lightly report – embeddings plots" class="calibre82"/>
+				</div>
+			</div>
+			<p class="calibre6" lang="en-US" xml:lang="en-US">Figure 5.10 – Lightly report – embeddings plots</p>
+			<p class="calibre6">With <span><em class="italic">Figure 5</em></span><em class="italic">.11</em>, we have a better understanding of which frames were selected by the active ML<a id="_idIndexMarker272" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> algorithm. We can see that it did a good job of selecting frames from diverse locations in the <span>embeddings space:</span></p>
+			<div class="calibre18">
+				<div id="_idContainer075" class="img---figure">
+					<img src="image/B21789_05_11.jpg" alt="Figure 5.11 – Lightly report – embeddings plots selected frames" class="calibre83"/>
+				</div>
+			</div>
+			<p class="calibre6" lang="en-US" xml:lang="en-US">Figure 5.11 – Lightly report – embeddings plots selected frames</p>
+			<p class="calibre6">In <span><em class="italic">Figure 5</em></span><em class="italic">.12</em>, we can observe that the class distribution has been effectively balanced: the <strong class="source-inline">dog</strong> class accounts for 54.5%, while the <strong class="source-inline">sports ball</strong> class accounts for 45.5% of the selection, closely aligning with our intended 50/50 class balance ratio. This balance was achieved thanks to our configured class balance ratios. Nonetheless, attaining such equilibrium often presents challenges, particularly when <a id="_idIndexMarker273" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/>one class significantly outnumbers the others in <span>the dataset:</span></p>
+			<div class="calibre18">
+				<div id="_idContainer076" class="img---figure">
+					<img src="image/B21789_05_12.jpg" alt="Figure 5.12 – Lightly report – class distribution" class="calibre84"/>
+				</div>
+			</div>
+			<p class="calibre6" lang="en-US" xml:lang="en-US">Figure 5.12 – Lightly report – class distribution</p>
+			<p class="calibre6">Now, we can explore<a id="_idIndexMarker274" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> some of the model predictions, as shown in <span><em class="italic">Figure 5</em></span><em class="italic">.13</em>. Here, we have several examples of predictions with different numbers of detections. Overall, the model demonstrates strong performance, consistently identifying the dog within the frames. However, it appears to struggle more with detecting the ball. Notably, the ball was recognized in one of the sample frames, which is an encouraging sign. This discrepancy in detection accuracy likely comes from the nature of the ball used in the test; it deviates from the conventional sports balls, such as tennis or soccer balls, on which the original model was trained. This context helps explain the observed variations in model performance and can be fixed by labeling the ball and re-training <span>the model:</span></p>
+			<div class="calibre18">
+				<div id="_idContainer077" class="img---figure">
+					<img src="image/B21789_05_13.jpg" alt="Figure 5.13 – Lightly report – examples of the model’s predictions" class="calibre85"/>
+				</div>
+			</div>
+			<p class="calibre6" lang="en-US" xml:lang="en-US">Figure 5.13 – Lightly report – examples of the model’s predictions</p>
+			<p class="calibre6">Finally, <span><em class="italic">Figure 5</em></span><em class="italic">.14</em> shows<a id="_idIndexMarker275" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> the selected frames throughout the video. Each selected frame corresponds to a vertical line, and we can confirm that there are five lines for our five <span>selected frames:</span></p>
+			<div class="calibre18">
+				<div id="_idContainer078" class="img---figure">
+					<img src="image/B21789_05_14.jpg" alt="Figure 5.14 – Lightly report – video sampling densities" class="calibre86"/>
+				</div>
+			</div>
+			<p class="calibre6" lang="en-US" xml:lang="en-US">Figure 5.14 – Lightly report – video sampling densities</p>
+			<p class="calibre6">Now that we have the most informative frames we wish to label, we can send them to the annotation platform used in the project, such as Encord Annotate (<a href="https://docs.encord.com/docs/annotate-overview" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3">https://docs.encord.com/docs/annotate-overview</a>) or Roboflow (<a href="https://roboflow.com/" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3">https://roboflow.com/</a>), as presented in <a href="B21789_03.xhtml#_idTextAnchor040" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"><span><em class="italic">Chapter 3</em></span></a>, <em class="italic">Managing the Human in the Loop</em>. In this example, we will use Encord Annotate because it offers a feature to visualize selected frames <span>as videos.</span></p>
+			<p class="calibre6">Before running this code, you need to create an Encord SSH private key by following the documentation (<a href="https://docs.encord.com/reference/authentication-sdk" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3">https://docs.encord.com/reference/authentication-sdk</a>) <span>they provide.</span></p>
+			<p class="calibre6">Then, you can authenticate using the <span>following code:</span></p>
+			<pre class="source-code">
+encord_private_key = "-----BEGIN OPENSSH PRIVATE KEY-----{your_key}-----END OPENSSH PRIVATE KEY-----"
+user_client = EncordUserClient.create_with_ssh_private_key(
+    encord_private_key)</pre>			<p class="calibre6">The next step is to<a id="_idIndexMarker276" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> create an Encord dataset (<a href="https://docs.encord.com/docs/annotate-datasets" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3">https://docs.encord.com/docs/annotate-datasets</a>) with the name of our project – that is, <strong class="source-inline">project_demo</strong>. This Encord dataset is the data that we want <span>to label:</span></p>
+			<pre class="source-code">
+print('\nCreating Encord Dataset...')
+encord_dataset_created = user_client.create_dataset(
+    'project_demo', StorageLocation.CORD_STORAGE
+)</pre>			<p class="calibre6">This will return a dictionary with the <strong class="source-inline">title</strong>, <strong class="source-inline">type</strong>, <strong class="source-inline">dataset_hash</strong>, <strong class="source-inline">user_hash</strong>, and <strong class="source-inline">backing_folder_uuid</strong> values of the created dataset. Here, we are using Encord’s cloud storage, but you could also use custom cloud storage. For example, if you’re using AWS S3, then you can use <span><strong class="source-inline">StorageLocation.AWS</strong></span><span> instead.</span></p>
+			<p class="calibre6">Now, we can query the dataset hash because it will be necessary when uploading <span>the images:</span></p>
+			<pre class="source-code">
+dataset_hash = encord_dataset_created.dataset_hash</pre>			<p class="calibre6">Next, we can populate the dataset with our <span>selected frames:</span></p>
+			<pre class="source-code">
+dataset = user_client.get_dataset(dataset_hash)
+image_files = sorted(
+    [
+        p.as_posix()
+        for p in Path("lightly/project_demo/.lightly/frames").iterdir()
+        if p.suffix in {".jpg", ".png"}
+    ]
+)
+dataset.create_image_group(image_files, create_video=True)</pre>			<p class="calibre6">This will return a <a id="_idIndexMarker277" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/>dictionary containing the <strong class="source-inline">data_hash</strong>, <strong class="source-inline">backing_item_uuid</strong>, and <strong class="source-inline">title</strong> values of the <span>uploaded data.</span></p>
+			<p class="calibre6">Note that we used <strong class="source-inline">create_video=True</strong> so that we can create a compressed video from the image groups; these are called image sequences (<a href="https://docs.encord.com/docs/annotate-supported-data#image-sequences" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3">https://docs.encord.com/docs/annotate-supported-data#image-sequences</a>). This is beneficial when visualizing the frames as it helps maintain the temporal context of the videos and is usually very helpful for the labelers. It also allows the labelers to use features such as automated labeling (<a href="https://docs.encord.com/docs/automated-labeling" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3">https://docs.encord.com/docs/automated-labeling</a>), which includes interpolation. This helps speed up the labeling process considerably by automatically estimating the location of labels between two manually <span>labeled frames.</span></p>
+			<p class="calibre6">At this point, we can view our dataset on the Encord web application, in the <strong class="source-inline">Index/Datasets</strong> section (<a href="https://app.encord.com/datasets" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3">https://app.encord.com/datasets</a>), as shown in <span><em class="italic">Figure 5</em></span><em class="italic">.15</em>. We can observe that the images are saved as <strong class="source-inline">img_sequence</strong>, which means that they will be displayed as <span>a video:</span></p>
+			<div class="calibre18">
+				<div id="_idContainer079" class="img---figure">
+					<img src="image/B21789_05_15.jpg" alt="Figure 5.15 – Encord dataset with our five selected frames saved as an image sequence" class="calibre87"/>
+				</div>
+			</div>
+			<p class="calibre6" lang="en-US" xml:lang="en-US">Figure 5.15 – Encord dataset with our five selected frames saved as an image sequence</p>
+			<p class="calibre6">In Encord, we define<a id="_idIndexMarker278" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> the ontology (<a href="https://docs.encord.com/reference/ontologies-sdk" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3">https://docs.encord.com/reference/ontologies-sdk</a>) that we want to use for this annotation project, as shown in <span><em class="italic">Figure 5</em></span><em class="italic">.16</em>. We introduced the concept of ontologies in the <em class="italic">Designing interactive learning systems and workflows</em> section of <a href="B21789_03.xhtml#_idTextAnchor040" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"><span><em class="italic">Chapter 3</em></span></a>, <em class="italic">Managing the Human in </em><span><em class="italic">the Loop</em></span><span>:</span></p>
+			<div class="calibre18">
+				<div id="_idContainer080" class="img---figure">
+					<img src="image/B21789_05_16.jpg" alt="Figure 5.16 – Created ontology in Encord with our two classes, dog and ball" class="calibre88"/>
+				</div>
+			</div>
+			<p class="calibre6" lang="en-US" xml:lang="en-US">Figure 5.16 – Created ontology in Encord with our two classes, dog and ball</p>
+			<p class="calibre6">From the page visualized in <span><em class="italic">Figure 5</em></span><em class="italic">.16</em>, we can copy the ontology ID and use it to create the Encord <a id="_idIndexMarker279" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/>Annotate <span>project (</span><a href="https://docs.encord.com/docs/annotate-overview" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"><span>https://docs.encord.com/docs/annotate-overview</span></a><span>):</span></p>
+			<pre class="source-code">
+project_hash = user_client.create_project(
+        project_title='project_demo',
+        dataset_hashes=[dataset_hash],
+        ontology_hash='a0e16402-a5b4-417e-a4b1-7871ed386362')</pre>			<p class="calibre6">We’ll see <span>the following:</span></p>
+			<div class="calibre18">
+				<div id="_idContainer081" class="img---figure">
+					<img src="image/B21789_05_17.jpg" alt="Figure 5.17 – Encord Annotate project of our project_demo samples" class="calibre89"/>
+				</div>
+			</div>
+			<p class="calibre6" lang="en-US" xml:lang="en-US">Figure 5.17 – Encord Annotate project of our project_demo samples</p>
+			<p class="calibre6">Our data is now ready to<a id="_idIndexMarker280" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> be labeled. We can view our Encord Annotate project in the <strong class="source-inline">Annote/Annotation projects</strong> section (<a href="https://app.encord.com/projects" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3">https://app.encord.com/projects</a>) of the web app. Then, in the <strong class="bold">Labels</strong> section (see <span><em class="italic">Figure 5</em></span><em class="italic">.17</em>) of our <strong class="source-inline">project_demo</strong> annotation project, we can view our selected frames as a video, as shown in <span><em class="italic">Figure 5</em></span><span><em class="italic">.18</em></span><span>:</span></p>
+			<div class="calibre18">
+				<div id="_idContainer082" class="img---figure">
+					<img src="image/B21789_05_18.jpg" alt="Figure 5.18 – Labeling view of the selected frames' image sequence in Encord" class="calibre90"/>
+				</div>
+			</div>
+			<p class="calibre6" lang="en-US" xml:lang="en-US">Figure 5.18 – Labeling view of the selected frames' image sequence in Encord</p>
+			<p class="calibre6">In the view<a id="_idIndexMarker281" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> presented in <span><em class="italic">Figure 5</em></span><em class="italic">.18</em>, we can see that all the frames are presented as a video with a slider that the users can use to navigate the frames. There are also the two classes (dog and ball) that we defined in our ontology in the <strong class="bold">Classes</strong> section that labelers can select to label the frames, as shown in <span><em class="italic">Figure 5</em></span><span><em class="italic">.19</em></span><span>:</span></p>
+			<div class="calibre18">
+				<div id="_idContainer083" class="img---figure">
+					<img src="image/B21789_05_19.jpg" alt="Figure 5.19 – Example of annotations on one of the selected frames" class="calibre91"/>
+				</div>
+			</div>
+			<p class="calibre6" lang="en-US" xml:lang="en-US">Figure 5.19 – Example of annotations on one of the selected frames</p>
+			<p class="calibre6">From this page, labelers can use the automated labeling feature mentioned previously and easily label the objects; when they are done, they can submit the results <span>for review.</span></p>
+			<p class="calibre6">You can also access the selected frames using the <span>following code:</span></p>
+			<pre class="source-code">
+client_lightly_dataset = ApiWorkflowClient(
+    token=lightly_token, dataset_id=dataset_id)
+filenames_and_read_urls \ 
+    client_lightly_dataset.export_filenames_and_read_urls_by_tag_name(
+        tag_name="initial-tag"  # name of the tag in the dataset
+)
+print(f'There are {len(filenames_and_read_urls)} frames')</pre>			<p class="calibre6">This returns the <a id="_idIndexMarker282" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/><span>following output:</span></p>
+			<pre class="source-code">
+There are 5 frames</pre>			<p class="calibre6">This is correct! Now, let’s print the results so that we have a <span>better understanding:</span></p>
+			<pre class="source-code">
+print(filenames_and_read_urls)</pre>			<p class="calibre6">This returns the <span>following output:</span></p>
+			<pre class="source-code">
+[{'fileName': 'dog_running_ball-024-mp4.png', 'readUrl': 'https://api.lightly.ai/v1/datasets/...', 'datasourceUrl': 'project_demo/.lightly/frames/dog_running_ball-024-mp4.png'}, .... {'fileName': 'dog_running_ball-180-mp4.png', 'readUrl': 'https://api.lightly.ai/v1/datasets/...', 'datasourceUrl': 'project_demo/.lightly/frames/dog_running_ball-180-mp4.png'}]</pre>			<p class="calibre6">These URLs can be used to send the selected frames to the annotations platform used for the project. Note that since we are using local storage for the demo, the data isn’t easily accessible to annotation platforms and cloud services should be used instead. The local data can also be visualized in Lightly by serving <span><strong class="source-inline">localhost</strong></span><span> (</span><a href="https://docs.lightly.ai/docs/local-storage#optional-view-local-data-in-lightly-platform" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"><span>https://docs.lightly.ai/docs/local-storage#optional-view-local-data-in-lightly-platform</span></a><span>).</span></p>
+			<p class="calibre6">In this section, we used Lightly to select the most informative frames in a test video of a dog running after a ball using several strategies. These strategies included finding diverse objects, balancing class ratios, using prediction scores for object frequencies, and<a id="_idIndexMarker283" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> considering the least confident results. Lightly has a lot of other features to improve these results and well-organized <span>documentation (</span><a href="https://docs.lightly.ai/" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"><span>https://docs.lightly.ai/</span></a><span>).</span></p>
+			<p class="calibre6">Next up, we will talk about how we can use Lightly for <strong class="bold">self-supervised </strong><span><strong class="bold">learning</strong></span><span> (</span><span><strong class="bold">SSL</strong></span><span>).</span></p>
+			<h2 id="_idParaDest-73" class="calibre9"><a id="_idTextAnchor075" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/>SSL with active ML</h2>
+			<p class="calibre6">Lightly offers<a id="_idIndexMarker284" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> other useful features, such<a id="_idIndexMarker285" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> as <strong class="bold">SSL</strong>, which allows users to <a id="_idIndexMarker286" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/>fine-tune an SSL model on their data before embedding the images. SSL algorithms exploit the structure and context within unlabeled images or videos to generate surrogate supervised signals that enable models to discover powerful visual representations on their own. For example, models may be trained to recognize spatial patterns, colorizations, rotations, or temporal ordering as pretext objectives before fine-tuning downstream tasks. In essence, SSL allows models to take advantage of vast volumes of unlabeled video and images to uncover useful features and patterns within the data itself, avoiding reliance on manual labeling, which can be infeasible at scale. The models automatically supervise their feature learning through carefully designed pretext tasks while harnessing aspects such as temporal continuity in a video. So, this Lightly feature can be extremely beneficial when developing models for a specific domain, such as medical videos. The additional training step improves the quality of the embeddings because the model can adapt to the specific domain without requiring <span>more labeling.</span></p>
+			<p class="calibre6">Enabling SSL is simple and only requires adding a couple of lines to our code in the <strong class="source-inline">worker_config</strong> and <strong class="source-inline">lightly_config</strong> subdictionaries, both<a id="_idIndexMarker287" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> of which <a id="_idIndexMarker288" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/>are <a id="_idIndexMarker289" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/>part of the <span><strong class="source-inline">scheduled_run_id</strong></span><span> dictionary:</span></p>
+			<pre class="source-code">
+scheduled_run_id = client.schedule_compute_worker_run(
+    worker_config={
+        "enable_training": True
+    },
+    selection_config={
+        "n_samples": 5,
+        "strategies": [....], # same as before
+    },
+    lightly_config={
+        'loader': {
+            'num_workers': -1,
+        },
+        'trainer': {
+            'max_epochs': 10,
+            "gpus": 0, # cpu
+        },
+    },
+    runs_on=['Demo'],
+)</pre>			<p class="calibre6">Here, we configured the active ML run to perform SSL training for 10 epochs on the CPU before generating <span>the embeddings.</span></p>
+			<p class="calibre6">Now, let’s take a look at our outputs. The frames that were selected are mostly different from the ones we selected previously – that is, <strong class="source-inline">dog_running_ball-024-mp4.png</strong>, <strong class="source-inline">dog_running_ball-101-mp4.png</strong>, <strong class="source-inline">dog_running_ball-033-mp4.png</strong>, <strong class="source-inline">dog_running_ball-224-mp4.png</strong>, and <strong class="source-inline">dog_running_ball-049-mp4.png</strong> – compared to <strong class="source-inline">dog_running_ball-024-mp4.png</strong>, <strong class="source-inline">dog_running_ball-183-mp4.png</strong>, <strong class="source-inline">dog_running_ball-151-mp4.png</strong>, <strong class="source-inline">dog_running_ball-194-mp4.png</strong>, <span>and </span><span><strong class="source-inline">dog_running_ball-180-mp4.png</strong></span><span>.</span></p>
+			<p class="calibre6">So, only <a id="_idIndexMarker290" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/>frame <strong class="source-inline">024</strong> was<a id="_idIndexMarker291" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> selected <a id="_idIndexMarker292" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/>again. <span><em class="italic">Figure 5</em></span><em class="italic">.20</em> shows the five most <span>informative frames:</span></p>
+			<div class="calibre18">
+				<div id="_idContainer084" class="img---figure">
+					<img src="image/B21789_05_20.jpg" alt="Figure 5.20 – Selecting the five most informative frames via a Lightly active ML SSL run" class="calibre92"/>
+				</div>
+			</div>
+			<p class="calibre6" lang="en-US" xml:lang="en-US">Figure 5.20 – Selecting the five most informative frames via a Lightly active ML SSL run</p>
+			<p class="calibre6">The frame that was selected in both the SSL and non-SSL runs is highlighted at <span>the borders.</span></p>
+			<p class="calibre6"><span><em class="italic">Figure 5</em></span><em class="italic">.20</em> shows that the addition of the SSL step has noticeably altered the selection criteria for frames. Predominantly, frames chosen post-SSL tend to feature the dog at a further distance, contrasting sharply with those selected without SSL, which mainly consisted of close-ups showcasing the dog holding the ball. This<a id="_idIndexMarker293" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> shift<a id="_idIndexMarker294" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> underscores<a id="_idIndexMarker295" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> the impact of SSL on the model’s focus and frame <span>selection preferences:</span></p>
+			<div class="calibre18">
+				<div id="_idContainer085" class="img---figure">
+					<img src="image/B21789_05_21.jpg" alt="Figure 5.21 – Lightly report – comparing video sampling densities between the non-SSL run (top image) and the SSL run (bottom image)" class="calibre93"/>
+				</div>
+			</div>
+			<p class="calibre6" lang="en-US" xml:lang="en-US">Figure 5.21 – Lightly report – comparing video sampling densities between the non-SSL run (top image) and the SSL run (bottom image)</p>
+			<p class="calibre6">Upon examining the new embedding plots shown in <span><em class="italic">Figure 5</em></span><em class="italic">.21</em>, it is evident that the embeddings model performs better in clustering the frames. Despite this improvement, the clusters are not yet sharply defined, suggesting that extending the number of epochs in the SSL training could further refine <span>this aspect:</span></p>
+			<div class="calibre18">
+				<div id="_idContainer086" class="img---figure">
+					<img src="image/B21789_05_22.jpg" alt="Figure 5.22 – New embeddings plots with the SSL active ML run" class="calibre94"/>
+				</div>
+			</div>
+			<p class="calibre6" lang="en-US" xml:lang="en-US">Figure 5.22 – New embeddings plots with the SSL active ML run</p>
+			<p class="calibre6">Incorporating the Lightly SSL feature into the ML pipeline is a straightforward addition that can provide significant benefits for field-specific data. By leveraging this advanced technique, we observed that the embeddings that were generated by the model were notably improved after undergoing SSL in our test. This enhancement not only enhances the overall performance but also ensures that the pipeline is<a id="_idIndexMarker296" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> optimized<a id="_idIndexMarker297" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> to<a id="_idIndexMarker298" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/> handle the unique characteristics of the data <span>being processed.</span></p>
+			<h1 id="_idParaDest-74" class="calibre8"><a id="_idTextAnchor076" class="pcalibre pcalibre1 calibre5 pcalibre4 pcalibre2 pcalibre3"/>Summary</h1>
+			<p class="calibre6">In this chapter, we learned how to use Lightly to efficiently select the most informative frames in videos to improve object detection models using diverse sampling strategies. We also saw how to send these selected frames to the labeling platform Encord, thereby completing an end-to-end use case. Finally, we explored how to further enhance sampling by incorporating an SSL step into the active <span>ML pipeline.</span></p>
+			<p class="calibre6">Moving forward, our focus will shift to exploring how to effectively evaluate, monitor, and test the active ML pipeline. This step is essential in ensuring that the pipeline remains robust and reliable throughout its deployment. By implementing comprehensive evaluation strategies, we can assess the performance of the pipeline against predefined metrics and benchmarks. Additionally, continuous monitoring will allow us to identify any potential issues or deviations from expected behavior, enabling us to take proactive measures to maintain <span>optimal performance.</span></p>
+			<p class="calibre6">Furthermore, rigorous testing of the active ML pipeline is essential to verify its functionality and validate its accuracy. Through systematic testing procedures, we can ensure that the pipeline behaves consistently under various scenarios and input conditions. This will involve designing and executing diverse test cases that cover a wide range of potential use cases and <span>edge scenarios.</span></p>
+			<p class="calibre6">By thoroughly evaluating, monitoring, and testing the active ML pipeline, we can instill confidence in its reliability and performance. This robust framework will enable us to make informed decisions and drive valuable insights from the processed data, ultimately leading to improved outcomes and enhanced decision-making capabilities in the <span>field-specific domain.</span></p>
+		</div>
+	</div>
+</div>
+</body></html>

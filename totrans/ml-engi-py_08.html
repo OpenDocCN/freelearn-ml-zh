@@ -1,0 +1,753 @@
+<html><head></head><body>
+<div id="sbo-rt-content"><div class="Basic-Text-Frame" id="_idContainer195">
+<h1 class="chapterNumber">8</h1>
+<h1 class="chapterTitle" id="_idParaDest-170">Building an Example ML Microservice</h1>
+<p class="normal">This chapter will be all about bringing together some of what we have learned in the book so far with a realistic example. This will be based on one of the scenarios introduced in <em class="chapterRef">Chapter 1</em>, <em class="italic">Introduction to ML Engineering</em>, where we were required to build a forecasting service for store item sales. We will discuss the scenario in a bit of detail and outline the key decisions that have to be made to make a solution a reality, before showing how we can employ the processes, tools, and techniques we have learned through out this book to solve key parts of the problem from an ML engineering perspective. By the end of this chapter, you should come away with a clear view of how to build your own ML microservices for solving a variety of business problems.</p>
+<p class="normal">In this chapter, we will cover the following topics:</p>
+<ul>
+<li class="bulletList">Understanding the forecasting problem</li>
+<li class="bulletList">Designing our forecasting service</li>
+<li class="bulletList">Selecting the tools</li>
+<li class="bulletList">Training at scale</li>
+<li class="bulletList">Serving the models with FastAPI</li>
+<li class="bulletList">Containerizing and deploying to Kubernetes</li>
+</ul>
+<p class="normal">Each topic will provide an opportunity for us to walk through the different decisions we have to make as engineers working on a complex ML delivery. This will provide us with a handy reference when we go out and do this in the real world!</p>
+<p class="normal">With that, let’s get started and build a forecasting microservice!</p>
+<h1 class="heading-1" id="_idParaDest-171">Technical requirements</h1>
+<p class="normal">The code examples in this chapter will be simpler to follow if you have the following installed and running on your machine:</p>
+<ul>
+<li class="bulletList">Postman or another API development tool</li>
+<li class="bulletList">A local Kubernetes cluster manager like minikube or kind</li>
+<li class="bulletList">The Kubernetes CLI tool, <code class="inlineCode">kubectl</code></li>
+</ul>
+<p class="normal">There are several different <code class="inlineCode">conda</code> environment <code class="inlineCode">.yml</code> files contained in the <code class="inlineCode">Chapter08</code> folder in the book’s GitHub repo for the technical examples, as there are a few different sub-components. These are:</p>
+<ul>
+<li class="bulletList"><code class="inlineCode">mlewp-chapter08-train</code>: This specifies the environment for running the training scripts.</li>
+<li class="bulletList"><code class="inlineCode">mlewp-chapter08-serve</code>: This specifies the environment for the local FastAPI web service build.</li>
+<li class="bulletList"><code class="inlineCode">mlewp-chapter08-register</code>: This gives the environment specification for running the MLflow tracking server.</li>
+</ul>
+<p class="normal">In each case, create the Conda environment, as usual, with:</p>
+<pre class="programlisting con"><code class="hljs-con">conda env create –f &lt;ENVIRONMENT_NAME&gt;.yml
+</code></pre>
+<p class="normal">The Kubernetes examples in this chapter also require some configuration of the cluster and the services we will deploy; these are given in the <code class="inlineCode">Chapter08/forecast</code> folder under different <code class="inlineCode">.yml</code> files. If you are using kind, you can create a cluster with a simple configuration by running: </p>
+<pre class="programlisting con"><code class="hljs-con">kind create cluster
+</code></pre>
+<p class="normal">Or you can use one of the configuration <code class="inlineCode">.yaml</code> files provided in the repository:</p>
+<pre class="programlisting con"><code class="hljs-con">kind create cluster --config cluster-config-ch08.yaml
+</code></pre>
+<p class="normal">Minikube does not provide an option to read in a cluster configuration <code class="inlineCode">.yaml</code> like kind, so instead, you should simply run:</p>
+<pre class="programlisting con"><code class="hljs-con">minikube start
+</code></pre>
+<p class="normal">to deploy your local cluster.</p>
+<h1 class="heading-1" id="_idParaDest-172">Understanding the forecasting problem</h1>
+<p class="normal">In <em class="chapterRef">Chapter 1</em>, <em class="italic">Introduction to ML Engineering</em>, we considered the example of an ML team that has been tasked with <a id="_idIndexMarker948"/>providing forecasts of items at the level of individual stores in a retail business. The fictional business users had the following requirements:</p>
+<ul>
+<li class="bulletList">The forecasts should be rendered and accessible via a web-based dashboard.</li>
+<li class="bulletList">The user should be able to request updated forecasts if necessary.</li>
+<li class="bulletList">The forecasts should be carried out at the level of individual stores.</li>
+<li class="bulletList">Users will be interested in their own regions/stores in any one session and not be concerned with global trends.</li>
+<li class="bulletList">The number of requests for updated forecasts in any one session will be small.</li>
+</ul>
+<p class="normal">Given these requirements, we can work with the business to create the following user stories, which we can put into a tool such as Jira, as explained in <em class="chapterRef">Chapter 2</em>, <em class="italic">The Machine Learning Development Process</em>. Some examples of user stories covering these requirements would be the following:</p>
+<ul>
+<li class="bulletList"><strong class="keyWord">User Story 1</strong>: As a local logistics planner, I want to log in to a dashboard in the morning at 09:00 and be able <a id="_idIndexMarker949"/>to see forecasts of item demand at the store level for the next few days so that I can understand transport demand ahead of time.</li>
+<li class="bulletList"><strong class="keyWord">User Story 2</strong>: As a local logistics planner, I want to be able to request an update of my forecast if I see it is out of date. I want the new forecast to be returned in under 5 minutes so that I can make decisions on transport demand effectively.</li>
+<li class="bulletList"><strong class="keyWord">User Story 3</strong>: As a local logistics planner, I want to be able to filter for forecasts for specific stores so that I <a id="_idIndexMarker950"/>can understand what stores are driving demand and use this in decision-making.</li>
+</ul>
+<p class="normal">These user stories are very important for the development of the solution as a whole. As we are focused on the ML engineering <a id="_idIndexMarker951"/>aspects of the problem, we can now dive into what these mean for building the solution.</p>
+<p class="normal">For example, the desire to <em class="italic">be able to see forecasts of item demand at the store level</em> can be translated quite nicely into a few technical requirements for the ML part of the solution. This tells us that the target variable will be the number of items required on a particular day. It tells us that our ML model or models need to be able to work at the store level, so either we have one model per store or the concept of the store can be taken in as some sort of feature.</p>
+<p class="normal">Similarly, the requirement that the user wants to <em class="italic">be able to request an update of my forecast if I see it is out of date ... I want the new forecast to be retrieved in under five minutes</em> places a clear latency requirement on training. We cannot build something that takes days to retrain, so this may suggest that one model built across all of the data may not be the best solution.</p>
+<p class="normal">Finally, the request <em class="italic">I want to be able to filter for forecasts for specific stores</em> again supports the notion that whatever we build must utilize some sort of store identifier in the data but not necessarily as a feature for the algorithm. So, we may want to start thinking of application logic that will take a request for the forecast for a specific store, identified by this store ID, then the ML model and forecast are retrieved only for that store via some kind of lookup or retrieval that uses this ID in a filter.</p>
+<p class="normal">Walking through this process, we can see how just a few lines of requirements have allowed us to start fleshing out how we <a id="_idIndexMarker952"/>will tackle the problem in practice. Some of these thoughts and others could be consolidated upon a little brainstorming among our team for the project in a table like that of <em class="italic">Table 8.1</em>:</p>
+<table class="table-container" id="table001-4">
+<tbody>
+<tr>
+<td class="table-cell">
+<p class="normal"><strong class="keyWord">User Story</strong></p>
+</td>
+<td class="table-cell">
+<p class="normal"><strong class="keyWord">Details</strong></p>
+</td>
+<td class="table-cell">
+<p class="normal"><strong class="keyWord">Technical Requirements</strong></p>
+</td>
+</tr>
+<tr>
+<td class="table-cell">
+<p class="normal">1</p>
+</td>
+<td class="table-cell">
+<p class="normal">As a local logistics planner, I want to log in to a dashboard in the morning at 09:00 and be able to see forecasts of item demand at the store level for the next few days so that I can understand transport demand ahead of time.</p>
+</td>
+<td class="table-cell">
+<ul>
+<li class="bulletList">Target variable = item demand.</li>
+<li class="bulletList">Forecast horizon – 1-7 days.</li>
+<li class="bulletList">API access for a dashboard or other visualization solution.</li>
+</ul>
+</td>
+</tr>
+<tr>
+<td class="table-cell">
+<p class="normal">2</p>
+</td>
+<td class="table-cell">
+<p class="normal">As a local logistics planner, I want to be able to request an update of my forecast if I see it is out of date. I want the new forecast to be returned in under 5 minutes so that I can make decisions on transport demand effectively.</p>
+</td>
+<td class="table-cell">
+<ul>
+<li class="bulletList">Lightweight retraining.</li>
+<li class="bulletList">Model per store.</li>
+</ul>
+</td>
+</tr>
+<tr>
+<td class="table-cell">
+<p class="normal">3</p>
+</td>
+<td class="table-cell">
+<p class="normal">As a local logistics planner, I want to be able to filter for forecasts for specific stores so that I can understand what stores are driving demand and use this in decision-making.</p>
+</td>
+<td class="table-cell">
+<ul>
+<li class="bulletList">Model per store.</li>
+</ul>
+</td>
+</tr>
+</tbody>
+</table>
+<p class="packt_figref">Table 8.1: Translating user stories to technical requirements.</p>
+<p class="normal">Now we will build on our understanding of the problem by starting to pull together a design for the ML piece of the solution.</p>
+<h1 class="heading-1" id="_idParaDest-173">Designing our forecasting service</h1>
+<p class="normal">The requirements in the <em class="italic">Understanding the forecasting problem</em> section are the definitions of the targets we need to hit, but <a id="_idIndexMarker953"/>they are not the method for getting there. Drawing on our understanding of design and architecture from <em class="chapterRef">Chapter 5</em>, <em class="italic">Deployment Patterns and Tools</em>, we can start building out our design.</p>
+<p class="normal">First, we should confirm what kind of design we should be working on. Since we need dynamic requests, it makes sense that we follow the microservice architecture discussed in <em class="chapterRef">Chapter 5</em>, <em class="italic">Deployment Patterns and Tools</em>. This will allow us to build a service that has the sole focus of retrieving the right model from our model store and performing the requested inference. The prediction service should therefore have interfaces available between the dashboard and the model store.</p>
+<p class="normal">Furthermore, since a user may want to work with a few different store combinations in any one session and maybe switch back and forth between the forecasts of these, we should provide a mechanism for doing so that is performant.</p>
+<p class="normal">It is also clear from the scenario that we can quite easily have a very high volume of requests for predictions but a lower request for model updates. This means that separating out training and prediction will make sense and that we can follow the train-persist process outlined in <em class="chapterRef">Chapter 3</em>, <em class="italic">From Model to Model Factory</em>. This will mean that prediction will not be dependent on a full training run every time and that retrieval of models for prediction is relatively fast.</p>
+<p class="normal">What we have also gathered from the requirements is that our training system doesn’t necessarily need to be triggered by drift monitoring in this case, but by dynamic requests made by the user. This adds a bit of complexity as it means that our solution should not retrain for every request coming in but be able to determine whether retraining is worth it for a given request or whether the model is already up to date. For example, if four users log on and are looking at the same region/store/item combination and all request a retrain, it is pretty clear that we do not need to retrain our model four times! Instead, what should happen is that the training system registers a request, performs a retrain, and then safely ignores the other requests.</p>
+<p class="normal">There are several ways to serve ML models, as we have discussed several times throughout this book. One very powerful and flexible way is to wrap the models, or the model serving logic, into a standalone service that is limited to only performing tasks required for the serving of the ML inference. This is the serving pattern that we will consider in this chapter and it is the classic “microservice” architecture, where different pieces of functionality are broken down into their own distinct and separated services. This builds resiliency and extensibility into your software systems so it is a great pattern to become comfortable with. This is also particularly amenable to the development of ML systems, as these have to consist of training, inference, and monitoring services, as outlined in <em class="chapterRef">Chapter 3</em>, <em class="italic">From Model to Model Factory</em>. This chapter will walk through how to serve an ML model using a microservice architecture, using a few different approaches with various pros and cons. You will then be able to adapt and build on these examples in your own future projects.</p>
+<p class="normal">We can bring these <a id="_idIndexMarker954"/>design points together into a high-level design diagram, for example, in <em class="italic">Figure 8.1</em>:</p>
+<figure class="mediaobject"><img alt="" height="295" role="presentation" src="../Images/B19525_08_01.png" width="825"/></figure>
+<p class="packt_figref">Figure 8.1: High-level design for the forecasting microservice.</p>
+<p class="normal">The next section will focus on taking these high-level design considerations to a lower level of detail as we perform some tool selection ahead of development.</p>
+<h1 class="heading-1" id="_idParaDest-174">Selecting the tools</h1>
+<p class="normal">Now that we have <a id="_idIndexMarker955"/>a high-level design in mind and we have written down some clear technical requirements, we can begin to select the toolset we will use to implement our solution.</p>
+<p class="normal">One of the most important considerations on this front will be what framework we use for modeling our data and building our forecasting functionality. Given that the problem is a time-series modeling problem with a need for fast retraining and prediction, we can consider the pros and cons of a few options that may <a id="_idIndexMarker956"/>fit the bill before <a id="_idIndexMarker957"/>proceeding.</p>
+<p class="normal">The results of this exercise are shown in <em class="italic">Table 8.2</em>:</p>
+<table class="table-container" id="table002-2">
+<tbody>
+<tr>
+<td class="table-cell">
+<p class="normal"><strong class="keyWord">Tool/Framework</strong></p>
+</td>
+<td class="table-cell">
+<p class="normal"><strong class="keyWord">Pros</strong></p>
+</td>
+<td class="table-cell">
+<p class="normal"><strong class="keyWord">Cons</strong></p>
+</td>
+</tr>
+<tr>
+<td class="table-cell">
+<p class="normal">Scikit-learn</p>
+</td>
+<td class="table-cell">
+<ul>
+<li class="bulletList">Already understood by almost all data scientists.</li>
+<li class="bulletList">Very easy-to-use syntax.</li>
+<li class="bulletList">Lots of great community support.</li>
+<li class="bulletList">Good feature engineering and pipelining support.</li>
+</ul>
+</td>
+<td class="table-cell">
+<ul>
+<li class="bulletList">No native time-series modeling capabilities (but the popular <code class="inlineCode">sktime</code> package does have these).</li>
+<li class="bulletList">Will require more feature engineering to apply models to time-series data.</li>
+</ul>
+</td>
+</tr>
+<tr>
+<td class="table-cell">
+<p class="normal">Prophet</p>
+</td>
+<td class="table-cell">
+<ul>
+<li class="bulletList">Purely focused on forecasting.</li>
+<li class="bulletList">Has inbuilt hyperparameter optimization capabilities.</li>
+<li class="bulletList">Provides a lot of functionality out of the box.</li>
+<li class="bulletList">Often gives accurate results on a wide variety of problems.</li>
+<li class="bulletList">Provides confidence intervals out of the box.</li>
+</ul>
+</td>
+<td class="table-cell">
+<ul>
+<li class="bulletList">Not as commonly used as scikit-learn (but still relatively popular).</li>
+<li class="bulletList">Underlying methods are quite sophisticated – may lead to black box usage by data scientists.</li>
+<li class="bulletList">Not inherently scalable.</li>
+</ul>
+</td>
+</tr>
+<tr>
+<td class="table-cell">
+<p class="normal">Spark ML</p>
+</td>
+<td class="table-cell">
+<ul>
+<li class="bulletList">Natively scalable to large volumes.</li>
+<li class="bulletList">Good feature engineering and pipelining support.</li>
+</ul>
+</td>
+<td class="table-cell">
+<ul>
+<li class="bulletList">No native time-series modeling capabilities.</li>
+<li class="bulletList">Algorithm options are relatively limited.</li>
+<li class="bulletList">Can be harder to debug.</li>
+</ul>
+</td>
+</tr>
+</tbody>
+</table>
+<p class="packt_figref">Table 8.2: The considered pros and cons of some different ML toolkits for solving this forecasting problem.</p>
+<p class="normal">Based on the information in <em class="italic">Table 8.2</em>, it looks like the <strong class="keyWord">Prophet</strong> library would be a good choice and offer a nice balance between <a id="_idIndexMarker958"/>predictive power, the desired time-series capabilities, and experience among the developers and scientists on the team.</p>
+<p class="normal">The data scientists could then use this information to build a proof-of-concept, with code much like that shown in <em class="chapterRef">Chapter 1</em>, <em class="italic">Introduction to ML Engineering</em>, in the <em class="italic">Example 2: Forecasting API </em>section, which applies Prophet to a standard retail dataset.</p>
+<p class="normal">This covers the ML package we will use for modeling, but what about the other components? We need to build something that allows the frontend application to request actions be taken by the backend, so it is a good idea to consider some kind of web application framework. We also need to consider what happens <a id="_idIndexMarker959"/>when this backend application is hit by many requests, so it makes sense to build it with scale in mind. Another consideration is that we are tasked with training not one but several models in this use case, one for each retail store, and so we should try and parallelize the training as much as possible. The last pieces of the puzzle are going to be the use of a model management tool and the need for an orchestration layer in order to trigger training and monitoring jobs on a schedule or dynamically.</p>
+<p class="normal">Putting all of this together, we can make some design decisions about the lower-level tooling required on top of using the Prophet library. We can summarize <a id="_idIndexMarker960"/>these in the following list:</p>
+<ol class="numberedList" style="list-style-type: decimal;">
+<li class="numberedList" value="1"><strong class="keyWord">Prophet</strong>: We met the Prophet forecasting library in <em class="chapterRef">Chapter 1</em>, <em class="italic">Introduction to ML Engineering</em>. Here we will <a id="_idIndexMarker961"/>provide a deeper dive into that library and how it works before developing a training pipeline to create the types of forecasting models we saw for that retail use case in the first chapter.</li>
+<li class="numberedList"><strong class="keyWord">Kubernetes</strong>: As discussed in <em class="chapterRef">Chapter 6</em>, <em class="italic">Scaling Up</em>, this is a platform for orchestrating multiple containers <a id="_idIndexMarker962"/>across compute clusters and allows you to build highly scalable ML model-serving solutions. We will use this to host the main application.</li>
+<li class="numberedList"><strong class="keyWord">Ray Train</strong>: We already <a id="_idIndexMarker963"/>met Ray in <em class="chapterRef">Chapter 6</em>, <em class="italic">Scaling Up</em>. Here we will use Ray Train to train many different Prophet forecasting models in parallel, and we will also allow these jobs to be triggered upon a request to the main web service handling the incoming requests.</li>
+<li class="numberedList"><strong class="keyWord">MLflow</strong>: We <a id="_idIndexMarker964"/>met MLflow in <em class="chapterRef">Chapter 3</em>, <em class="italic">From Model to Model Factory</em>, and this will be used as our model registry.</li>
+<li class="numberedList"><strong class="keyWord">FastAPI</strong>: For Python, the go-to backend web frameworks are typically Django, Flask, and FastAPI. We will use FastAPI to <a id="_idIndexMarker965"/>create the main backend routing application that will serve the forecasts and interact with the other components of the solution. FastAPI is a web framework designed to be simple to use and for building highly performant web applications and is currently being used by some high-profile organizations, including Uber, Microsoft, and Netflix (according to the FastAPI homepage).</li>
+</ol>
+<div class="note">
+<p class="normal">There has been some recent discussion around the potential for memory leaks when using FastAPI, especially for longer-running services. This means that ensuring you have enough RAM on the machines running your FastAPI endpoints can be very important. In many cases, this does not seem to be a critical issue, but it is an active topic being discussed within the FastAPI community. For more on this, please see <a href="https://github.com/tiangolo/fastapi/discussions/9082"><span class="url">https://github.com/tiangolo/fastapi/discussions/9082</span></a>. Other frameworks, such as <strong class="keyWord">Litestar</strong>, <a href="https://litestar.dev/"><span class="url">https://litestar.dev/</span></a>, do not seem to have the same issue, so feel free to play around <a id="_idIndexMarker966"/>with different web frameworks for the serving layer in the following example and in your projects. FastAPI is still a very useful framework with lots of benefits so we will proceed with it in this chapter; it is just important to bear this point in mind.</p>
+</div>
+<p class="normal">In this chapter, we are going to <a id="_idIndexMarker967"/>focus on the components of this system that are relevant to serving the models at scale, as the scheduled train and retrain aspects will be covered in <em class="chapterRef">Chapter 9</em>, <em class="italic">Building an Extract, Transform, Machine Learning Use Case</em>. The components we focus on can be thought to consist of our “serving layer,” although I will show you how to use Ray to train several forecasting models in parallel.</p>
+<p class="normal">Now that we have made some tooling choices, let’s get building our ML microservice!</p>
+<h1 class="heading-1" id="_idParaDest-175">Training at scale</h1>
+<p class="normal">When we introduced Ray in <em class="chapterRef">Chapter 6</em>, <em class="italic">Scaling Up</em>, we mentioned use cases where the data or processing time requirements were <a id="_idIndexMarker968"/>such that using a very scalable parallel computing framework made sense. What was not made explicit is that sometimes these requirements come from the fact that we actually want to train <em class="italic">many models</em>, not just one model on a large amount of data or one model more quickly. This is what we will do here.</p>
+<p class="normal">The retail forecasting example we described in <em class="chapterRef">Chapter 1</em>, <em class="italic">Introduction to ML Engineering</em> uses a data set with several different retail stores in it. Rather than creating one model that could have a store number or identifier as a feature, a better strategy would perhaps be to train a forecasting model for each individual store. This is likely to give better accuracy as the features of the data at the store level which may give some predictive power will not be averaged out by the model looking at a combination of all the stores together. This is therefore the approach we will take, and this is where we can use Ray’s parallelism to train multiple forecasting models simultaneously.</p>
+<p class="normal">To use <strong class="keyWord">Ray</strong> to do this, we need to take the training code we had in <em class="chapterRef">Chapter 1</em>, and adapt it slightly. First, we can bring together the functions we had for pre-processing the data and for training the forecasting models. Doing this means that <a id="_idIndexMarker969"/>we are creating one serial process that we can then distribute to run on the shard of the data corresponding to each store. The original functions for preprocessing and training the models were:</p>
+<pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">import</span> ray
+<span class="hljs-keyword">import</span> ray.data
+<span class="hljs-keyword">import</span> pandas <span class="hljs-keyword">as</span> pd
+<span class="hljs-keyword">from</span> prophet <span class="hljs-keyword">import</span> Prophet
+
+<span class="hljs-keyword">def</span> <span class="hljs-title">prep_store_data</span>(
+<span class="hljs-params">    df: pd.DataFrame, </span>
+<span class="hljs-params">    store_id: </span><span class="hljs-built_in">int</span><span class="hljs-params"> = </span><span class="hljs-number">4</span><span class="hljs-params">, </span>
+<span class="hljs-params">    store_open: </span><span class="hljs-built_in">int</span><span class="hljs-params"> = </span><span class="hljs-number">1</span>
+) -&gt; pd.DataFrame:
+    df_store = df[
+        (df[<span class="hljs-string">'Store'</span>] == store_id) &amp;\
+        (df[<span class="hljs-string">'</span><span class="hljs-string">Open'</span>] == store_open)
+    ].reset_index(drop=<span class="hljs-literal">True</span>)
+    df_store[<span class="hljs-string">'Date'</span>] = pd.to_datetime(df_store[<span class="hljs-string">'Date'</span>])
+    df_store.rename(columns= {<span class="hljs-string">'Date'</span>: <span class="hljs-string">'ds'</span>, <span class="hljs-string">'Sales'</span>: <span class="hljs-string">'y'</span>}, inplace=<span class="hljs-literal">True</span>)
+    <span class="hljs-keyword">return</span> df_store.sort_values(<span class="hljs-string">'</span><span class="hljs-string">ds'</span>, ascending=<span class="hljs-literal">True</span>)
+
+<span class="hljs-keyword">def</span> <span class="hljs-title">train_predict</span>(
+<span class="hljs-params">    df: pd.DataFrame,</span>
+<span class="hljs-params">    train_fraction: </span><span class="hljs-built_in">float</span><span class="hljs-params">,</span>
+<span class="hljs-params">    seasonality: </span><span class="hljs-built_in">dict</span>
+) -&gt; <span class="hljs-built_in">tuple</span>[pd.DataFrame, pd.DataFrame, pd.DataFrame, <span class="hljs-built_in">int</span>]:
+<span class="hljs-comment">    # grab split data</span>
+    train_index = <span class="hljs-built_in">int</span>(train_fraction*df.shape[<span class="hljs-number">0</span>])
+    df_train = df.copy().iloc[<span class="hljs-number">0</span>:train_index]
+    df_test = df.copy().iloc[train_index:]
+<span class="hljs-comment">#create Prophet model</span>
+    model=Prophet(
+        yearly_seasonality=seasonality[<span class="hljs-string">'yearly'</span>],
+        weekly_seasonality=seasonality[<span class="hljs-string">'weekly'</span>],
+        daily_seasonality=seasonality[<span class="hljs-string">'daily'</span>],
+        interval_width = <span class="hljs-number">0.95</span>
+    )
+<span class="hljs-comment"># train and predict</span>
+    model.fit(df_train)
+    predicted = model.predict(df_test)
+    <span class="hljs-keyword">return</span> predicted, df_train, df_test, train_index
+</code></pre>
+<p class="normal">We can now combine these into a single function that will take a <code class="inlineCode">pandas</code> DataFrame, preprocess that data, train a Prophet forecasting model and then return predictions on the test set, the training dataset, the test dataset and the size of the training set, here labelled by the <code class="inlineCode">train_index</code> value. Since we wish to distribute the application of this function, we need to use the <code class="inlineCode">@ray.remote</code> decorator that we introduced in <em class="chapterRef">Chapter 6</em>, <em class="italic">Scaling Up</em>. We pass in the <code class="inlineCode">num_returns=4</code> argument to the decorator to let Ray know that this function will return four values in a tuple.</p>
+<pre class="programlisting code"><code class="hljs-code"><span class="hljs-meta">@ray.remote(</span><span class="hljs-params">num_returns=</span><span class="hljs-number">4</span><span class="hljs-meta">)</span>
+<span class="hljs-keyword">def</span> <span class="hljs-title">prep_train_predict</span>(
+<span class="hljs-params">    df: pd.DataFrame,</span>
+<span class="hljs-params">    store_id: </span><span class="hljs-built_in">int</span><span class="hljs-params">,</span>
+<span class="hljs-params">    store_open: </span><span class="hljs-built_in">int</span><span class="hljs-params">=</span><span class="hljs-number">1</span><span class="hljs-params">,</span>
+<span class="hljs-params">    train_fraction: </span><span class="hljs-built_in">float</span><span class="hljs-params">=</span><span class="hljs-number">0.8</span><span class="hljs-params">,</span>
+<span class="hljs-params">    seasonality: </span><span class="hljs-built_in">dict</span><span class="hljs-params">={</span><span class="hljs-string">'yearly'</span><span class="hljs-params">: </span><span class="hljs-literal">True</span><span class="hljs-params">, </span><span class="hljs-string">'weekly'</span><span class="hljs-params">: </span><span class="hljs-literal">True</span><span class="hljs-params">, </span><span class="hljs-string">'daily'</span><span class="hljs-params">: </span><span class="hljs-literal">False</span><span class="hljs-params">}</span>
+) -&gt; <span class="hljs-built_in">tuple</span>[pd.DataFrame, pd.DataFrame, pd.DataFrame, <span class="hljs-built_in">int</span>]:
+    df = prep_store_data(df, store_id=store_id, store_open=store_open)
+    <span class="hljs-keyword">return</span> train_predict(df, train_fraction, seasonality)
+</code></pre>
+<p class="normal">Now that we have our remote function we just need to apply it. First, we assume that the dataset has been read into a <code class="inlineCode">pandas</code> DataFrame <a id="_idIndexMarker970"/>in the same manner as in <em class="chapterRef">Chapter 1</em>, <em class="italic">Introduction to ML Engineering</em>. The assumption here is that the dataset is small enough to fit in memory and doesn’t require computationally intense transformations. This has the advantage of allowing us to use <code class="inlineCode">pandas</code> relatively smart data ingestion logic, which allows for various formatting of the header row for example, as well as apply any filtering or transformation logic we want to before distribution using that now familiar <code class="inlineCode">pandas</code> syntax. If the dataset was larger or the transformations more intense, we could have used the <code class="inlineCode">ray.data.read_csv()</code> method from the Ray API to read the data in as a Ray Dataset. This reads the data into an Arrow data format, which has its own data manipulation syntax. </p>
+<p class="normal">Now, we are ready to apply our distributed training and testing. First, we can retrieve all of the store identifiers from the dataset, as we are going to train a model for each one.</p>
+<pre class="programlisting code"><code class="hljs-code">store_ids = df[<span class="hljs-string">'Store'</span>].unique()
+</code></pre>
+<p class="normal">Before we do anything else we will initialize the Ray cluster using the <code class="inlineCode">ray.init()</code> command we met in <em class="chapterRef">Chapter 6</em>, <em class="italic">Scaling Up</em>. This avoids performing the intitialization when we first call the remote function, meaning we can get accurate timings of the actual processing if we perform any benchmarking. To aid performance, we can also use <code class="inlineCode">ray.put()</code> to store the pandas DataFrame in the Ray object store. This stops us replicating this dataset every time we run a task. Putting an object in the store returns an id, which you can then use for function arguments just like the original object.</p>
+<pre class="programlisting code"><code class="hljs-code">ray.init(num_cpus=<span class="hljs-number">4</span>)
+df_id = ray.put(df)
+</code></pre>
+<p class="normal">Now, we need to submit our Ray tasks to the cluster. Whenever you do this, a Ray object reference is returned that will allow you to retrieve the data for the process when we use <code class="inlineCode">ray.get</code> to collect the results. The syntax I’ve used here may look a bit complicated, but we can break it down piece by piece. The core Python function <code class="inlineCode">map</code>, just applies <a id="_idIndexMarker971"/>the list operation to all of the elements of the result of the <code class="inlineCode">zip</code> syntax. The <code class="inlineCode">zip(*iterable)</code> pattern allows us to unzip all of the elements in the list comprehension, so that we can have a list of prediction object references, training data object references, test data object references and finally the training index object references. Note the use of <code class="inlineCode">df_id</code> for referencing the stored dataframe in the object store.</p>
+<pre class="programlisting code"><code class="hljs-code">pred_obj_refs, train_obj_refs, test_obj_refs, train_index_obj_refs = <span class="hljs-built_in">map</span>(
+    <span class="hljs-built_in">list</span>,
+    <span class="hljs-built_in">zip</span>(*([prep_train_predict.remote(df_id, store_id) <span class="hljs-keyword">for</span> store_id <span class="hljs-keyword">in</span> store_ids])),
+)
+</code></pre>
+<p class="normal">We then need to get the actual results of these tasks, which we can do by using <code class="inlineCode">ray.get()</code> as discussed.</p>
+<pre class="programlisting code"><code class="hljs-code">ray_results = {
+    <span class="hljs-string">'predictions'</span>: ray.get(pred_obj_refs),
+    <span class="hljs-string">'train_data'</span>: ray.get(train_obj_refs),
+    <span class="hljs-string">'</span><span class="hljs-string">test_data'</span>: ray.get(test_obj_refs),
+    <span class="hljs-string">'train_indices'</span>: ray.get(train_index_obj_refs)
+}
+</code></pre>
+<p class="normal">You can then access the values of these for each model with <code class="inlineCode">ray_results['predictions'][&lt;index&gt;]</code> and so on.</p>
+<p class="normal">In the Github repository, the file <code class="inlineCode">Chapter08/train/train_forecasters_ray.py</code> runs this syntax and an example for loop for training the Prophet models one by one in serial fashion for comparison. Using the <code class="inlineCode">time</code> library for the measurements and running the experiment on my Macbook with four CPUs being utilized by the Ray cluster, I was able to train 1,115 Prophet models in just under 40 seconds using Ray, compared to <a id="_idIndexMarker972"/>around 3 minutes 50 seconds using the serial code. That’s an almost six-fold speedup, without doing much optimization!</p>
+<div class="note">
+<p class="normal">We did not cover the saving of the models and metadata into MLFlow, which you can do using the syntax we discussed in depth in <em class="chapterRef">Chapter 3</em>, <em class="italic">From Model to Model Factory</em>. To avoid lots of communication overhead, it may be best to store the metadata temporarily as the result of the training process, like we have done in the dictionary storing the predictions and then write everything to MLFlow at the end. This means you do not slow down the Ray processes with communications to the MLFlow server. Note also that we could have optimized this parallel processing even further by using the Ray Dataset API discussed and altering the transformation logic to use Arrow syntax. A final option would also have been to use <strong class="keyWord">Modin</strong>, previously known as Pandas on Ray, which allows you to use <code class="inlineCode">pandas</code> syntax whilst leveraging the parallelism of Ray.</p>
+</div>
+<p class="normal">Let’s now start building out the serving layer for our solution, so that we can use these forecasting models to generate results for other systems and users.</p>
+<h1 class="heading-1" id="_idParaDest-176">Serving the models with FastAPI</h1>
+<p class="normal">The simplest and potentially most flexible approach to serving ML models in a microservice with Python is in wrapping <a id="_idIndexMarker973"/>the serving logic inside a lightweight web application. Flask has <a id="_idIndexMarker974"/>been a popular option among Python users for many years but now the FastAPI web framework has many advantages, which means it should be seriously considered as a better alternative.</p>
+<p class="normal">Some of the features of FastAPI that make it an excellent choice for a lightweight microservice are:</p>
+<ul>
+<li class="bulletList"><strong class="keyWord">Data validation</strong>: FastAPI uses and is based on the <strong class="keyWord">Pydantic</strong> library, which allows you to enforce type hints at runtime. This <a id="_idIndexMarker975"/>allows for the implementation of very easy-to-create data validation steps that make your system way more robust and helps avoid edge case behaviors.</li>
+<li class="bulletList"><strong class="keyWord">Built-in async workflows</strong>: FastAPI gives you asynchronous task management out of the box with <code class="inlineCode">async</code> and <code class="inlineCode">await</code> keywords, so you can build the logic you will need in many cases relatively seamlessly without resorting to extra libraries.</li>
+<li class="bulletList"><strong class="keyWord">Open specifications</strong>: FastAPI is based on several open source standards including the <strong class="keyWord">OpenAPI REST API standard</strong> and the <strong class="keyWord">JSON Schema</strong> declarative language, which helps create automatic data model documentation. These specs help keep the workings of FastAPI transparent and very easy to use.</li>
+<li class="bulletList"><strong class="keyWord">Automatic documentation generation</strong>: The last point mentioned this for data models, but FastAPI also auto-generates documentation for your entire service using SwaggerUI.</li>
+<li class="bulletList"><strong class="keyWord">Performance</strong>: Fast is in <a id="_idIndexMarker976"/>the name! FastAPI uses the <strong class="keyWord">Asynchronous Server Gateway Interface</strong> (<strong class="keyWord">ASGI</strong>) standard, whereas other frameworks <a id="_idIndexMarker977"/>like Flask use the <strong class="keyWord">Web Server Gateway Interface</strong> (<strong class="keyWord">WSGI</strong>). The ASGI can process more requests per unit of time and does so more efficiently, as it can execute tasks without waiting for previous tasks to finish. The WSGI interface executes specified tasks sequentially and so takes longer to process requests.</li>
+</ul>
+<p class="normal">So, the above are the reasons why it might be a good idea to use FastAPI to serve the forecasting models in this example, but how do we go about doing that? That is what we will now cover.</p>
+<p class="normal">Any microservice has to have data come into it in some specified format; this is called the “request.” It will then return data, known as the “response.” The job of the microservice is to ingest the request, execute a series of tasks that the request either defines or gives input for, create the appropriate output, and then transform that into the specified request format. This may seem basic, but it is important to recap and gives us the starting point for designing our system. It is clear that we will have to take into account the following points in our design:</p>
+<ol class="numberedList" style="list-style-type: decimal;">
+<li class="numberedList" value="1"><strong class="keyWord">Request and response schemas</strong>: Since we will be building a REST API, it is natural that we will specify the data model for the request and responses as JSON objects with associated schemas. The key when doing this is that the schemas are as simple as possible and that they contain all the information necessary for the client (the requesting service) and the server (the microservice) to perform the appropriate actions. Since we are building a forecasting service, the request object must provide enough information to allow the system to provide an appropriate forecast, which the upstream solution calling the service can present to users or perform further logic on. The response will have to contain the actual forecast data points or some pointer toward the location of the forecast.</li>
+<li class="numberedList"><strong class="keyWord">Compute</strong>: The creation of the response object, in this case, a forecast, requires computation, as discussed in <em class="chapterRef">Chapter 1</em>, <em class="italic">Introduction to ML Engineering</em>. 
+    <p class="numberedList">A key consideration in designing ML microservices is the size of this compute resource and the appropriate tooling needed to execute it. As an example, if you are running a computer vision model that requires a large GPU in order to perform inference, you cannot do this on the server running the web application backend if that is only a small machine running a CPU. Similarly, if the inference step requires the ingestion of a terabyte of data, this may require us to use a parallelization framework like Spark or Ray running on a dedicated cluster, which by definition will have to be running on different machines from the serving web application. If the compute requirements are small enough and fetching data from another location is not too intense, then you may be able to run the inference on the same machine hosting the web application.</p></li>
+</ol>
+<ol class="numberedList" style="list-style-type: decimal;">
+<li class="numberedList" value="3"><strong class="keyWord">Model management</strong>: This is an ML service, so, of course, there are models involved! This means, as discussed in detail in <em class="chapterRef">Chapter 3</em>, <em class="italic">From Model to Model Factory</em>, we will need to implement a robust process for managing the appropriate model versions. The requirements for this example also mean that we have to be able to utilize many different models in a relatively dynamic fashion. This will require some careful consideration and the use of a model management tool like MLflow, which we met in <em class="chapterRef">Chapter 3</em> as well. We also have to consider our strategies for updating and rolling back models; for example, will we use blue/green deployments or canary deployments, as discussed in <em class="chapterRef">Chapter 5</em>, <em class="italic">Deployment Patterns and Tools</em>.</li>
+<li class="numberedList"><strong class="keyWord">Performance monitoring</strong>: For any ML system, as we have discussed at length throughout the book, monitoring the <a id="_idIndexMarker978"/>performance of models will be critically important, as <a id="_idIndexMarker979"/>will taking appropriate action to update or roll back these models. If the truth data for any inference cannot be immediately given back to the service, then this will require its own process for gathering together truth and inferences before performing the desired calculations on them.</li>
+</ol>
+<p class="normal">These are some of the important points we will have to consider as we build our solution. In this chapter, we will focus on points 1 and 3, as <em class="italic">Chapter 9</em> will cover how to build training and monitoring systems that run in a batch setting. Now that we know some of the things we want to factor into our solution, let’s get on and start building!</p>
+<h2 class="heading-2" id="_idParaDest-177">Response and request schemas</h2>
+<p class="normal">If the client is asking for a forecast for a specific store, as we are assuming in the requirements, then this means that the <a id="_idIndexMarker980"/>request should specify a few things. First, it should specify the store, using some kind of store identifier that will be kept in common between the data models of the ML <a id="_idIndexMarker981"/>microservice and the client application. </p>
+<p class="normal">Second, the <a id="_idIndexMarker982"/>time range for the forecast should be provided in an appropriate format <a id="_idIndexMarker983"/>that can be easily interpreted and serviced by the application. The systems should also have logic in place to create appropriate forecast time windows if none are provided in the request, as it is perfectly reasonable to assume if a client is requesting “a forecast for store X,” then we can assume some default behavior that provides a forecast for some time period from now into the future will likely be useful to the client application.</p>
+<p class="normal">The simplest request JSON schema that satisfies this is then something like:</p>
+<pre class="programlisting code"><code class="hljs-code"><span class="hljs-punctuation">{</span>
+    <span class="hljs-attr">"storeId"</span><span class="hljs-punctuation">:</span> <span class="hljs-string">"4"</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-attr">"beginDate"</span><span class="hljs-punctuation">:</span> <span class="hljs-string">"2023-03-01T00:00:00Z"</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-attr">"endDate"</span><span class="hljs-punctuation">:</span> <span class="hljs-string">"2023-03-07T00:00:00Z"</span>
+<span class="hljs-punctuation">}</span>
+</code></pre>
+<p class="normal">As this is a JSON object, all of the fields are strings, but they are populated with values that will be easily interpretable within our Python application. The Pydantic library will also help us to enforce data validation, which we will discuss later. Note that we should also allow for the client application to request multiple forecasts, so we should allow for this JSON to be extended to allow for lists of request objects:</p>
+<pre class="programlisting code"><code class="hljs-code"><span class="hljs-punctuation">[</span>
+  <span class="hljs-punctuation">{</span>
+        <span class="hljs-attr">"storeId"</span><span class="hljs-punctuation">:</span> <span class="hljs-string">"2"</span><span class="hljs-punctuation">,</span>
+        <span class="hljs-attr">"beginDate"</span><span class="hljs-punctuation">:</span> <span class="hljs-string">"2023-03-01T00:00:00Z"</span><span class="hljs-punctuation">,</span>
+        <span class="hljs-attr">"endDate"</span><span class="hljs-punctuation">:</span> <span class="hljs-string">"2023-03-07T00:00:00Z"</span>
+    <span class="hljs-punctuation">},</span>
+    <span class="hljs-punctuation">{</span>
+        <span class="hljs-attr">"</span><span class="hljs-attr">storeId"</span><span class="hljs-punctuation">:</span> <span class="hljs-string">"4"</span><span class="hljs-punctuation">,</span>
+        <span class="hljs-attr">"beginDate"</span><span class="hljs-punctuation">:</span> <span class="hljs-string">"2023-03-01T00:00:00Z"</span><span class="hljs-punctuation">,</span>
+        <span class="hljs-attr">"endDate"</span><span class="hljs-punctuation">:</span> <span class="hljs-string">"2023-03-07T00:00:00Z"</span>
+    <span class="hljs-punctuation">}</span>
+<span class="hljs-punctuation">]</span>
+</code></pre>
+<p class="normal">As mentioned, we <a id="_idIndexMarker984"/>would like to build our application logic so that the system would <a id="_idIndexMarker985"/>still work even if the client only made a request <a id="_idIndexMarker986"/>specifying the <code class="inlineCode">store_id</code>, and then we infer the appropriate forecast horizon to be from now to <a id="_idIndexMarker987"/>some time in the future. </p>
+<p class="normal">This means our application should work when the following is submitted as the JSON body in the API call:</p>
+<pre class="programlisting code"><code class="hljs-code"><span class="hljs-punctuation">[</span>
+    <span class="hljs-punctuation">{</span>
+        <span class="hljs-attr">"storeId"</span><span class="hljs-punctuation">:</span> <span class="hljs-string">"4"</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-punctuation">}</span>
+<span class="hljs-punctuation">]</span>
+</code></pre>
+<p class="normal">To enforce these constraints on the request, we can use the Pydantic functionality where we inherit from the Pydantic <code class="inlineCode">BaseModel</code> and create a data class defining the type requirements we have just made:</p>
+<pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">from</span> pydantic <span class="hljs-keyword">import</span> BaseModel
+
+<span class="hljs-keyword">class</span> <span class="hljs-title">ForecastRequest</span>(<span class="hljs-title">BaseModel</span>):
+    store_id: <span class="hljs-built_in">str</span>
+    begin_date: <span class="hljs-built_in">str</span> | <span class="hljs-literal">None</span> = <span class="hljs-literal">None</span>
+    end_date: <span class="hljs-built_in">str</span> | <span class="hljs-literal">None</span> = <span class="hljs-literal">None</span>
+</code></pre>
+<p class="normal">As you can see, we have enforced here that the <code class="inlineCode">store_id</code> is a string, but we have allowed for the beginning and end dates for the forecast to be given as <code class="inlineCode">None</code>. If the dates are not specified, we could make a reasonable assumption based on our business knowledge that a useful forecast time window would be from the datetime of the request to seven days from now. This could be something that is changed or even provided as a configuration variable in the application config. We will not deal with that particular aspect here to focus on the more the more exciting stuff, so this is left as fun exercise for the reader!</p>
+<p class="normal">The forecasting model in our case will be based on the Prophet library, as <a id="_idIndexMarker988"/>discussed, and this requires an index <a id="_idIndexMarker989"/>that contains the datetimes for the forecast to run over. To produce this <a id="_idIndexMarker990"/>based on the request, we can write a simple <a id="_idIndexMarker991"/>helper function:</p>
+<pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">import</span> pandas <span class="hljs-keyword">as</span> pd
+
+<span class="hljs-keyword">def</span> <span class="hljs-title">create_forecast_index</span>(<span class="hljs-params">begin_date: </span><span class="hljs-built_in">str</span><span class="hljs-params"> = </span><span class="hljs-literal">None</span><span class="hljs-params">, end_date: </span><span class="hljs-built_in">str</span><span class="hljs-params"> = </span><span class="hljs-literal">None</span>):
+    <span class="hljs-comment"># Convert forecast begin date</span>
+    <span class="hljs-keyword">if</span> begin_date == <span class="hljs-literal">None</span>:
+        begin_date = datetime.datetime.now().replace(tzinfo=<span class="hljs-literal">None</span>)
+    <span class="hljs-keyword">else</span>:
+        begin_date = datetime.datetime.strptime(begin_date,
+                     <span class="hljs-string">'%Y-%m-%dT%H:%M:%SZ'</span>).replace(tzinfo=<span class="hljs-literal">None</span>)
+    
+    <span class="hljs-comment"># Convert forecast end date</span>
+    <span class="hljs-keyword">if</span> end_date == <span class="hljs-literal">None</span>:
+        end_date = begin_date + datetime.timedelta(days=<span class="hljs-number">7</span>)
+    <span class="hljs-keyword">else</span>:
+        end_date = datetime.datetime.strptime(end_date, 
+                   <span class="hljs-string">'%Y-%m-%dT%H:%M:%SZ'</span>).replace(tzinfo=<span class="hljs-literal">None</span>)
+    <span class="hljs-keyword">return</span> pd.date_range(start = begin_date, end = end_date, freq = <span class="hljs-string">'D'</span>)
+</code></pre>
+<p class="normal">This logic then allows us to create the input to the forecasting model once it is retrieved from the model storage layer, in our case, MLflow.</p>
+<p class="normal">The response object has to return the forecast in some data format, and it is always imperative that you return enough information for the client application to be able to conveniently associate the returned object with the response that triggered its creation. A simple schema that satisfies this would be something like:</p>
+<pre class="programlisting code"><code class="hljs-code"><span class="hljs-punctuation">[</span>
+    <span class="hljs-punctuation">{</span>
+        <span class="hljs-attr">"request"</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">{</span>
+            <span class="hljs-attr">"store_id"</span><span class="hljs-punctuation">:</span> <span class="hljs-string">"4"</span><span class="hljs-punctuation">,</span>
+            <span class="hljs-attr">"begin_date"</span><span class="hljs-punctuation">:</span> <span class="hljs-string">"2023-03-01T00:00:00Z"</span><span class="hljs-punctuation">,</span>
+            <span class="hljs-attr">"end_date"</span><span class="hljs-punctuation">:</span> <span class="hljs-string">"2023-03-07T00:00:00Z"</span>
+        <span class="hljs-punctuation">},</span>
+        <span class="hljs-attr">"forecast"</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span>
+            <span class="hljs-punctuation">{</span>
+                <span class="hljs-attr">"timestamp"</span><span class="hljs-punctuation">:</span> <span class="hljs-string">"2023-03-01T00:00:00"</span><span class="hljs-punctuation">,</span>
+                <span class="hljs-attr">"value"</span><span class="hljs-punctuation">:</span> <span class="hljs-number">20716</span>
+            <span class="hljs-punctuation">},</span>
+            <span class="hljs-punctuation">{</span>
+                <span class="hljs-attr">"timestamp"</span><span class="hljs-punctuation">:</span> <span class="hljs-string">"2023-03-02T00:00:00"</span><span class="hljs-punctuation">,</span>
+                <span class="hljs-attr">"value"</span><span class="hljs-punctuation">:</span> <span class="hljs-number">20816</span>
+            <span class="hljs-punctuation">},</span>
+            <span class="hljs-punctuation">{</span>
+                <span class="hljs-attr">"timestamp"</span><span class="hljs-punctuation">:</span> <span class="hljs-string">"2023-03-03T00:00:00"</span><span class="hljs-punctuation">,</span>
+                <span class="hljs-attr">"value"</span><span class="hljs-punctuation">:</span> <span class="hljs-number">21228</span>
+            <span class="hljs-punctuation">},</span>
+            <span class="hljs-punctuation">{</span>
+                <span class="hljs-attr">"timestamp"</span><span class="hljs-punctuation">:</span> <span class="hljs-string">"2023-03-04T00:00:00"</span><span class="hljs-punctuation">,</span>
+                <span class="hljs-attr">"value"</span><span class="hljs-punctuation">:</span> <span class="hljs-number">21829</span>
+            <span class="hljs-punctuation">},</span>
+            <span class="hljs-punctuation">{</span>
+                <span class="hljs-attr">"timestamp"</span><span class="hljs-punctuation">:</span> <span class="hljs-string">"2023-03-05T00:00:00"</span><span class="hljs-punctuation">,</span>
+                <span class="hljs-attr">"value"</span><span class="hljs-punctuation">:</span> <span class="hljs-number">21686</span>
+            <span class="hljs-punctuation">},</span>
+            <span class="hljs-punctuation">{</span>
+                <span class="hljs-attr">"timestamp"</span><span class="hljs-punctuation">:</span> <span class="hljs-string">"2023-03-06T00:00:00"</span><span class="hljs-punctuation">,</span>
+                <span class="hljs-attr">"value"</span><span class="hljs-punctuation">:</span> <span class="hljs-number">22696</span>
+            <span class="hljs-punctuation">},</span>
+            <span class="hljs-punctuation">{</span>
+                <span class="hljs-attr">"timestamp"</span><span class="hljs-punctuation">:</span> <span class="hljs-string">"2023-03-07T00:00:00"</span><span class="hljs-punctuation">,</span>
+                <span class="hljs-attr">"value"</span><span class="hljs-punctuation">:</span> <span class="hljs-number">21138</span>
+            <span class="hljs-punctuation">}</span>
+        <span class="hljs-punctuation">]</span>
+    <span class="hljs-punctuation">}</span>
+<span class="hljs-punctuation">]</span>
+</code></pre>
+<p class="normal">We will allow for this to <a id="_idIndexMarker992"/>be extended as a list in the same way as the request JSON schema. We <a id="_idIndexMarker993"/>will work with these schemas for the rest <a id="_idIndexMarker994"/>of this chapter. Now<span class="hljs-punctuation">,</span> let’s look at how we will manage the models <a id="_idIndexMarker995"/>in the application.</p>
+<h2 class="heading-2" id="_idParaDest-178">Managing models in your microservice</h2>
+<p class="normal">In <em class="chapterRef">Chapter 3</em>, <em class="italic">From Model to Model Factory</em>, we discussed in detail how you can use MLflow as a model artifact and <a id="_idIndexMarker996"/>metadata storage layer in your ML systems. We will do the same here, so let’s assume that you have an MLflow Tracking server already running and then we just need to define our logic for interacting with it. If you need a refresher, feel free to revisit <em class="chapterRef">Chapter 3</em>.</p>
+<p class="normal">We will need to write some logic that does the following:</p>
+<ol class="numberedList" style="list-style-type: decimal;">
+<li class="numberedList" value="1">Checks there are models available for use in production in the MLflow server.</li>
+<li class="numberedList">Retrieves a version of the model satisfying any criteria we wish to set, for example, that the model was not trained more than a certain number of days ago and that it has validation metrics within a chosen range.</li>
+<li class="numberedList">Caches the model for use and reuse during the forecasting session if desired.</li>
+<li class="numberedList">Does all of the above for multiple models if that is required from the response object.</li>
+</ol>
+<p class="normal">For point 1, we will have to have models tagged as ready for production in the MLflow model registry and then we can use the <code class="inlineCode">MlflowClient()</code> and <code class="inlineCode">mlflow pyfunc</code> functionality we met in <em class="chapterRef">Chapter 3</em>, <em class="italic">From Model to Model Factory</em>:</p>
+<pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">import</span> mlflow 
+<span class="hljs-keyword">import</span> mlflow.pyfunc
+<span class="hljs-keyword">from</span> mlflow.client <span class="hljs-keyword">import</span> MlflowClient
+<span class="hljs-keyword">import</span> os
+
+tracking_uri = os.getenv(["MLFLOW_TRACKING_URI"])
+mlflow.set_tracking_uri(tracking_uri)
+client = MlflowClient(tracking_uri=tracking_uri)
+
+<span class="hljs-keyword">def</span> <span class="hljs-title">get_production_model</span>(<span class="hljs-params">store_id:</span><span class="hljs-built_in">int</span>):
+    model_name = <span class="hljs-string">f"prophet-retail-forecaster-store-</span><span class="hljs-subst">{store_id}</span><span class="hljs-string">"</span>
+    model =mlflow.pyfunc.load_model(
+                         model_uri=<span class="hljs-string">f"models:/</span><span class="hljs-subst">{model_name}</span><span class="hljs-string">/production"</span>
+<span class="hljs-string">                       </span>)
+<span class="hljs-keyword">    return</span> model
+</code></pre>
+<p class="normal">For point 2, we can retrieve the metrics for a given model by using the MLflow functionality we will describe below. First, using the name of the model, you retrieve the model’s metadata:</p>
+<pre class="programlisting code"><code class="hljs-code">model_name = <span class="hljs-string">f"prophet-retail-forecaster-store-</span><span class="hljs-subst">{store_id}</span><span class="hljs-string">"</span>
+latest_versions_metadata = client.get_latest_versions(
+    name=model_name
+)
+</code></pre>
+<p class="normal">This will return a dataset like this:</p>
+<pre class="programlisting con"><code class="hljs-con">[&lt;ModelVersion: creation_timestamp=1681378913710, current_stage='Production', description='', last_updated_timestamp=1681378913722, name='prophet-retail-forecaster-store-3', run_id='538c1cbded614598a1cb53eebe3de9f2', run_link='', source='/Users/apmcm/
+dev/Machine-Learning-Engineering-with-Python-Second-Edition/Chapter07/register/artifacts/0/538c1cbded614598a1cb53eebe3de9f2/artifacts/model', status='READY', status_message='', tags={}, user_id='', version='3'&gt;]
+</code></pre>
+<p class="normal">You can then use that <a id="_idIndexMarker997"/>data to retrieve the version via this object and then retrieve the model version metadata:</p>
+<pre class="programlisting code"><code class="hljs-code">latest_model_version_metadata = client.get_model_version(
+    name=model_name,
+    version=latest_versions_metadata.version
+)
+</code></pre>
+<p class="normal">This contains metadata that looks something like:</p>
+<pre class="programlisting con"><code class="hljs-con">&lt;ModelVersion: creation_timestamp=1681377954142, current_stage='Production', description='', last_updated_timestamp=1681377954159, name='prophet-retail-forecaster-store-3', run_id='41f163b0a6af4b63852d9218bf07adb3', run_link='', source='/Users/apmcm/dev/Machine-Learning-Engineering-with-Python-Second-Edition/Chapter07/register/artifacts/0/41f163b0a6af4b63852d9218bf07adb3/artifacts/model', status='READY', status_message='', tags={}, user_id='', version='1'&gt;
+</code></pre>
+<p class="normal">The metrics information for this model version is associated with the <code class="inlineCode">run_id</code>, so we need to get that:</p>
+<pre class="programlisting code"><code class="hljs-code">latest_model_run_id = latest_model_version_metadata.run_id
+</code></pre>
+<p class="normal">The value for the <code class="inlineCode">run_id</code> would be something like:</p>
+<pre class="programlisting con"><code class="hljs-con">'41f163b0a6af4b63852d9218bf07adb3'
+</code></pre>
+<p class="normal">You can then use this information to get the model metrics for the specific run, and then perform any logic you want on top of it. To retrieve the metric values, you can use the following syntax:</p>
+<pre class="programlisting code"><code class="hljs-code">client.get_metric_history(run_id=latest_model_run_id, key=<span class="hljs-string">'rmse'</span>)
+</code></pre>
+<p class="normal">As an example, you could use logic like the one applied in <em class="chapterRef">Chapter 2</em> in the <em class="italic">Continuous model performance testing</em> section and simply demand the root mean squared error is below some specified value before allowing it to be used in the forecasting service.</p>
+<p class="normal">We may also want to allow for the service to trigger retraining if the model is out of tolerance in terms of age; this could <a id="_idIndexMarker998"/>act as another layer of model management on top of any training systems put in place. </p>
+<p class="normal">If our training process is orchestrated by an Airflow DAG running on AWS MWAA, as we discussed in <em class="chapterRef">Chapter 5</em>, <em class="italic">Deployment Patterns and Tools</em>, then the below code could be used to invoke the training pipeline:</p>
+<pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">import</span> boto3
+<span class="hljs-keyword">import</span> http.client
+<span class="hljs-keyword">import</span> base64
+<span class="hljs-keyword">import</span> ast
+<span class="hljs-comment"># mwaa_env_name = 'YOUR_ENVIRONMENT_NAME'</span>
+<span class="hljs-comment"># dag_name = 'YOUR_DAG_NAME'</span>
+
+<span class="hljs-keyword">def</span> <span class="hljs-title">trigger_dag</span>(<span class="hljs-params">mwaa_env_name: </span><span class="hljs-built_in">str</span><span class="hljs-params">, dag_name: </span><span class="hljs-built_in">str</span>) -&gt; <span class="hljs-built_in">str</span>:
+    client = boto3.client(<span class="hljs-string">'mwaa'</span>)
+    
+    <span class="hljs-comment"># get web token</span>
+    mwaa_cli_token = client.create_cli_token(
+        Name=mwaa_env_name
+    )
+    
+    conn = http.client.HTTPSConnection(
+       mwaa_cli_token[<span class="hljs-string">'WebServerHostname'</span>]
+    )
+    mwaa_cli_command = <span class="hljs-string">'dags trigger'</span>
+    payload = mwaa_cli_command + <span class="hljs-string">" "</span> + dag_name
+    headers = {
+      <span class="hljs-string">'Authorization'</span>: <span class="hljs-string">'Bearer '</span> + mwaa_cli_token[<span class="hljs-string">'CliToken'</span>],
+      <span class="hljs-string">'Content-Type'</span>: <span class="hljs-string">'text/plain'</span>
+    }
+    conn.request(<span class="hljs-string">"POST"</span>, <span class="hljs-string">"/aws_mwaa/cli"</span>, payload, headers)
+    res = conn.getresponse()
+    data = res.read()
+    dict_str = data.decode(<span class="hljs-string">"UTF-8"</span>)
+    mydata = ast.literal_eval(dict_str)
+    <span class="hljs-keyword">return</span> base64.b64decode(mydata[<span class="hljs-string">'stdout'</span>]).decode(<span class="hljs-string">'ascii'</span>)
+</code></pre>
+<p class="normal">The next sections will outline how these pieces can be brought together so that the FastAPI service can wrap around several pieces of this logic before discussing how we containerize and deploy the app.</p>
+<h2 class="heading-2" id="_idParaDest-179">Pulling it all together</h2>
+<p class="normal">We have successfully defined our request and response schemas, and we’ve written logic to pull the appropriate model from our model repository; now all that is left to do is to tie all this together and perform the actual inference with the model. There are a few steps to this, which we will break down now. The main file <a id="_idIndexMarker999"/>for the FastAPI backend is <a id="_idIndexMarker1000"/>called <code class="inlineCode">app.py</code> and contains a few different application routes. For the rest of the chapter, I will show you the necessary imports just before each relevant piece of code, but the actual file follows the PEP8 convention of imports at the top of the file.</p>
+<p class="normal">First, we define our logger and we set up some global variables to act as a lightweight in-memory cache of the retrieved models and service handlers:</p>
+<pre class="programlisting code"><code class="hljs-code"><span class="hljs-comment"># Logging</span>
+<span class="hljs-keyword">import</span> logging
+
+log_format = <span class="hljs-string">"%(asctime)s - %(name)s - %(levelname)s - %(message)s"</span> 
+logging.basicConfig(<span class="hljs-built_in">format</span> = log_format, level = logging.INFO)
+handlers = {}
+models = {}
+MODEL_BASE_NAME = <span class="hljs-string">f"prophet-retail-forecaster-store-"</span>
+</code></pre>
+<p class="normal">Using global variables to pass objects between application routes is only a good idea if you know that this app will run in isolation and not create race conditions by receiving requests from multiple clients simultaneously. When this happens, multiple processes try and overwrite the variable. You can adapt this example to replace the use of global variables with the use of a cache like <strong class="keyWord">Redis</strong> or <strong class="keyWord">Memcache</strong> as an exercise!</p>
+<p class="normal">We then have to <a id="_idIndexMarker1001"/>instantiate a <code class="inlineCode">FastAPI</code> app object and we can define any logic we want to run upon startup by using the start-up lifespan event method:</p>
+<pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">from</span> fastapi <span class="hljs-keyword">import</span> FastAPI
+<span class="hljs-keyword">from</span> registry.mlflow.handler <span class="hljs-keyword">import</span> MLFlowHandler
+
+app = FastAPI()
+<span class="hljs-meta">@app.on_event(</span><span class="hljs-string">"startup"</span><span class="hljs-meta">)</span>
+<span class="hljs-keyword">async</span> <span class="hljs-keyword">def</span> <span class="hljs-title">startup</span>():
+    <span class="hljs-keyword">await</span> get_service_handlers()
+    logging.info(<span class="hljs-string">"Updated global service handlers"</span>)
+<span class="hljs-keyword">async</span> <span class="hljs-keyword">def</span> <span class="hljs-title">get_service_handlers</span>():
+    mlflow_handler = MLFlowHandler()
+    <span class="hljs-keyword">global</span> handlers
+    handlers[<span class="hljs-string">'mlflow'</span>] = mlflow_handler
+    logging.info(<span class="hljs-string">"Retreving mlflow handler {}"</span>.<span class="hljs-built_in">format</span>(mlflow_handler))
+    <span class="hljs-keyword">return</span> handlers
+</code></pre>
+<p class="normal">As already mentioned, FastAPI is great for supporting async workflows, allowing for the compute resources to be used while awaiting for other tasks to complete. The instantiation of the service handlers could be a slower process so this can be useful to adopt here. When functions that use the <code class="inlineCode">async</code> keyword are called, we need to use the <code class="inlineCode">await</code> keyword, which means that the rest of the function where the <code class="inlineCode">async</code> function has been called can be suspended until a result is returned and the resources used for tasks elsewhere. Here we have only one handler to instantiate, which will handle connections to the MLflow Tracking server.</p>
+<p class="normal">The <code class="inlineCode">registry.mlflow.handler</code> module is one I have written containing the <code class="inlineCode">MLFlowHandler</code> class, with methods we will use throughout the app. The following are the contents of that module:</p>
+<pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">import</span> mlflow
+<span class="hljs-keyword">from</span> mlflow.client <span class="hljs-keyword">import</span> MlflowClient
+<span class="hljs-keyword">from</span> mlflow.pyfunc <span class="hljs-keyword">import</span> PyFuncModel
+<span class="hljs-keyword">import</span> os 
+
+<span class="hljs-keyword">class</span> <span class="hljs-title">MLFlowHandler</span>:
+    <span class="hljs-keyword">def</span> <span class="hljs-title">__init__</span>(<span class="hljs-params">self</span>) -&gt; <span class="hljs-literal">None</span>:
+        tracking_uri = os.getenv('MLFLOW_TRACKING_URI')
+        self.client = MlflowClient(tracking_uri=tracking_uri)
+        mlflow.set_tracking_uri(tracking_uri)
+    
+    <span class="hljs-keyword">def</span> <span class="hljs-title">check_mlflow_health</span>(<span class="hljs-params">self</span>) -&gt; <span class="hljs-literal">None</span>:
+        <span class="hljs-keyword">try</span>:
+            experiments = self.client.search_experiments()
+            <span class="hljs-keyword">return</span> <span class="hljs-string">'Service returning experiments'</span>
+        <span class="hljs-keyword">except</span>:
+            <span class="hljs-keyword">return</span> <span class="hljs-string">'Error calling MLFlow'</span>
+        
+    <span class="hljs-keyword">def</span> <span class="hljs-title">get_production_model</span>(<span class="hljs-params">self, store_id: </span><span class="hljs-built_in">str</span>) -&gt; PyFuncModel:
+        model_name = <span class="hljs-string">f"prophet-retail-forecaster-store-</span><span class="hljs-subst">{store_id}</span><span class="hljs-string">"</span>
+        model = mlflow.pyfunc.load_model(
+                             model_uri=<span class="hljs-string">f"models:/</span><span class="hljs-subst">{model_name}</span><span class="hljs-string">/production"</span>
+<span class="hljs-string">                             </span>)
+        <span class="hljs-keyword">return</span> model
+</code></pre>
+<p class="normal">As you can see, this handler has methods for checking the MLflow Tracking server is up and running and getting production models. You could also add methods for querying the MLflow API to gather the metrics data we <a id="_idIndexMarker1002"/>mentioned before.</p>
+<p class="normal">Returning to the main <code class="inlineCode">app.py</code> file now, I’ve written a small health check endpoint to get the status of the service:</p>
+<pre class="programlisting code"><code class="hljs-code"><span class="hljs-meta">@app.get(</span><span class="hljs-string">"/health/"</span><span class="hljs-params">, status_code=</span><span class="hljs-number">200</span><span class="hljs-meta">)</span>
+<span class="hljs-keyword">async</span> <span class="hljs-keyword">def</span> <span class="hljs-title">healthcheck</span>():
+    <span class="hljs-keyword">global</span> handlers
+    logging.info(<span class="hljs-string">"</span><span class="hljs-string">Got handlers in healthcheck."</span>)
+    <span class="hljs-keyword">return</span> {
+        <span class="hljs-string">"serviceStatus"</span>: <span class="hljs-string">"OK"</span>,
+        <span class="hljs-string">"modelTrackingHealth"</span>: handlers[<span class="hljs-string">'mlflow'</span>].check_mlflow_health()
+        }
+</code></pre>
+<p class="normal">Next comes a method to get the production model for a given retail store ID. This function checks if the model is already available in the <code class="inlineCode">global</code> variable (acting as a simple cache) and if it isn’t there, adds it. You could expand this method to include logic around the age of the model or any other metrics you wanted to use to decide whether or not to pull the model into the application:</p>
+<pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">async</span> <span class="hljs-keyword">def</span> <span class="hljs-title">get_model</span>(<span class="hljs-params">store_id: </span><span class="hljs-built_in">str</span>):
+    <span class="hljs-keyword">global</span> handlers
+    <span class="hljs-keyword">global</span> models
+    model_name = MODEL_BASE_NAME + <span class="hljs-string">f"</span><span class="hljs-subst">{store_id}</span><span class="hljs-string">"</span>
+    <span class="hljs-keyword">if</span> model_name <span class="hljs-keyword">not</span> <span class="hljs-keyword">in</span> models:
+        models[model_name] = handlers[<span class="hljs-string">'mlflow'</span>].\
+                                   get_production_model(store_id=store_id)
+    <span class="hljs-keyword">return</span> models[model_name]
+</code></pre>
+<p class="normal">Finally, we have the forecasting endpoint, where the client can hit this application with the request objects we defined before and get the forecasts based on the Prophet models we retrieve from MLflow. Just like in the rest of the book, I’ve omitted longer comments for brevity:</p>
+<pre class="programlisting code"><code class="hljs-code"><span class="hljs-meta">@app.post(</span><span class="hljs-string">"/forecast/"</span><span class="hljs-params">, status_code=</span><span class="hljs-number">200</span><span class="hljs-meta">)</span>
+<span class="hljs-keyword">async</span> <span class="hljs-keyword">def</span> <span class="hljs-title">return_forecast</span>(<span class="hljs-params">forecast_request: </span><span class="hljs-type">List</span><span class="hljs-params">[ForecastRequest]</span>):
+    forecasts = []
+    <span class="hljs-keyword">for</span> item <span class="hljs-keyword">in</span> forecast_request:
+        model = <span class="hljs-keyword">await</span> get_model(item.store_id)
+        forecast_input = create_forecast_index(
+            begin_date=item.begin_date, 
+            end_date=item.end_date
+            )
+        forecast_result = {}
+        forecast_result[<span class="hljs-string">'request'</span>] = item.<span class="hljs-built_in">dict</span>()
+        model_prediction = model.predict(forecast_input)[[<span class="hljs-string">'ds'</span>, <span class="hljs-string">'yhat'</span>]]\
+            .rename(columns={<span class="hljs-string">'ds'</span>: <span class="hljs-string">'timestamp'</span>, <span class="hljs-string">'yhat'</span>: <span class="hljs-string">'value'</span>})
+        model_prediction[<span class="hljs-string">'value'</span>] = model_prediction[<span class="hljs-string">'value'</span>].astype(<span class="hljs-built_in">int</span>)
+        forecast_result[<span class="hljs-string">'forecast'</span>] = model_prediction.to_dict(<span class="hljs-string">'records'</span>)
+        forecasts.append(forecast_result)
+    <span class="hljs-keyword">return</span> forecasts
+</code></pre>
+<p class="normal">You can then run the app locally with:</p>
+<pre class="programlisting con"><code class="hljs-con">uvicorn app:app –-host 127.0.0.1 --port 8000
+</code></pre>
+<p class="normal">And you can add the <code class="inlineCode">–reload</code> flag if you want to develop the app while it is running. If you use Postman (or <code class="inlineCode">curl</code> or any other tool of your choice) and query this endpoint with a request body as we described <a id="_idIndexMarker1003"/>previously, see <em class="italic">Figure 8.2</em>, you will get an output like that shown in <em class="italic">Figure 8.3</em>.</p>
+<figure class="mediaobject"><img alt="" height="688" role="presentation" src="../Images/B19525_08_02.png" width="825"/></figure>
+<p class="packt_figref">Figure 8.2: A request to the ML microservice in the Postman app.</p>
+<figure class="mediaobject"><img alt="" height="752" role="presentation" src="../Images/B19525_08_03.png" width="825"/></figure>
+<p class="packt_figref">Figure 8.3: The response from the ML microservice when querying with Postman.</p>
+<p class="normal">And that’s it, we have a <a id="_idIndexMarker1004"/>relatively simple ML microservice that will return a Prophet model forecast for retail stores upon querying the endpoint! We will now move on to discussing how we can containerize this application and deploy it to a Kubernetes cluster for scalable serving.</p>
+<h1 class="heading-1"/>
+<h1 class="heading-1" id="_idParaDest-180">Containerizing and deploying to Kubernetes</h1>
+<p class="normal">When we introduced Docker in <em class="chapterRef">Chapter 5</em>, <em class="italic">Deployment Patterns and Tools</em>, we showed how you can use it to encapsulate <a id="_idIndexMarker1005"/>your code and then run it across many different platforms consistently. </p>
+<p class="normal">Here we will do this again, but with the idea in mind that we don’t just want to run the <a id="_idIndexMarker1006"/>application as a singleton on a different piece of infrastructure, we actually want to allow for many different replicas of the microservice to be running simultaneously with requests being routed effectively by a load balancer. This means that we can take what works and make it work at almost arbitrarily large scales.</p>
+<p class="normal">We will do this by executing several steps:</p>
+<ol class="numberedList" style="list-style-type: decimal;">
+<li class="numberedList" value="1">Containerize the application using Docker.</li>
+<li class="numberedList">Push this Docker container to Docker Hub to act as our container storage location (you could use another container management solution like AWS Elastic Container Registry or similar solutions on another cloud provider for this step).</li>
+<li class="numberedList">Create a Kubernetes cluster. We will do this locally using minikube, but you can do this on a cloud provider using its managed Kubernetes service. On AWS, this is <strong class="keyWord">Elastic Kubernetes Service</strong> (<strong class="keyWord">EKS</strong>).</li>
+<li class="numberedList">Define a service and load balancer on the cluster that can scale. Here we will introduce the concept of <a id="_idIndexMarker1007"/>manifests for programmatically defining service and <a id="_idIndexMarker1008"/>deployment characteristics on Kubernetes clusters.</li>
+<li class="numberedList">Deploy the service and test that it is working as expected.</li>
+</ol>
+<p class="normal">Let us now go through these steps in the next section.</p>
+<h2 class="heading-2" id="_idParaDest-181">Containerizing the application</h2>
+<p class="normal">As introduced earlier in the <a id="_idIndexMarker1009"/>book, if we want to use Docker, we <a id="_idIndexMarker1010"/>need to give instructions for how to build the container and install any necessary dependencies in a Dockerfile. For this application, we can use one that is based on one of the available FastAPI container images, assuming we have a file called <code class="inlineCode">requirements.txt</code> that contains all of our Python package dependencies:</p>
+<pre class="programlisting con"><code class="hljs-con">FROM tiangolo/uvicorn-gunicorn-fastapi:latest
+COPY ./requirements.txt requirements.txt
+RUN pip install --no-cache-dir --upgrade -r requirements.txt
+COPY ./app /app
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+</code></pre>
+<p class="normal">We can then build this Docker container using the following command, where I have named the container <code class="inlineCode">custom-forecast-service</code>:</p>
+<pre class="programlisting con"><code class="hljs-con">docker build -t custom-forecast-service:latest .
+</code></pre>
+<p class="normal">Once this has been successfully built, we need to push it to Docker Hub. You can do this by logging in to Docker Hub in the terminal and then pushing to your account by running:</p>
+<pre class="programlisting con"><code class="hljs-con">docker login
+docker push &lt;DOCKER_USERNAME&gt;/custom-forecast-service:latest
+</code></pre>
+<p class="normal">This means that other build processes or solutions can download and run your container.</p>
+<p class="normal">Note that before you push to Docker Hub, you can test that the containerized application runs by executing a command like the following, where I have included a platform flag in order to run the container locally on my MacBook Pro:</p>
+<pre class="programlisting con"><code class="hljs-con">docker run -d --platform linux/amd64 -p 8000:8080 electricweegie/custom-forecast-service
+</code></pre>
+<p class="normal">Now that we have <a id="_idIndexMarker1011"/>built and shared the container, we can now work on <a id="_idIndexMarker1012"/>scaling this up with a deployment to Kubernetes.</p>
+<h2 class="heading-2" id="_idParaDest-182">Scaling up with Kubernetes</h2>
+<p class="normal">Working with Kubernetes can be a steep learning curve for even the most seasoned developers, so we will only scratch the surface here and give you enough to get started on your own learning journey. This section <a id="_idIndexMarker1013"/>will walk you through the steps you need to deploy your ML microservice onto a Kubernetes cluster running locally, as it takes the same steps to deploy to a remotely hosted cluster (with minor modifications). Operating Kubernetes clusters seamlessly in production requires consideration of topics such as networking, cluster resource configuration and management, security policies, and much more. Studying all of these topics in detail would require an entire book in itself. In fact, an excellent resource to get up to speed on many of these details is <em class="italic">Kubernetes in Production Best Practices</em> by Aly Saleh and Murat Karsioglu. In this chapter, we will instead focus on understanding the most important steps to get you up and running and developing ML microservices using Kubernetes.</p>
+<p class="normal">First, let’s get set up for Kubernetes development. I will use minikube here, as it has some handy utilities for setting up services that can be called via REST API calls. Previously in this book, I used kind (Kubernetes in Docker), and you can use this here; just be prepared to do some more work and use the documentation. </p>
+<p class="normal">To get set up with minikube on your machine, follow the installation guide in the official docs for your platform at <a href="https://minikube.sigs.k8s.io/docs/start/"><span class="url">https://minikube.sigs.k8s.io/docs/start/</span></a>.</p>
+<p class="normal">Once minikube is installed, you can spin up your first cluster using default configurations with:</p>
+<pre class="programlisting con"><code class="hljs-con">minikube start
+</code></pre>
+<p class="normal">Once the cluster is up and running, you can deploy the <code class="inlineCode">fast-api</code> service to the cluster with the following command in the terminal:</p>
+<pre class="programlisting con"><code class="hljs-con">kubectl apply –f direct-kube-deploy.yaml
+</code></pre>
+<p class="normal">where <code class="inlineCode">direct-kube-deploy.yaml</code> is a manifest that contains the following code:</p>
+<pre class="programlisting code"><code class="hljs-code"><span class="hljs-attr">apiVersion:</span> <span class="hljs-string">apps/v1</span>
+<span class="hljs-attr">kind:</span> <span class="hljs-string">Deployment</span>
+<span class="hljs-attr">metadata:</span>
+  <span class="hljs-attr">name:</span> <span class="hljs-string">fast-api-deployment</span>
+<span class="hljs-attr">spec:</span>
+  <span class="hljs-attr">replicas:</span> <span class="hljs-number">2</span>
+  <span class="hljs-attr">selector:</span>
+    <span class="hljs-attr">matchLabels:</span>
+      <span class="hljs-attr">app:</span> <span class="hljs-string">fast-api</span>
+  <span class="hljs-attr">template:</span>
+    <span class="hljs-attr">metadata:</span>
+      <span class="hljs-attr">labels:</span>
+        <span class="hljs-attr">app:</span> <span class="hljs-string">fast-api</span>
+    <span class="hljs-attr">spec:</span>
+      <span class="hljs-attr">containers:</span>
+      <span class="hljs-bullet">-</span> <span class="hljs-attr">name:</span> <span class="hljs-string">fast-api</span>
+        <span class="hljs-attr">image:</span> <span class="hljs-string">electricweegie/custom-forecast-service:latest</span>
+        <span class="hljs-attr">resources:</span>
+          <span class="hljs-attr">limits:</span>
+            <span class="hljs-attr">memory:</span> <span class="hljs-string">"128Mi"</span>
+            <span class="hljs-attr">cpu:</span> <span class="hljs-string">"500m"</span>
+        <span class="hljs-attr">ports:</span>
+          <span class="hljs-bullet">-</span> <span class="hljs-attr">containerPort:</span> <span class="hljs-number">8000</span>
+</code></pre>
+<p class="normal">This manifest defines a Kubernetes Deployment that creates and manages two replicas of a Pod template containing a container named <code class="inlineCode">fast-api</code>, which runs the Docker image we created and published previously, <code class="inlineCode">electricweegie/custom-forecast-service:latest</code>. It also defines resource limits for the containers running inside the Pods and ensures that the containers are listening on port <code class="inlineCode">8000</code>.</p>
+<p class="normal">Now that we have created a Deployment with the application in it, we need to expose this solution to incoming traffic, preferably through a load balancer so that incoming traffic can be efficiently routed to the different replicas of the application. To do this in minikube, you have to perform a few steps:</p>
+<ol class="numberedList" style="list-style-type: decimal;">
+<li class="numberedList" value="1">Network or host machine access is not provided by default to the Services running on the minikube cluster, so we have to create a route to expose the cluster IP address using the <code class="inlineCode">tunnel</code> command:
+        <pre class="programlisting con"><code class="hljs-con">minkube tunnel
+</code></pre>
+</li>
+<li class="numberedList">Open a new terminal window. This allows the tunnel to keep running, and then you need to create a Kubernetes Service with type <code class="inlineCode">LoadBalancer</code> that will access the <code class="inlineCode">deployment</code> we have already set up:
+        <pre class="programlisting con"><code class="hljs-con">kubectl expose deployment fast-api-deployment --type=LoadBalancer --port=8080
+</code></pre>
+</li>
+<li class="numberedList">You can then get the external IP for accessing the Service by running:
+        <pre class="programlisting con"><code class="hljs-con">kubectl get svc
+</code></pre>
+<p class="normal">This should give an output that looks something like:</p>
+<pre class="programlisting con"><code class="hljs-con">NAME                       TYPE                CLUSTER-IP     EXTERNAL-IP  PORT(S)               AGE
+fast-api-deployment  LoadBalancer   10.96.184.178   10.96.184.178   8080:30791/TCP   59s
+</code></pre></li>
+</ol>
+<p class="normal">You will then be able to<a id="_idIndexMarker1014"/> use the <code class="inlineCode">EXTERNAL-IP</code> of the load balancer service to hit the API, so you can navigate to Postman, or your other API development tool, and use <code class="inlineCode">http://&lt;EXTERNAL-IP&gt;:8080</code> as the root URL for the FastAPI service that you have now successfully built and deployed to Kubernetes!</p>
+<h2 class="heading-2" id="_idParaDest-183">Deployment strategies</h2>
+<p class="normal">As discussed in <em class="chapterRef">Chapter 5</em>, <em class="italic">Deployment Patterns and Tools</em>, there are several different strategies you can use to deploy and update your ML services. There are two components to this: one is the deployment strategy for <a id="_idIndexMarker1015"/>the models and the other is the deployment strategy for the hosting application or pipelines that serve the models. These can both be executed in tandem as well.</p>
+<p class="normal">Here we will discuss how to take the application we just deployed to Kubernetes and update it using canary and blue/green deployment strategies. Once you know how to do this for the base application, performing a similar update strategy for the models can be added in by specifying in the canary or blue/green deployment a model version that has an appropriate tag. As an example, we could use the “staging” stage of the model registry in MLflow to give us our “blue” model, and then upon transition to “green,” ensure that we have moved this model to the “production” stage in the model registry using the syntax outlined earlier in the chapter and in <em class="chapterRef">Chapter 3</em>, <em class="italic">From Model to Model Factory</em>.</p>
+<p class="normal">As a canary deployment is a deployment of the new version of the application in a smaller subset of the production environment, we <a id="_idIndexMarker1016"/>can create a new deployment manifest that enforces only one replica (this could be more on larger clusters) of the canary application is created and run. In this case, this only requires that you edit the previous manifest number of replicas to “1.”</p>
+<p class="normal">To ensure that the canary <a id="_idIndexMarker1017"/>deployment is accessible to the same load balancer, we have to utilize the concept of resource labels in Kubernetes. We can then deploy a load balancer that selects resources with the desired label. An example manifest for deploying such a load balancer is given below:</p>
+<pre class="programlisting code"><code class="hljs-code"><span class="hljs-attr">apiVersion:</span> <span class="hljs-string">v1</span>
+<span class="hljs-attr">kind:</span> <span class="hljs-string">Service</span>
+<span class="hljs-attr">metadata:</span>
+  <span class="hljs-attr">name:</span> <span class="hljs-string">fast-api-service</span>
+<span class="hljs-attr">spec:</span>
+  <span class="hljs-attr">selector:</span>
+    <span class="hljs-attr">app:</span> <span class="hljs-string">fast-api</span>
+  <span class="hljs-attr">ports:</span>
+    <span class="hljs-bullet">-</span> <span class="hljs-attr">protocol:</span> <span class="hljs-string">TCP</span>
+      <span class="hljs-attr">port:</span> <span class="hljs-number">8000</span>
+      <span class="hljs-attr">targetPort:</span> <span class="hljs-number">8000</span>
+  <span class="hljs-attr">type:</span> <span class="hljs-string">LoadBalancer</span>
+</code></pre>
+<p class="normal">Or using the same minkube syntax as above:</p>
+<pre class="programlisting con"><code class="hljs-con">kubectl expose deployment fast-api-deployment --name=fast-api-service --type=LoadBalancer --port=8000 --target-port=8000 --selector=app=fast-api
+</code></pre>
+<p class="normal">After deploying this load balancer and the canary deployment, you can then implement monitoring of the logs on the cluster or on your model in order to determine if the canary is successful and should get more traffic. In that case, you would just update the deployment manifest to contain more replicas.</p>
+<p class="normal">Blue/green deployments will work in a very similar way; in each case, you just edit the Deployment manifest to label the <a id="_idIndexMarker1018"/>application as blue or green, The core difference between blue/green and canary deployments though is that the switching of the traffic is a bit more abrupt, where <a id="_idIndexMarker1019"/>here we can have the load balancer <a id="_idIndexMarker1020"/>service switch production traffic to the green deployment with the following command, which uses the <code class="inlineCode">kubectl</code> CLI to patch the definition of the selector in the service:</p>
+<pre class="programlisting con"><code class="hljs-con">kubectl patch service fast-api-service -p '{"spec":{"selector":{"app":"fast-api-green"}}}'
+</code></pre>
+<p class="normal">And that is how you perform <a id="_idIndexMarker1021"/>canary and blue/green deployments in Kubernetes, and how you can use it to try different versions of the forecasting service; give it a try!</p>
+<h1 class="heading-1" id="_idParaDest-184">Summary</h1>
+<p class="normal">In this chapter, we walked through an example of how to take the tools and techniques from the first seven chapters of this book and apply them together to solve a realistic business problem. We discussed in detail how the need for a dynamically triggered forecasting algorithm can lead very quickly to a design that requires several small services to interact seamlessly. In particular, we created a design with components responsible for handling events, training models, storing models, and performing predictions. We then walked through how we would choose our toolset to build to this design in a real-world scenario, by considering things such as appropriateness for the task at hand, as well as likely developer familiarity. Finally, we carefully defined the key pieces of code that would be required to build the solution to solve the problem repeatedly and robustly.</p>
+<p class="normal">In the next, and final, chapter, we will build out an example of a batch ML process. We will name the pattern that this adheres to <strong class="keyWord">Extract</strong>, <strong class="keyWord">Transform</strong>, <strong class="keyWord">Machine Learning</strong>, and explore what key points should be covered in any project aiming to build this type of solution.</p>
+</div>
+<div id="_idContainer197">
+<h1 class="heading-1" id="_idParaDest-185">Join our community on Discord</h1>
+<p class="normal">Join our community’s Discord space for discussion with the author and other readers:</p>
+<p class="normal"><a href="https://packt.link/mle"><span class="url">https://packt.link/mle</span></a></p>
+<p class="normal"><img alt="" height="177" role="presentation" src="../Images/QR_Code102810325355484.png" width="177"/></p>
+</div>
+</div></body></html>

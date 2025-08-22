@@ -1,0 +1,663 @@
+<html><head></head><body>
+		<div id="_idContainer179">
+			<h1 class="chapter-number" id="_idParaDest-105"><a id="_idTextAnchor244"/>5</h1>
+			<h1 id="_idParaDest-106"><a id="_idTextAnchor245"/>Feature Engineering on Databricks<a id="_idTextAnchor246"/></h1>
+			<p class="author-quote">“Applied machine learning is basically feature engineering.”</p>
+			<p class="author-quote">– Andrew Ng</p>
+			<p><a id="_idTextAnchor247"/>As we progress from <a href="B16865_04.xhtml#_idTextAnchor180"><span class="No-Break"><em class="italic">Chapter 4</em></span></a>, where we harnessed the power of Databricks to explore and refine our datasets, we are now ready to delve into the components of Databricks that <a id="_idIndexMarker282"/>enable the next step: feature engineering. We will start by covering <strong class="bold">Databricks Feature Engineering</strong> (<strong class="bold">DFE</strong>) in Unity Catalog <a id="_idIndexMarker283"/>to show you how you can efficiently manage engineered features using <strong class="bold">Unity Catalog</strong> (<strong class="bold">UC</strong>). Understanding how to leverage DFE in UC is crucial for creating reusable and consistent features across training and inference. Next, you will learn how to leverage Sparka Structured Streaming for calculating features on a stream, which allows you to create stateful features needed for models to perform quick decision-making. Feature engineering is a broad topic. We will focus on how <a id="_idIndexMarker284"/>the DI Platform facilitates the development of certain feature categories, such as <strong class="bold">point-in-time lookups</strong> and <strong class="bold">on-demand features</strong>. You will <a id="_idIndexMarker285"/>also learn how to calculate features in real time during model inference, which is vital for scenarios requiring immediate data processing. The last <a id="_idIndexMarker286"/>product feature we will cover is the <strong class="bold">Databricks online store</strong>. You will understand how to make features available for real-time access and enhance the responsiveness of machine learning models in <span class="No-Break">low-latency applicatio<a id="_idTextAnchor248"/>ns.</span></p>
+			<p>Here is what you will learn about as part of <span class="No-Break">this chapter:</span></p>
+			<ul>
+				<li>Databricks Feature Engineering in <span class="No-Break">Unity Catalog</span></li>
+				<li>Feature engineering on <span class="No-Break">a stream</span></li>
+				<li>Employing <span class="No-Break">point-in-time lookups</span></li>
+				<li>Computing <span class="No-Break">on-demand features</span></li>
+				<li>Publishing features to the Databricks <span class="No-Break">Online Store</span></li>
+				<li>Applying <span class="No-Break">our lear<a id="_idTextAnchor249"/><a id="_idTextAnchor250"/>ning</span></li>
+			</ul>
+			<h1 id="_idParaDest-107"><a id="_idTextAnchor251"/>Databricks Feature Engineering in Unity Catalog</h1>
+			<p>In this chapter, we will focus on several types of features. Feature types ca<a id="_idTextAnchor252"/>n be roughly grouped <a id="_idIndexMarker287"/>based on when they are calculated <a id="_idIndexMarker288"/>relative to the time of model prediction. The three types we cover in this chapter are batch, streaming, <span class="No-Break">and on-demand:</span></p>
+			<ul>
+				<li><strong class="bold">Batch features</strong>: These are features that are generated hours, days, or even further ahead <a id="_idIndexMarker289"/>of when the feature will be used as a model input. There are several reasons for this; the model may <a id="_idIndexMarker290"/>be offline and run in a batch prediction fas<a id="_idTextAnchor253"/>hion, or perhaps the feature values change slowly relative to the model inference timeline. In these cases, it is not necessary to recompute the values more frequently. An exam<a id="_idTextAnchor254"/>ple of a batch feature is the <strong class="source-inline">holidays</strong> field in our <em class="italic">Favorita Sales Forecasting</em> project, as we can compute it before we need it and don’t expect the values to <span class="No-Break">change frequently.</span></li>
+				<li><strong class="bold">Streaming features</strong>: These are features processed in real or near-real time as the source <a id="_idIndexMarker291"/>data is ingested in the data pipeline, allowing for continuous and incremental feature creation. To <a id="_idIndexMarker292"/>demonstrate this, we will calculate a streaming feature for our <em class="italic">Streaming Transactions</em> project with Spark <span class="No-Break">Structured Streaming.</span></li>
+				<li><strong class="bold">On-demand features</strong>: Unlike batch or streaming features, on-demand features <a id="_idIndexMarker293"/>are only computed when needed, which is to say, at the time of inference. These features are <a id="_idIndexMarker294"/>crucial for scenarios where feature values are unknown beforehand and must be calculated in real time. We will delve into the mechanics of computing and storing these features, demonstrating their implementation and integration into <span class="No-Break">predictive models.</span></li>
+			</ul>
+			<p>Any Unity Catalog table with a defined primary key constraint can be a centralized repository for materialized, pre-computed (e.g., batch or streaming) features. These types of tables, whose explicit purpose is to centrally store features to be used throughout an organization’s analytics, data science, and machine learning projects, are commonly <a id="_idIndexMarker295"/>called <strong class="bold">feature tables</strong>. Feature tables allow data scientists to share their engineered features and find features that other team members <span class="No-Break">have built.</span></p>
+			<p>They are a wonderful way to ensure business logic is centrally stored, save team members from recreating already-created features, and prevent duplicate work. Plus, Unity Catalog manages all data’s discoverability, lineage, and governance, so your feature <a id="_idIndexMarker296"/>tables are easily managed just like any other table. In Databricks, any table with a non-nullable primary key can <a id="_idIndexMarker297"/>be a feature table. While there is no specific API call to list all tables eligible to be a feature table or to list those officially created as a feature table, we recommend using tags or naming conventions to identify feature tables. This book’s example projects will follow the convention of appending <strong class="source-inline">_ft</strong> at the end of feature table names. Feature Engineering in Unity Catalog provides the <strong class="source-inline">FeatureEngineeringClient</strong> Python client (commonly imported under the alias of <strong class="source-inline">fe</strong>) for creating and updating feature tables (<span class="No-Break"><em class="italic">Figure 5</em></span><span class="No-Break"><em class="italic">.1</em></span><span class="No-Break">):</span></p>
+			<div>
+				<div class="IMG---Figure" id="_idContainer135">
+					<img alt="Figure 5.1 – Example of creating a feature table with FeatureEngineeringClient" src="image/B16865_05_01.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.1 – Example of creating a feature table with FeatureEngineeringClient</p>
+			<p>As we mentioned, the combination of Delta, UC, and the Feature Engineering client provides considerable benefits. Features can be shared and reused across teams, reducing the need to recreate them from scratch. Reusability can save time and resources, and it can also help to ensure that features are consistent across different teams. Centralized feature tables ensure the same code computes feature values for training and inference. This is especially important to avoid online/offline skew – that is, the discrepancy that can occur when the data transformations used during the model training phase (offline) are different from those used when the model is deployed and making predictions (online). <span class="No-Break"><em class="italic">Figure 5</em></span><em class="italic">.2</em> shows a data science project workflow and highlights the offline and online transformations that <span class="No-Break">must match.</span></p>
+			<div>
+				<div class="IMG---Figure" id="_idContainer136">
+					<img alt="Figure 5.2 – You can avoid accuracy issues by guaranteeing that the transformations performed on training data are the same as those performed on inference data" src="image/B16865_05_02.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.2 – You can avoid accuracy issues by guaranteeing that the transformations performed on training data are the same as those performed on inference data</p>
+			<p>We will <a id="_idIndexMarker298"/>prevent online/offline skew in the <em class="italic">Streaming Transactions</em> project by wrapping the data transformation processes into a packaged model in <a href="B16865_06.xhtml#_idTextAnchor297"><span class="No-Break"><em class="italic">Chapter 6</em></span></a>. Consistency can improve the accuracy <a id="_idIndexMarker299"/>of models, as it ensures the same input generates the same output in production as <span class="No-Break">in training.</span></p>
+			<p class="callout-heading">Note</p>
+			<p class="callout">For those who are familiar with the Databricks Feature Store, you may wonder why we do not utilize it in this chapter. Before Unity Catalog, the Databricks Feature Store provided incredible value with added lineage and metadata details. With the advancement of UC, instead of having a separate Feature Store product, every table utilizing UC automatically has these added benefits. The original Databricks Feature Store has been absorbed <span class="No-Break">into UC.</span></p>
+			<p>In the <em class="italic">Applying our learning</em> section ahead, we will save our features to a feature table using both SQL and <strong class="source-inline">FeatureEngineeringClient</strong>. Once stored, Unity Catalog makes it easy to track the data sources used to create your features and the downstream artifacts (such as models and notebooks) that use each feature. Even better, when you log a model using a training set of features from a feature table, feature metadata is packaged with the resulting model. Watch for this when we are working on the <em class="italic">Streaming </em><span class="No-Break"><em class="italic">Trans<a id="_idTextAnchor255"/>a<a id="_idTextAnchor256"/>ctions</em></span><span class="No-Break"> project.</span></p>
+			<h1 id="_idParaDest-108">Feature engineer<a id="_idTextAnchor257"/>ing on a stream</h1>
+			<p>Before diving <a id="_idIndexMarker300"/>into feature engineering on a stream, we want to clarify the difference between <strong class="bold">streaming pipelines</strong> and <strong class="bold">streaming data</strong>. If you have not used <a id="_idIndexMarker301"/>Spark Structured Streaming before, it is a stream processing engine built on the Spark SQL engine. It makes it easy to write streaming calculations <a id="_idIndexMarker302"/>or transformations like you would write expressions for static data. Structured Streaming pipelines <a id="_idIndexMarker303"/>can process batch or streaming data. Streaming pipelines have elements such as checkpoints to automate the data flow. Streaming pipelines, however, are not necessarily always running; rather, they only <a id="_idIndexMarker304"/>run when the developer chooses it. In contrast, streaming data (also known as <strong class="bold">real-time data</strong>) refers to continuously generated data that can be processed in real time or batch. To simplify, think of streaming pipelines as a series of automated conveyor belts in a factory set up to process items (data) as they come. These conveyor belts can be turned on or off as needed. On the other hand, streaming data is like a never-ending flow of items piling up at the beginning of the line. Depending on the volume of the stream, immediate handling may be necessary. In the context of our <em class="italic">Streaming Transactions</em> example in the <em class="italic">Applying our learning</em> section, we are using these automated conveyor belts (streaming pipelines) to efficiently manage and transform this continuous flow of items (streaming data) <a id="_idTextAnchor258"/>into a <span class="No-Break">useful form.</span></p>
+			<p>Streaming data <a id="_idIndexMarker305"/>has <span class="No-Break">several benefits:</span></p>
+			<ul>
+				<li><strong class="bold">Immediate insights</strong>: Streaming data allows you to receive quick insights and make real-time decisions based on the data. Speed is essential for applications where timing is critical, such as financial trading or the real-time monitoring of <span class="No-Break">industrial equipment.</span></li>
+				<li><strong class="bold">Up-to-date analysis</strong>: Processing streaming data in real time allows for more current data analysis. Real-time analysis can help you find patterns and trends as they occur and take proactive steps to address potential data <span class="No-Break">quality issues.</span></li>
+				<li><strong class="bold">Improved efficiency</strong>: Streaming data can help organizations become more efficient by enabling them to respond to events quickly and proactively. Short response times <a id="_idIndexMarker306"/>can improve customer satisfaction, reduce downtime, and <span class="No-Break">increase productivity.</span></li>
+			</ul>
+			<p>Streaming data can provide significant benefits for organizations that need to process large volumes of data quickly and make real-time decisions based on that data. However, there are transformations that require a more complex type of streaming, specifically, <strong class="bold">stateful streaming</strong>. Stateful streaming refers to stream processing that consumes a <a id="_idIndexMarker307"/>continuous data stream and persists the state of past events. Persisting the state allows for the stream to “know” information from previous transactions. This is particularly helpful when calculating aggregates over a time window <a id="_idIndexMarker308"/>since the aggregate <a id="_idIndexMarker309"/>would need values from the previous window in the stream. To make this clearer, we provide an example of this in the <em class="italic">Streaming Transactions</em> project. There is also an informative video linked in the <em class="italic">Further reading</em> section that explains stateful streaming <span class="No-Break">in detail.</span></p>
+			<p class="callout-heading">Note</p>
+			<p class="callout">Streaming feature tables should be altered before you begin writing to them. Running an <strong class="source-inline">ALTER TABLE</strong> command causes the stream to quit. However, you can restart the stream if you must alter the table. Be prepared and plan ahead as much <span class="No-Break">as possible!</span></p>
+			<p>The DFE client supports intelligent handling and lookups for time-based features, such as our timestamped streaming features. Let’s go over this time-saving product <span class="No-Break">feature next.</span></p>
+			<h1 id="_idParaDest-109"><a id="_idTextAnchor259"/>Employing point-in-time lookups for time series feature tables</h1>
+			<p>Time series <a id="_idIndexMarker310"/>feature tables are any table in Unity Catalog with a <strong class="source-inline">TIMESERIES</strong> primary key. These tables are eligible for point-in-time lookups, which is a mechanism for looking up the correct feature values. Before <strong class="source-inline">training_sets</strong>, coming in <a href="B16865_06.xhtml#_idTextAnchor297"><span class="No-Break"><em class="italic">Chapter 6</em></span></a>, we often joined tables to connect training rows with their feature values. However, a fine-grained event timestamp is not ideal for joining. This led to rounding the timestamps to minutes, hours, or even days. Depending on the use case, this method may or may not work. For example, joining on <strong class="source-inline">TransactionTimestamp</strong> in <span class="No-Break"><em class="italic">Figure 5</em></span><em class="italic">.3</em> is not realistic in a standard join so one might create <strong class="source-inline">TransactionMinute</strong> <span class="No-Break">or </span><span class="No-Break"><strong class="source-inline">TransactionHour</strong></span><span class="No-Break">.</span></p>
+			<table class="No-Table-Style _idGenTablePara-1" id="table001-1">
+				<colgroup>
+					<col/>
+					<col/>
+					<col/>
+				</colgroup>
+				<tbody>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="bold">TransactionTimestamp</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="bold">TransactionMinute</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="bold">TransactionHour</strong></span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><span class="No-Break">2023-09-03 19:23:09.765676</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">2023-09-03 19:23:00</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">2023-09-03 19:00:00</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><span class="No-Break">2023-09-03 19:23:09.765821</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">2023-09-03 19:23:00</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">2023-09-03 19:00:00</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><span class="No-Break">2023-09-03 19:23:09.765899</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">2023-09-03 19:23:00</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">2023-09-03 19:00:00</span></p>
+						</td>
+					</tr>
+				</tbody>
+			</table>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.3 – Example of timestamp rounding for easy joining</p>
+			<p>Employing <a id="_idIndexMarker311"/>point-in-time lookups fixes this problem by handling the time matching for you. For those familiar with <em class="italic">The Price Is Right</em>, it’s the closest feature value without going over. More specifically, it will match with the latest feature value as of the event timestamp without ever providing a feature value calculated after the event. You don’t worry about data leakage during training. Without a <strong class="source-inline">Timeseries</strong> primary key, the latest value for a feature <span class="No-Break">is matched.</span></p>
+			<p class="callout-heading">Note</p>
+			<p class="callout">It’s recommended to apply Z-ordering on time series tables for better performance in point-in-time lookups. Z-ordering is covered in <a href="B16865_07.xhtml#_idTextAnchor325"><span class="No-Break"><em class="italic">Chapter 7</em></span></a><span class="No-Break">.</span></p>
+			<p>Looking up features is great and often the best choice for your use case. However, in some data science and machine learning tasks, we need feature values calculated quickly on data that we do not have ahead of time. For those projects, we need <span class="No-Break">on-demand features.</span></p>
+			<h1 id="_idParaDest-110"><a id="_idTextAnchor260"/>Computing on-demand features</h1>
+			<p>Calculating the number of transactions per customer in a brief time window works in a streaming fashion <a id="_idIndexMarker312"/>because we only need to use historical data. When we want to use a feature that requires data available only at inference time, we use on-demand features, with unknown values until inference time. In Databricks, you can <a id="_idIndexMarker313"/>create on-demand features with Python <strong class="bold">user-defined functions</strong> (<strong class="bold">UDFs</strong>). These Python UDFs can then be invoked via <strong class="source-inline">training_set</strong> configurations to create training datasets, as you will see in <a href="B16865_06.xhtml#_idTextAnchor297"><span class="No-Break"><em class="italic">Chapter 6</em></span></a><span class="No-Break">.</span></p>
+			<p>Let’s consider the <em class="italic">Streaming Transactions</em> project again. We want to add a feature for the amount a product sold at, compared to its historical maximum price, and use this as part of the training data to predict the generated classification label. In this scenario, we don’t know the purchase price until the transaction has been received. We’ll cover how to build a Python UDF for calculating an on-demand feature for the <em class="italic">Streaming Transactions</em> project in the <em class="italic">Applying our </em><span class="No-Break"><em class="italic">learning</em></span><span class="No-Break"> section.</span></p>
+			<p>Additionally, we recommend checking out the <em class="italic">How Databricks AI improves model accuracy with real-time computations</em> and <em class="italic">Best Practices for Realtime Feature Computation on Databricks</em> articles for in-depth advice from the on-demand experts at Databricks; see the <em class="italic">Further reading</em> section for <span class="No-Break">the links.</span></p>
+			<p>We have discussed saving features to feature tables in Unity Catalog, the standard “offline” pattern for applications that do not have low-latency requirements. If your business problem requires low latency or fast results, you’ll need your data in an online table or implement Databricks Feature Serving. Feature Serving can serve functions as well as precomputed features. For low-latency projects, we recommend Databricks Model Serving because it removes any need for Feature Serving. <a id="_idTextAnchor261"/>We don’t cover Feature Serving in this book, but if you are going to serve your models externally to Databricks, Feature Serving may be of interest <span class="No-Break">to you.</span></p>
+			<p>Next, we learn about how to leverage the Databricks <span class="No-Break">Online Store.</span></p>
+			<h1 id="_idParaDest-111"><a id="_idTextAnchor262"/>Publishing features to the Databricks Online Store</h1>
+			<p>If you want to use your features with real-time serving, you can publish the features to a low-latency database, also known as an online store. Publishing feature tables to a low-latency database <a id="_idIndexMarker314"/>allows for automatic feature lookup during model inference. There are a variety of options to choose from when choosing an online store. A typical data-serving solution requires expert engineers to select an appropriate database for online access, build data publishing pipelines, and orchestrate deployment. After deployment, someone has to monitor, manage, and optimize the pipelines feeding the online store. This is why we recommend Databricks’ own fully managed serverless online store built right into the platform. It automatically syncs your Delta feature table with the online store, making it amazingly easy to use. Databricks Online Store is integrated with Databricks Model Serving, so it’s easy to set up your online store without ever leaving Databricks. To create an online store, go to the <strong class="bold">Compute</strong> tab, select <strong class="bold">Online stores</strong>, and then <strong class="bold">Create store</strong>. The next step is to enter your online store’s name and you can select a size for your store, based on how many lookups per second, as shown in <span class="No-Break"><em class="italic">Figure 5</em></span><span class="No-Break"><em class="italic">.4</em></span><span class="No-Break">.</span></p>
+			<div>
+				<div class="IMG---Figure" id="_idContainer137">
+					<img alt="Figure 5.4 – Creating an online store from the Compute screen" src="image/B16865_05_04.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.4 – Creating an online store from the Compute screen</p>
+			<p>To sync data to your online store, go to the table with the data you want in the store, and from the hotdog menu to the left of the <strong class="bold">Create</strong> button, select <strong class="bold">Sync to </strong><span class="No-Break"><strong class="bold">online store</strong></span><span class="No-Break">.</span></p>
+			<div>
+				<div class="IMG---Figure" id="_idContainer138">
+					<img alt="Figure 5.5 – Syncing data from a table to your online store" src="image/B16865_05_05.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.5 – Syncing data from a table to your online store</p>
+			<p>You will need <a id="_idIndexMarker315"/>to specify the primary key for lookup, and a timestamp column if needed, then confirm to sync <span class="No-Break">your data.</span></p>
+			<div>
+				<div class="IMG---Figure" id="_idContainer139">
+					<img alt="Figure 5.6 – Confirming the online store with its primary keys" src="image/B16865_05_06.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.6 – Confirming the online store with its primary keys</p>
+			<p>You can check the sync status on your online store on the <span class="No-Break"><strong class="bold">Details</strong></span><span class="No-Break"> tab.</span></p>
+			<div>
+				<div class="IMG---Figure" id="_idContainer140">
+					<img alt="Figure 5.7 – The in-notebook UI for viewing the experiment runs" src="image/B16865_05_07.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.7 – The in-notebook UI for viewing the experiment runs</p>
+			<p>Syncing your tables is simple. No additional engineering is required! Once your feature tables are <a id="_idIndexMarker316"/>established and ready for Databricks Online Store, simply sync the table by providing the primary keys, a timestamp column (if appropriate), and how often to sync (<span class="No-Break"><em class="italic">Figure 5</em></span><span class="No-Break"><em class="italic">.8</em></span><span class="No-Break">).</span></p>
+			<div>
+				<div class="IMG---Figure" id="_idContainer141">
+					<img alt="Figure 5.8 – UI for syncing a feature table to Databricks Online Store" src="image/B16865_05_08.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.8 – UI for syncing a feature table to Databricks Online Store</p>
+			<p>Online stores are ideal for storing only a record’s most recent feature values when accessing the values at low latency speeds. Common use cases include models that require fast feature <a id="_idIndexMarker317"/>lookups and serving data to applications. You can use the Delta Lake<strong class="bold"> change data feed</strong> (<strong class="bold">CDF</strong>) to make the most of Databricks Online Store, which tracks row-level changes in a Delta table. Using CDF, you can update feature tables with just the changed values instead of overwriting the entire table <a id="_idIndexMarker318"/>or keeping track of timestamps. As a result, there is less data you need <a id="_idTextAnchor263"/>to sync with Databricks Online Store learned about declaring feature tables by saving them with a primary key as a Delta table in Unity Catalog. Additionally, we can create an online feature store a<a id="_idTextAnchor264"/>nd sync our tables to make the features available for low-latency use cases or serving data to applications. Next, we must consider how to use features in our <span class="No-Break">training datasets.</span></p>
+			<p>We’ve gone through ways to save feature tables, build streaming features, implement point-in-time lookups, create on-demand features, and publish to the Databricks Online Stor<a id="_idTextAnchor265"/>e. It’s time to get ready to follow along in your own Databricks workspace as we work through the <a href="B16865_05.xhtml#_idTextAnchor244"><span class="No-Break"><em class="italic">Chapter 5</em></span></a> <span class="No-Break">project cod<a id="_idTextAnchor266"/>e.</span></p>
+			<h1 id="_idParaDest-112">Applying our learni<a id="_idTextAnchor267"/>ng</h1>
+			<p>Now that we have learned about the feature engineering components of the DI platform, let’s <a id="_idIndexMarker319"/>put these topics into action and build on the example project datasets with new features that will enhance the data <span class="No-Break">science projec<a id="_idTextAnchor268"/>ts.</span></p>
+			<h2 id="_idParaDest-113"><a id="_idTextAnchor269"/>Technical requirements</h2>
+			<p>Here are the <a id="_idIndexMarker320"/>technical requirements needed to complete the hands-on examples in <span class="No-Break">this chapter:</span></p>
+			<ul>
+				<li>The <em class="italic">Streaming Transactions</em> project requires more compute power than is available in the single node cluster. We created a multi-node cluster to address this. See <span class="No-Break"><em class="italic">Figure 5</em></span><em class="italic">.9</em> for the multi-node CPU configuration <span class="No-Break">we used.</span></li>
+			</ul>
+			<div>
+				<div class="IMG---Figure" id="_idContainer142">
+					<img alt="Figure 5.9 – Multi-node CPU cluster configuration (on AWS) used for this book" src="image/B16865_05_09.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.9 – Multi-node CPU cluster configuration (on AWS) used for this book</p>
+			<ul>
+				<li>We will use managed volumes to store cleaned, <span class="No-Break">featurized dat<a id="_idTextAnchor270"/>a.</span></li>
+			</ul>
+			<h2 id="_idParaDest-114"><a id="_idTextAnchor271"/>Project – Streaming Transactions</h2>
+			<p>If you’ve been following the code in the previous chapters, at this point, you have the streaming <a id="_idIndexMarker321"/>data you need. In this chapter, we will augment that data with some of the feature engineering techniques discussed earlier. First, we will create a streaming feature to count the number of transactions that have arrived in the last two minutes for <span class="No-Break">each customer.</span></p>
+			<p>Before we jump in, let’s remember where we are and where we <span class="No-Break">are going.</span></p>
+			<div>
+				<div class="IMG---Figure" id="_idContainer143">
+					<img alt="Figure 5.10 – The project pipeline for the Streaming Transactions proj﻿ect" src="image/B16865_05_10.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.10 – The project pipeline for the Streaming Transactions proj<a id="_idTextAnchor272"/>ect</p>
+			<p>We are building a streaming pipeline to process the incoming transactions into a feature. We will use stateful streaming to count the number of transactions per customer over a two-minute timeframe. Stateful streaming is required because the calculations <a id="_idIndexMarker322"/>in the stream need to know how many transactions have already occurred and when a transaction falls outside the two-minute window. This information is known as the state of <span class="No-Break">a customer.</span></p>
+			<p>The streaming feature and the on-demand feature are created in two different notebooks. In the code repository, you have the following <span class="No-Break">four notebooks:</span></p>
+			<ul>
+				<li><strong class="source-inline">CH5-01-Generating Records</strong>: This notebook is nearly identical to the data generator used in the previous chapters. The two key differences are that there is now always a product present in the records, and the total (meaning the number of time steps) has been increased to provide a stream for a longer period <span class="No-Break">of time.</span></li>
+				<li><strong class="source-inline">CH5-02-Auto Loader</strong>: The only change to the <strong class="source-inline">Auto Loader</strong> notebook is the location the data is being <span class="No-Break">written to.</span></li>
+				<li><strong class="source-inline">CH5-03-FE Using Spark Structured Streaming</strong>: This notebook is explained in detail in the <em class="italic">Building a streaming feature with Spark Structured Streaming</em> subsection of this project. The code is written in Scala. Stateful streaming is now also available with PySpark. See the <em class="italic">Further reading</em> section at the end of this chapter for <span class="No-Break">more details.</span></li>
+				<li><strong class="source-inline">CH5-04-Building Maximum Price Feature Table</strong>: This notebook calculates the maximum price for a product over a time window. The calculated price will be used at inference time by the Python UDF also created in <span class="No-Break">this notebook.</span></li>
+			</ul>
+			<p>The first <a id="_idIndexMarker323"/>two notebooks are nearly identical to their counterparts from the last chapter, so we won’t cover them again. We start from the <span class="No-Break"><strong class="source-inline">CH5-03-FE_Using_Spark_Structured_Streaming</strong></span><span class="No-Break"> not<a id="_idTextAnchor273"/>e<a id="_idTextAnchor274"/>book.</span></p>
+			<h3>Building a streaming feature with Spark Structured Streaming</h3>
+			<p>We <a id="_idIndexMarker324"/>calculate the number of transactions per customer in the last two <a id="_idIndexMarker325"/>minutes and <a id="_idIndexMarker326"/>call this new feature <strong class="source-inline">transactionCount</strong>, which is a case class in <span class="No-Break">the code.</span></p>
+			<table class="No-Table-Style _idGenTablePara-1" id="table002">
+				<colgroup>
+					<col/>
+					<col/>
+					<col/>
+					<col/>
+				</colgroup>
+				<tbody>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="bold">CustomerID</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="bold">transactionTimestamp</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><strong class="bold">…</strong></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><strong class="bold">…</strong></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>1</p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">2023-09-03 19:23:09.765676</span></p>
+						</td>
+						<td class="No-Table-Style"/>
+						<td class="No-Table-Style"/>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>4</p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">2023-09-03 19:23:09.765821</span></p>
+						</td>
+						<td class="No-Table-Style"/>
+						<td class="No-Table-Style"/>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>2</p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">2023-09-03 19:23:09.765899</span></p>
+						</td>
+						<td class="No-Table-Style"/>
+						<td class="No-Table-Style"/>
+					</tr>
+				</tbody>
+			</table>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US"><a id="_idTextAnchor275"/>Figure 5.11 – The table contains example data corresponding to readStream – namely, inputDf</p>
+			<p><a id="_idTextAnchor276"/>We need to aggregate the transactions from the incoming stream, the <strong class="source-inline">InputRow</strong> case class, by the <strong class="source-inline">CustomerID</strong> field. <span class="No-Break"><em class="italic">Figure 5</em></span><em class="italic">.11</em> shows an example table of the incoming stream. Additionally, we must remove transactions once they have fallen outside the specified window; we will call these “expired transactions.” This means we must create and maintain a state for each customer, the <strong class="source-inline">TransactionCountState</strong> case class. Each <a id="_idIndexMarker327"/>customer state consists of <strong class="source-inline">CustomerID</strong>, <strong class="source-inline">transactionCount</strong>, and <strong class="source-inline">transactionList</strong> containing the times that the transactions <a id="_idIndexMarker328"/>occurred for each transaction accounted for in the transaction count. <span class="No-Break"><em class="italic">Figure 5</em></span><em class="italic">.12</em> is a visual <a id="_idIndexMarker329"/>representation of the customer state. As a customer transaction arrives, it is added to a list of transactions with a timestamp as part of the <span class="No-Break">customer state.</span></p>
+			<p class="IMG---Figure"><a id="_idTextAnchor277"/></p>
+			<div>
+				<div class="IMG---Figure" id="_idContainer144">
+					<img alt="Figure 5.12 – Each transaction updates the customer sta﻿t﻿e" src="image/B16865_05_12.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.12 – Each transaction updates the customer sta<a id="_idTextAnchor278"/>t<a id="_idTextAnchor279"/>e</p>
+			<p>The state is created by applying the stateful streaming logic to the input data. The customer state is then used to write the feature table, <strong class="source-inline">transaction_count_ft</strong>, shown in <span class="No-Break"><em class="italic">Figure 5</em></span><span class="No-Break"><em class="italic">.13</em></span><span class="No-Break">:</span></p>
+			<table class="No-Table-Style _idGenTablePara-1" id="table003">
+				<colgroup>
+					<col/>
+					<col/>
+					<col/>
+					<col/>
+				</colgroup>
+				<tbody>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="bold">CustomerID</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="bold">transactionCount</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="bold">eventTimestamp</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="bold">isTimeout</strong></span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>5</p>
+						</td>
+						<td class="No-Table-Style">
+							<p>3</p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">2023-09-03T19:24:14.388</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="source-inline">false</strong></span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>2</p>
+						</td>
+						<td class="No-Table-Style">
+							<p>4</p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">2023-09-03T19:24:16.721</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="source-inline">true</strong></span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>3</p>
+						</td>
+						<td class="No-Table-Style">
+							<p>0</p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">2023-09-03T19:24:16.720</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="source-inline">true</strong></span></p>
+						</td>
+					</tr>
+				</tbody>
+			</table>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.13 – This table is the result after applying the stateful streaming transformation</p>
+			<p>The feature table shown in <span class="No-Break"><em class="italic">Figure 5</em></span><em class="italic">.13</em> includes the <strong class="source-inline">CustomerID</strong> reference, <strong class="source-inline">transactionCount</strong> for that customer, <strong class="source-inline">eventTimestamp</strong>, and a Boolean variable, <strong class="source-inline">isTimeout</strong>. The <strong class="source-inline">eventTimestamp</strong> is the time the feature record was written. We call it <strong class="source-inline">eventTimestamp</strong> because a new transaction or a timeout could have triggered the <a id="_idIndexMarker330"/>update to the customer state/event. To know which type of <a id="_idIndexMarker331"/>event it is, we include <strong class="source-inline">isTimeout</strong>. A timeout occurs when no new transactions for a customer have occurred <a id="_idIndexMarker332"/>but the value of <strong class="source-inline">transactionCount</strong> has changed – an indication that the count <span class="No-Break">has decreased.</span></p>
+			<div>
+				<div class="IMG---Figure" id="_idContainer145">
+					<img alt="Figure 5.14 – Logic flow for the stateful streaming transformation" src="image/B16865_05_14.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.14 – Logic flow for the stateful streaming transformation</p>
+			<p><span class="No-Break"><em class="italic">Figure 5</em></span><em class="italic">.14</em> visually represents the update logic applied to the customer state. The logical path can be broken <span class="No-Break">into steps:</span><a id="_idTextAnchor280"/></p>
+			<ol>
+				<li>For <strong class="source-inline">n</strong> new transactions coming in for customer <strong class="source-inline">c</strong>, <strong class="source-inline">transactionCount</strong> is incremented <span class="No-Break"><strong class="source-inline">n</strong></span><span class="No-Break"> times.</span></li>
+				<li>Then, for each <strong class="source-inline">transactionTimestamp</strong>, <strong class="source-inline">ti</strong>, in <strong class="source-inline">transactionList</strong>, we compare the current time with <strong class="source-inline">expirationTimestamp</strong> (<strong class="source-inline">ti+windowMinutes</strong>) to determine whether the transaction accounted for in <strong class="source-inline">transactionCount</strong> <span class="No-Break">has expired:</span><ol><li class="u er-roman">If any transactions have expired, we decrement <strong class="source-inline">transactionCount</strong> by one for each and drop the corresponding <strong class="source-inline">transactionTimestamp</strong> <span class="No-Break">from </span><span class="No-Break"><strong class="source-inline">transactionList</strong></span><span class="No-Break">.</span></li><li class="u er-roman">If no transaction has expired or <strong class="source-inline">transactionTimestamp</strong> for the expired transactions has been dropped, then we add the new <strong class="source-inline">transactionTimestamp</strong> to <strong class="source-inline">transactionList</strong> and write out the <span class="No-Break">customer record.</span></li></ol></li>
+			</ol>
+			<p>Now <a id="_idIndexMarker333"/>that we have outlined the goal of our transformation, let’s look <a id="_idIndexMarker334"/>at the code. To follow <a id="_idIndexMarker335"/>along in your own workspace, please refer to the <span class="No-Break">following notebooks:</span></p>
+			<ul>
+				<li><span class="No-Break"><strong class="source-inline">CH5-01-Generating Records</strong></span></li>
+				<li><span class="No-Break"><strong class="source-inline">CH5-02-Auto Loader</strong></span></li>
+				<li><strong class="source-inline">CH5-03-FE Using Spark </strong><span class="No-Break"><strong class="source-inline">Structured Streaming</strong></span></li>
+				<li><strong class="source-inline">CH5-04-Building Maximum Price </strong><span class="No-Break"><strong class="source-inline">Feature Table</strong></span></li>
+			</ul>
+			<p>Before you begin executing <em class="italic">notebook 3</em>, please open <em class="italic">notebooks 1</em> and <em class="italic">2</em> and click <strong class="bold">Run All</strong> for both. These two notebooks relaunch the data streams that we need running in order to run <em class="italic">notebook 3</em>. However, you do not need all streams running in order to run <span class="No-Break"><em class="italic">notebook 4</em></span><span class="No-Break">.</span></p>
+			<p>The code we are jumping into is in the <strong class="source-inline">CH5-03-FE Using Spark Structured Streaming</strong> notebook. We start with the basics – imports and delta configurations – as shown in the <span class="No-Break">following screenshot:</span></p>
+			<div>
+				<div class="IMG---Figure" id="_idContainer146">
+					<img alt="Figure 5.15 – Setting delta configurations for optimized writes and compaction" src="image/B16865_05_15.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.15 – Setting delta configurations for optimized writes and compaction</p>
+			<p>These <a id="_idIndexMarker336"/>configurations can also be set in the cluster configurations, but we call them out explicitly in <span class="No-Break"><em class="italic">Figure 5</em></span><em class="italic">.15</em>. These settings will automatically <a id="_idIndexMarker337"/>compact sets of small files into larger files as it writes for optimal read performance. <span class="No-Break"><em class="italic">Figure 5</em></span><em class="italic">.16</em> primarily <a id="_idIndexMarker338"/>shows the reset commands that enable starting fresh <span class="No-Break">when needed:</span></p>
+			<div>
+				<div class="IMG---Figure" id="_idContainer147">
+					<img alt="Figure 5.16 – Setting the widget value to True runs the commands in this cell, removing the output data, including the checkpoint, and dropping the table" src="image/B16865_05_16.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.16 – Setting the widget value to True runs the commands in this cell, removing the output data, including the checkpoint, and dropping the table</p>
+			<p>We define the necessary variables in this next code snippet and create our table. Notice that variables passed from the setup file are in Python and SQL, meaning they are unavailable in Scala. Although all three languages can be used in a notebook, they do not share constants or variable values between them. As a result, we define the variables we need in Scala for access in the Scala notebook. We set the volume location for files, output paths, and the <span class="No-Break"><strong class="source-inline">inputTable</strong></span><span class="No-Break"> name:</span></p>
+			<div>
+				<div class="IMG---Figure" id="_idContainer148">
+					<img alt="Figure 5.17 – Setting variables, constants, and paths in Scala" src="image/B16865_05_17.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.17 – Setting variables, constants, and paths in Scala</p>
+			<p>Notice <a id="_idIndexMarker339"/>that we enable <a id="_idIndexMarker340"/>the CDF on our streaming feature table, <strong class="source-inline">transaction_count_ft</strong>, in<em class="italic"> </em><span class="No-Break"><em class="italic">Figure 5</em></span><em class="italic">.18</em>. We could publish this table to an online store if desired. Additionally, we set the table name we want to write all <span class="No-Break">transactions, </span><span class="No-Break"><strong class="source-inline">transaction_count_history</strong></span><span class="No-Break">:</span></p>
+			<div>
+				<div class="IMG---Figure" id="_idContainer149">
+					<img alt="Figure 5.18 – Creating a table and enabling CDF" src="image/B16865_05_18.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.18 – Creating a table and enabling CDF</p>
+			<p>Next, the <strong class="source-inline">windowMinutes</strong> constant is the number of minutes we want to aggregate transactions for each customer, whereas <strong class="source-inline">maxWaitMinutes</strong> is exactly what it sounds like. It is the minutes the stream waits for a transaction before writing out the state without <a id="_idIndexMarker341"/>new transactions. The value of <strong class="source-inline">maxWaitMinutes</strong> should always be less than the value <span class="No-Break">of </span><span class="No-Break"><strong class="source-inline">windowMinutes</strong></span><span class="No-Break">:</span></p>
+			<div>
+				<div class="IMG---Figure" id="_idContainer150">
+					<img alt="Figure 5.19 – Setting windowMinutes and maxWaitMinutes for our stream" src="image/B16865_05_19.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.19 – Setting windowMinutes and maxWaitMinutes for our stream</p>
+			<p>We will initiate <strong class="source-inline">FeatureEngineeringClient</strong> and set feature table tags so we can easily see which project these tables are <span class="No-Break">associated with:</span></p>
+			<div>
+				<div class="IMG---Figure" id="_idContainer151">
+					<img alt="Figure 5.20 – Setting feature table tags on our table" src="image/B16865_05_20.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.20 – Setting feature table tags on our table</p>
+			<p>Next, we <a id="_idIndexMarker342"/>define the case <a id="_idIndexMarker343"/>class structures. <span class="No-Break"><em class="italic">Figure 5</em></span><em class="italic">.21</em> shows that our case classes define our data structures. This is because Scala is a <span class="No-Break">typed language.</span></p>
+			<div>
+				<div class="IMG---Figure" id="_idContainer152">
+					<img alt="Figure 5.21 – Defining class structures to support aggregations for each customer ID" src="image/B16865_05_21.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.21 – Defining class structures to support aggregations for each customer ID</p>
+			<p>In<em class="italic"> </em><span class="No-Break"><em class="italic">Figure 5</em></span><em class="italic">.22</em>, we see the <strong class="source-inline">addNewRecords</strong> function. <strong class="source-inline">latestTimestamp</strong> is calculated by comparing the latest timestamp in <strong class="source-inline">transactionCountState</strong> with the <a id="_idIndexMarker344"/>latest timestamp from the new records. This is in case we’ve received data out of order. Finally, we create and return the new <strong class="source-inline">TransactionCountState</strong> object with the newly calculated <strong class="source-inline">latestTimestamp</strong> and combine the two <span class="No-Break">record lists:</span></p>
+			<div>
+				<div class="IMG---Figure" id="_idContainer153">
+					<img alt="Figure 5.22 – Defining the addNewRecords fun﻿ction" src="image/B16865_05_22.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.22 – Defining the addNewRecords fun<a id="_idTextAnchor281"/>ction</p>
+			<p>The next <a id="_idIndexMarker345"/>function, <span class="No-Break"><em class="italic">Figure 5</em></span><em class="italic">.23</em>, drops the records that are more <a id="_idIndexMarker346"/>than <strong class="source-inline">windowMinutes</strong> old from <strong class="source-inline">TransactionCountState</strong> by calculating the state expiration <a id="_idIndexMarker347"/>timestamp (the latest timestamp minus the transaction count minutes). Then, it loops through the list of current transactions and keeps any that occur before the expiration timestamp. This is shown in the <span class="No-Break">following screenshot:</span></p>
+			<div>
+				<div class="IMG---Figure" id="_idContainer154">
+					<img alt="Figure 5.23 – Defining a function to drop stale records" src="image/B16865_05_23.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.23 – Defining a function to drop stale records</p>
+			<p>The <strong class="source-inline">updateState</strong> function uses our helper functions to – you guessed it – update the customer <a id="_idIndexMarker348"/>state. This is the function called <strong class="source-inline">flatMapGroupsWithState</strong>. The <strong class="source-inline">updateState</strong> function receives the customer ID, values, and <a id="_idIndexMarker349"/>the current state. <strong class="source-inline">CustomerID</strong> is the key we are <a id="_idIndexMarker350"/>grouping on. <strong class="source-inline">values</strong> is an iterator of <strong class="source-inline">InputRow</strong>. In <span class="No-Break"><em class="italic">Figure 5</em></span><em class="italic">.11</em>, we see that <strong class="source-inline">InputRow</strong> is a transaction record consisting of a <strong class="source-inline">CustomerID</strong> reference and the time the transaction occurred. The <strong class="source-inline">updateState</strong> function behaves in two ways. Suppose one or more <strong class="source-inline">InputRow</strong> records for a given <strong class="source-inline">CustomerID</strong> are received. In that case, it will add those records to the state, drop any records that are older than <strong class="source-inline">windowMinutes</strong> from the state, and calculate the transaction count. See <span class="No-Break"><em class="italic">Figure 5</em></span><em class="italic">.18</em> for the <span class="No-Break">notebook code.</span></p>
+			<div>
+				<div class="IMG---Figure" id="_idContainer155">
+					<img alt="Figure 5.24 – If the state has not timed out, the updateState function receives and processes records" src="image/B16865_05_24.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.24 – If the state has not timed out, the updateState function receives and processes records</p>
+			<p>On the <a id="_idIndexMarker351"/>other hand, as shown in <span class="No-Break"><em class="italic">Figure 5</em></span><em class="italic">.25</em>, if no records are <a id="_idIndexMarker352"/>received for a given <strong class="source-inline">CustomerID</strong> within <a id="_idIndexMarker353"/>a minute since the last time this function was called, it will drop any records that are older than <strong class="source-inline">windowMinutes</strong> from the state and adjust <span class="No-Break">the count:</span></p>
+			<div>
+				<div class="IMG---Figure" id="_idContainer156">
+					<img alt="Figure 5.25 – If the state has timed out, the updateState function receives no records and only updates the state after dropping expired records" src="image/B16865_05_25.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.25 – If the state has timed out, the updateState function receives no records and only updates the state after dropping expired records</p>
+			<p>Note <a id="_idIndexMarker354"/>that the <strong class="source-inline">transactionCounts</strong> list buffer created at the <a id="_idIndexMarker355"/>beginning of the <strong class="source-inline">updateState</strong> function is returned as an iterator. In this case, the output will contain <a id="_idIndexMarker356"/>one record: the transaction count record for the <span class="No-Break">specific customer.</span></p>
+			<p>Next, as we prepare to create a read stream, we define the input schema we need for our read stream; see <span class="No-Break"><em class="italic">Figure 5</em></span><span class="No-Break"><em class="italic">.26</em></span><span class="No-Break">:</span></p>
+			<div>
+				<div class="IMG---Figure" id="_idContainer157">
+					<img alt="Figure 5.26 – Read stream input schema" src="image/B16865_05_26.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.26 – Read stream input schema</p>
+			<p>We now <a id="_idIndexMarker357"/>must create <a id="_idIndexMarker358"/>the read and <a id="_idIndexMarker359"/>write components of the stream. The read stream reads in the Delta table we created in <a href="B16865_03.xhtml#_idTextAnchor123"><span class="No-Break"><em class="italic">Chapter 3</em></span></a>. Recall we created the Bronze layer by streaming in JSON files and writing them to our <strong class="source-inline">inputTable</strong>. The <strong class="source-inline">readStream</strong> and <strong class="source-inline">writeStream</strong> code is long so we will break it up into smaller sections in the <span class="No-Break">following steps:</span></p>
+			<ol>
+				<li>You should recognize this from earlier chapters. The difference is we are using <strong class="source-inline">selectExpr</strong> to isolate <strong class="source-inline">CustomerID</strong> and <strong class="source-inline">TransactionTimestamp</strong>. Additionally, we specifically set the type of output dataframe to the case class that <strong class="source-inline">flatMapGroupsWithState</strong> <span class="No-Break">is expecting:</span></li>
+			</ol>
+			<div>
+				<div class="IMG---Figure" id="_idContainer158">
+					<img alt="Figure 5.27 – InputDF is a read stream reading the table we created in Chapter 3" src="image/B16865_05_27.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.27 – InputDF is a read stream reading the table we created in Chapter 3</p>
+			<ol>
+				<li value="2">We apply the watermark and <strong class="source-inline">flatMapGroupsWithState</strong> function to <strong class="source-inline">inputDf</strong>. In Spark Streaming, a watermark is a time threshold determining the maximum allowable delay for late events. We’re allowing data to be 30 seconds late before it is dropped (<em class="italic">Watermarking in Spark Structured Streaming</em>, by Thomas Treml: <a href="https://towardsdatascience.com/watermarking-in-spark-structured-streaming-9e164f373e9">https://towardsdatascience.com/watermarking-in-spark-structured-streaming-9e164f373e9</a>). The <strong class="source-inline">flatMapGroupsWithState</strong> function is an arbitrary stateful streaming aggregation operator. It applies our <strong class="source-inline">updateState</strong> function to each micro-batch of transactions while maintaining the state for each <span class="No-Break">customer ID:</span></li>
+			</ol>
+			<div>
+				<div class="IMG---Figure" id="_idContainer159">
+					<img alt="Figure 5.28 – Applying the watermark and flatMapGroupsWithState function to inputDf" src="image/B16865_05_28.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.28 – Applying the watermark and flatMapGroupsWithState function to inputDf</p>
+			<ol>
+				<li value="3">We define the <strong class="source-inline">updateCounts</strong> function for <strong class="source-inline">foreachBatch</strong> to update the counts <a id="_idIndexMarker360"/>in the write stream. It performs upserts <a id="_idIndexMarker361"/>of the new <a id="_idIndexMarker362"/>transaction counts into the <strong class="source-inline">transaction_count_ft</strong> table; this is the <span class="No-Break">CDC component:</span></li>
+			</ol>
+			<div>
+				<div class="IMG---Figure" id="_idContainer160">
+					<img alt="Figure 5.29 – The updateCounts function upserts the new transaction counts into the transaction_count_ft table" src="image/B16865_05_29.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.29 – The updateCounts function upserts the new transaction counts into the transaction_count_ft table</p>
+			<ol>
+				<li value="4">The last piece of the stream is the write, or, more clearly, the update. The write stream applies the <strong class="source-inline">updateCounts</strong> function. Delta tables do not support streaming updates directly, so we need to use a <strong class="source-inline">foreachBatch</strong> function. The <strong class="source-inline">foreachBatch</strong> function is like a streaming <strong class="source-inline">for</strong> loop applying the function to each <a id="_idIndexMarker363"/>micro-batch of data in the stream. This write stream is similar to <strong class="source-inline">flatMapGroupsWithState</strong> without grouping the data or maintaining the state. We <a id="_idIndexMarker364"/>are simply updating the CDC result table. Notice the checkpointing is handled for us, and our stream is triggered every 10 seconds, meaning every 10 seconds is a new micro-batch of the data. The query name is optional. It shows up in <span class="No-Break">the SparkUI.</span></li>
+			</ol>
+			<div>
+				<div class="IMG---Figure" id="_idContainer161">
+					<img alt="Figure 5.30 – The write stream applies the updateCounts function using foreachBatch" src="image/B16865_05_30.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.30 – The write stream applies the updateCounts function using foreachBatch</p>
+			<ol>
+				<li value="5">In addition <a id="_idIndexMarker365"/>to the writing out to the CDC table, we also want a historical record of the <span class="No-Break">transaction values:</span></li>
+			</ol>
+			<div>
+				<div class="IMG---Figure" id="_idContainer162">
+					<img alt="Figure 5.31 – The write stream records all of the transactionCounts values to the Delta table" src="image/B16865_05_31.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.31 – The write stream records all of the transactionCounts values to the Delta table</p>
+			<ol>
+				<li value="6">While the stream runs, we can observe the output table, <strong class="source-inline">transaction_count_ft</strong>. While your streams are running, refresh the table view so you can follow along with the output changes as the input <span class="No-Break">data changes:</span></li>
+			</ol>
+			<div>
+				<div class="IMG---Figure" id="_idContainer163">
+					<img alt="Figure 5.32 – A snapshot of the transaction_count_ft table" src="image/B16865_05_32.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.32 – A snapshot of the transaction_count_ft table</p>
+			<ol>
+				<li value="7">Another <a id="_idIndexMarker366"/>thing you can observe while the stream <a id="_idIndexMarker367"/>runs is the <a id="_idIndexMarker368"/>stream statistics. This view is found by expanding the <span class="No-Break">results section.</span></li>
+			</ol>
+			<div>
+				<div class="IMG---Figure" id="_idContainer164">
+					<img alt="Figure 5.33 – Stream real-time statistics for writeStream" src="image/B16865_05_33.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.33 – Stream real-time statistics for writeStream</p>
+			<p>Navigate <a id="_idIndexMarker369"/>to the Catalog <a id="_idIndexMarker370"/>view to see <a id="_idIndexMarker371"/>that the two new tables have appeared. This wraps up our streaming feature. Next, we wil<a id="_idTextAnchor282"/>l build a <span class="No-Break">Python UDF.</span></p>
+			<h3>Building an on-demand feature with a Python UDF</h3>
+			<p>Let’s also create a second feature table using on-demand feature engineering. Focus on the <strong class="source-inline">CH5-04-Building_Maximum_Price_Feature_Table</strong> notebook. We briefly <a id="_idIndexMarker372"/>introduced a scenario in an early section of this chapter requiring us to calculate <a id="_idIndexMarker373"/>a transaction’s difference <a id="_idIndexMarker374"/>from the maximum price on the fly. This could be useful for modeling. To get the difference as an on-demand feature, we do <span class="No-Break">the following:</span></p>
+			<ol>
+				<li>Calculate the maximum price per product over a rolling window. We begin with creating <strong class="source-inline">time_window</strong>. We want the maximum price in the last <span class="No-Break">three minutes:</span></li>
+			</ol>
+			<div>
+				<div class="IMG---Figure" id="_idContainer165">
+					<img alt="Figure 5.34 – Creating a time window to calculate the rolling maximum prices by product" src="image/B16865_05_34.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.34 – Creating a time window to calculate the rolling maximum prices by product</p>
+			<ol>
+				<li value="2"> Now that <a id="_idIndexMarker375"/>we have a window, we <a id="_idIndexMarker376"/>can calculate <a id="_idIndexMarker377"/>and save that maximum price to a DataFrame. Usually, the value of a maximum price doesn’t drastically change, so hourly is an appropriate timeframe. We add a new time column called <strong class="source-inline">LookupTimestamp</strong> for <span class="No-Break">joining on.</span></li>
+			</ol>
+			<div>
+				<div class="IMG---Figure" id="_idContainer166">
+					<img alt="Figure 5.35 – Creating a DataFrame feature table of product maximum prices" src="image/B16865_05_35.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.35 – Creating a DataFrame feature table of product maximum prices</p>
+			<ol>
+				<li value="3">Next, let’s create a new feature table from our DataFrame. We will assume that the maximum price for a specific product does not vary enough to calculate this value more than hourly, so we can set this table to update on a set schedule. In the GitHub code, we’ll instantiate <strong class="source-inline">FeatureEngineeringClient</strong>. In <span class="No-Break"><em class="italic">Figure 5</em></span><em class="italic">.36</em>, we use it to write the new feature table as a Delta table in <span class="No-Break">Unity Catalog:</span></li>
+			</ol>
+			<div>
+				<div class="IMG---Figure" id="_idContainer167">
+					<img alt="Figure 5.36 – Writing our table to a Delta table in Unity Catalog" src="image/B16865_05_36.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.36 – Writing our table to a Delta table in Unity Catalog</p>
+			<ol>
+				<li value="4">Next, we <a id="_idIndexMarker378"/>need a Python UDF to <a id="_idIndexMarker379"/>calculate the discount <a id="_idIndexMarker380"/>or the difference between the transaction amount and the product’s maximum price. We’ll name it <strong class="source-inline">product_difference_ratio_on_demand_feature</strong>. We can use the same notebook to build and save this simple function under the same catalog and schema as our tables in <span class="No-Break">Unity Catalog.</span></li>
+			</ol>
+			<div>
+				<div class="IMG---Figure" id="_idContainer168">
+					<img alt="Figure 5.37 – Building an on-demand function to calculate product discounts" src="image/B16865_05_37.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.37 – Building an on-demand function to calculate product discounts</p>
+			<ol>
+				<li value="5">Once we run this code, we can navigate to Unity Catalog and see <strong class="source-inline">product_difference_ratio_on_demand_feature</strong> listed. It’s ready to use in a training set! We’ll refer to this function in <a href="B16865_06.xhtml#_idTextAnchor297"><span class="No-Break"><em class="italic">Chapter 6</em></span></a><span class="No-Break">.</span></li>
+			</ol>
+			<div>
+				<div class="IMG---Figure" id="_idContainer169">
+					<img alt="Figure 5.38 – Viewing the on-demand feature we created in Unity Catalog" src="image/B16865_05_38.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.38 – Viewing the on-demand feature we created in Unity Catalog</p>
+			<p>And with <a id="_idIndexMarker381"/>that, we have engineered <a id="_idIndexMarker382"/>features for our <em class="italic">Streaming Transactions</em> dataset. We enriched the original data with a streaming feature <a id="_idIndexMarker383"/>called <strong class="source-inline">transactionCount</strong> and an <a id="_idIndexMarker384"/>on-demand feature function that we will use to build the training <a id="_idTextAnchor283"/>dataset in the <span class="No-Break">next chapter.</span></p>
+			<p>In the next section, we will aggregate store sales data and save it to a <span class="No-Break">feature table.</span></p>
+			<h2 id="_idParaDest-115"><a id="_idTextAnchor284"/>Project – Favorita Store Sales – time series forecasting</h2>
+			<p>In<em class="italic"> </em><a href="B16865_04.xhtml#_idTextAnchor180"><span class="No-Break"><em class="italic">Chapter 4</em></span></a><em class="italic">,</em> we used <a id="_idIndexMarker385"/>AutoML to explore the <em class="italic">Favorita Sales</em> dataset <a id="_idIndexMarker386"/>and create a baseline model predicting sales. To follow along in your own workspace, please refer to the following notebook: <strong class="source-inline">CH5-01-Building –Favorita –</strong><span class="No-Break"><strong class="source-inline">Feature Tables</strong></span><span class="No-Break">.</span></p>
+			<p>To create a Databricks feature table, we can use either Python (via <strong class="source-inline">FeatureEngineeringClient</strong>) or SQL. This chapter primarily uses Python, but we start by creating a <strong class="source-inline">stores_ft</strong> feature table <span class="No-Break">using SQL:</span></p>
+			<div>
+				<div class="IMG---Figure" id="_idContainer170">
+					<img alt="Figure 5.39 – Creating the stores_ft feature table from the favorita_stores table using SQL" src="image/B16865_05_39.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.39 – Creating the stores_ft feature table from the favorita_stores table using SQL</p>
+			<p>Executing the code in <span class="No-Break"><em class="italic">Figure 5</em></span><em class="italic">.39</em> creates a feature table called <strong class="source-inline">stores_ft</strong> that we will use as a <a id="_idIndexMarker387"/>central repository for important store details. <strong class="source-inline">store_nbr</strong> is set to <strong class="source-inline">NOT NULL</strong> because it is the primary key. The table <a id="_idIndexMarker388"/>does not contain a date column, so this feature table is not a time series feature table. If it did, we could include an additional <strong class="source-inline">TIMESERIES</strong> primary key. Note that when adding the primary key to the table, you can name the constraint for the primary key with a unique name, as shown in the documentation. We prefer to let the DFE client name the constraint automatically. You can use <strong class="source-inline">DESCRIBE TABLE EXTENDED</strong> to see the name of your primary <span class="No-Break">key constraint.</span></p>
+			<p>The remaining two feature tables are time series tables. After some transformations, we will create the feature tables using Python and the DFE client. Let’s focus on the <span class="No-Break">holidays first.</span></p>
+			<div>
+				<div class="IMG---Figure" id="_idContainer171">
+					<img alt="Figure 5.40 – The holiday events table" src="image/B16865_05_40.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.40 – The holiday events table</p>
+			<p>The features we create are their respective store’s local, regional, and national holidays. We can look at <span class="No-Break"><em class="italic">Figure 5</em></span><em class="italic">.40</em> to recall what the holiday data <span class="No-Break">looked like.</span></p>
+			<p>One thing to note about our data is that there are days when multiple holidays occur for the same store. We process the three types of holidays very similarly. The transformations <a id="_idIndexMarker389"/>for national holidays are slightly different, given that there is no need to match on locale. All holiday transformations are present in the <a id="_idIndexMarker390"/>GitHub code. However, we do not cover each in detail in <span class="No-Break">the book.</span></p>
+			<p>The following steps take you through the transformations for the local holiday type we use for the holiday <span class="No-Break">feature table:</span></p>
+			<ol>
+				<li>We begin the ETL for the local holidays by singling out the local locale and renaming the type <span class="No-Break">to </span><span class="No-Break"><strong class="source-inline">holiday_type</strong></span><span class="No-Break">:</span></li>
+			</ol>
+			<div>
+				<div class="IMG---Figure" id="_idContainer172">
+					<img alt="Figure 5.41 – Isolating the local holidays" src="image/B16865_05_41.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.41 – Isolating the local holidays</p>
+			<p class="list-inset">Using the bronze table created in <em class="italic">Step 1</em>, we construct a silver table consisting of the date, store number, and local holiday type. We must account for the issue of multiple local holidays happening on the same day for the same stores. We do so by grouping with a <strong class="source-inline">MIN</strong> function to select a holiday type. The local holiday type is changed to <strong class="source-inline">Multiple</strong> using a case statement and <strong class="source-inline">num_holidays</strong> accounts <a id="_idIndexMarker391"/>for <a id="_idIndexMarker392"/><span class="No-Break">these instances:</span></p>
+			<div>
+				<div class="IMG---Figure" id="_idContainer173">
+					<img alt="Figure 5.42 – SQL checking for multiple holiday instances and identifying them with a new holiday type for the local holidays" src="image/B16865_05_42.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.42 – SQL checking for multiple holiday instances and identifying them with a new holiday type for the local holidays</p>
+			<p class="list-inset">The resulting silver table is shown in <span class="No-Break"><em class="italic">Figure 5</em></span><span class="No-Break"><em class="italic">.43</em></span><span class="No-Break">:</span></p>
+			<div>
+				<div class="IMG---Figure" id="_idContainer174">
+					<img alt="Figure 5.43 – The first five rows of the local_holidays_silver table" src="image/B16865_05_43.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.43 – The first five rows of the local_holidays_silver table</p>
+			<ol>
+				<li value="2">After completing the same process in the previous steps for regional and national <a id="_idIndexMarker393"/>holidays, we combine the silver tables into a <a id="_idIndexMarker394"/>single DataFrame. We use full joins to include all holidays. To avoid <strong class="source-inline">null</strong> dates and store numbers, we chain two <span class="No-Break"><strong class="source-inline">ifnull()</strong></span><span class="No-Break"> functions:</span></li>
+			</ol>
+			<div>
+				<div class="IMG---Figure" id="_idContainer175">
+					<img alt="Figure 5.44 – Combining all three silver tables into a single DataFrame" src="image/B16865_05_44.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.44 – Combining all three silver tables into a single DataFrame</p>
+			<ol>
+				<li value="3">Now that we have prepared our DataFrame with the features we want to save, we use the DFE <strong class="source-inline">create_table</strong> method to save the DataFrame as a feature table. We specify <strong class="source-inline">primary_keys</strong>. Be sure to note that we are <em class="italic">not</em> including a time series column. This is because we want the feature table lookup only to match exact dates. Holidays would not function well with the point-in-time logic. The primary keys will also be our lookup keys when we create the training set in the next chapter. A best practice is to include a thoughtful description <span class="No-Break">as well.</span></li>
+			</ol>
+			<p class="IMG---Figure"> </p>
+			<div>
+				<div class="IMG---Figure" id="_idContainer176">
+					<img alt="Figure 5.45 – Creating the store holidays feature table using the DFE client" src="image/B16865_05_45.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.45 – Creating the store holidays feature table using the DFE client</p>
+			<ol>
+				<li value="4">Notice that in our feature table, <span class="No-Break"><em class="italic">Figure 5</em></span><em class="italic">.46</em>, there are <strong class="source-inline">null</strong> values when there is <a id="_idIndexMarker395"/>not a holiday of a specific holiday of such type. When <a id="_idIndexMarker396"/>we create the training set, the feature lookup functionality will have <strong class="source-inline">null</strong> for the values of dates not in the table. We do not need to create <strong class="source-inline">null</strong> rows for each date that is not a holiday, thus s<a id="_idTextAnchor285"/>aving us the <span class="No-Break">preprocessing time.</span></li>
+			</ol>
+			<div>
+				<div class="IMG---Figure" id="_idContainer177">
+					<img alt="Figure 5.46 – The store_holidays_ft feature table" src="image/B16865_05_46.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.46 – The store_holidays_ft feature table</p>
+			<ol>
+				<li value="5">In addition to the holiday and store data, we were provided with oil prices data. We can use this data as a proxy for the economy. Let’s create one more feature table using the <strong class="source-inline">oil_price_silver</strong> table. Unlike <strong class="source-inline">store_holidays_ft</strong>, having the previous value of a stock price in the place of <strong class="source-inline">null</strong> would be helpful. This is a fitting example of when to use the point-in-time lookup functionality. To do so, a second primary key is required. Therefore, we include the date as the primary key but not as <strong class="source-inline">timeseries_column</strong>, as shown in <span class="No-Break"><em class="italic">Figure 5</em></span><span class="No-Break"><em class="italic">.47</em></span><span class="No-Break">:</span></li>
+			</ol>
+			<div>
+				<div class="IMG---Figure" id="_idContainer178">
+					<img alt="Figure 5.47 – Creating a feature table from the oil prices" src="image/B16865_05_47.jpg"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.47 – Creating a feature table from the oil prices</p>
+			<p>We have <a id="_idIndexMarker397"/>multiple feature tables that we can use with the specific training data provided on Kaggle or any other related training data. For example, <strong class="source-inline">oil_10d_lag_ft</strong> can be used as a proxy for the economy for any dataset based <span class="No-Break">in Ecuador.</span></p>
+			<p>For future <a id="_idIndexMarker398"/>modeling, saving the features in feature tables using the DFE client will be helpful. Doing so makes it seamless to look up the features with the model at inference time. In the next chapter, using the DFE client, we will combine our feature tables to cr<a id="_idTextAnchor286"/>eate a t<a id="_idTextAnchor287"/>raining set for <span class="No-Break">our model.</span></p>
+			<h1 id="_idParaDest-116"><a id="_idTextAnchor288"/>Summary</h1>
+			<p>As we conclude <a href="B16865_05.xhtml#_idTextAnchor244"><span class="No-Break"><em class="italic">Chapter 5</em></span></a>, we have successfully navigated the multifaceted realm of feature engineering on Databricks. We have learned how to organize our features into feature tables, in both SQL and Python, by ensuring there is a non-nullable primary key. Unity Catalog provides lineage and discoverability, which makes features reusable. Continuing with the streaming project, we also highlighted creating a streaming feature using stateful streaming. We touched on the latest feature engineering products from Databricks, such as point-in-time lookups, on-demand feature functions, and publishing tables to the Databricks Online Store. These product features will reduce time to production a<a id="_idTextAnchor289"/>nd simplify <span class="No-Break">production pipelines.</span></p>
+			<p>You are now ready to tackle feature engineering for a variety of scenarios! Next up, we take what we’ve learned to build training sets and machine learning models in <a href="B16865_06.xhtml#_idTextAnchor297"><span class="No-Break"><em class="italic">Chapter 6</em></span></a><span class="No-Break">.</span></p>
+			<h1 id="_idParaDest-117"><a id="_idTextAnchor290"/>Questions</h1>
+			<p>The following questions solidify key points to remember and tie the content back to <span class="No-Break">your experience:</span></p>
+			<ol>
+				<li>What element of the Delta format helps <span class="No-Break">with reproducibility?</span></li>
+				<li>What are some of the reasons why you would choose to publish a feature to an <span class="No-Break">online store?</span></li>
+				<li>How would you create a training set using the Feature <span class="No-Break">Engineering API?</span></li>
+				<li>What distinguishes a feature table from any other table in <span class="No-Break">Unity Catalog?</span></li>
+				<li>In the <em class="italic">Streaming Transactions dataset</em> section of <em class="italic">Applying our learning</em>, we created a stream with a transformation. What could be the business drivers for creating this pipeline<a id="_idTextAnchor291"/>? We did the <em class="italic">how</em>; what is <span class="No-Break">the </span><span class="No-Break"><em class="italic">why</em></span><span class="No-Break">?</span></li>
+			</ol>
+			<h1 id="_idParaDest-118"><a id="_idTextAnchor292"/>Answers</h1>
+			<p>After putting thought into the questions, compare your answers <span class="No-Break">to ours:</span></p>
+			<ol>
+				<li>Delta’s ability to time travel helps with reproducibility. Delta has versioning that allows us a point-in-time lookup to see what data our model was trained on. For long-term versioning, deep clones or snapshots <span class="No-Break">are appropriate.</span></li>
+				<li>Writing data to an online store provides real-time feature lookup for real-time <span class="No-Break">inference models.</span></li>
+				<li>Create <strong class="source-inline">FeatureLookups</strong> for each feature table you wish to include. Then, <span class="No-Break">use </span><span class="No-Break"><strong class="source-inline">create_training_set</strong></span><span class="No-Break">.</span></li>
+				<li>A feature table has a unique primary key, which indicates the object or entity the <span class="No-Break">features describe.</span></li>
+				<li>The possibilities are vast. An example is behavior modeling or customer segme<a id="_idTextAnchor293"/>ntation to support <span class="No-Break">flagging fraud.</span></li>
+			</ol>
+			<h1 id="_idParaDest-119"><a id="_idTextAnchor294"/>Further reading</h1>
+			<p>In this chapter, we identified specific technologies, technical features, and options. Please take a look at these resources to get deeper into the areas that interest <span class="No-Break">you most:</span></p>
+			<ul>
+				<li><em class="italic">How Databricks AI improves model accuracy with real-time </em><span class="No-Break"><em class="italic">computations</em></span><span class="No-Break">:</span><span class="No-Break"><em class="italic"> </em></span><a href="https://www.databricks.com/blog/how-lakehouse-ai-improves-model-accuracy-real-time-computations"><span class="No-Break">https://www.databricks.com/blog/how-lakehouse-ai-improves-model-accuracy-real-time-computations</span></a></li>
+				<li><em class="italic">Use time series feature tables with point-in-time </em><span class="No-Break"><em class="italic">support</em></span><span class="No-Break">: </span><a href="https://docs.databricks.com/en/machine-learning/feature-store/time-series.html"><span class="No-Break">https://docs.databricks.com/en/machine-learning/feature-store/time-series.html</span></a></li>
+				<li><em class="italic">Python Arbitrary Stateful Processing in Structured Streaming – </em>Databricks <span class="No-Break">blog: </span><a href="https://www.databricks.com/blog/2022/10/18/python-arbitrary-stateful-processing-structured-streaming.html"><span class="No-Break">https://www.databricks.com/blog/2022/10/18/python-arbitrary-stateful-processing-structured-streaming.html</span></a></li>
+				<li><em class="italic">Databricks </em><span class="No-Break"><em class="italic">Volumes</em></span><span class="No-Break">: </span><a href="https://docs.databricks.com/en/sql/language-manual/sql-ref-volumes.html"><span class="No-Break">https://docs.databricks.com/en/sql/language-manual/sql-ref-volumes.html</span></a></li>
+				<li><em class="italic">Experimenting with Databricks </em><span class="No-Break"><em class="italic">Volumes</em></span><span class="No-Break">: </span><a href="https://medium.com/@tsiciliani/experimenting-with-databricks-volumes-5666cecb166"><span class="No-Break">https://medium.com/@tsiciliani/experimenting-with-databricks-volumes-5666cecb166</span></a></li>
+				<li><em class="italic">Optimize stateful Structured Streaming </em><span class="No-Break"><em class="italic">queries</em></span><span class="No-Break">: </span><a href="https://docs.databricks.com/en/structured-streaming/stateful-streaming.html"><span class="No-Break">https://docs.databricks.com/en/structured-streaming/stateful-streaming.html</span></a></li>
+				<li>Databricks blog – <em class="italic">Introducing Delta Time Travel for Large Scale Data </em><span class="No-Break"><em class="italic">Lakes</em></span><span class="No-Break">: </span><a href="https://www.databricks.com/blog/2019/02/04/introducing-delta-time-travel-for-large-scale-data-lakes.html"><span class="No-Break">https://www.databricks.com/blog/2019/02/04/introducing-delta-time-travel-for-large-scale-data-lakes.html</span></a></li>
+				<li>YouTube video – <em class="italic">Arbitrary Stateful Aggregations in Structured Streaming in Apache Spark by Burak </em><span class="No-Break"><em class="italic">Yavuz</em></span><span class="No-Break">:</span><span class="No-Break"><em class="italic"> </em></span><a href="https://youtu.be/JAb4FIheP28?si=BjoeKkxP_OUxT7-K"><span class="No-Break">https://youtu.be/JAb4FIheP28?si=BjoeKkxP_OUxT7-K</span></a></li>
+				<li>Databricks documentation – <em class="italic">Compute features on demand using Python user-defined </em><span class="No-Break"><em class="italic">functions</em></span><span class="No-Break">: </span><a href="https://docs.databricks.com/en/machine-learning/feature-store/on-demand-features.html"><span class="No-Break">https://docs.databricks.com/en/machine-learning/feature-store/on-demand-features.html</span></a></li>
+				<li><em class="italic">Delta Lake change data feed (</em><span class="No-Break"><em class="italic">CDF)</em></span><span class="No-Break">: </span><a href="https://docs.databricks.com/en/delta/delta-change-data-feed.html"><span class="No-Break">https://docs.databricks.com/e<span id="_idTextAnchor295"/><span id="_idTextAnchor296"/>n/delta/delta-change-data-feed.html</span></a></li>
+			</ul>
+		</div>
+	</body></html>

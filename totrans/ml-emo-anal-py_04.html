@@ -1,0 +1,928 @@
+<html><head></head><body>
+<div id="sbo-rt-content"><div id="_idContainer064">
+<h1 class="chapter-number" id="_idParaDest-70"><a id="_idTextAnchor093"/>4</h1>
+<h1 id="_idParaDest-71"><a id="_idTextAnchor094"/>Preprocessing – Stemming, Tagging, and Parsing</h1>
+<p>Before we can start assigning emotions to texts, we have to carry out a range of preprocessing tasks to get to the elements that carry the information we want. In <a href="B18714_01.xhtml#_idTextAnchor015"><span class="No-Break"><em class="italic">Chapter 1</em></span></a>, <em class="italic">Foundations</em>, we briefly covered the various components of a generic NLP system, but without looking in detail at how any of these components might be implemented. In this chapter, we will provide sketches and partial implementations of the tools that are most likely to be useful for sentiment mining – where we give a partial implementation or a code fragment for something, the full implementation is available in the <span class="No-Break">code repository.</span></p>
+<p>We will look at the earlier stages of the language processing pipeline in detail. The texts that are most often used for sentiment mining tend to be very informal – tweets, product reviews, and so on. This material is often ungrammatical and contains made-up words, misspellings, and non-text items such as emoticons, images, and emojis. Standard parsing algorithms cannot deal with this kind of material, and even if they could, the analyses that they produce would be very hard to work with: what would the parse tree for <em class="italic">@MarthatheCat Look at that toof! #growl</em> look like? We will include material relating to tagging (which is generally only useful as a precursor to parsing) and parsing, but the focus will be largely on the lowest level steps – reading the text (not as straightforward as it seems), decomposing words into parts, and identifying <span class="No-Break">compound words.</span></p>
+<p>In this chapter, we will cover the <span class="No-Break">following topics:</span></p>
+<ul>
+<li><span class="No-Break">Readers</span></li>
+<li>Word parts and <span class="No-Break">compound words</span></li>
+<li>Tokenizing, morphology, <span class="No-Break">and stemming</span></li>
+<li><span class="No-Break">Compound words</span></li>
+<li>Tagging <span class="No-Break">and parsing</span></li>
+</ul>
+<h1 id="_idParaDest-72"><a id="_idTextAnchor095"/>Readers</h1>
+<p>Before we can do anything, we need to be able to read the documents that contain the texts – in particular, the training data that will be used by the preprocessing algorithms and the sentiment mining algorithms themselves. These documents come in <span class="No-Break">two classes:</span></p>
+<ul>
+<li><strong class="bold">Training data for the preprocessing algorithms</strong>: A number of the algorithms that we use for <a id="_idIndexMarker406"/>finding words, decomposing them into smaller units, and combining them into larger groups require training data. This can be raw text or it can be annotated with suitable labels. In either case, we need a lot of it (for some tasks, you need hundreds of millions of words, maybe more), and it is often more convenient to use data from external sources than to try to compile it yourself. Unfortunately, externally supplied data does not always come in a single agreed format, so you need <strong class="bold">readers</strong> to <a id="_idIndexMarker407"/>abstract away from the details of the format and organization of this data. To take a simple example, data for training a program to assign part-of-speech tags to text needs to be given text that has been labeled with such tags. We will carry out some experiments here using two well-known corpora: the <a id="_idIndexMarker408"/><strong class="bold">British National Corpus (BNC)</strong> and <a id="_idIndexMarker409"/>the <strong class="bold">Universal Dependency Tre ebanks (UDT)</strong>. The BNC provides text with complex XML-like annotations, such as <span class="No-Break">the following:</span><pre class="source-code">
+&lt;w c5=NN1  hw=factsheet  pos= SUBST &gt;FACTSHEET &lt;/w&gt;</pre><pre class="source-code">&lt;w c5=DTQ  hw=what  pos= PRON &gt;WHAT &lt;/w&gt;</pre></li> </ul>
+<p>This says that <em class="italic">factsheet</em> is an NN1 and <em class="italic">what</em> is <span class="No-Break">a pronoun.</span></p>
+<p>The UDT provides text as tab-separated files where each line represents information about <span class="No-Break">a word:</span></p>
+<pre class="source-code">
+1   what    what    PRON    PronType=Int,Rel  0       root    _2   is      be      AUX     Mood=Ind          1       cop     _</pre>
+<p>This says that <em class="italic">what</em> is a pronoun and <em class="italic">is</em> is an auxiliary. To use these to train a tagger, we have to dig out the<a id="_idIndexMarker410"/> information that we want and convert it into a <span class="No-Break">uniform format.</span></p>
+<ul>
+<li><strong class="bold">Training data for the sentiment analysis algorithms</strong>: Almost all approaches to assigning<a id="_idIndexMarker411"/> emotions to texts employ machine learning algorithms, and hence again require training data. As noted in <a href="B18714_02.xhtml#_idTextAnchor061"><span class="No-Break"><em class="italic">Chapter 2</em></span></a>, <em class="italic">Building and Using a Dataset</em>, it is often convenient to use externally supplied data, and as with the data used for the preprocessing algorithms, this data can come in a variety <span class="No-Break">of formats.</span></li>
+</ul>
+<p>Training data may be <a id="_idIndexMarker412"/>supplied as text files, as directory trees with text files as leaves, or as SQL or other databases. To make matters more complex, there can be very large amounts of data (hundreds of millions of items, even billions of items), to the point where it is not convenient to have all the data in memory at once. Therefore, we start by providing a <a id="_idIndexMarker413"/>reader generator function that will traverse a directory tree until it reaches a leaf file whose name matches an optional pattern and then uses an appropriate reader to return items one at a time from <span class="No-Break">this file:</span></p>
+<pre class="source-code">
+def reader(path, dataFileReader, pattern=re.compile('.*')):    if isinstance(pattern, str):
+        pattern = re.compile(pattern)
+    if isinstance(path, list):
+        # If what you're looking at is a list of file names,
+        # look inside it and return the things you find there
+        for f in path:
+            for r in reader(f, dataFileReader, pattern=pattern):
+                yield r
+    elif os.path.isdir(path):
+        # If what you're looking at is a directory,
+        # look inside it and return the things you find there
+        for f in sorted(os.listdir(path)):
+            for r in reader(os.path.join(path, f),
+                            dataFileReader, pattern=pattern):
+                yield r
+    else:
+        # If it's a datafile, check that its name matches the pattern
+        # and then use the dataFileReader to extract what you want
+        if pattern.match(path):
+            for r in dataFileReader(path):
+                yield r</pre>
+<p><strong class="source-inline">reader</strong> will <a id="_idIndexMarker414"/>return a generator that walks down through the directory tree specified by <strong class="source-inline">path</strong> until it finds leaf files whose names match <strong class="source-inline">pattern</strong> and then uses <strong class="source-inline">dataFileReader</strong> to iterate through the data in the given files. We use a generator rather than a simple function because corpora can be very large and reading all the data contained in a corpus into memory at once can become unmanageable. The disadvantage of using a generator is that you can only iterate through it once – if you want to solidify the results of using a reader, you can use <strong class="source-inline">list</strong> to store them as <span class="No-Break">a list:</span></p>
+<pre class="source-code">
+&gt;&gt;&gt; r = reader(BNC, BNCWordReader, pattern=r'.*\.xml')&gt;&gt;&gt; l = list(r)</pre>
+<p>This will create a generator, <strong class="source-inline">r</strong>, for reading words from the <strong class="bold">BNC</strong>. The BNC is <a id="_idIndexMarker415"/>a widely used collection of documents, though its status as a resource for training, and especially testing, taggers is slightly unclear since the tags for the vast majority of the material were assigned programmatically by the CLAW<a id="_idTextAnchor096"/>S4 tagger (Leech et al., 1994). This means that any tagger trained on it will be learning the<a id="_idIndexMarker416"/> tags assigned by CLAWS4, so unless these are 100% accurate (which they are not), then it will not be learning the “real” tags. Nonetheless, it is an extremely useful resource, and can certainly be used as a resource for training usable taggers. It can be downloaded <span class="No-Break">from </span><a href="https://ota.bodleian.ox.ac.uk/repository/xmlui/handle/20.500.12024/2554"><span class="No-Break">https://ota.bodleian.ox.ac.uk/repository/xmlui/handle/20.500.12024/2554</span></a><span class="No-Break">.</span></p>
+<p>Then, we solidify this generator to a list, <strong class="source-inline">l</strong>, for ease of use. The <a id="_idIndexMarker417"/>BNC contains about 110 million words, which is a manageable amount of data on a modern computer, so storing them as a single list makes sense. However, for larger corpora, this may not be feasible, so having the option of using a generator can <span class="No-Break">be useful.</span></p>
+<p>The BNC is supplied as a directory tree with subdirectories, <strong class="source-inline">A</strong>, <strong class="source-inline">B</strong>, …, <strong class="source-inline">K</strong>, which contain <strong class="source-inline">A0</strong>, <strong class="source-inline">A1</strong>, …, <strong class="source-inline">B0</strong>, <strong class="source-inline">B1</strong>, …, which, in turn, contain <strong class="source-inline">A00.xml</strong>, <span class="No-Break"><strong class="source-inline">A01.xml</strong></span><span class="No-Break">, …:</span></p>
+<div>
+<div class="IMG---Figure" id="_idContainer057">
+<img alt="Figure 4.1 – Structure of the BNC directory tree" height="402" src="image/B18714_04_01.jpg" width="247"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 4.1 – Structure of the BNC directory tree</p>
+<p>The leaf files contain header information followed by sentences demarcated by <strong class="source-inline">&lt;s n=???&gt;...&lt;/s&gt;</strong>, with the words that make up a sentence marked by <strong class="source-inline">&lt;w c5=??? hw=??? pos=???&gt;???&lt;/w&gt;</strong>. Here’s <span class="No-Break">an example:</span></p>
+<pre class="source-code">
+&lt;s n= 1 &gt;&lt;w c5= NN1  hw= factsheet  pos= SUBST &gt;FACTSHEET &lt;/w&gt;&lt;w c5= DTQ  hw= what  pos= PRON &gt;WHAT &lt;/w&gt;&lt;w c5= VBZ  hw= be  pos= VERB &gt;IS &lt;/w&gt;&lt;w c5= NN1  hw= aids  pos= SUBST &gt;AIDS&lt;/w&gt;&lt;c c5= PUN &gt;?&lt;/c&gt;&lt;/s&gt;</pre> <p>To read all the words in the<a id="_idIndexMarker418"/> BNC, we need something to dig out the items <a id="_idIndexMarker419"/>between <strong class="source-inline">&lt;w ...&gt;</strong> and <strong class="source-inline">&lt;/w&gt;</strong>. The easiest way to do this is by using a <span class="No-Break">regular expression:</span></p>
+<pre class="source-code">
+BNCWORD = re.compile('&lt;(?P&lt;tagtype&gt;w|c).*?&gt;(?P&lt;form&gt;.*?)\s*&lt;/(?P=tagtype)&gt;')Get raw text from BNC leaf files
+def BNCWordReader(data):
+    for i in BNCWORD.finditer(open(data).read()):
+        yield i.group( form )</pre>
+<p>The pattern looks for instances of either <strong class="source-inline">&lt;w ...&gt;</strong> or <strong class="source-inline">&lt;c ...&gt;</strong> and then looks for the appropriate closing bracket since the BNC marks words with <strong class="source-inline">&lt;w ...&gt;</strong> and punctuation marks with <strong class="source-inline">&lt;c ...&gt;</strong>. We have to find both and make sure that we get the right <span class="No-Break">closing bracket.</span></p>
+<p>Given this definition of <strong class="source-inline">BNCWordReader</strong>, we can, as we did previously, create a reader to extract all the raw text from the BNC. Other corpora require different patterns for extracting the text – for example, the <strong class="bold">Penn Arabic Tree Bank</strong> (<strong class="bold">PATB</strong>) (this is a useful resource for training and testing <a id="_idIndexMarker420"/>Arabic NLP tools. Unfortunately, it is not free – see the Linguistic Data Consortium (<a href="https://www.ldc.upenn.edu/">https://www.ldc.upenn.edu/</a>) for <a id="_idIndexMarker421"/>information about how to obtain it – however, we will use it for illustration when appropriate) contains leaf files that look <span class="No-Break">like this:</span></p>
+<pre class="source-code">
+INPUT STRING: فيLOOK-UP WORD: fy
+     Comment:
+       INDEX: P1W1
+* SOLUTION 1: (fiy) [fiy_1] fiy/PREP
+     (GLOSS): in
+  SOLUTION 2: (fiy~a) [fiy_1] fiy/PREP+ya/PRON_1S
+     (GLOSS): in + me
+  SOLUTION 3: (fiy) [fiy_2] Viy/ABBREV
+     (GLOSS): V.
+INPUT STRING: سوسة
+LOOK-UP WORD: swsp
+     Comment:
+       INDEX: P1W2
+* SOLUTION 1: (suwsap) [suws_1] suws/NOUN+ap/NSUFF_FEM_SG
+     (GLOSS): woodworm:licorice + [fem.sg.]
+  SOLUTION 2: (suwsapu) [suws_1] suws/NOUN+ap/NSUFF_FEM_SG+u/CASE_DEF_NOM
+     (GLOSS): woodworm:licorice + [fem.sg.] + [def.nom.]
+…</pre>
+<p>To extract <a id="_idIndexMarker422"/>words from this, we would need a pattern <span class="No-Break">like this:</span></p>
+<pre class="source-code">
+PATBWordPattern = re.compile("INPUT STRING: (?P&lt;form&gt;\S*)")def PATBWordReader(path):
+    for i in PATBWordPattern.finditer(open(path).read()):
+        yield i.group( form )</pre>
+<p>This will return the following when applied to <span class="No-Break">the PATB:</span></p>
+<pre class="source-code">
+... لونغ بيتش ( الولايات المتحدة ) 15-7 ( اف ب</pre> <p>Given the<a id="_idIndexMarker423"/> similarity between <strong class="source-inline">BNCWordReader</strong> and <strong class="source-inline">PATBWordReader</strong>, we could have simply defined a single function called <strong class="source-inline">WordReader</strong> that takes a path and a pattern and bound the pattern <span class="No-Break">as required:</span></p>
+<pre class="source-code">
+def WordReader(pattern, path):    for i in pattern.finditer(open(path).read()):
+        yield i.group( form )
+from functools import partial
+PATBWordReader = partial(WordReader, PATBWordPattern)
+BNCWordReader = partial(WordReader, BNCWordPattern)</pre>
+<p>The same technique can be applied to extract the raw text from a wide range of corpora, such as the UDT (<a href="https://universaldependencies.org/#download">https://universaldependencies.org/#download</a>), which provides free access to moderate amounts of tagged and parsed data for a large number of languages (currently 130 languages, with about 200K words per language for the commone<a id="_idIndexMarker424"/>r languages but rather less <span class="No-Break">for others).</span></p>
+<p>Similarly, the training data for sentiment assignment algorithms comes in a variety of formats. As noted in <a href="B18714_01.xhtml#_idTextAnchor015"><span class="No-Break"><em class="italic">Chapter 1</em></span></a>, <em class="italic">Foundations</em>, Python already provides a module, <strong class="source-inline">pandas</strong>, for managing training sets for generic sets of training data. <strong class="source-inline">pandas</strong> is useful if your training data consists of sets of data points, where a data point is a set of <strong class="source-inline">feature:value</strong> pairs that describe the properties of the data point, along with a label that says what class it belongs to. The basic object in <strong class="source-inline">pandas</strong> is a DataFrame, which is a collection of objects where each object is described by a set of <strong class="source-inline">feature:value</strong> pairs. As such, a DataFrame<a id="_idIndexMarker425"/> is very much like a SQL table, where the names of the columns are the feature names and an object corresponds to a row in the table; it is also extremely like a nested Python dictionary, where the keys at the top level are the feature names and the values associated with those names are index-value pairs. And it’s also very like a spreadsheet, where the top row is the feature names and the remaining rows are the data points. DataFrames can be read directly from all these formats and more (including from a table in a SQL database), and can be written directly to any of them. Consider the<a id="_idIndexMarker426"/> following extract from a set of annotated tweets stored as a <span class="No-Break">MySQL database:</span></p>
+<pre class="source-code">
+mysql&gt; describe sentiments;+-----------+--------------+------+-----+---------+-------+
+| Field     | Type         | Null | Key | Default | Extra |
++-----------+--------------+------+-----+---------+-------+
+| annotator | int(11)      | YES  |     | NULL    |       |
+| tweet     | int(11)      | YES  |     | NULL    |       |
+| sentiment | varchar(255) | YES  |     | NULL    |       |
++-----------+--------------+------+-----+---------+-------+
+3 rows in set (0.01 sec)
+mysql&gt; select * from sentiments where tweet &lt; 3;
++-----------+-------+-----------------------+
+| annotator | tweet | sentiment             |
++-----------+-------+-----------------------+
+|        19 |     1 | love                  |
+|         1 |     1 | anger+dissatisfaction |
+|         8 |     1 | anger+dissatisfaction |
+|         2 |     2 | love+joy              |
+|        19 |     2 | love                  |
+|         6 |     2 | love+joy+optimism     |
++-----------+-------+-----------------------</pre>
+<p>The <strong class="source-inline">sentiments</strong> table <a id="_idIndexMarker427"/>contains rows representing the ID of the annotator who annotated a given tweet, the ID of the tweet itself, and the set of emotions that the given annotator assigned to it (for example, annotator 8 assigned anger and dissatisfaction to tweet 1). This table can be read directly as a DataFrame and can be transformed into a dictionary, a JSON object (very similar to a dictionary), a string in CSV format, <span class="No-Break">and more:</span></p>
+<pre class="source-code">
+&gt;&gt;&gt; DB = MySQLdb.connect(db= centement , autocommit=True, charset= UTF8 )&gt;&gt;&gt; cursor = DB.cursor()
+&gt;&gt;&gt; data = pandas.read_sql( select * from sentiments where tweet &lt; 3 , DB)
+&gt;&gt;&gt; data
+   annotator  tweet              sentiment
+0         19      1                   love
+1          1      1  anger+dissatisfaction
+2          8      1  anger+dissatisfaction
+3          2      2               love+joy
+4         19      2                   love
+5          6      2      love+joy+optimism
+&gt;&gt;&gt; data.to_json()
+'{ annotator :{ 0 :19, 1 :1, 2 :8, 3 :2, 4 :19, 5 :6}, tweet :{ 0 :1, 1 :1, 2 :1, 3 :2, 4 :2, 5 :2}, sentiment :{ 0 : love , 1 : anger+dissatisfaction , 2 : anger+dissatisfaction , 3 : love+joy , 4 : love , 5 : love+joy+optimism }}'
+&gt;&gt;&gt; print(data.to_csv())
+,annotator,tweet,sentiment
+0,19,1,love
+1,1,1,anger+dissatisfaction
+2,8,1,anger+dissatisfaction
+3,2,2,love+joy
+4,19,2,love
+5,6,2,love+joy+optimism</pre>
+<p>We therefore do not have to worry too much about actually reading and writing the data to be used to train the emotion classification algorithms – DataFrames<a id="_idIndexMarker428"/> can be read from, and written to, in almost any<a id="_idIndexMarker429"/> reasonable format. Nonetheless, we still have to be careful about what features we are using and what values they can have. The preceding MySQL database, for instance, refers to the IDs of the tweets and the annotators, with the text of each tweet being kept in a separate table, and it stores each annotator’s assignment of emotions as a single compound value (for example, love+joy+optimism). It would have been perfectly possible to store the text of the tweet in the table and to have each emotion as a column that could be set to 1 if the annotator had assigned this emotion to the tweet and <span class="No-Break">0 otherwise:</span></p>
+<pre class="source-code">
+ID  Tweet                        anger  sadness  surprise0   2017-En-21441 Worry is a dow     0     1          0
+1   2017-En-31535  Whatever you d    0     0          0
+2   2017-En-22190  No but that's     0     0          1
+3   2017-En-20221  Do you think h    0     0          0
+4   2017-En-22180  Rooneys effing    1     0          0
+6830  2017-En-21383  @nicky57672 Hi  0     0          0
+6831  2017-En-41441  @andreamitchel  0     0          1
+6832  2017-En-10886  @isthataspider  0     1          0
+6833  2017-En-40662  i wonder how a  0     0          1
+6834  2017-En-31003  I'm highly ani  0     0          0</pre>
+<p>Here, each tweet has an explicit ID, as well as a position in the DataFrame; the tweet itself is included, and each emotion is a separate column. The data here was supplied as a CSV file, so it was read directly as a DataFrame without any trouble, but the way it is presented is completely different from the previous set. Therefore, we will need preprocessing algorithms to make sure that the data we are using is organized the way the machine learning algorithms <span class="No-Break">want it.</span></p>
+<p>Fortunately, DataFrames <a id="_idIndexMarker430"/>have database-like options <a id="_idIndexMarker431"/>for selecting data and merging tables, so converting from one way of presenting the data into another is reasonably straightforward, but it does have to be carried out. There are, for instance, advantages to having a single column per emotion and advantages to having a single column for all emotions but allowing compound emotions – having a single column per emotion makes it easy to allow for cases where a single object may have more than one emotion associated with it; having just one column for all emotions makes it easy to search for tweets that have the same emotions. Some resources will provide one and some the other, but almost any learning algorithm will require one or the other, so it is necessary to be able to convert <span class="No-Break">between them.</span></p>
+<h1 id="_idParaDest-73"><a id="_idTextAnchor097"/>Word parts and compound words</h1>
+<p>The key to identifying emotions in texts lies with the words that make up those texts. It may turn out to be useful to classify words, find similarities between words, and find out how the words in a given text are related, but the most important things are the words themselves. If a text contains the words <em class="italic">love</em> and <em class="italic">happy</em>, then it’s very likely to be positive, whereas if it contains the words <em class="italic">hate</em> and <em class="italic">horrible</em>, it’s very likely to <span class="No-Break">be negative.</span></p>
+<p>As noted in <a href="B18714_01.xhtml#_idTextAnchor015"><span class="No-Break"><em class="italic">Chapter 1</em></span></a>, <em class="italic">Foundations</em>, however, it can be difficult to specify exactly what counts as a word, and hence difficult to find the words that make up a text. While the writing systems of many languages use white space to split up text, there are languages where this does not happen (for example, written Chinese). But even where the written form of a language does use white space, finding the units that we are interested in is not always straightforward. There are two <span class="No-Break">basic problems:</span></p>
+<ul>
+<li>Words are <a id="_idIndexMarker432"/>typically made up of a core lexeme and several affixes that add to or alter the meaning of the core. <em class="italic">love</em>, <em class="italic">loves</em>, <em class="italic">loved</em>, <em class="italic">loving</em>, <em class="italic">lover</em>, and <em class="italic">lovable</em> are all clearly related to a single concept, though they all look slightly different. So, do we want to treat them as different words or as variations on a single word? Do we want to treat <em class="italic">steal</em>, <em class="italic">stole</em>, and <em class="italic">stolen</em> as different words or as variations of the same word? The answer is that sometimes we want to do one and sometimes the other, but when we do want to treat them as variations of the same word, we need machinery to <span class="No-Break">do so.</span></li>
+<li>Some items that are separated by white space look as though they are made out of several components: <em class="italic">anything</em>, <em class="italic">anyone</em>, and <em class="italic">anybody</em> look very much as though they are made out of <em class="italic">any</em> plus <em class="italic">thing</em>, <em class="italic">one</em>, or <em class="italic">body</em> – it is hard to imagine that the underlying structures of <em class="italic">anyone could do that</em> and <em class="italic">any fool could do that</em> are different. It is worth noting that in English, the stress patterns of the spoken language match up with the presence or absence of white space in text – <em class="italic">anyone</em> is pronounced with a single stress on the first syllable, /en/, while <em class="italic">any fool</em> has stress on /en/ and /fool/, so there is a difference, but they also have the <span class="No-Break">same structure.</span></li>
+</ul>
+<p>It is <a id="_idIndexMarker433"/>tempting to try to deal<a id="_idIndexMarker434"/> with this by looking at each White space-separated item to see whether it is made out of two (or more) other known units. <em class="italic">Stock market</em> and <em class="italic">stockmarket</em> seem to be the same word, as do <em class="italic">battle ground</em> and <em class="italic">battleground</em>, and looking at the contexts in which they occur bears <span class="No-Break">this out:</span></p>
+<pre class="source-code">
+                         as well as in a stock market                  in share prices in the stock market
+                  to the harsher side of stock market life
+                          apart from the stock market crash of two
+                        There was a huge stockmarket crash in October
+           of being replaced in a sudden stockmarket coup
+           in the days that followed the stockmarket crash of October
+                                     The stockmarket crash of 1987 is
+                       was to be a major battle ground between
+           of politics as an ideological battle ground and by her
+             likely to form the election battle ground
+             likely to form the election battle ground
+                           surveying the battleground with quiet
+      Industry had become an ideological battleground
+         of London as a potential savage battleground is confirmed by
+          previous evening it had been a battleground for people who</pre>
+<p>However, there are also<a id="_idIndexMarker435"/> clear examples where the compound word is not the same as the two words put next to one another. A <em class="italic">heavy weight</em> is something (anything) that<a id="_idIndexMarker436"/> weighs a lot, whereas a <em class="italic">heavyweight</em> is nearly always a boxer; if something is <em class="italic">under study</em>, then someone is studying it, whereas an <em class="italic">understudy</em> is someone who will step in to fill a role when the person who normally performs it <span class="No-Break">is unavailable:</span></p>
+<pre class="source-code">
+       an example about lifting a heavy weight and doing a              I was n't lifting a heavy weight
+            's roster there was a heavy weight of expectation for the
+   half-conscious levels he was a heavy weight upon me of a perhaps
+                              the heavyweight boxing champion of the
+      up a stirring finale to the heavyweight contest
+   of the main contenders for the heavyweight Bath title
+a former British and Commonwealth heavyweight boxing champion
+  a new sound broadcasting system under study
+           many of the plants now under study phase come to fruition '
+    to the Brazilian auto workers under study at that particular time
+      in Guanxi province has been under study since the 1950s
+                      and Jack 's understudy can take over as the maid
+   to be considered as an England understudy for the Polish expedition
+              His Equity-required understudy received $800 per — 
+                         will now understudy all positions along the</pre>
+<p>This is particularly<a id="_idIndexMarker437"/> important for languages such as Chinese, which are written <a id="_idIndexMarker438"/>without white space, where almost any character can be a standalone word but sequences of two or more characters can also be words, often with very little connection to the words that correspond to the <span class="No-Break">individual characters.</span></p>
+<p>These phenomena occur<a id="_idIndexMarker439"/> in all languages. Some languages have very complex rules for breaking <a id="_idIndexMarker440"/>words into smaller parts, some make a great deal of use of compounds, and some do both. These examples gave a rough idea of the issues as they arise in English, but in the following discussion of using algorithms to deal with these issues, we will look at examples from other languages. In the next section, <em class="italic">Tokenizing, morphology, and stemming</em>, we will look at algorithms for splitting words into parts – that is, at ways of recognizing that the word <em class="italic">recognizing</em> is made up of two parts, <em class="italic">recognize</em> and <em class="italic">-ing</em>. In the section, <em class="italic">Compound words</em>, we will look at ways of spotting compounds in languages where they are <span class="No-Break">extremely common.</span></p>
+<h1 id="_idParaDest-74"><a id="_idTextAnchor098"/>Tokenizing, morphology, and stemming</h1>
+<p>The very first thing we have to do is split the input text into <strong class="bold">tokens</strong> – units that make an identifiable contribution to the<a id="_idIndexMarker441"/> message carried by the whole text. Tokens include words, as roughly characterized previously, but also punctuation marks, numbers, currency symbols, emojis, and so on. Consider the text <em class="italic">Mr. Jones bought it for £5.3K!</em> The first token is <em class="italic">Mr.</em>, which is a word pronounced /m i s t uh/, while the next few are <em class="italic">Jones</em>, <em class="italic">bought</em>, <em class="italic">it</em>, and <em class="italic">for</em>, then the currency symbol, <em class="italic">£</em>, followed by the number <em class="italic">5.3K</em> and the punctuation mark, <em class="italic">!</em>. Exactly what gets treated as a token depends on what you are going to do next (is <em class="italic">5.3K</em> a single number or is it two tokens, <em class="italic">5.3</em> and <em class="italic">K</em>?), but there is very little you can do with a piece of text without splitting it into units along <span class="No-Break">these lines.</span></p>
+<p>The easiest way to do this is by defining a regular expression where the pattern specifies the way the text is to be split. Consider the preceding sentence: we need something for picking out numbers, something for abbreviations, something for currency symbols, and something for punctuation marks. This suggests the <span class="No-Break">following pattern:</span></p>
+<pre class="source-code">
+ENGLISHPATTERN = re.compile(r"""(?P&lt;word&gt;(\d+,?)+((\.|:)\d+)?K?|(Mr|Mrs|Dr|Prof|St|Rd)\.?|([A-Za-z_](?!n't))*[A-Za-z]|n't|\.|\?|,|\$|£|&amp;|:|!|"|-|–|[^a-zA-Z\s]+)""")</pre> <p>The first part of this pattern says that a number can consist of some digits, possibly followed by a comma (to capture cases such as 120,459 for one hundred and twenty thousand four hundred and fifty-nine), followed by a point and some more digits, and then finally possibly followed by the letter K; the second part lists several abbreviations that will normally be followed by a full stop; the next two, <strong class="source-inline">n't</strong> and <strong class="source-inline">([A-Za-z](?!n't))*[A-Za-z]</strong>, are fairly complex; <strong class="source-inline">n't</strong> recognizes <em class="italic">n’t</em> as a token, while <strong class="source-inline">([A-Za-z](?!n't))*[A-Za-z]</strong> picks out sequences of alphabetic characters not ending with <em class="italic">n’t</em> so that <em class="italic">hasn’t</em> and <em class="italic">didn’t</em> are each recognized as two tokens, <em class="italic">has + n’t</em> and <em class="italic">did + n’t</em>. The next few just recognize punctuation marks, currency symbols, and similar; the last one recognizes sequences of non-alphabetic symbols, which is useful for treating sequences of emojis <span class="No-Break">as tokens.</span></p>
+<p>Looking for instances of this pattern in English texts produces results <span class="No-Break">like this:</span></p>
+<pre class="source-code">
+&gt;&gt;&gt; tokenise("Mr. Jones bought it for £5.3K!")['Mr.', 'Jones', 'bought', 'it', 'for', '£', '5.3K', '!']
+&gt;&gt;&gt; tokenise("My cat is lucky the RSPCA weren't open at 3am last night!!!
+#fuming 😡🐱")
+['My', 'cat', 'is', 'lucky', 'the', 'RSPCA', 'were', "n't", 'open', 'at', '3', 'am', 'last', 'night', '!', '!', '!', '#', 'fuming', '😡🐱']</pre>
+<p>Using regular expressions<a id="_idIndexMarker442"/> for tokenization<a id="_idIndexMarker443"/> has two advantages: regular expressions can be applied extremely fast, so large amounts of text can be tokenized very quickly (about three times as fast as the NLTK’s built-in <strong class="source-inline">word_tokenize</strong>: the only major difference between the output of the two is that <strong class="source-inline">tokenise</strong> treats words such as <em class="italic">built-in</em> as being made of three components, <em class="italic">built</em>, <em class="italic">-</em>, and <em class="italic">in</em>, whereas the NLTK treats them as single compounds, <em class="italic">built-in</em>); and the patterns are completely self-contained, so they can be changed easily (if, for instance, you would rather treat each emoji as a separate token, just remove <strong class="source-inline">+</strong> from <strong class="source-inline">[^a-zA-Z\s]+</strong>, and if you would rather treat <em class="italic">built-in</em> as a single compound unit, just remove <strong class="source-inline">–</strong> from the list of options) and can also be easily adapted to other languages, such as by replacing the character range, <strong class="source-inline">[a-z]</strong>, with the Unicode range of characters used by the <span class="No-Break">required language:</span></p>
+<pre class="source-code">
+ARABICPATTERN = re.compile(r"(?P&lt;word&gt;(\d+,?)+(\.\d+)?|<strong class="bold">[</strong>؟ۼ<strong class="bold">]</strong>+|\.|\?|,|\$|£|&amp;|!|'|\"|\S+)")CHINESEPATTERN =
+re.compile(r"(?P&lt;word&gt;(\d+,?)+(\.\d+)?|<strong class="bold">[</strong><strong class="bold">一</strong><strong class="bold">-</strong><strong class="bold">龥</strong><strong class="bold">]</strong>|.|\?|,|\$|£|&amp;|!|'|\"|)")</pre>
+<p>Once we have <a id="_idIndexMarker444"/>tokenized our text, we are likely to have tokens that are minor variants of the same lexeme – <em class="italic">hating</em> and <em class="italic">hated</em> are both versions of the same lexeme, <em class="italic">hate</em>, and will tend to carry the same emotional charge. The importance (and difficulty) of this step will vary from language to language, but virtually all languages make words out of a core lexeme and a set of affixes, and finding the core lexeme will generally contribute to tasks such as <span class="No-Break">emotion detection.</span></p>
+<p>The obvious starting<a id="_idIndexMarker445"/> point is to produce a list of affixes and try to chop them off the start and end of a token until a known core lexeme is found. This requires us to have a set of core lexemes, which can be quite difficult to get. For English, we can simply use the list of words from WordNet. This gives us 150K words, which will cover <span class="No-Break">most cases:</span></p>
+<pre class="source-code">
+from utilities import *from nltk.corpus import wordnet
+PREFIXES = {"", "un", "dis", "re"}
+SUFFIXES = {"", "ing", "s", "ed", "en", "er", "est", "ly", "ion"}
+PATTERN = re.compile("(?P&lt;form&gt;[a-z]{3,}) (?P&lt;pos&gt;n|v|r|a) ")
+def readAllWords():
+    return set(wordnet.all_lemma_names())
+ALLWORDS = readAllWords()
+def stem(form, prefixes=PREFIXES, words=ALLWORDS, suffixes=SUFFIXES):
+    for i in range(len(form)):
+        if form[:i] in prefixes:
+            for j in range(i+1, len(form)+1):
+                if form[i:j] in words:
+                    if form[j:] in suffixes:
+                        yield ("%s-%s+%s"%(form[:i],
+                        form[i:j], form[j:])).strip("+-")
+ROOTPATTERN = re.compile("^(.*-)?(?P&lt;root&gt;.*?)(\+.*)?$")
+def sortstem(w):
+    return ROOTPATTERN.match(w).group("root")
+def allstems(form, prefixes=PREFIXES, words=ALLWORDS, suffixes=SUFFIXES):
+    return sorted(stem(form, prefixes=PREFIXES,
+        words=ALLWORDS, suffixes=SUFFIXES), key=sortstem)</pre>
+<p>This will look at the first <a id="_idIndexMarker446"/>few characters of the <a id="_idIndexMarker447"/>token to see whether they are prefixes (allowing for empty prefixes), and then at the next few to see whether they are known words, and then at the remainder to see whether it’s a suffix. Writing it as a generator makes it easy to produce multiple answers – for example, if <strong class="source-inline">WORDS</strong> contains both <em class="italic">construct</em> and <em class="italic">reconstruct</em>, then <strong class="source-inline">stem1</strong> will return <strong class="source-inline">['-reconstruct+ing', 're-construct+ing']</strong> to form <em class="italic">reconstructing</em>. <strong class="source-inline">stem1</strong> takes around 2*10<span class="superscript">-06</span> seconds for a short word such as <em class="italic">cut</em> and 7*10<span class="superscript">-06</span> seconds for a longer and more complex case such as <em class="italic">reconstructing</em> – fast enough for <span class="No-Break">most purposes.</span></p>
+<p>To use <strong class="source-inline">stem1</strong>, use the <span class="No-Break">following code:</span></p>
+<pre class="source-code">
+&gt;&gt;&gt; from chapter4 import stem1&gt;&gt;&gt; stem1.stem("unexpected")
+<strong class="bold">&lt;generator object stem at 0x7f947a418890&gt;</strong></pre>
+<p><strong class="source-inline">stem1.stem</strong> is a generator because there might be several ways to decompose a word. For <em class="italic">unexpected</em>, we get three analyses because <em class="italic">expect</em>, <em class="italic">expected</em>, and <em class="italic">unexpected</em> are all in the <span class="No-Break">base</span><span class="No-Break"><a id="_idIndexMarker448"/></span><span class="No-Break"> lexicon:</span></p>
+<pre class="source-code">
+&gt;&gt;&gt; list(stem1.stem("unexpected"))<strong class="bold">['unexpected', 'un-expect+ed', 'un-expected']</strong></pre>
+<p>For <em class="italic">uneaten</em>, on the other hand, we only get <em class="italic">un-eat+en</em>, because the lexicon does not contain <em class="italic">eaten</em> and <em class="italic">uneaten</em> <span class="No-Break">as entries:</span></p>
+<pre class="source-code">
+&gt;&gt;&gt; list(stem1.stem("uneaten"))<strong class="bold">['un-eat+en']</strong></pre>
+<p>That’s a bit awkward because it is hard to predict which derived forms will be listed in the lexicon. What we want is the root and its affixes, and it is clear that <em class="italic">expected</em> and <em class="italic">unexpected</em> are not the root forms. The more affixes you remove, the closer you get to the root. So, we might decide to use the output with the shortest root as <span class="No-Break">the best:</span></p>
+<pre class="source-code">
+&gt;&gt;&gt; stem1.allstems("unexpected")<strong class="bold">['un-expect+ed', 'un-expected', 'unexpected']</strong></pre>
+<p>The quality of the output depends very heavily on the quality of the lexicon: if it contains forms that are themselves derived from smaller items, we will get analyses like the three for <em class="italic">unexpected</em>, and if it doesn’t contain some form, then it won’t return it (the WordNet lexicon contains about 150K entries, so this won’t happen all that often if we <span class="No-Break">use it!).</span></p>
+<p><strong class="source-inline">stem1.stem</strong> is the basis for<a id="_idIndexMarker449"/> several well-known tools – for example, the <strong class="source-inline">morphy</strong> function from the NLTK for analyzing<a id="_idIndexMarker450"/> English forms and the <strong class="bold">Standar<a id="_idTextAnchor099"/>d Arabic Morphological Analyzer</strong> (<strong class="bold">SAMA</strong>), (Buckwalter, T., 2007). There are, as ever, some complications, notably that the spelling of a word can change when you add a prefix or a suffix (for instance, when you add the English negative prefix <em class="italic">in-</em> to a word that begins with a <em class="italic">p</em>, it becomes <em class="italic">im-</em>, so <em class="italic">in-</em> + <em class="italic">perfect</em> becomes <em class="italic">imperfect</em> and <em class="italic">in-</em> + <em class="italic">possible</em> becomes <em class="italic">impossible</em>), and that words can have multiple affixes (for instance, French nouns and adjectives can have two suffixes, one to mark gender and one to mark number). We will look at these in the next <span class="No-Break">two sections.</span></p>
+<h2 id="_idParaDest-75"><a id="_idTextAnchor100"/>Spelling changes</h2>
+<p>In many languages (for example, English), the relationship between spelling and pronunciation is quite<a id="_idIndexMarker451"/> subtle. In particular, it can encode facts about the stress of a word, and it can do so in ways that change when you add prefixes and suffixes. The “magic e,” for instance, is used to mark words where the final vowel is long – for example, <em class="italic">site</em> versus <em class="italic">sit</em>. However, when a suffix that begins with a vowel is added to such a word, the <em class="italic">e</em> is dropped from the version with a long vowel, and the final consonant of the version with a short vowel is doubled: <em class="italic">siting</em> versus <em class="italic">sitting</em> (this only happens when the final vowel of the root is both short and stressed, with <em class="italic">enter</em> and <em class="italic">infer</em> becoming <em class="italic">entering</em> and <em class="italic">inferring</em>). Such rules tend to reflect the way that spelling encodes pronunciation (for example, the magic e marks the preceding vowel as being long, while the doubled consonant in <em class="italic">inferring</em> marks the previous vowel as being short and stressed) or to arise from actual changes in pronunciation (the <em class="italic">im-</em> in <em class="italic">impossible</em> is the <em class="italic">in-</em> prefix, but it’s difficult to say <em class="italic">inpossible</em> (try it!), so English spe<a id="_idTextAnchor101"/>akers have lazily changed it to <em class="italic">im-</em>. See (Chomsky &amp; Halle, 1968) for a detailed discussion of the relationship between spelling and pronunciation <span class="No-Break">in English).</span></p>
+<p><strong class="source-inline">morphy</strong> deals<a id="_idIndexMarker452"/> with this by including all possible versions of the affixes and stopping as soon as one that matches <span class="No-Break">is found:</span></p>
+<pre class="source-code">
+    MORPHOLOGICAL_SUBSTITUTIONS = {        NOUN: [
+            ('s', ''),
+            ('ses', 's'),
+            ('ves', 'f'),
+            ('xes', 'x'),
+            ('zes', 'z'),
+            ('ches', 'ch'),
+            ('shes', 'sh'),
+            ('men', 'man'),
+            ('ies', 'y'),
+        ],
+        VERB: [
+            ('s', ''),
+            ('ies', 'y'),
+            ('es', 'e'),
+            ('es', ''),
+            ('ed', 'e'),
+            ('ed', ''),
+            ('ing', 'e'),
+            ('ing', ''),
+        ],
+        ADJ: [('er', ''), ('est', ''), ('er', 'e'), ('est', 'e')],
+        ADV: [],
+    }</pre>
+<p>This table says, for<a id="_idIndexMarker453"/> instance, that if you see a word that ends with <em class="italic">s</em>, it might be a noun if you delete the <em class="italic">s</em>, and that if you see a word that ends with <em class="italic">ches</em>, then it might be a form of a noun that ends <em class="italic">ch</em>. Making these substitutions will work fine a lot of the time, but it does not deal with cases such as <em class="italic">hitting</em> and <em class="italic">slipped</em>. Due to this, <strong class="source-inline">morphy</strong> includes a list of exceptions (quite a long list: 2K for nouns and 2.4K for verbs) that includes forms like these. This will work, of course, but it does take a lot of maintenance and it does mean that words that obey the rules but are not in the exception list will not be recognized (for example, the basic word list includes <em class="italic">kit</em> as a verb, but does not including <em class="italic">kitting</em> and <em class="italic">kitted</em> as exceptions and hence will not recognize that <em class="italic">kitted</em> in <em class="italic">he was kitted out with all the latest gear</em> is a form <span class="No-Break">of </span><span class="No-Break"><em class="italic">kit</em></span><span class="No-Break">).</span></p>
+<p>Instead of providing multiple versions of the affixes and long lists of exceptions, we can provide a set of spelling changes that are to be applied as the word <span class="No-Break">is split:</span></p>
+<pre class="source-code">
+SPELLINGRULES = """ee X:(d|n) ==&gt; ee + e X
+C y X:ing ==&gt; C ie + X
+C X:ly ==&gt; C le + X
+i X:e(d|r|st?)|ly ==&gt; y + X
+X:((d|g|t)o)|x|s(h|s)|ch es ==&gt; X + s
+X0 (?!(?P=X0)) C X1:ed|en|ing ==&gt; X0 C e + X1
+C0 V C1 C1 X:e(d|n|r)|ing ==&gt; C0 V C1 + X
+C0 V C1 X:(s|$) ==&gt; C0 V C1 + X
+"""</pre>
+<p>In these rules, the<a id="_idIndexMarker454"/> left-hand side is a pattern that is to be matched somewhere in the current form and the right-hand side is how it might be rewritten. <strong class="source-inline">C, C0, C1</strong>, … will match any consonant, <strong class="source-inline">V, V0, V1</strong>, … will match any vowel, <strong class="source-inline">X, X0, X1</strong>, … will match any character, and <strong class="source-inline">X:(d|n)</strong> will match <strong class="source-inline">d</strong> or <strong class="source-inline">n</strong> and fix the value of <strong class="source-inline">X</strong> to be whichever one was matched. Thus, the first rule will match <em class="italic">seen</em> and <em class="italic">freed</em> and suggest rewriting them as <em class="italic">see+en</em> or <em class="italic">free+ed</em>, and the second last one, which looks for a consonant, a vowel, a repeated consonant, and any of <em class="italic">ed</em>, <em class="italic">en</em>, <em class="italic">er</em>, or <em class="italic">ing</em> will match <em class="italic">slipping</em> and <em class="italic">kitted</em> and suggest rewriting them as <em class="italic">slip+ing</em> <span class="No-Break">and </span><span class="No-Break"><em class="italic">kit+ed</em></span><span class="No-Break">.</span></p>
+<p>If we use rules like these, we can find roots of forms where the ending has been changed without explicitly <span class="No-Break">listing them:</span></p>
+<pre class="source-code">
+&gt;&gt;&gt; from chapter4 import stem2&gt;&gt;&gt; list(stem2.stem("kitted"))
+<strong class="bold">['kit+ed']</strong></pre>
+<p>As before, if we use it with a word where the derived form is explicitly listed as an exception, then we will get multiple versions, but again, using the one with the shortest root will give us the most basic version of <span class="No-Break">the root:</span></p>
+<pre class="source-code">
+&gt;&gt;&gt; stem2.allstems("hitting")<strong class="bold">['hit+ing', 'hitting']</strong></pre>
+<p>The implementation of <strong class="source-inline">allstems</strong> in <strong class="source-inline">chapter4.stem2</strong> in this book’s code repository also allows multiple affixes, so we can analyze words such as <em class="italic">unreconstructed</em> <span class="No-Break">and </span><span class="No-Break"><em class="italic">derestrictions</em></span><span class="No-Break">:</span></p>
+<pre class="source-code">
+&gt;&gt;&gt; stem2.allstems("unreconstructed")<strong class="bold">['un-re-construct+ed', 'un-reconstruct+ed', 'un-reconstructed', 'unreconstructed']</strong>
+&gt;&gt;&gt; stem2.allstems("restrictions")
+<strong class="bold">['restrict+ion+s', 'restriction+s', 're-strict+ion+s']</strong></pre>
+<p>These rules can be<a id="_idIndexMarker455"/> compiled into a single regular expression, and hence can be applied very fast and will cover the vast majority of spelling changes at the boundaries between the morphemes that make up an English word (the use of regula<a id="_idTextAnchor102"/>r expressions for this task was pioneered by (Koskiennemi, 1985)). Rules only apply at the junctions between morphemes, so it is possible to immediately check whether the first part of the rewritten form is a prefix (if no root has been found) or a root (if no root has been found so far), so they will not lead to multiple unjustified splits. This kind of approach leads to tools that can be much more easily maintained since you do not have to add all the forms that cannot be obtained just by splitting off some versions of the affixes as exceptions, so it may be worth considering if you are working with a language where there are large numbers of spelling changes of <span class="No-Break">this sort.</span></p>
+<h2 id="_idParaDest-76"><a id="_idTextAnchor103"/>Multiple and contextual affixes</h2>
+<p>The preceding<a id="_idIndexMarker456"/> discussion suggests that there is a fixed set of affixes, each of which can<a id="_idIndexMarker457"/> be attached to a suitable root. Even in English, the situation is not that simple. Firstly, there are several alternative past endings, some of which attach to some verbs and some to others. Most verbs take <em class="italic">–ed</em> for their past participles, but some, such as <em class="italic">take</em>, require <em class="italic">–en</em>: <strong class="source-inline">morphy</strong> accepts <em class="italic">taked</em> as well as <em class="italic">taken</em> as forms of <em class="italic">take</em>, and likewise for other <em class="italic">–en</em> verbs and completely irregular cases such as <em class="italic">thinked</em> and <em class="italic">bringed</em>. Secondly, there are cases where a word may take a sequence of affixes – for example, <em class="italic">unexpectedly</em> looks as though it is made out of a prefix, <em class="italic">un-</em>, the root, <em class="italic">expect</em>, and two suffixes, <em class="italic">-ed</em> and <em class="italic">-ly</em>. Both these issues become more significant in other languages. It probably doesn’t matter that <strong class="source-inline">morphy</strong> returns <em class="italic">steal</em> as the root of <em class="italic">stealed</em> since it is very unlikely that anyone would ever write <em class="italic">stealed</em> (likewise, it doesn’t matter that it accepts <em class="italic">sliping</em> as the present participle of <em class="italic">slip</em> since no one would ever write <em class="italic">sliping</em>). In other languages, failing to spot that some affix is the wrong kind of thing to attach to a given root can lead to incorrect readings. Likewise, there are not all that many cases in English of multiple affixes, certainly not of multiple inflectional affixes (in the preceding example, <em class="italic">un-</em>, <em class="italic">-ed</em>, and <em class="italic">-ly</em> are all derivational affixes – <em class="italic">-un</em> obtains a new adjective from an old one, <em class="italic">-ed</em> in this case obtains an adjective from a verb root, and <em class="italic">-ly</em> obtains an adverb from <span class="No-Break">an adjective).</span></p>
+<p>Again, this can matter more in languages such as French (and other Romance languages), where a noun is expected to take a gender marker and a number marker (<em class="italic">noir</em>, <em class="italic">noire</em>, <em class="italic">noirs</em>, and <em class="italic">noires</em>), and a verb is expected to take a tense marker and an appropriate person marker (<em class="italic">achetais</em> as the first person singular imperfect, <em class="italic">acheterais</em> as the first person singular conditional); and in languages such as Arabic, where a word may have varying numbers of  inflectional affixes (for example, a present tense verb will have a tense prefix and a present<a id="_idIndexMarker458"/> tense person marker, while a past tense one will just have the<a id="_idIndexMarker459"/> past tense number marker) and also a number of clitic affixes (closed class words that are directly attached to the main word) – for example, the form ويكتبون (wyktbwn) consists of a conjunction, وَ/PART (wa), a present tense prefix, يَ/IV3MP, a present tense form of the verb, (كْتُب/VERB_IMP), a present tense suffix, ُونَ/IVSUFF_SUBJ:MP_MOOD:I, and a third person plural pronoun, هُم/IVSUFF_DO:3MP, with the whole thing meaning <em class="italic">and they are writing them</em>. The permitted constituents, the order they are allowed to appear in, and the form of the root, which can vary with different affixes and between different classes of nouns and verbs, are complex <span class="No-Break">and crucial.</span></p>
+<p>To capture these phenomena, we need to make a further change to the algorithm given previously. We need to say what each affix can combine with, and we need to assign words to lexical classes. To capture the first part of this, we must assume that a root is typically incomplete without certain affixes – that an English verb is incomplete without a tense marker, a French adjective is incomplete without a gender marker and a number marker, and so on. We will write <strong class="source-inline">A-&gt;B</strong> to denote an <strong class="source-inline">A</strong> character that is missing a following <strong class="source-inline">B</strong> – for example, an English verb root is of the type <strong class="source-inline">V-&gt;TNS</strong>, and <strong class="source-inline">A &lt;-B</strong> denotes an <strong class="source-inline">A</strong> that is missing a preceding <strong class="source-inline">B</strong>. For example, <em class="italic">-ly</em> is an adverb missing a preceding adjective, so it is of the type <strong class="source-inline">ADV&lt;-ADJ</strong>. Given this notion, we can require that items have to combine as they are found – for example, <em class="italic">sadly</em>, which is made of the adjective <em class="italic">sad</em> and the derivational affix <em class="italic">-ly</em> can be combined, but <em class="italic">dogly</em> is not a word because the noun <em class="italic">dog</em> is not what <em class="italic">-ly</em> requires. Thus, the standard set of English affixes becomes <span class="No-Break">as follows:</span></p>
+<pre class="source-code">
+PREFIXES = fixaffixes(    {"un": "(v-&gt;tns)-&gt;(v-&gt;tns), (a-&gt;cmp)-&gt;(a-&gt;cmp)",
+     "re": "(v-&gt;tns)-&gt;(v-&gt;tns)",
+     "dis": "(v-&gt;tns)-&gt;(v-&gt;tns)"})
+SUFFIXES = fixaffixes(
+    {"": "tns, num, cmp",
+     "ing": "tns",
+     "ed": "tns",
+     "s": "tns, num",
+     "en": "tns",
+     "est": "cmp",
+     "ly": "r&lt;-(a-&gt;cmp), r&lt;-v",
+     "er": "(n-&gt;num)&lt;-(v-&gt;tns), cmp",,
+     "ment": "(n-&gt;num)&lt;-(v-&gt;tns)"
+     "ness": "(n-&gt;num)&lt;-(v-&gt;tns)"})</pre>
+<p>Here, the root forms of <a id="_idIndexMarker460"/>nouns, verbs, and adjectives are assigned the types <strong class="source-inline">n-&gt;num</strong>, <strong class="source-inline">v-&gt;tns</strong>, and <strong class="source-inline">a-&gt;cmp</strong>. Now, analyzing a word such as <em class="italic">smaller</em> involves combining <em class="italic">small</em> (<strong class="source-inline">adj-&gt;cmp</strong>) and the suffix, <em class="italic">–er</em> (<strong class="source-inline">cmp</strong>), while the analysis of <em class="italic">redevelopments</em> involves combining <em class="italic">re-</em> (<strong class="source-inline">(v-&gt;tns)-&gt;(v-&gt;tns)</strong>) and <em class="italic">develop</em> (<strong class="source-inline">v-&gt;tns</strong>) to produce a <a id="_idIndexMarker461"/>new untensed verb, <em class="italic">redevelop</em>, also of the <strong class="source-inline">(v-&gt;tns)</strong> type. Now, we can combine this with <em class="italic">–ment</em> (<strong class="source-inline">(n-&gt;num)&lt;-(v-&gt;tns)</strong>) to produce a new noun root, <em class="italic">redevelopment</em> (<strong class="source-inline">(n-&gt;num)</strong>), and finally combine that with <em class="italic">-s</em> (<strong class="source-inline">(num)</strong>) to produce the plural noun <em class="italic">redevelopments</em>. If we pick the best analysis in each case, we will get <span class="No-Break">the following:</span></p>
+<pre class="source-code">
+&gt;&gt;&gt; from chapter4 import stem3&gt;&gt;&gt; stem3.allstems("smaller")[0]
+<strong class="bold">('small+er', ['a'])</strong>
+&gt;&gt;&gt; stem3.allstems("redevelopments")[0]
+<strong class="bold">('re-develop+ment+s', ['n'])</strong>
+&gt;&gt;&gt; stem3.allstems("unsurprisingly")[0]
+<strong class="bold">('un-surprise+ing++ly', ['r'])</strong>
+&gt;&gt;&gt; stem3.allstems("unreconstructedly")[0]
+<strong class="bold">('un-re-construct+ed++ly', ['r'])</strong>
+&gt;&gt;&gt; stem3.allstems("reconstructions")[0]
+<strong class="bold">('re-construct+ion+s', ['n'])</strong>
+&gt;&gt;&gt; stem3.allstems("unreconstructions")[0]
+<strong class="bold">Traceback (most recent call last):</strong>
+<strong class="bold">  File "&lt;stdin&gt;", line 1, in &lt;module&gt;</strong>
+<strong class="bold">IndexError: list index out of range</strong></pre>
+<p>Note that <em class="italic">unreconstructions</em> leads to an error because the <em class="italic">un-</em>, <em class="italic">re-</em>, and <em class="italic">-ion</em> affixes don’t go together – <em class="italic">un-</em> produces an adjective from a verb, so <em class="italic">un-re-construct</em> is an adjective and -<em class="italic">ion</em> has to be attached to a <span class="No-Break">verb root.</span></p>
+<p>The more elements you can <a id="_idIndexMarker462"/>remove from a complex word, the more likely you are to arrive at <a id="_idIndexMarker463"/>a root that is known to carry an emotional charge. If you can work out that <em class="italic">disastrously</em> is <em class="italic">disaster+ous+ly</em>, then you will be able to make use of the fact that <em class="italic">disaster</em> is a highly negative word to detect the negative overtones of <em class="italic">disastrously</em>; if you can spot that <em class="italic">enthusiastic</em> and <em class="italic">enthusiastically</em> are <em class="italic">enthusiast+ic</em> and <em class="italic">enthusiast+ic+al+ly</em>, then these three words can be treated as though they were the same when learning and subsequently applying rules for detecting emotions. It is worth noting that some affixes reverse the meaning of the words to which they apply – for example, an unexpected event is one that was not expected. This has to be taken into account when understanding that <em class="italic">undesirable</em>, for instance, is <em class="italic">un+desire+able</em>, where <em class="italic">desire</em> is a generally positive term but the prefix reverses its meaning and hence suggests that a text that contains it will <span class="No-Break">be negative.</span></p>
+<p>Similar phenomena occur in many other languages, with affixes either adding information to the base word or changing its meaning and/or class. In many cases, such as in Romance languages, the root will require multiple affixes to complete itself. In the English cases mentioned previously, we saw several examples where a word was made out of multiple components, but all such cases involved at most one inflectional affix plus one or more <span class="No-Break">derivational ones.</span></p>
+<p>Consider, for instance, the adjective <em class="italic">noir</em>: this, like most French adjectives, has four forms – <em class="italic">noir</em>, <em class="italic">noire</em>, <em class="italic">noirs</em>, and <em class="italic">noires</em>. We can easily capture this pattern by saying that a French adjectival root is of the type<strong class="source-inline">(a-&gt;num)-&gt;gen</strong> (note the bracketing – the first thing that has to be found is the gender marker, and only once that has been found do we have <strong class="source-inline">a-&gt;num</strong> – that is, an adjective looking for a number marker). Now, let’s say we have a set of affixes, <span class="No-Break">like so:</span></p>
+<pre class="source-code">
+FSUFFIXES = fixaffixes({    "": "gen, num",
+    "s": "num",
+    "e": "gen",})</pre>
+<p>With this, we can easily<a id="_idIndexMarker464"/> decompose the various forms of <em class="italic">noir</em>. We will also need a set of<a id="_idIndexMarker465"/> spelling change rules since some adjectives change their form when we add the various suffixes – for example, adjectives that end with <em class="italic">-if</em> (<em class="italic">sportif</em>, <em class="italic">objectif</em>) change their feminine endings to <em class="italic">–ive</em> (singular) and <em class="italic">–ives</em> (plural), so we need spelling rules such as the following, which says that the <em class="italic">–ive</em> sequence could arise from adding <em class="italic">-e</em> to the end of a word that ends <span class="No-Break">with </span><span class="No-Break"><em class="italic">if</em></span><span class="No-Break">:</span></p>
+<pre class="source-code">
+FSPELLING = """ive ==&gt; if+e
+"""</pre>
+<p>This rule will account for the four forms (<em class="italic">sportif</em>, <em class="italic">sportive</em>, <em class="italic">sportifs</em>, and <em class="italic">sportives</em>), with the <em class="italic">e</em> marking the fact that <em class="italic">sportif</em> and <em class="italic">sportifs</em> are pronounced with an unvoiced following consonant and <em class="italic">sportive</em> and <em class="italic">sportives</em> are pronounced with the voiced version of <span class="No-Break">the consonant.</span></p>
+<p>The situation becomes considerably more complicated when we come to deal with verbs. Consider the following conjugation table for the regular <span class="No-Break">verb </span><span class="No-Break"><em class="italic">regarder</em></span><span class="No-Break">:</span></p>
+<table class="T---Table _idGenTablePara-1" id="table001-4">
+<colgroup>
+<col/>
+<col/>
+<col/>
+<col/>
+<col/>
+<col/>
+<col/>
+</colgroup>
+<thead>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Header"/>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Present</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Imperfect</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Future</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Conditional</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Subjunctive</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Imperfect subj.</strong></span></p>
+</td>
+</tr>
+</thead>
+<tbody>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">je</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">regarde</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">regardais</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">regarderai</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">regarderais</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">regarde</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">regardasse</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">tu</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">regardes</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">regardais</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">regarderas</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">regarderais</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">regardes</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">regardasses</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">il</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">regarde</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">regardait</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">regardera</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">regarderait</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">regarde</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">regardât</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">nous</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">regardons</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">regardions</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">regarderons</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">regarderions</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">regardions</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">regardassions</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">vous</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">regardez</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">regardiez</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">regarderez</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">regarderiez</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">regardiez</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">regardassiez</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">ils</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">regardent</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">regardaient</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">regarderont</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">regarderaient</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">regardent</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">regardassent</span></p>
+</td>
+</tr>
+</tbody>
+</table>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 4.2 – Conjugation table for “regarder”</p>
+<p>There are some <a id="_idIndexMarker466"/>easy-to-spot regularities in this table – for example, that the future <a id="_idIndexMarker467"/>and conditional forms all contain the <em class="italic">-er</em> suffix, and that the imperfect and conditional forms have the same set of person affixes. There are quite a lot of semi-regularities that don’t carry over completely – for example, the subjunctive and imperfect subjunctive have very similar (but not identical) sets of person endings. It is very difficult to do anything useful with the semi-regularities, so the best that we can easily do is specify that a French verb requires a mood marker and a person marker – that is, that <em class="italic">regard</em> is of the <strong class="source-inline">(v-&gt;person)-&gt;mood</strong> type (as with the type for adjectives, this says that you have to supply the mood marker first to get something of the <strong class="source-inline">(v-&gt;person)</strong> type and then look for the person marker). Now, we can supply the collection of affixes, which can then be used to analyze <span class="No-Break">input text:</span></p>
+<pre class="source-code">
+FSUFFIXES = {    "": "gen, num", "s": "num", "e": "gen, person",
+    "er": "mood", "": "mood",
+    "ez": "person", "ais": "person", "a": "person", "ai": "person",
+    "aient": "person", "ait": "person", "as": "person","ât": "person",
+    "asse": "person", "asses": "person", "ent": "person", "es": "person",
+    "iez": "person", "ions": "person", "ons": "person", "ont": "person",
+    }</pre>
+<p>These affixes <a id="_idIndexMarker468"/>can then be used to reduce verbs to their base forms – <em class="italic">regardions</em> and <em class="italic">regarderions</em>, for instance, become <em class="italic">regard+ions</em> and <em class="italic">regard+er+ions</em>, respectively – so that<a id="_idIndexMarker469"/> different variants of the same word can <span class="No-Break">be recognized.</span></p>
+<p>Simply using this table will overgenerate, incorrectly recognizing, for instance, <em class="italic">regardere</em> as <em class="italic">regard+er+e</em>. This may not matter too much since people don’t generally write incorrect forms (and maybe if they do, it is helpful to recognize them anyway, as with the English examples of <em class="italic">stealed</em> and <em class="italic">sliping</em> mentioned previously). More significantly, different verbs have substantially different conjugation tables that require different sets <span class="No-Break">of affixes:</span></p>
+<table class="T---Table _idGenTablePara-1" id="table002-1">
+<colgroup>
+<col/>
+<col/>
+<col/>
+<col/>
+<col/>
+<col/>
+<col/>
+</colgroup>
+<thead>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Header"/>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Present</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Imperfect</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Future</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Conditional</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Subjunctive</strong></span></p>
+</td>
+<td class="T---Table T---Body T---Header">
+<p><span class="No-Break"><strong class="bold">Imperfect subj.</strong></span></p>
+</td>
+</tr>
+</thead>
+<tbody>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">je</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">faiblis</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">faiblissais</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">faiblirai</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">faiblirais</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">faiblisse</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">faiblisse</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">tu</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">faiblis</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">faiblissais</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">faibliras</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">faiblirais</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">faiblisses</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">faiblisses</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">il</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">faiblit</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">faiblissait</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">faiblira</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">faiblirait</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">faiblisse</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">faiblît</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">nous</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">faiblissons</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">faiblissions</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">faiblirons</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">faiblirions</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">faiblissions</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">faiblissions</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">vous</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">faiblissez</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">faiblissiez</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">faiblirez</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">faibliriez</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">faiblissiez</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">faiblissiez</span></p>
+</td>
+</tr>
+<tr class="T---Table">
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">ils</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">faiblissent</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">faiblissaient</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">faibliront</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">faibliraient</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">faiblissent</span></p>
+</td>
+<td class="T---Table T---Body T---Body">
+<p><span class="No-Break">faiblissent</span></p>
+</td>
+</tr>
+</tbody>
+</table>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 4.3 – Conjugation table for “faiblir”</p>
+<p>Here, several (but not all) of the tense markers that were empty for <em class="italic">regard</em> are now <em class="italic">-iss</em>, the marker for the future and conditional tenses is <em class="italic">ir</em>, and some of the person markers for the present tense are different. We can add (and indeed will have to) these to our table, but we would also like to make sure that the right affixes get applied to the <span class="No-Break">right verb.</span></p>
+<p>To do this, we have to<a id="_idIndexMarker470"/> be able to say more about words and affixes than simply <a id="_idIndexMarker471"/>assigning them a single atomic label. In English, we want to be able to say that <em class="italic">–ly</em> attaches to participles but not to tensed forms (for example, that <em class="italic">unexpectedly</em> and <em class="italic">unsurprisingly</em> are <em class="italic">un+expect+ed+ly</em> and <em class="italic">un+surprise+ing+ly</em>, but that <em class="italic">unexpectly</em> and <em class="italic">unsurprisesly</em> are not words). We want to be able to say that <em class="italic">regard</em> is an <em class="italic">er</em> verb and <em class="italic">faibl</em> is an <em class="italic">ir</em> verb, with an empty imperfect marker for <em class="italic">er</em> verbs and <em class="italic">iss</em> as the imperfect marker for <em class="italic">ir</em> verbs. In general, we want to be able to say quite detailed things about words and their affixes and to be able to copy information from one to the other (for example, that the verb root will get its tense and form from the <span class="No-Break">tense affix).</span></p>
+<p>We can do this by extending our notation to allow for features – that is, properties that distinguish one instance of a word from another. For example, we can say that <em class="italic">sleeps</em> is <strong class="source-inline">[hd=v, tense=present, finite=tensed, number=singular, person=third]</strong> and <em class="italic">sleeping</em> is <strong class="source-inline">[hd=v, tense=present, finite=participle]</strong>. We can, for instance, change the description of the base form of a verb from <strong class="source-inline">v-&gt;tns</strong> to <strong class="source-inline">v[tense=T, finite=F, number=N, person=P]-&gt;tense[tense=T, finite=F, number=N, person=P],</strong>  – i.e., a base verb isn’t just something that needs a tense marker; it will also inherit the values of the features for tense, finiteness, number, and person from that affix. The verbal suffixes then become <span class="No-Break">as follows:</span></p>
+<pre class="source-code">
+SUFFIXES = fixaffixes(    {"": "tense[finite=infinitive]; tense[finite=tensed, tense=present]"
+     "ing": "tense[finite=participle, tense=present]",
+     "ed": "tense[finite=participle, tense=present, voice=passive];
+            tense[tense=past, voice=active]",
+     "s": "tense[finite=tensed, tense=present, number=singular,
+                 person=third];
+     "en": "tense[finite=participle]",
+      ...
+     "ly": "r&lt;-v[finite=participle, tense=present]",
+     ...
+})</pre>
+<p>This code block says that adding an empty suffix to a verbal root will give you the infinitive form or the present tense, adding <em class="italic">-ing</em> will give you the present participle, and <span class="No-Break">so on.</span></p>
+<p>This general<a id="_idIndexMarker472"/> approach can be used to assign French verbs to the various<a id="_idIndexMarker473"/> classes of <em class="italic">-er</em>, <em class="italic">-ir</em>, <em class="italic">-re</em>, and irregular cases, to ensure that tense and agreement markers on Arabic verbs match each other, as well as to ensure that complex sequences of derivational and inflectional affixes are handled properly. If you want to get at the root of a surface form and see exactly what properties it has, you will have to do something like this. It does, however, come at <span class="No-Break">a price:</span></p>
+<ul>
+<li>You have to say more about the words in your lexicon and a lot more about the affixes themselves. To realize that <em class="italic">kissed</em> can be the past tense or the past participle or the passive participle of <em class="italic">kiss</em> but that <em class="italic">walked</em> can only be the past tense or past participle of <em class="italic">walk</em>, you have to know what the <em class="italic">-ed</em> suffix does and you also have to know that <em class="italic">walk</em> is an intransitive verb and hence does not have a passive form. The more you want to know about the properties of a surface form, the more you have to say about its root and about the affixes that are attached to it. This is hard work and can make it very hard to maintain the lexicon. This can be seen in an extreme form in the lexicon for the most widely used morphological analyzer for Arabic, namely the SAMA lexi<a id="_idTextAnchor104"/>con (Buckwalter, T., 2007). A typical entry in the SAMA lexicon looks <span class="No-Break">like this:</span><pre class="source-code">
+;--- Ab(1)</pre><pre class="source-code">;; &gt;ab~-ui_1</pre><pre class="source-code">&gt;b (أب) &gt;ab~ (أَبّ) PV_V desire;aspire</pre><pre class="source-code">&gt;bb (أبب) &gt;abab (أَبَب) PV_C desire;aspire</pre><pre class="source-code">&amp;b (ؤب) &amp;ub~ (ؤُبّ) IV_Vd desire;aspire</pre><pre class="source-code">&gt;bb (أبب) &gt;obub (أْبُب) IV_C desire;aspire</pre><pre class="source-code">}b (ئب) }ib~ (ئِبّ) IV_Vd desire;aspire</pre><pre class="source-code">&gt;bb (أبب) &gt;obib (أْبِب) IV_C desire;aspire</pre></li> </ul>
+<p>This entry contains six distinct variants for a verb meaning something such as desire. The first part of a variant is what the stem looks like with diacritics omitted (diacritics are things such as short vowels and other marks that affect the pronunciation of the word, and are generally omitted in written Arabic), the second part is what the stem would look like if the diacritics were written, the third is a label that specifies what affixes the stem will combine with, and the last is the English gloss. To add a single entry to the lexicon, you have to know what all the surface forms look like and which class they belong to – for example, the stem &amp;b (ؤب) is the <strong class="source-inline">IV_Vd</strong> form of this word. To do that, you have to know what it means to say that something is the <strong class="source-inline">IV_Vd</strong> form of the word. And then, there are over 14K prefixes and nearly 15k suffixes, each with a complex label saying what stems it <span class="No-Break">attaches to.</span></p>
+<p>This is an extreme case: we need<a id="_idIndexMarker474"/> five inflectional affixes for English verbs and maybe <a id="_idIndexMarker475"/>another 10 derivational ones, and around 250 inflectional affixes for French verbs. Nonetheless, the point is clear: if you want to get complete and correct decompositions of complex words, you need to provide a lot of information about words and suffixes.<a id="_idTextAnchor105"/> (See Hoeksema, 1985, for more on describing words in terms that specify what they need to <span class="No-Break">complete themselves.)</span></p>
+<ul>
+<li>Exploiting this information requires more work than just splitting the surface form into pieces, and can markedly slow things down. <strong class="source-inline">morphy</strong> runs at about 150K words/second, but it does very little with compound words such as <em class="italic">unexpectedly</em> – if a word like this is in the set of exceptions, then it is returned without being decomposed; if it is not (for example, <em class="italic">unwarrantedly</em>), then it will simply return nothing at all. The analyzer provided in the code repository runs at 27K words/second if we use simple labels and no spelling rules, 17.2K words/second with simple labels and spelling rules, 21.4K words/second with complex labels and no spelling rules, and 14.7K words/second with complex labels and<a id="_idIndexMarker476"/> spelling rules, and the SAMA lexicon runs at about 9K words/second. The analyzer from the code repository and the SAMA lexicon also provide all the<a id="_idIndexMarker477"/> alternative analyses of a given form, whereas <strong class="source-inline">morphy</strong> just returns the first match <span class="No-Break">it finds.</span></li>
+</ul>
+<p>The lesson is clear: if you want words that have been stripped right down to their roots, you will have to provide a substantial amount of clear information about word classes and about the effects that the various affixes have. If you take a simple-minded approach and are not too worried about getting right to the heart of each form, and about finding out its exact properties, then you can do the task substantially faster, but even at 14.7K words/second, morphological analysis not going to be a <span class="No-Break">major bottleneck.</span></p>
+<h1 id="_idParaDest-77"><a id="_idTextAnchor106"/>Compound words</h1>
+<p>In the previous section, we looked<a id="_idIndexMarker478"/> at how to find the root element of a complex word. This is important for our overall task since a large part of the emotional content of a text is determined simply by the choice of words. A tweet such as <em class="italic">My joy at finding that you loved me as much as I love you has filled my heart with contentment</em> is overwhelmingly likely to be tagged as expressing <strong class="bold">joy</strong> and <strong class="bold">love</strong>, and the form <em class="italic">loved</em> will contribute as much to this as the form <em class="italic">love</em>. It can also happen, however, that a group of words expresses something quite different from what they express individually – that a tweet containing the phrases <em class="italic">greenhouse gases</em> and <em class="italic">climate change</em> is much more likely to be negative than one that just contains <em class="italic">greenhouse</em> and <em class="italic">change</em>, and that one that contains the phrase <em class="italic">crime prevention</em> is much more likely to be positive than one that just contains <em class="italic">crime</em> <span class="No-Break">or </span><span class="No-Break"><em class="italic">prevention</em></span><span class="No-Break">.</span></p>
+<p>This is a fairly marginal effect in languages that use white space to separate tokens because compound words of this kind tend to be written either with no separator or with a dash: a <em class="italic">blackbird</em> is not just a bird that is black, and a <em class="italic">greenhouse</em> is neither a house nor green. In some languages, however, each token is potentially a word and each sequence of tokens is also potentially a word, with no white space to mark the boundaries around sequences. In Chinese, for instance, the words 酒 and 店 mean <em class="italic">wine</em> and <em class="italic">shop</em>, but the sequence 酒店 means <em class="italic">hotel</em>. Similarly, the word 奄 means <em class="italic">suddenly</em> but the sequence 奄奄 means <em class="italic">dying</em>. While it is easy enough to see the connection between <em class="italic">wine shop</em> and <em class="italic">hotel</em>, there is more to a hotel than just somewhere that sells wine; and it is all but impossible to see <span class="No-Break">why </span><span class="No-Break"><em class="italic">suddenly-</em></span></p>
+<p><em class="italic">suddenly</em> would mean <em class="italic">dying</em>. Similarly, the four characters 新, 冠, 疫, and 情, which individually mean <em class="italic">new crown epidemic feeling</em>, meaning COVID-19, when taken as a group, are hard to predict. Also, a tweet about COVID-19 is much more likely to be negative than one about <em class="italic">new crown epidemic feeling</em>. Therefore, it is important to be able to detect such compounds even when there is no typographical evidence for them, particularly since they are fluid, with new ones being created all the time (新冠疫情 would not have meant COVID-19 <span class="No-Break">in 2018!).</span></p>
+<p>The key to finding such<a id="_idIndexMarker479"/> compounds is observing that the elements of a compound will occur next to each much more frequently than you would expect just by chance. The standard way to detect this is by<a id="_idIndexMarker480"/> using <strong class="bold">pointwise mutual informa<a id="_idTextAnchor107"/>tion</strong> (<strong class="bold">PMI</strong>) (Fano, r. M., 1961). The idea here is that if two events, E1 and E2, are unconnected, then the likelihood of E2 occurring immediately after E1 should be the same as the likelihood of E2 occurring immediately after some other event. If E1 and E2 have nothing to do with each other, then the likelihood of E2 occurring immediately after E1 is <em class="italic">prob(E1)*prob(E2)</em>. If we find that they are occurring together more often than that, we can conclude that they have some connection. If E1 and E2 are words, we can hypothesize that if they co-occur much more often than expected, then they may be a compound. Therefore, we can calculate the PMI of two words as <em class="italic">log(prob(W1+W2)/(prob(W1)*prob(W2))</em> (taking logs smooths out values that are returned but this is not crucial to <span class="No-Break">the approach).</span></p>
+<p>The machinery for doing this is implemented in <strong class="source-inline">chapter4.compounds</strong>. If we apply it to a collection of 10 million words from the BNC, we will see that the top 20 pairs that occur at least 300 times are largely fixed phrases, often Latin (<em class="italic">inter-alia</em>, <em class="italic">vice-versa</em>, <em class="italic">ad-hoc</em>, <em class="italic">status-quo</em>, and <em class="italic">de-facto</em>) or technical/medical terms (<em class="italic">ulcerative-colitis</em>, and <em class="italic">amino-acids</em>). The following scores are of the <strong class="source-inline">(&lt;PMI-score&gt;, &lt;pair&gt;, &lt;</strong><span class="No-Break"><strong class="source-inline">freq&gt;)</strong></span><span class="No-Break"> form:</span></p>
+<pre class="source-code">
+&gt;&gt;&gt; from basics.readers import *&gt;&gt;&gt; from chapter4 import compounds
+&gt;&gt;&gt; l = list(reader(BNC, BNCWordReader, pattern=".*/[A-Z\d]*\.xml"))
+&gt;&gt;&gt; pmi, pmiTable, words, pairs = compounds.doItAllPMI(l)
+<strong class="bold">111651731 words</strong>
+<strong class="bold">760415 distinct words found (111651731 tokens)</strong>
+<strong class="bold">Getting pairs</strong>
+<strong class="bold">67372 pairs found</strong>
+<strong class="bold">Calculating PMI</strong>
+&gt;&gt;&gt; thresholded = compounds.thresholdpmi(pmi, 300)
+&gt;&gt;&gt; printall(thresholded[:20])
+<strong class="bold">(14.880079898248782, 'inter-alia', 306)</strong>
+<strong class="bold">(14.10789557602586, 'ulcerative-colitis', 708)</strong>
+<strong class="bold">(13.730483221346029, 'vice-versa', 667)</strong>
+<strong class="bold">(13.600053898897935, 'gall-bladder', 603)</strong>
+<strong class="bold">(13.564948792663655, 'amino-acids', 331)</strong>
+<strong class="bold">(13.490100806659854, 'ad-hoc', 485)</strong>
+<strong class="bold">(12.956064741908307, 'carbon-dioxide', 976)</strong>
+<strong class="bold">(12.935141767901545, 'sq-km', 499)</strong>
+<strong class="bold">(12.872023194200782, 'biopsy-specimens', 306)</strong>
+<strong class="bold">(12.766406621309034, 'da-da', 499)</strong>
+<strong class="bold">(12.55829842681955, 'mentally-handicapped', 564)</strong>
+<strong class="bold">(12.46079297927814, 'ethnic-minorities', 336)</strong>
+<strong class="bold">(12.328294856503494, 'et-al', 2963)</strong>
+<strong class="bold">(12.273447636994682, 'global-warming', 409)</strong>
+<strong class="bold">(12.183953515076327, 'bodily-harm', 361)</strong>
+<strong class="bold">(12.097267289044826, 'ozone-layer', 320)</strong>
+<strong class="bold">(12.083121068394941, 'ha-ha', 665)</strong>
+<strong class="bold">(12.01519057467734, 'activating-factor', 311)</strong>
+<strong class="bold">(12.005309794347232, 'desktop-publishing', 327)</strong>
+<strong class="bold">(11.972306035897368, 'tens-thousands', 341)</strong></pre>
+<p>Even in English, pairs such as <strong class="source-inline">crime-prevention</strong> and <strong class="source-inline">greenhouse-gases</strong>, which have high PMI <a id="_idIndexMarker481"/>scores (the median pair in our set is <strong class="source-inline">(</strong><strong class="source-inline">5.48, needs-help, 121)</strong>, and <strong class="source-inline">crime-prevention</strong> and <strong class="source-inline">greenhouse-gases</strong> are both in the top 2% of the entire set), can carry an emotional weight that is different from the emotions associated with <span class="No-Break">the components:</span></p>
+<pre class="source-code">
+&gt;&gt;&gt; pmiTable['crime-prevention']<strong class="bold">(10.540598239864938, 202)</strong>
+&gt;&gt;&gt; pmiTable['greenhouse-gases']
+<strong class="bold">(12.322885857554724, 120)</strong></pre>
+<p>So, it may be worth looking at the emotional weights associated with particularly frequent compound terms even in English. For other languages, this may be even <span class="No-Break">more important.</span></p>
+<h1 id="_idParaDest-78"><a id="_idTextAnchor108"/>Tagging and parsing</h1>
+<p>We have spent quite a long time looking at individual words – finding tokens in text, decomposing those into smaller elements, looking at the way that spelling changes happen at the boundaries between word parts, and considering the problems that arise, particularly in languages that do not use white space to separate tokens when words come together to form compounds. A huge part of the task of emotion detection relies on identifying words that carry emotions, so it makes sense to be careful when looking <span class="No-Break">at words.</span></p>
+<p>As noted in <a href="B18714_01.xhtml#_idTextAnchor015"><span class="No-Break"><em class="italic">Chapter 1</em></span></a>, <em class="italic">Foundations</em>, for most NLP tasks, finding the relationships between words is just as important as finding the words themselves. For our current task, which involves finding the general emotional overtones of a short informal text, this may not be the case. There are two major questions to be <span class="No-Break">answered here:</span></p>
+<ul>
+<li>Does assigning a set of relations between words help with <span class="No-Break">emotion detection?</span></li>
+<li>Is it possible to assign relations to elements of <span class="No-Break">in</span><span class="No-Break">formal text?</span></li>
+</ul>
+<p>Normal texts are<a id="_idIndexMarker482"/> divided into sentences – that is, groups of words separated by punctuation marks that describe the words (or query a description of the words). A properly formed sentence has a main verb that denotes an event or a state and a set of satellite phrases that either describe the participants in this event or state or say something about where, when, how, or why it took place. Consider the second question: if we use a rule-based parser we get something similar to the following tree (the exact form of the tree will<a id="_idIndexMarker483"/> depend on the nature of the rules being used; we are using a parser that was designed to deal cleanly with out-of-po<a id="_idTextAnchor109"/>sition items (Ramsay, A. M., 1999), but any rule-based parser will produce something <span class="No-Break">like this):</span></p>
+<div>
+<div class="IMG---Figure" id="_idContainer058">
+<img alt="Figure 4.4 – Rule-based parse of “Is it possible to assign relations to elements of normal text”" height="1738" src="image/B18714_04_04.jpg" width="563"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 4.4 – Rule-based parse of “Is it possible to assign relations to elements of normal text”</p>
+<p>This tree says that the given sentence is a query about the existence of a particular kind of possibility, namely the possibility of assigning relations to elements of normal text. To understand this sentence properly, we have to find <span class="No-Break">these relations.</span></p>
+<p>The preceding tree was generated by a rule-<a id="_idTextAnchor110"/>based parser (Ramsay, A. M., 1999). As noted in <a href="B18714_01.xhtml#_idTextAnchor015"><span class="No-Break"><em class="italic">Chapter 1</em></span></a>, <em class="italic">Foundations</em>, rule-based parsers can be fragile when confronted with texts that do not obey the rules, and they can be slow. Given that informal texts are, more or less by definition, likely not to obey the rules of normal language, we will consider using a data-driven parser to <span class="No-Break">analyze them.</span></p>
+<p>We will start by looking at two tweets that were chosen fairly randomly from the SEMEVAL <span class="No-Break">training data:</span></p>
+<pre class="source-code">
+@PM @KF Very misleading heading.#anxious don't know why #worry (: slowly going #mad hahahahahahahahaha</pre>
+<p>These tweets do not obey the <a id="_idIndexMarker484"/>rules of normal well-formed text. They contain elements that simply do not appear in normal language (usernames, hashtags, emojis, emoticons), they contain non-standard uses of punctuation, they very often have no main verb, they contain deliberate misspellings and words made out of repeated elements (<em class="italic">hahahahahahahahaha</em>), and so on. Our rule-based parser will just fail if we try to use it to analyze them. What happens if we were to use a data-driven one (we use the NLTK pre-trained version of the MALT<a id="_idTextAnchor111"/> parser (Nivre, 2006) with the NLTK recommended tagger, but very little changes if we choose another data-driven parser or a <span class="No-Break">different tagger)?</span></p>
+<p>Just using MALT with the standard<a id="_idIndexMarker485"/> tagger, we get the following trees for <em class="italic">@PM @KF Very misleading heading. </em>and<em class="italic"> #anxious don’t know why ................. #worry (: slowly going #</em><span class="No-Break"><em class="italic">mad hahahahahahahahaha</em></span><span class="No-Break">:</span></p>
+<p class="IMG---Figure"> </p>
+<div>
+<div class="IMG---Figure" id="_idContainer059">
+<img alt="Figure 4.5 – MALT parses of informal texts" height="1286" src="image/B18714_04_05.jpg" width="1099"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 4.5 – MALT parses of informal texts</p>
+<p>There are two problems here. The first is that the tagger and parser are data-driven – that is, the decisions they make are learned from a labeled corpus, and the corpus they have been trained on does not contain the kind of informal text that is found in tweets. Secondly, and more significantly, informal texts often contain fragments jumbled up together, so it is not possible to assign relationships to such a text in a way that makes a single <span class="No-Break">coherent tree.</span></p>
+<p>The first of these problems could <a id="_idIndexMarker486"/>be overcome by marking up a corpus of tweets. This would, of course, be tedious, but no more tedious than doing so for a corpus of standard texts. The second problem raises its head again here because to mark up a piece of text, you have to have an underlying theory of what POS tags to use and what kinds of relationships exist between the elements of the text. If you assume that the only POS tags that you can use are the standard NN, VV, JJ, DET, IN, CC, and PR, then you cannot assign the correct tags to tweet elements, since these are new and are not of the standard types. And if you assume that only the standard relations between words can be used, then you cannot assign the correct roles to tweet items since they do not tend to occupy these roles – the emoticon <em class="italic">(:</em> and the word <em class="italic">hahahahahahahahaha</em> are not the kinds of things that can play these roles. So, if we are going to mark up a collection of tweets to train a tagger and parser, we are going to have to come up with a theory of the structure of such texts. Constructing a treebank is not a theory-free activity. The guidelines given to the<a id="_idIndexMarker487"/> annotators are, by definition, an informal specification of a grammar, so unless you have a clear idea of what roles things such as hashtags and emojis can play, and a clear understanding of when, for instance, an emoji should be seen as a comment on the tweet as a whole and when it should be seen as a comment on a particular element, it is just not possible to construct <span class="No-Break">a treebank.</span></p>
+<p>Tweets often contain well-formed fragments, so maybe we can get some benefit from <span class="No-Break">finding these:</span></p>
+<p><em class="italic">Never regret anything that once made you smile :)   #</em><span class="No-Break"><em class="italic">positive</em></span></p>
+<p><em class="italic">Literally hanging on by a thread need some taylor ray tonight loving a bad dog sucks #taylorrayholbrook #</em><span class="No-Break"><em class="italic">hurting @TRT</em></span></p>
+<p><em class="italic">was one moron driving his oversize tonka truck with the big flag in the bed back and forth blaring country music. </em>😐<em class="italic"> #</em><span class="No-Break"><em class="italic">disappointment</em></span></p>
+<p><em class="italic">#ThingsIveLearned The wise #shepherd never trusts his flock to a #smiling wolf. #TeamFollowBack #</em><span class="No-Break"><em class="italic">fact #wisewords</em></span></p>
+<p>There are a couple of things that are worth doing to start with. No existing parser, rule-based or data-driven, is going to do anything sensible with tags, usernames, emojis, or emoticons at the beginning or end of a sentence, so we may as well strip those off before attempting to find parseable fragments. Hashtags in the middle of a tweet are often attached to meaningful words, so we may as well remove those too. This will give us <span class="No-Break">the following:</span></p>
+<p><em class="italic">Never regret anything that once made </em><span class="No-Break"><em class="italic">you smile</em></span></p>
+<p><em class="italic">was one moron driving his oversize tonka truck with the big flag in the bed back and forth blaring </em><span class="No-Break"><em class="italic">country music.</em></span></p>
+<p><em class="italic">Literally hanging on by a thread need some taylor ray tonight loving a bad </em><span class="No-Break"><em class="italic">dog sucks</em></span></p>
+<p><em class="italic">The wise shepherd never trusts his flock to a </em><span class="No-Break"><em class="italic">smiling wolf</em></span><span class="No-Break">.</span></p>
+<p>These all contain well-formed fragments: the first and fourth are, indeed, well-formed sentences, and the other two contain well-formed fragments. What happens if we try to parse them using our rule-based tagger and then <span class="No-Break">use MALT?</span></p>
+<p>The<a id="_idIndexMarker488"/> two parsers give <a id="_idIndexMarker489"/>essentially the same answers for the first and fourth of these (rule-based analysis on the left, MALT analysis on the right), save that the rule-based parser gives the wrong attachment to <em class="italic">to a smiling wolf</em>. No parser can be expected to get the attachment of such phrases right every time, and apart from that, the two behave perfectly sensibly given the rules that either explicitly or implicitly <span class="No-Break">underly them:</span></p>
+<div>
+<div class="IMG---Figure" id="_idContainer060">
+<img alt="Figure 4.6 – Rule-based and MALT parses for “The wise shepherd never trusts his flock to a smiling wolf”" height="1086" src="image/B18714_04_06.jpg" width="1602"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 4.6 – Rule-based and MALT parses for “The wise shepherd never trusts his flock to a smiling wolf”</p>
+<div>
+<div class="IMG---Figure" id="_idContainer061">
+<img alt="Figure 4.7 – Rule-based and MALT parses for “Never regret anything that once made you smile”" height="1022" src="image/B18714_04_07.jpg" width="1392"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 4.7 – Rule-based and MALT parses for “Never regret anything that once made you smile”</p>
+<p>So, either <a id="_idIndexMarker490"/>approach will suffice for<a id="_idIndexMarker491"/> these examples. When we consider the other cases, the situation becomes more difficult. The rule-based parser fails to produce any overall analysis for <em class="italic">was one moron driving his oversize tonka truck with the big flag in the bed back and forth blaring country music</em> or <em class="italic">Literally hanging on by a thread need some taylor ray tonight loving a bad dog sucks</em>. Both these sentences are simply too long for it to handle because there are too many options to be explored. MALT produces analyses for <span class="No-Break">both cases:</span></p>
+<div>
+<div class="IMG---Figure" id="_idContainer062">
+<img alt="Figure 4.8 – MALT parse for “was one moron driving his oversize tonka truck with the big flag in the bed back and forth blaring country music”" height="1607" src="image/B18714_04_08.jpg" width="1647"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 4.8 – MALT parse for “was one moron driving his oversize tonka truck with the big flag in the bed back and forth blaring country music”</p>
+<div>
+<div class="IMG---Figure" id="_idContainer063">
+<img alt="Figure 4.9 – MALT parse for “Literally hanging on by a thread need some taylor ray tonight loving a bad dog sucks”" height="1262" src="image/B18714_04_09.jpg" width="1452"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 4.9 – MALT parse for “Literally hanging on by a thread need some taylor ray tonight loving a bad dog sucks”</p>
+<p>The first of these is reasonable – the analysis of <em class="italic">was</em> as a copula is questionable, and the attachment of <em class="italic">back and forth</em> is wrong, but by and large, it captures most of the relevant relationships. The second is just a mess. The problem with the second is that the text contains several disjoint elements – <em class="italic">Literally hanging on by a thread, need some taylor ray tonight </em>and<em class="italic"> loving a bad dog sucks</em> – but the parser has been told to analyze the whole thing and hence it has analyzed the <span class="No-Break">whole thing.</span></p>
+<p>There is <a id="_idIndexMarker492"/>nothing to be done about this. Data-driven parsers are generally designed to be robust, so even if the text they are given is entirely ungrammatical or contains grammatical fragments but is not a single coherent whole, they will return a single tree <strong class="bold">and there is no way of telling that what they return is problematic</strong>. This holds pretty much by definition. If a text doesn’t have a sensible structure – that is, it can’t be assigned a sensible parse tree – then a robust parser will assign it a tree that is not sensible. A <a id="_idIndexMarker493"/>rule-based parser, on the other hand, will just fail if the text does not obey the rules it expects it to obey or is just too long and complex <span class="No-Break">to handle.</span></p>
+<p>So, there seems little point in including a parser in the preprocessing steps for sentiment mining. Rule-based parsers will frequently just fail when confronted with informal texts, even if they are preprocessed to strip non-textual items off the front and back and to do various other simple steps. Data-driven parsers will always produce an answer, but for text that does not obey the rules of normal language, this answer will often be nonsensical and <strong class="bold">there is no easy way of telling which analyses are reasonable and which are not</strong>. And if there is no point in including a parser, then there is also no point in including a tagger, since the sole function of a tagger is to preprocess the text for a parser. It might be possible to use a rule-based parser to check the output of a data-driven parser – if the output of the data-driven one is reasonable, then using it to guide the rule-based one will enable the rule-based one to verify that it is indeed acceptable without exploring vast numbers <span class="No-Break">of dead-ends.</span></p>
+<p>However, it is very unclear how a typical machine learning algorithm would be able to make use of such trees, even if they could be reliably found. The code repository for this book includes code for tagging tweets and running a data-driven parser on the results, and some examples can be explored further there, but since these are not generally useful steps for our overall goal, we will not discuss them <span class="No-Break">further here.</span></p>
+<h1 id="_idParaDest-79"><a id="_idTextAnchor112"/>Summary</h1>
+<p>In this chapter, we have looked at the issues that arise when you try to split a piece of text into words by looking at how to split text into tokens, how to find the basic components of words, and how to identify compound words. These are all useful steps for assigning emotions to informal texts. We also looked at what happens when we try to take the next step and assign grammatical relations to the words that make up an informal text, concluding that this is an extremely difficult task that provides comparatively little benefit for our overall task. We had to look quite carefully at this step, even though we believe it is not all that useful, since we need to understand why it is so hard and why the results of even the best parsers cannot be <span class="No-Break">relied on.</span></p>
+<h1 id="_idParaDest-80"><a id="_idTextAnchor113"/>References</h1>
+<p>To learn more about the topics that were covered in this chapter, take a look at the <span class="No-Break">fo<a id="_idTextAnchor114"/>llowing resources:</span></p>
+<ul>
+<li>Buckwalter, T. (2007). <em class="italic">Issues in Arabic Morphological Analysis</em>. Arabic Computational <span class="No-Break">Morphology, 23-42.</span></li>
+<li>Chomsky, N., &amp; Halle, M. (1968). <em class="italic">The Sound Pattern of English</em>. <span class="No-Break">MIT Press.</span></li>
+<li>Fano, R. M. (1961). <em class="italic">Transmission of Information: A Statistical Theory of Communications</em>. <span class="No-Break">MIT Press.</span></li>
+<li>Hoeksema, J. (1985). <em class="italic">Categorial Morphology</em>. <span class="No-Break">Garland Publishing.</span></li>
+<li>Koskiennemi, K. (1985). <em class="italic">A General Two-level Computational Model for Word-form Recognition and Production</em>. <span class="No-Break">COLING-84, 178-181.</span></li>
+<li>Leech, G., Garside, R., &amp; Bryant, M. (1994, August). <em class="italic">CLAWS4: The Tagging of the British National Corpus</em>. COLING 1994 Volume 1: The 15th International Conference on Computational <span class="No-Break">Linguistics. </span><a href="https://aclanthology.org/C94-1103"><span class="No-Break">https://aclanthology.org/C94-1103</span></a></li>
+<li>Nivre, J., Hall, J., &amp; Nilsson, J. (2006). <em class="italic">MaltParser: A language-independent system for data-driven dependency parsing</em>. Proceedings of the International Conference on Language Resources (LREC), <span class="No-Break">6, 2216-2219.</span></li>
+<li>Ramsay, A. M. (1999). <em class="italic">Direct parsing with discontinuous phrases</em>. Natural Language Engineering, <span class="No-Break">5(3), 271-300.</span></li>
+</ul>
+</div>
+</div>
+
+<div id="sbo-rt-content"><div class="Content" id="_idContainer065">
+<h1 id="_idParaDest-81" lang="en-US" xml:lang="en-US"><a id="_idTextAnchor115"/>Part 3:Approaches</h1>
+<p>In this part, you’ll learn how we go about the task of EA. We will discuss various models, explain how they work, and evaluate <span class="No-Break">the results.</span></p>
+<p>This part has the <span class="No-Break">following chapters:</span></p>
+<ul>
+<li><a href="B18714_05.xhtml#_idTextAnchor116"><em class="italic">Chapter 5</em></a>, <em class="italic">Sentiment Lexicons and Vector Space Models</em></li>
+<li><a href="B18714_06.xhtml#_idTextAnchor134"><em class="italic">Chapter 6</em></a>, <em class="italic">Naïve Bayes</em></li>
+<li><a href="B18714_07.xhtml#_idTextAnchor144"><em class="italic">Chapter 7</em></a>, <em class="italic">Support Vector Machines</em></li>
+<li><a href="B18714_08.xhtml#_idTextAnchor157"><em class="italic">Chapter 8</em></a>, <em class="italic">Neural Networks and Deep Neural Networks</em></li>
+<li><a href="B18714_09.xhtml#_idTextAnchor172"><em class="italic">Chapter 9</em></a>, <em class="italic">Exploring Transformers</em></li>
+<li><a href="B18714_10.xhtml#_idTextAnchor193"><em class="italic">Chapter 10</em></a>, <em class="italic">Multiclassifiers</em></li>
+</ul>
+</div>
+<div>
+<div id="_idContainer066">
+</div>
+</div>
+<div>
+<div id="_idContainer067">
+</div>
+</div>
+<div>
+<div id="_idContainer068">
+</div>
+</div>
+<div>
+<div id="_idContainer069">
+</div>
+</div>
+<div>
+<div id="_idContainer070">
+</div>
+</div>
+<div>
+<div class="Basic-Graphics-Frame" id="_idContainer071">
+</div>
+</div>
+<div>
+<div id="_idContainer072">
+</div>
+</div>
+<div>
+<div id="_idContainer073">
+</div>
+</div>
+</div></body></html>
