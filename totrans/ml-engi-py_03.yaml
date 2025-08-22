@@ -895,6 +895,7 @@
   id: totrans-122
   prefs: []
   type: TYPE_NORMAL
+  zh: 因此，这需要大量的计算资源，在数据相对较大（或计算资源相对较低）的情况下，可能需要很长时间。即使您有一个小数据集和大量的计算资源，训练仍然不是一个低延迟的过程。此外，它通常是以批量方式运行的，并且数据集的小幅增加对模型性能的影响不大（也有例外）。另一方面，预测是一个更直接的过程，可以将其视为在代码中运行任何计算或函数：输入进入，进行计算，然后输出结果。这（通常）不需要大量的计算资源，并且具有低延迟。
 - en: Taken together, this means that, firstly, it makes sense to separate these two
     steps (training and prediction) both logically and in code. Secondly, it means
     we have to consider the different execution requirements for these two stages
@@ -905,31 +906,37 @@
   id: totrans-123
   prefs: []
   type: TYPE_NORMAL
+  zh: 综合来看，这意味着首先，从逻辑和代码的角度来看，将这两个步骤（训练和预测）分开是有意义的。其次，这意味着我们必须考虑这两个阶段的不同执行需求，并将这些需求纳入我们的解决方案设计中。最后，我们需要对训练方案做出选择，包括是否批量安排训练、使用增量学习，或者根据模型性能标准触发训练。这些都是您训练系统中的关键部分。
 - en: Training system design options
   id: totrans-124
   prefs:
   - PREF_H2
   type: TYPE_NORMAL
+  zh: 训练系统设计选项
 - en: 'Before we create any detailed designs of our training system, some general
     questions will always apply:'
   id: totrans-125
   prefs: []
   type: TYPE_NORMAL
+  zh: 在我们创建训练系统的任何详细设计之前，一些一般性问题总是适用的：
 - en: Is there infrastructure available that is appropriate to the problem?
   id: totrans-126
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 是否有适合该问题的基础设施可用？
 - en: Where is the data and how will we feed it to the algorithm?
   id: totrans-127
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 数据在哪里，我们将如何将其输入到算法中？
 - en: How am I testing the performance of the model?
   id: totrans-128
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 我是如何测试模型性能的？
 - en: In terms of infrastructure, this can be very dependent on the model and data
     you are using for training. If you are going to train a linear regression on data
     with three features and your dataset contains only 10,000 tabular records, you
@@ -943,6 +950,7 @@
   id: totrans-129
   prefs: []
   type: TYPE_NORMAL
+  zh: 在基础设施方面，这可能会非常依赖于您用于训练的模型和数据。如果您打算在具有三个特征的数据上训练线性回归，并且您的数据集只包含10,000个表格记录，那么您可能无需过多考虑就能在笔记本电脑级别的硬件上运行。这不是很多数据，并且您的模型没有很多自由参数。如果您要在更大的数据集上训练，例如包含1亿个表格记录的数据集，那么您可能可以从Spark集群之类的并行化中受益。然而，如果您要在1,000张图像上训练一个100层的深度卷积神经网络，那么您可能需要使用GPU。有很多选择，但关键是选择适合这项工作的正确工具。
 - en: Regarding the question of how we feed data to the algorithm, this can be non-trivial.
     Are we going to run a SQL query against a remotely hosted database? If so, how
     are we connecting to it? Does the machine we’re running the query on have enough
@@ -950,6 +958,7 @@
   id: totrans-130
   prefs: []
   type: TYPE_NORMAL
+  zh: 关于如何将数据输入到算法中的问题，这可能并不简单。我们是否将对远程托管数据库运行SQL查询？如果是这样，我们将如何连接到它？运行查询的机器是否有足够的RAM来存储数据？
 - en: If not, do we need to consider using an algorithm that can learn incrementally?
     For classic algorithmic performance testing, we need to employ the well-known
     tricks of the ML trade and perform train/test/validation splits on our data. We
@@ -961,36 +970,43 @@
   id: totrans-131
   prefs: []
   type: TYPE_NORMAL
+  zh: 如果不是这样，我们需要考虑使用一种可以逐步学习的算法吗？对于经典的算法性能测试，我们需要使用机器学习领域的知名技巧，并在我们的数据上执行训练/测试/验证拆分。我们还需要决定我们可能想要采用的交叉验证策略。然后，我们需要选择我们偏好的模型性能指标并适当地计算它。然而，作为机器学习工程师，我们也会对*其他*性能指标感兴趣，例如训练时间、内存的有效使用、延迟，以及（我敢说）成本。我们还需要了解我们如何衡量并优化这些指标。
 - en: So long as we bear these things in mind as we proceed, we will be in a good
     position. Now, onto the design.
   id: totrans-132
   prefs: []
   type: TYPE_NORMAL
+  zh: 只要我们在进行过程中牢记这些事情，我们就会处于有利的位置。现在，让我们转向设计。
 - en: 'As we mentioned in the introduction to this section, we have two fundamental
     pieces to consider: the training and output processes. There are two ways in which
     we can put these together for our solution. We will discuss this in the next section.'
   id: totrans-133
   prefs: []
   type: TYPE_NORMAL
+  zh: 正如我们在本节引言中提到的，我们需要考虑两个基本方面：训练和输出过程。我们可以以两种方式将这些结合起来作为我们的解决方案。我们将在下一节中讨论这一点。
 - en: Train-run
   id: totrans-134
   prefs:
   - PREF_H2
   type: TYPE_NORMAL
+  zh: 训练-运行
 - en: '*Option 1* is to perform training and prediction in the same process, with
     training occurring in either batch or incremental mode. This is shown schematically
     in the following diagram. This pattern is called *train-run*:'
   id: totrans-135
   prefs: []
   type: TYPE_NORMAL
+  zh: '*选项1*是在同一过程中执行训练和预测，训练可以在批量或增量模式下进行。这在下图中以示意图的形式展示。这种模式被称为*训练-运行*：'
 - en: '![Figure 3.2 – The train-run process ](img/B19525_03_03.png)'
   id: totrans-136
   prefs: []
   type: TYPE_IMG
+  zh: '![图3.2 – 训练-运行过程](img/B19525_03_03.png)'
 - en: 'Figure 3.3: The train-run process.'
   id: totrans-137
   prefs: []
   type: TYPE_NORMAL
+  zh: 图3.3：训练-运行过程。
 - en: This pattern is the simpler of the two but also the least desirable for real-world
     problems since it does not embody the *separation of concerns* principle we mentioned
     previously. This does not mean it is an invalid pattern, and it does have the
@@ -1002,6 +1018,7 @@
   id: totrans-138
   prefs: []
   type: TYPE_NORMAL
+  zh: 这种模式是两种模式中较简单的一种，但也是对现实世界问题最不理想的一种，因为它并不体现我们之前提到的*关注点分离*原则。这并不意味着它是一个无效的模式，它确实有易于实现的优点。在这里，我们在做出预测之前运行整个训练过程，中间没有真正的*中断*。根据我们之前的讨论，如果我们必须以非常低延迟的方式提供预测，我们可以自动排除这种方法；例如，通过事件驱动或流式解决方案（稍后会有更多介绍）。
 - en: Where this approach *could* be completely valid, though (and I’ve seen this
     a few times in practice), is either in cases where the algorithms you are applying
     are actually very lightweight to train and you need to keep using very recent
@@ -1009,11 +1026,13 @@
   id: totrans-139
   prefs: []
   type: TYPE_NORMAL
+  zh: 虽然这种方法*可能*完全有效（我在实践中见过几次），但这可能是在以下情况下：你应用的算法实际上非常轻量级，你需要继续使用非常最新的数据，或者你运行的大批量过程相对不频繁。
 - en: 'Although this is a simple approach and does not apply to all cases, it does
     have distinct advantages:'
   id: totrans-140
   prefs: []
   type: TYPE_NORMAL
+  zh: 虽然这是一个简单的方法，并不适用于所有情况，但它确实具有明显的优势：
 - en: Since you are training as often as you predict, you are doing everything you
     can to protect against modern performance degradation, meaning that you are combatting
     *drift* (see later sections in this chapter).
@@ -1021,6 +1040,7 @@
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 由于你训练的频率与预测的频率相同，你正在尽一切可能防止现代性能退化，这意味着你正在对抗*漂移*（参见本章后面的部分）。
 - en: You are significantly reducing the complexity of your solution. Although you
     are tightly coupling two components, which should generally be avoided, the training
     and prediction stages may be so simple to code that if you just stick them together,
@@ -1030,15 +1050,18 @@
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 你显著降低了你解决方案的复杂性。虽然你紧密耦合了两个组件，这通常应该避免，但训练和预测阶段可能非常简单，以至于如果你只是将它们放在一起，你会节省大量的开发时间。这是一个非同小可的观点，因为*开发时间是有成本的*。
 - en: Now, let’s look at the other case.
   id: totrans-143
   prefs: []
   type: TYPE_NORMAL
+  zh: 现在，让我们看看另一种情况。
 - en: Train-persist
   id: totrans-144
   prefs:
   - PREF_H2
   type: TYPE_NORMAL
+  zh: 训练-持久
 - en: '*Option 2* is that training runs in batch, while prediction runs in whatever
     mode is deemed appropriate, with the prediction solution reading in the trained
     model from a store. We will call this design pattern *train-persist*. This is
@@ -1046,36 +1069,43 @@
   id: totrans-145
   prefs: []
   type: TYPE_NORMAL
+  zh: '*选项2*是训练以批处理方式运行，而预测以认为合适的任何模式运行，预测解决方案从存储中读取已训练的模型。我们将这种设计模式称为*train-persist*。这将在以下图中展示：'
 - en: '![Figure 3.3 – The train-persist process ](img/B19525_03_04.png)'
   id: totrans-146
   prefs: []
   type: TYPE_IMG
+  zh: '![图3.3 – train-persist过程](img/B19525_03_04.png)'
 - en: 'Figure 3.4: The train-persist process.'
   id: totrans-147
   prefs: []
   type: TYPE_NORMAL
+  zh: 图3.4：train-persist过程。
 - en: 'If we are going to train our model and then persist the model so that it can
     be picked up later by a prediction process, then we need to ensure a few things
     are in place:'
   id: totrans-148
   prefs: []
   type: TYPE_NORMAL
+  zh: 如果我们要训练我们的模型并持久化模型，以便它可以在以后由预测过程拾取，那么我们需要确保以下几点：
 - en: What are our model storage options?
   id: totrans-149
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 我们有哪些模型存储选项？
 - en: Is there a clear mechanism for accessing our model store (writing to and reading
     from)?
   id: totrans-150
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 是否有明确的机制来访问我们的模型存储（写入和读取）？
 - en: How often should we train versus how often will we predict?
   id: totrans-151
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 我们应该多久训练一次，多久预测一次？
 - en: In our case, we will solve the first two questions by using MLflow, which we
     introduced in *Chapter 2*, *The Machine Learning Development Process*, but will
     revisit in later sections. There are also lots of other solutions available. The
@@ -1085,6 +1115,7 @@
   id: totrans-152
   prefs: []
   type: TYPE_NORMAL
+  zh: 在我们的情况下，我们将通过使用在第2章“机器学习开发过程”中介绍但将在后续部分重新讨论的MLflow来解决前两个问题。还有许多其他解决方案可用。关键点是，无论你使用什么作为模型存储和训练与预测过程之间的*交接*点，都应该以稳健和可访问的方式使用。
 - en: The third point is trickier. You could potentially just decide at the outset
     that you want to train on a schedule, and you stick to that. Or you could be more
     sophisticated and develop trigger criteria that must be met before training occurs.
@@ -1094,17 +1125,20 @@
   id: totrans-153
   prefs: []
   type: TYPE_NORMAL
+  zh: 第三个点更复杂。你可以在一开始就决定你想按计划进行训练，并坚持下去。或者你可以更复杂，开发出在训练发生之前必须满足的触发标准。再次强调，这是你需要与你的团队一起做出的选择。在本章的后面部分，我们将讨论安排你的训练运行的机制。
 - en: In the next section, we will explore what you have to do if you want to trigger
     your training runs based on how your model’s performance could be degrading over
     time.
   id: totrans-154
   prefs: []
   type: TYPE_NORMAL
+  zh: 在下一节中，我们将探讨如果你想要根据你的模型性能随时间可能退化的情况来触发你的训练运行，你需要做什么。
 - en: Retraining required
   id: totrans-155
   prefs:
   - PREF_H1
   type: TYPE_NORMAL
+  zh: 需要重新训练
 - en: You wouldn’t expect that after finishing your education, you never read a paper
     or book or speak to anyone again, which would mean you wouldn’t be able to make
     informed decisions about what is happening in the world. So, you shouldn’t expect
@@ -1112,12 +1146,14 @@
   id: totrans-156
   prefs: []
   type: TYPE_NORMAL
+  zh: 你不会期望在完成教育后，就再也不读论文或书籍，也不再与任何人交谈，这意味着你将无法对世界正在发生的事情做出明智的决策。因此，你不应该期望一个机器学习模型一旦训练就永远表现良好。
 - en: 'This idea is intuitive, but it represents a formal problem for ML models known
     as **drift**. Drift is a term that covers a variety of reasons for your model’s
     performance dropping over time. It can be split into two main types:'
   id: totrans-157
   prefs: []
   type: TYPE_NORMAL
+  zh: 这个想法直观易懂，但它代表了机器学习模型中一个被称为**漂移**的正式问题。漂移是一个涵盖你模型性能随时间下降的多种原因的术语。它可以分为两大类：
 - en: '**Concept drift**: This happens when there is a change in the fundamental relationship
     between the features of your data and the outcome you are trying to predict. Sometimes,
     this is also known as *covariate drift*. An example could be that at the time
@@ -1130,6 +1166,7 @@
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: '**概念漂移**：当你的数据特征与试图预测的结果之间的基本关系发生变化时，就会发生这种情况。有时，这也被称为*协变量漂移*。一个例子是在训练时，你只有一部分数据似乎显示出特征和结果之间的线性关系。如果结果是，在部署后收集了大量更多数据后，这种关系是非线性的，那么就发生了概念漂移。对此的缓解措施是使用更能代表正确关系的正确数据重新训练。'
 - en: '**Data drift**: This happens when there is a change in the statistical properties
     of the variables you are using as your features. For example, you could be using
     *age* as a feature in one of your models but at training time, you only have data
@@ -1138,11 +1175,13 @@
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: '**数据漂移**：这种情况发生在你用作特征的变量的统计属性发生变化时。例如，你可能在你的某个模型中使用*年龄*作为特征，但在训练时间，你只有16至24岁年龄段的数据。'
 - en: If the model gets deployed and your system starts ingesting data for a wider
     age demographic, then you have data drift.
   id: totrans-160
   prefs: []
   type: TYPE_NORMAL
+  zh: 如果模型被部署，并且你的系统开始摄入更广泛年龄层的数据，那么你就遇到了数据漂移。
 - en: The truth is that drift is part of life as an ML engineer, so we will spend
     a good bit of time getting to know how to detect and mitigate against it. But
     why does it happen? As you would expect, there are a variety of reasons for drift
@@ -1153,6 +1192,7 @@
   id: totrans-161
   prefs: []
   type: TYPE_NORMAL
+  zh: 事实上，漂移是作为机器学习工程师生活的一部分，因此我们将花费大量时间来了解如何检测和减轻它。但为什么它会发生？正如你所预期的那样，漂移有多种原因需要考虑。让我们考虑一些例子。比如说，你用于采样训练数据的机制在某些方面不合适；也许你为特定的地理区域或人口统计进行了子采样，但你希望模型在更普遍的情况下应用。
 - en: There may be seasonal effects in the problem domain in which we are operating,
     as can be expected in sales forecasting or weather prediction. Anomalies could
     be introduced by “black swan” or rare events, like geopolitical events or even
@@ -1172,6 +1212,7 @@
   id: totrans-162
   prefs: []
   type: TYPE_NORMAL
+  zh: 在我们操作的问题域中可能存在季节性影响，正如在销售预测或天气预测中可以预期的那样。异常情况可能由“黑天鹅”或罕见事件引起，如地缘政治事件甚至新冠疫情大流行。数据收集过程可能在某个时候引入错误，例如，如果上游系统存在错误或过程本身没有遵循或已改变。最后一个例子在需要手动输入数据的流程中可能特别普遍。如果销售人员要被信任正确标记**客户资源管理**（**CRM**）系统中销售的当前状态，那么训练或经验较少的销售人员可能不会准确或及时地标记数据。尽管在软件开发领域的许多方面取得了进步，但这种数据收集过程仍然非常普遍，因此你必须在自己的机器学习系统开发中防范这一点。可以通过尝试强制执行数据收集的更多自动化或为输入数据的人提供指南（例如下拉菜单）来略微减轻这种情况，但几乎可以肯定，大量的数据仍然以这种方式收集，并且在未来一段时间内也将如此。
 - en: 'That drift is an important aspect of your system to consider should be clear
     now, but dealing with it is actually a multi-step process. We first need to detect
     the drift. Detecting drift in your deployed models is a key part of MLOps and
@@ -1189,34 +1230,40 @@
   id: totrans-163
   prefs: []
   type: TYPE_NORMAL
+  zh: 现在应该很清楚，漂移是您系统需要考虑的重要方面，但实际上处理它是一个多步骤的过程。我们首先需要检测漂移。在部署的模型中检测漂移是MLOps的关键部分，作为机器学习工程师，您应该将其放在首位。然后我们需要诊断漂移的来源；这通常涉及负责监控的人员进行某种形式的离线调查。我们将提到的工具和技术将帮助您定义工作流程，从而开始自动化这个过程，以便在检测到问题时处理任何可重复的任务。最后，我们需要实施一些措施来补救漂移的影响：这通常涉及使用更新或修正的数据集重新训练模型，但可能需要重新开发或重写模型的关键组件。一般来说，如果您能够构建您的训练系统，以便根据对模型中漂移的了解有意识地触发重新训练，那么您将节省大量的计算资源，因为只有在需要时才进行训练。
 - en: The next section will discuss some of the ways we can detect drift in our models.
     This will help us start building up a smart retraining strategy in our solution.
   id: totrans-164
   prefs: []
   type: TYPE_NORMAL
+  zh: 下一节将讨论我们可以检测模型中漂移的一些方法。这将帮助我们开始构建解决方案中的智能重新训练策略。
 - en: Detecting data drift
   id: totrans-165
   prefs:
   - PREF_H2
   type: TYPE_NORMAL
+  zh: 检测数据漂移
 - en: So far, we have defined drift, and we know that detecting it is going to be
     important if we want to build sophisticated training systems. The next logical
     question is, *how do we do this?*
   id: totrans-166
   prefs: []
   type: TYPE_NORMAL
+  zh: 到目前为止，我们已经定义了漂移，并且我们知道如果我们想构建复杂的训练系统，检测它将非常重要。下一个合乎逻辑的问题是，*我们该如何做呢？*
 - en: The definitions of drift we gave in the previous section were very qualitative;
     we can start to make these statements a bit more quantitative as we explore the
     calculations and concepts that can help us detect drift.
   id: totrans-167
   prefs: []
   type: TYPE_NORMAL
+  zh: 我们在上一节中给出的漂移定义非常定性；随着我们探索有助于我们检测漂移的计算和概念，我们可以开始使这些陈述更加量化。
 - en: 'In this section, we will rely heavily on the `alibi-detect` Python package
     from Seldon, which, at the time of writing, is not available from **Anaconda.org**
     but is available on PyPI. To acquire this package, use the following commands:'
   id: totrans-168
   prefs: []
   type: TYPE_NORMAL
+  zh: 在本节中，我们将大量依赖Seldon的`alibi-detect` Python包，在撰写本文时，该包在**Anaconda.org**上不可用，但在PyPI上有。要获取此包，请使用以下命令：
 - en: '[PRE16]'
   id: totrans-169
   prefs: []
@@ -1232,12 +1279,14 @@
   id: totrans-170
   prefs: []
   type: TYPE_NORMAL
+  zh: 使用`alibi-detect`包非常简单。在下面的示例中，我们将使用来自`sklearn`的`wine`数据集，该数据集将在本章的其他地方使用。在这个第一个例子中，我们将数据分割为50/50，并将其中一个集合称为*参考*集，另一个称为*测试*集。然后我们将使用Kolmogorov-Smirnov测试来证明这两个数据集之间没有出现数据漂移，正如预期的那样，然后人为地添加一些漂移以显示它已被成功检测：
 - en: 'First, we must import the `TabularDrift` detector from the `alibi-detect` package,
     as well as the relevant packages for loading and splitting the data:'
   id: totrans-171
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 首先，我们必须从`alibi-detect`包中导入`TabularDrift`检测器，以及用于加载数据和分割数据的相关包：
 - en: '[PRE17]'
   id: totrans-172
   prefs:
@@ -1249,6 +1298,7 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 接下来，我们必须获取并分割数据：
 - en: '[PRE18]'
   id: totrans-174
   prefs:
@@ -1263,6 +1313,7 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 接下来，我们必须使用参考数据和提供的`p-value`来初始化我们的漂移检测器，以便在统计显著性测试中使用。如果您希望使您的漂移检测器在数据分布中出现较小差异时触发，您必须选择一个更大的`p_val`：
 - en: '[PRE19]'
   id: totrans-176
   prefs:
@@ -1274,6 +1325,7 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 现在我们可以检查测试数据集相对于参考数据集是否存在漂移：
 - en: '[PRE20]'
   id: totrans-178
   prefs:
@@ -1285,12 +1337,14 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: '这返回了 `''Drift: No''`。'
 - en: So, we have not detected drift here, as expected (see the following *IMPORTANT
     NOTE* for more on this).
   id: totrans-180
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 因此，正如预期的那样，我们没有检测到漂移（有关更多信息，请参阅以下 *重要提示*）。
 - en: 'Although there was no drift in this case, we can easily simulate a scenario
     where the chemical apparatus being used for measuring the chemical properties
     experienced a calibration error, and all the values are recorded as 10% higher
@@ -1300,6 +1354,7 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 尽管在这种情况下没有发生漂移，我们可以轻松地模拟一个场景，其中用于测量化学性质的化学装置经历了校准错误，所有值都被记录为比真实值高10%。在这种情况下，如果我们再次在相同的参考数据集上运行漂移检测，我们将得到以下输出：
 - en: '[PRE21]'
   id: totrans-182
   prefs:
@@ -1312,10 +1367,12 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: '这返回了 `''Drift: Yes''`，表明漂移已被成功检测到。'
 - en: IMPORTANT NOTE
   id: totrans-184
   prefs: []
   type: TYPE_NORMAL
+  zh: 重要提示
 - en: This example is very artificial but is useful for illustrating the point. In
     a standard dataset like this, there won’t be data drift between 50% of the randomly
     sampled data and the other 50% of the data. This is why we have to artificially
@@ -1327,6 +1384,8 @@
   id: totrans-185
   prefs: []
   type: TYPE_NORMAL
+  zh: 这个例子非常人为化，但有助于说明这一点。在一个标准的像这样的数据集中，随机抽取的50%的数据和剩下的50%的数据之间不会有数据漂移。这就是为什么我们必须人为地
+    *移动* 一些点来表明检测器确实起作用。在现实世界场景中，数据漂移可能由于测量所用的传感器更新；到消费者行为的改变；一直到数据库软件或模式的改变而自然发生。因此，要保持警惕，因为许多漂移情况不会像这个例子中那样容易被发现！
 - en: This example shows how, with a few simple lines of Python, we can detect a change
     in our dataset, which means our ML model may start to degrade in performance if
     we do not retrain to take the new properties of the data into account. We can
@@ -1337,6 +1396,7 @@
   id: totrans-186
   prefs: []
   type: TYPE_NORMAL
+  zh: 这个例子展示了如何用几行简单的Python代码检测数据集中的变化，这意味着如果我们不重新训练以考虑数据的新的属性，我们的机器学习模型可能会开始性能下降。我们还可以使用类似的技术来跟踪我们的模型性能指标，例如准确度或均方误差，是否也在漂移。在这种情况下，我们必须确保我们定期在新测试或验证数据集上计算性能。
 - en: The first drift detection example was very simple and showed us how to detect
     a basic case of one-off data drift, specifically feature drift. We will now show
     an example of detecting **label drift**, which is basically the same but now we
@@ -1346,12 +1406,14 @@
   id: totrans-187
   prefs: []
   type: TYPE_NORMAL
+  zh: 第一个漂移检测例子非常简单，展示了如何检测一次性数据漂移的基本情况，特别是特征漂移。现在我们将展示检测 **标签漂移** 的例子，这基本上是相同的，但现在我们只是使用标签作为参考和比较数据集。我们将忽略前几个步骤，因为它们是相同的，并从我们有参考和测试数据集可用的点开始。
 - en: 'As in the example for the drift in the features, we can configure the tabular
     drift detector, but now we will use the initial label as our baseline dataset:'
   id: totrans-188
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 就像在特征漂移的例子中一样，我们可以配置表格漂移检测器，但现在我们将使用初始标签作为我们的基线数据集：
 - en: '[PRE22]'
   id: totrans-189
   prefs:
@@ -1363,6 +1425,7 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 我们现在可以检查测试标签相对于参考数据集的漂移：
 - en: '[PRE23]'
   id: totrans-191
   prefs:
@@ -1374,6 +1437,7 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: '这返回了 `''Drift: No''`。'
 - en: So, we have not detected drift here, as expected. Note that this method can
     also be used as a good sanity check that training and test data labels follow
     similar distributions and our sampling of test data is representative.
@@ -1381,12 +1445,14 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 因此，正如预期的那样，我们没有检测到漂移。请注意，这种方法也可以用作一个好的合理性检查，以确保训练和测试数据标签遵循相似的分布，并且我们的测试数据抽样具有代表性。
 - en: 'As in the previous example, we can simulate some drift in the data, and then
     check that this is indeed detected:'
   id: totrans-194
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 就像上一个例子一样，我们可以模拟数据中的一些漂移，然后检查这确实被检测到了：
 - en: '[PRE24]'
   id: totrans-195
   prefs:
@@ -1398,11 +1464,13 @@
   id: totrans-196
   prefs: []
   type: TYPE_NORMAL
+  zh: 我们现在将转向一个更加复杂的场景，即检测概念漂移。
 - en: Detecting concept drift
   id: totrans-197
   prefs:
   - PREF_H2
   type: TYPE_NORMAL
+  zh: 检测概念漂移
 - en: Concept drift was described in this section, and there it was emphasized that
     this type of drift is really all about a change in the relationships between the
     variables in our model. This means by definition that it is far more likely that
@@ -1410,6 +1478,7 @@
   id: totrans-198
   prefs: []
   type: TYPE_NORMAL
+  zh: 概念漂移在本节中进行了描述，并强调这种类型的漂移实际上完全是关于我们模型中变量之间关系的变化。这意味着按照定义，这种类型的案例更有可能很复杂，并且可能很难诊断。
 - en: The most common way that you can catch concept drift is by monitoring the performance
     of your model through time. For example, if we are working with the `wine` classification
     problem again, we can look at metrics that tell us the model’s classification
@@ -1418,6 +1487,7 @@
   id: totrans-199
   prefs: []
   type: TYPE_NORMAL
+  zh: 你可以捕捉到概念漂移的最常见方式是通过监控你的模型随时间的变化性能。例如，如果我们再次处理`wine`分类问题，我们可以查看告诉我们模型分类性能的指标，随着时间的推移绘制这些指标，然后围绕我们可能在这些值中看到的趋势和异常构建逻辑。
 - en: The `alibi_detect` package, which we have already been using, has several useful
     methods for online drift detection that can be used to find concept drift as it
     happens and impacts model performance. Online here refers to the fact that the
@@ -1429,6 +1499,7 @@
   id: totrans-200
   prefs: []
   type: TYPE_NORMAL
+  zh: 我们已经使用过的`alibi_detect`包包含了一些用于在线漂移检测的有用方法，这些方法可以用来在概念漂移发生时及其影响模型性能时找到它。在这里，“在线”指的是漂移检测发生在单个数据点的层面上，因此即使在生产中数据完全按顺序到来时，这也可能发生。其中一些方法假设PyTorch或TensorFlow作为后端可用，因为这些方法使用**未训练的自动编码器**（**UAEs**）作为开箱即用的预处理方法。
 - en: As an example, let us walk through an example of creating and using one of these
     online detectors, the Online Maximum Mean Discrepancy method. The following example
     assumes that in addition to the reference dataset, `X_ref`, we have also defined
@@ -1445,11 +1516,13 @@
   id: totrans-201
   prefs: []
   type: TYPE_NORMAL
+  zh: 作为例子，让我们通过创建和使用这些在线检测器之一，即在线最大均值差异方法，来走一遍。以下示例假设除了参考数据集`X_ref`外，我们还定义了预期的运行时间`ert`和窗口大小`window_size`变量。预期的运行时间是一个变量，表示检测器在引发假阳性检测之前应该运行的平均数据点数。这里的想法是，你希望预期的运行时间更大，但随着它的增大，检测器对实际漂移的敏感性会降低，因此必须找到平衡点。`window_size`是用于计算适当的漂移测试统计量的滑动数据窗口的大小。较小的`window_size`意味着你正在调整检测器以在短时间内找到数据或性能的急剧变化，而较长的窗口大小则意味着你正在调整以在更长的时间内寻找更微妙的变化。
 - en: 'First we import the method:'
   id: totrans-202
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 首先，我们导入该方法：
 - en: '[PRE25]'
   id: totrans-203
   prefs:
@@ -1464,12 +1537,14 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 我们随后使用前一段中讨论的一些变量设置初始化漂移检测器。我们还包含了我们想要应用的自举模拟次数，以便该方法计算检测漂移的一些阈值。
 - en: Depending on your hardware settings for the deep learning library used and the
     size of the data, this may take some time.
   id: totrans-205
   prefs:
   - PREF_IND
   type: TYPE_NORMAL
+  zh: 根据你为使用的深度学习库设置的硬件配置和数据的大小，这可能会花费一些时间。
 - en: '[PRE26]'
   id: totrans-206
   prefs:
@@ -1485,6 +1560,7 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 然后，我们可以通过从**Wine**数据集取测试数据，并一次输入一个特征向量，来模拟生产环境中的漂移检测。如果给定数据的特征向量由`x`给出，我们就可以调用漂移检测器的`predict`方法，并从返回的元数据中检索`'is_drift'`值，如下所示：
 - en: '[PRE27]'
   id: totrans-208
   prefs:
@@ -1497,12 +1573,14 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 对测试数据的所有行执行步骤2，并在检测到漂移的地方绘制一个垂直的橙色条，得到的图表如图3.5所示。![](img/B19525_03_05.png)
 - en: 'Figure 3.5: The features of the test set from the wine dataset, which we have
     used to run some simulated drift detection.'
   id: totrans-210
   prefs:
   - PREF_IND
   type: TYPE_NORMAL
+  zh: 图3.5：用于运行一些模拟漂移检测的测试集特征，来自我们使用的**Wine**数据集。
 - en: In this example, we can see in the plots of the simulated data that the accuracy
     of the data has changed over time. If we want to automate the detection of behaviors
     like this though, we will need to not simply plot this data but start to analyze
@@ -1511,23 +1589,27 @@
   id: totrans-211
   prefs: []
   type: TYPE_NORMAL
+  zh: 在这个例子中，我们可以从模拟数据的图表中看到，数据精度随时间发生了变化。如果我们想自动化检测这种行为，那么我们不仅需要简单地绘制这些数据，还需要开始以系统化的方式分析它，并将其纳入我们正在生产的模型监控过程中。
 - en: 'Note: The test data for the **Wine** dataset was used in the drift example
     only as an example. In production, this drift detection will be running on data
     that has never been seen before, but the principle is the same.'
   id: totrans-212
   prefs: []
   type: TYPE_NORMAL
+  zh: 注意：**Wine**数据集的测试数据仅用于漂移示例。在生产中，这种漂移检测将在从未见过的新数据上运行，但原理是相同的。
 - en: Now that you know drift is happening, we’ll move on to discuss how you can start
     to decide which limits to set on your drift detectors and then cover some processes
     and techniques for helping you to diagnose the type and source of your drift.
   id: totrans-213
   prefs: []
   type: TYPE_NORMAL
+  zh: 现在你已经知道漂移正在发生，我们将继续讨论你如何开始决定在你的漂移检测器上设置哪些限制，然后介绍一些帮助你诊断漂移类型和来源的过程和技术。
 - en: Setting the limits
   id: totrans-214
   prefs:
   - PREF_H2
   type: TYPE_NORMAL
+  zh: 设置限制
 - en: Many of the techniques we have been describing in this section on drift are
     very much aligned with standard techniques from statistics and machine learning.
     You can get very far using these techniques almost “out of the box” to diagnose
@@ -1540,6 +1622,7 @@
   id: totrans-215
   prefs: []
   type: TYPE_NORMAL
+  zh: 我们在本节中描述的许多关于漂移的技术与统计学和机器学习中的标准技术非常一致。你可以几乎“直接使用”这些技术来诊断一系列不同类型的问题，但我们还没有讨论如何将这些技术整合成一个连贯的漂移检测机制。在着手做这件事之前，考虑设置数据和模型可接受行为边界是非常重要的，这样你知道何时你的系统应该发出警报或采取某些行动。我们将称之为“设置漂移检测系统的限制”。
 - en: So, where do you start? This is where things become a bit less technical and
     definitely more centered around operating within a business environment, but let’s
     cover some of the key points. First, it is important to understand what is important
@@ -1564,17 +1647,20 @@
   id: totrans-216
   prefs: []
   type: TYPE_NORMAL
+  zh: 那么，你从哪里开始呢？这时事情变得稍微不那么技术性，而且肯定更多地围绕在商业环境中操作，但让我们先概述一些关键点。首先，了解哪些内容重要需要发出警报是很重要的。对你可以想到的所有指标中的偏差发出警报听起来可能是个好主意，但它可能仅仅创建了一个非常嘈杂的系统，难以找到真正值得关注的问题。因此，我们必须谨慎选择我们想要跟踪和监控的内容。接下来，我们需要了解检测问题的及时性要求。这与软件中的**服务级别协议**（**SLAs**）概念密切相关，它记录了系统所要求的和预期的性能。如果你的业务正在对用于危险条件下的设备运行实时异常检测和预测性维护模型，那么发出警报和采取行动的及时性要求可能相当高。然而，如果你的机器学习系统每周只进行一次财务预测，那么及时性限制可能就没有那么严格。最后，你需要设定限制。这意味着你需要仔细思考你正在跟踪的指标，并思考“什么构成了这里的坏？”或者“我们想被通知什么？”可能的情况是，作为项目发现阶段的一部分，你知道业务对回归模型感到满意，只要它提供合适的置信区间，其预测的准确性可以有很大的变化。
 - en: In another scenario, it could be that the classification model you are building
     must have a recall that fluctuates only within a relatively tight band; otherwise,
     it will jeopardize the efficacy of processes downstream.
   id: totrans-217
   prefs: []
   type: TYPE_NORMAL
+  zh: 在另一种场景中，你正在构建的分类模型可能必须具有只在相对较窄的范围内波动的召回率；否则，它将危及下游流程的有效性。
 - en: Diagnosing the drift
   id: totrans-218
   prefs:
   - PREF_H2
   type: TYPE_NORMAL
+  zh: 漂移的诊断
 - en: Although we have discussed in another section how there can be a variety of
     reasons for drift in our model, when it comes down to it, we must remember that
     machine learning models only act on features to create predictions. This then
@@ -1583,6 +1669,7 @@
   id: totrans-219
   prefs: []
   type: TYPE_NORMAL
+  zh: 虽然我们在另一个部分讨论了模型漂移可能存在各种原因，但归根结底，我们必须记住，机器学习模型只对特征进行操作以创建预测。这意味着，如果我们想诊断漂移的源头，我们不需要再往其他地方看，只需关注我们的特征即可。
 - en: So, where do we start? The first thing we should consider is that any feature
     could realistically have drifted, but not all the features will be equally important
     in terms of the model. This means we need to understand how important the features
@@ -1590,6 +1677,7 @@
   id: totrans-220
   prefs: []
   type: TYPE_NORMAL
+  zh: 那么，我们应该从哪里开始呢？首先，我们应该考虑的是，任何特征都有可能发生漂移，但并非所有特征在模型方面都同等重要。这意味着在优先考虑哪些特征需要补救措施之前，我们需要了解特征的重要性。
 - en: 'Feature importance can be calculated in ways that are either model dependent
     or model independent. The model-dependent methods refer specifically to tree-based
     models, such as decision trees or random forests. In these cases, feature importance
@@ -1603,6 +1691,7 @@
   id: totrans-221
   prefs: []
   type: TYPE_NORMAL
+  zh: 特征重要性可以通过模型相关或模型无关的方式计算。模型相关的方法特指基于树的模型，如决策树或随机森林。在这些情况下，特征重要性通常可以从模型中提取出来进行检查，具体取决于用于开发模型的包。例如，如果我们使用Scikit-Learn训练一个随机森林分类器，我们可以使用以下语法提取其特征重要性。在这个例子中，我们检索随机森林模型的默认特征重要性，这些重要性是通过**平均不纯度减少**（**MDI**）计算的，也称为“Gini重要性”，并将它们放入一个有序的pandas序列以供后续分析：
 - en: '[PRE28]'
   id: totrans-222
   prefs: []
@@ -1618,11 +1707,13 @@
   id: totrans-223
   prefs: []
   type: TYPE_NORMAL
+  zh: 尽管这非常简单，但由于几个原因，有时它可能会给出错误的结果。这里的特征重要性是通过一个不纯度度量计算的，这类度量可能会对高基数（例如数值）特征表现出偏差，并且仅基于训练集数据计算，这意味着它们不考虑模型对未见过的测试数据的泛化能力。在使用此类重要性度量时，这一点始终应牢记在心。
 - en: Another standard measure of feature importance, which is model agnostic and
     alleviates some of the issues for MDI or Gini importance, is the permutation importance.
   id: totrans-224
   prefs: []
   type: TYPE_NORMAL
+  zh: 另一个标准的特征重要性度量，它是模型无关的，并缓解了MDI或Gini重要性的一些问题，是排列重要性。
 - en: 'This works by taking the feature we are interested in, shuffling it (i.e.,
     moving the values in the column of the feature matrix up, down, or via some other
     method of reorganization), and then recalculating the model accuracy or error.
@@ -1633,6 +1724,7 @@
   id: totrans-225
   prefs: []
   type: TYPE_NORMAL
+  zh: 这是通过选择我们感兴趣的特定特征，对其进行洗牌（即，通过某种重新组织方法移动特征矩阵中的值，向上、向下或通过其他方法），然后重新计算模型精度或误差来实现的。精度或误差的变化然后可以用作衡量该特征重要性的指标，因为重要性特征越少，模型性能在洗牌后变化应该越小。以下是一个使用Scikit-Learn的此方法的示例，再次使用我们在上一个示例中使用的相同模型：
 - en: '[PRE29]'
   id: totrans-226
   prefs: []
@@ -1650,11 +1742,13 @@
   id: totrans-227
   prefs: []
   type: TYPE_NORMAL
+  zh: 最后，还有一种非常流行的确定特征重要性的方法是计算特征**SHAP**（**SHapley Additive exPlanation**）值。这种方法借鉴了博弈论的思想，考虑了特征如何组合来影响预测。SHAP值是通过在包含或排除考虑特征的所有特征排列上训练模型来计算的，然后计算该特征的预测值的边际贡献。这与排列重要性不同，因为我们不再只是排列特征值；我们现在实际上正在运行一系列不同的潜在特征集，包括或排除该特征。
 - en: 'You can start calculating SHAP values on your models by installing the `shap`
     package:'
   id: totrans-228
   prefs: []
   type: TYPE_NORMAL
+  zh: 您可以通过安装`shap`包来开始在您的模型上计算SHAP值：
 - en: '[PRE30]'
   id: totrans-229
   prefs: []
@@ -1667,6 +1761,8 @@
   id: totrans-230
   prefs: []
   type: TYPE_NORMAL
+  zh: 然后我们可以执行以下语法，使用前面示例中的相同随机森林模型来定义一个*SHAP解释器*对象并计算测试数据集中特征的SHAP值。我们假设这里的`X_test`是一个以特征名称为列名的pandas
+    DataFrame：
 - en: '[PRE31]'
   id: totrans-231
   prefs: []
@@ -1681,6 +1777,7 @@
   id: totrans-232
   prefs: []
   type: TYPE_NORMAL
+  zh: 注意，由于运行所有排列，计算SHAP值可能需要一些时间。`shap_values`本身不是特征重要性，但包含了为所有不同的特征组合实验中每个特征计算的SHAP值。为了确定特征重要性，你应该取每个特征的`shap_values`绝对值的平均值。如果你使用以下命令，这会为你完成并绘制结果：
 - en: '[PRE32]'
   id: totrans-233
   prefs: []
@@ -1695,22 +1792,26 @@
   id: totrans-234
   prefs: []
   type: TYPE_NORMAL
+  zh: 我们现在已经介绍了三种不同的方法来计算模型的特征重要性，其中两种完全与模型无关。特征重要性对于帮助你快速找到漂移的根源非常有帮助。如果你看到你模型的性能正在漂移或超过你设定的阈值，你可以使用特征重要性来集中你的诊断努力在最重要的特征上，并忽略不那么关键的特征的漂移。
 - en: Now that we have covered a useful way to help dig into the drift, we will now
     discuss how you can go about remediating it once you spot the feature or features
     that seem to be causing the most trouble.
   id: totrans-235
   prefs: []
   type: TYPE_NORMAL
+  zh: 现在我们已经介绍了一种有用的方法来帮助深入挖掘漂移，我们将讨论如何在发现似乎引起最大麻烦的特征或特征后如何着手解决它。
 - en: Remediating the drift
   id: totrans-236
   prefs:
   - PREF_H2
   type: TYPE_NORMAL
+  zh: 治疗漂移
 - en: 'There are a few ways we can take action against drift in order to maintain
     the performance of our system:'
   id: totrans-237
   prefs: []
   type: TYPE_NORMAL
+  zh: 我们可以采取几种方法来对抗漂移，以保持我们系统的性能：
 - en: '**Remove features and retrain**: If certain features are drifting or exhibiting
     degradation of some other kind, we can try removing them and retraining the model.
     This can become time consuming as our data scientists potentially need to re-run
@@ -1721,6 +1822,7 @@
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: '**移除特征并重新训练**：如果某些特征正在漂移或表现出某种退化，我们可以尝试移除它们并重新训练模型。这可能会变得耗时，因为我们的数据科学家可能需要重新运行一些分析和测试，以确保这种方法从建模的角度仍然有意义。我们还得考虑我们移除的特征的重要性。'
 - en: '**Retrain with more data**: If we are seeing concept drift, we may simply be
     noticing that the model has become stale with respect to the distributions and
     the relationships between these distributions in the data. It could be that retraining
@@ -1735,6 +1837,7 @@
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: '**使用更多数据重新训练**：如果我们看到概念漂移，我们可能只是注意到模型相对于数据的分布以及这些分布之间的关系已经过时。可能重新训练模型并包含更多最近的数据可以提高性能。还有选择在最近数据的一些选定部分上重新训练模型的选择。如果你能够诊断出数据中的某些重大事件或转变，例如Covid-19封锁的引入，这种方法可能特别有用。然而，这种方法可能难以自动化，因此有时也可以选择引入时间窗口方法，即训练一些预先选定数量的数据，直到现在的时间。'
 - en: '**Roll back the model**: We can replace the current model with a previous version
     or even a go-to baseline model. This can be a very good approach if your baseline
     model is more simple but also more predictable in terms of performance, because
@@ -1746,6 +1849,7 @@
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: '**回滚模型**：我们可以用之前的版本或甚至是一个基线模型来替换当前模型。如果你的基线模型更简单但性能方面也更可预测，例如应用了一些简单的业务逻辑，那么这可以是一个非常不错的做法。能够回滚到模型的先前版本需要你有在模型注册库周围建立一套良好的自动化流程。这非常类似于通用软件工程中的回滚，是构建健壮系统的一个关键组件。'
 - en: '**Rewrite or debug the solution**: It may be the case that the drift we are
     dealing with is so substantial that the model as it stands cannot cope with any
     of the above approaches. The idea of rewriting the model may seem drastic but
@@ -1768,6 +1872,7 @@
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: '**重写或调试解决方案**：可能存在这样的情况，我们处理的数据漂移非常严重，以至于现有的模型无法应对上述任何一种方法。重写模型的想法可能看起来有些激进，但这可能比你想象的更常见。例如，最初你可能部署了一个经过良好调优的LightGBM模型，该模型每天对一组五个特征进行二元分类。运行解决方案数月后，可能在你多次检测到模型性能漂移后，你决定最好进行一次调查，看看是否有更好的方法。在这种情况下，这尤其有帮助，因为现在你对将在生产中看到的数据有了更多的了解。你可能会发现，实际上，随机森林分类器在相同的生产数据场景上的平均性能并不如LightGBM模型，但它更稳定，表现更一致，并且更少触发漂移警报。你可能会决定，实际上，将这个不同的模型部署到同一个系统中对业务更有利，因为它将减少处理漂移警报的操作开销，并且这将是一个业务可以更加信任的模型。重要的是要注意，如果你需要编写一个新的管道或模型，在团队进行这项工作期间回滚到先前的模型通常是很重要的。'
 - en: '**Fix the data source**: Sometimes, the most challenging issues do not actually
     have anything to do with the underlying model but are more to do with changes
     in how data is collected and fed downstream to your system. There are so many
@@ -1783,6 +1888,7 @@
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: '**修复数据源**：有时，最具挑战性的问题实际上与底层模型无关，而更多与数据收集方式的变化以及如何将数据传递到你的系统下游有关。在许多业务场景中，由于新流程的引入、系统的更新，甚至由于负责输入某些源数据的个人人员的变动，数据的收集、数据的转换或数据的特征可能会发生变化。作者自己的一个很好的例子是，当涉及到**客户资源管理**（CRM）系统时，销售团队输入的数据质量可能取决于许多因素，因此合理地预期数据质量、一致性和及时性可能会出现缓慢或突然的变化。'
 - en: In this case, the right answer may not actually be an engineering one, but a
     process one, working with the appropriate teams and stakeholders to ensure that
     data quality is maintained, and standard processes are followed. This will benefit
@@ -1790,25 +1896,30 @@
   id: totrans-243
   prefs: []
   type: TYPE_NORMAL
+  zh: 在这种情况下，正确的答案可能实际上不是一个工程问题，而是一个流程问题，与适当的团队和利益相关者合作，确保数据质量得到维护，并遵循标准流程。这将有利于客户和业务，但仍可能难以推销。
 - en: 'Now, we can start to build this into solutions that will automatically trigger
     our ML model being retrained, as shown in *Figure 3.6*:'
   id: totrans-244
   prefs: []
   type: TYPE_NORMAL
+  zh: 现在，我们可以开始构建解决方案，这些解决方案将自动触发我们的ML模型重新训练，如图*图3.6*所示：
 - en: '![Figure 3.4 – An example of drift detection and the training system process
     ](img/B19525_03_06.png)'
   id: totrans-245
   prefs: []
   type: TYPE_IMG
+  zh: '![图3.4 – 漂移检测和训练系统过程的示例](img/B19525_03_06.png)'
 - en: 'Figure 3.6: An example of drift detection and the training system process.'
   id: totrans-246
   prefs: []
   type: TYPE_NORMAL
+  zh: 图3.6：漂移检测和训练系统过程的示例。
 - en: Other tools for monitoring
   id: totrans-247
   prefs:
   - PREF_H2
   type: TYPE_NORMAL
+  zh: 其他监控工具
 - en: The examples in this chapter have mainly used the alibi-detect package, but
     we are now in somewhat of a golden age of open source **MLOps** tools. There are
     several different packages and solutions available that you can start using to
@@ -1816,6 +1927,7 @@
   id: totrans-248
   prefs: []
   type: TYPE_NORMAL
+  zh: 本章中的示例主要使用了alibi-detect包，但我们现在正处于开源**MLOps**工具的黄金时代。有几种不同的包和解决方案可供选择，你可以开始使用它们来构建监控解决方案，而无需花费一分钱。
 - en: In this section, we will quickly cover some of these tools and show some basic
     points on their syntax, so that if you want to develop monitoring pipelines, then
     you can just get started right away and know where is best to use these different
@@ -1823,6 +1935,7 @@
   id: totrans-249
   prefs: []
   type: TYPE_NORMAL
+  zh: 在本节中，我们将快速介绍这些工具，并展示它们语法的一些基本要点，以便如果你想要开发监控管道，那么你可以立即开始，并知道在哪里最好使用这些不同的工具。
 - en: First, we will cover **Evidently AI** ([https://www.evidentlyai.com/](https://www.evidentlyai.com/)),
     which is a very easy-to-use Python package that allows users to not only monitor
     their models but also create customizable dashboards in a few lines of syntax.
@@ -1830,11 +1943,13 @@
   id: totrans-250
   prefs: []
   type: TYPE_NORMAL
+  zh: 首先，我们将介绍**Evidently AI**([https://www.evidentlyai.com/](https://www.evidentlyai.com/))，这是一个非常易于使用的Python包，它允许用户不仅监控他们的模型，还可以通过几行语法创建可定制的仪表板。以下是文档中入门指南的改编。
 - en: 'First, install Evidently:'
   id: totrans-251
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 首先，安装Evidently：
 - en: '[PRE33]'
   id: totrans-252
   prefs:
@@ -1848,6 +1963,7 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 导入`Report`功能。`Report`是一个对象，它收集多个指标的计算结果，以便进行可视化或以JSON对象的形式输出。我们将在稍后展示这种后者的行为：
 - en: '[PRE34]'
   id: totrans-254
   prefs:
@@ -1860,6 +1976,7 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 接下来，导入一个称为度量预设的东西，在这种情况下是针对数据漂移的。我们可以将其视为一个模板化的报告对象，我们可以在以后对其进行自定义：
 - en: '[PRE35]'
   id: totrans-256
   prefs:
@@ -1875,6 +1992,7 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 接下来，假设你已经有了数据，然后你可以运行数据漂移报告。假设你手头有之前示例中的**Wine**数据集。如果我们使用`scikit-learn`的`train_test_split()`方法将葡萄酒数据分成50/50，我们将有两个数据集，我们再次使用它们来模拟参考数据集`X_ref`和当前数据集`X_curr`：
 - en: '[PRE36]'
   id: totrans-258
   prefs:
@@ -1890,6 +2008,7 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: Evidently随后提供了一些非常棒的功能，用于在报告中可视化结果。你可以使用几种不同的方法导出或查看这些结果。你可以将报告导出为JSON或HTML对象，以便消费或审查下游或其他应用程序。*图3.7*和*图3.8*显示了使用以下命令创建这些输出时的结果片段：
 - en: '[PRE37]'
   id: totrans-260
   prefs:
@@ -1901,21 +2020,25 @@
   prefs:
   - PREF_IND
   type: TYPE_IMG
+  zh: '![图片 B19525_03_07](img/B19525_03_07.png)'
 - en: 'Figure 3.7: JSON output from the Evidently report on the 50/50 split Wine feature
     set.'
   id: totrans-262
   prefs:
   - PREF_IND
   type: TYPE_NORMAL
+  zh: 图3.7：Evidently报告的50/50分割葡萄酒特征集的JSON输出。
 - en: '![](img/B19525_03_08.png)'
   id: totrans-263
   prefs: []
   type: TYPE_IMG
+  zh: '![图片 B19525_03_08](img/B19525_03_08.png)'
 - en: 'Figure 3.8: HTML version of the drift report generated by Evidently on the
     50/50 split Wine feature set.'
   id: totrans-264
   prefs: []
   type: TYPE_NORMAL
+  zh: 图3.8：Evidently生成的50/50分割葡萄酒特征集的漂移报告的HTML版本。
 - en: One of the nice things about the rendered HTML report is that you can dynamically
     drill down into some useful information. As an example, *Figure 3.9* shows that
     if you click down into any of the features, you are provided with a plot of data
@@ -1924,25 +2047,31 @@
   id: totrans-265
   prefs: []
   type: TYPE_NORMAL
+  zh: 渲染的HTML报告的一个优点是你可以动态地深入到一些有用的信息中。例如，*图3.9* 显示，如果你点击进入任何特征，你会得到一个随时间变化的数据漂移图，而*图3.10*
+    显示你也可以以同样的方式得到特征的分布图。
 - en: '![](img/B19525_03_09.png)'
   id: totrans-266
   prefs: []
   type: TYPE_IMG
+  zh: '![图片](img/B19525_03_09.png)'
 - en: 'Figure 3.9: The automatically generated data drift plot when you drill down
     in the Evidently report for the Wine features.'
   id: totrans-267
   prefs: []
   type: TYPE_NORMAL
+  zh: 图3.9：当你钻入Evidently报告中的葡萄酒特征时自动生成数据漂移图。
 - en: '![](img/B19525_03_10.png)'
   id: totrans-268
   prefs: []
   type: TYPE_IMG
+  zh: '![图片](img/B19525_03_10.png)'
 - en: 'Figure 3.10: The automatically generated histogram showing the distribution
     of the feature when you drill down in the Evidently report for the Wine feature
     set.'
   id: totrans-269
   prefs: []
   type: TYPE_NORMAL
+  zh: 图3.10：当你钻入Evidently报告中的葡萄酒特征集时自动生成的直方图，显示了特征的分布。
 - en: This has only scratched the surface of what you can do with Evidently. There
     is a lot of functionality available for generating your own model test suites
     and monitoring functionality as well as visualizing it all nicely like we have
@@ -1950,23 +2079,27 @@
   id: totrans-270
   prefs: []
   type: TYPE_NORMAL
+  zh: 这只是触及了你可以用Evidently做到的事情的皮毛。有很多功能可以用来生成你自己的模型测试套件，监控功能，以及像我们看到的这样优雅地可视化所有内容。
 - en: Now that we have explored the concepts of model and data drift and how to detect
     them, we can now move on to a discussion about how we can take a lot of the concepts
     we covered earlier in the chapter and automate them.
   id: totrans-271
   prefs: []
   type: TYPE_NORMAL
+  zh: 现在我们已经探讨了模型和数据漂移的概念以及如何检测它们，我们可以继续讨论如何将我们在本章中讨论的许多概念自动化。
 - en: The next couple of sections will provide deep dives into different aspects of
     the training process and, in particular, how this process can be automated using
     a variety of tools.
   id: totrans-272
   prefs: []
   type: TYPE_NORMAL
+  zh: 接下来的几节将深入探讨训练过程的不同方面，特别是如何使用各种工具自动化这个过程。
 - en: Automating training
   id: totrans-273
   prefs:
   - PREF_H2
   type: TYPE_NORMAL
+  zh: 自动化训练
 - en: The training process is an integral part of the model factory and one of the
     main differentiators between ML engineering and traditional software engineering.
     The next few sections will discuss in detail how we can start to use some excellent
@@ -1975,11 +2108,13 @@
   id: totrans-274
   prefs: []
   type: TYPE_NORMAL
+  zh: 训练过程是模型工厂的一个组成部分，也是机器学习工程和传统软件工程之间主要区别之一。接下来的几节将详细讨论我们如何开始使用一些优秀的开源工具来简化、优化，在某些情况下，完全自动化这个过程的一些元素。
 - en: Hierarchies of automation
   id: totrans-275
   prefs:
   - PREF_H2
   type: TYPE_NORMAL
+  zh: 自动化层次结构
 - en: One of the main reasons that ML is now a common part of software development,
     as well as a major business and academic activity, is because of the plethora
     of tools available. All of the packages and libraries containing working and optimized
@@ -1989,12 +2124,14 @@
   id: totrans-276
   prefs: []
   type: TYPE_NORMAL
+  zh: 机器学习现在是软件开发的一个常见部分，也是商业和学术活动的一个主要部分，其中一个主要原因是工具的多样性。所有包含复杂算法有效和优化实现的包和库都允许人们在这些基础上构建，而不是每次遇到问题都要重新实现基础知识。
 - en: This is a powerful expression of the idea of **abstraction** in software development,
     where lower-level units can be leveraged and engaged with at higher levels of
     implementation.
   id: totrans-277
   prefs: []
   type: TYPE_NORMAL
+  zh: 这是软件开发中**抽象**理念的一个强大表达，其中较低级别的单元可以在较高级别的实现中被利用和参与。
 - en: This idea can be extended even further to the entire enterprise of training
     itself. At the lowest level of implementation (but still a very high level in
     the sense of the underlying algorithms), we can provide details about how we want
@@ -2010,6 +2147,7 @@
   id: totrans-278
   prefs: []
   type: TYPE_NORMAL
+  zh: 这个想法甚至可以进一步扩展到整个训练过程本身。在实施的最底层（但在底层算法的意义上仍然是一个非常高的层次），我们可以提供关于我们希望训练过程如何进行的详细信息。我们可以在代码中手动定义用于训练运行的精确超参数集（参见下一节关于*优化超参数*）。我称之为**手动操作**。然后我们可以再提高一个抽象层次，为我们的超参数提供范围和界限，供设计用于高效采样和测试我们模型性能的工具使用；例如，*自动超参数调整*。最后，在过去几年中，有一个更高层次的抽象引发了大量的媒体关注，即我们优化运行哪个算法。这被称为**自动机器学习**或**AutoML**。
 - en: There can be a lot of hype surrounding AutoML, with some people proclaiming
     the eventual automation of all ML development job roles. In my opinion, this is
     just not realistic, as selecting your model and hyperparameters is only one aspect
@@ -2019,6 +2157,7 @@
   id: totrans-279
   prefs: []
   type: TYPE_NORMAL
+  zh: 围绕AutoML可能会有很多炒作，有些人宣称最终所有机器学习开发职位都将实现自动化。在我看来，这并不现实，因为选择你的模型和超参数只是巨大复杂工程挑战的一个方面（因此这是一本书而不是传单！）。然而，AutoML是一个非常强大的工具，当你开始下一个机器学习项目时，应该将其添加到你的能力工具箱中。
 - en: 'We can summarize all of this quite handily as a *hierarchy of automation*;
     basically, how much control do you, as the ML engineer, want in the training process?
     I once heard this described in terms of gear control in a car (credit: *Databricks
@@ -2034,36 +2173,44 @@
   id: totrans-280
   prefs: []
   type: TYPE_NORMAL
+  zh: 我们可以将所有这些内容简洁地总结为*自动化层次结构*；基本上，作为机器学习工程师的你，在训练过程中希望有多少控制权？我曾经听到有人用汽车齿轮控制来描述这一点（感谢：*Databricks
+    at Spark AI 2019*）。手动操作相当于驾驶手动挡汽车，完全控制齿轮：需要考虑的事情更多，但如果你知道自己在做什么，它可以非常高效。再高一个层次，你有自动挡汽车：需要担心的事情更少，这样你可以更多地专注于到达目的地、交通和其他挑战。这对很多人来说是一个不错的选择，但仍需要你具备足够的知识、技能和理解。最后，我们有自动驾驶汽车：放松，放松，甚至不用担心如何到达目的地。你可以专注于到达那里后你要做什么。
 - en: 'This *hierarchy of automation* is shown in the following diagram:'
   id: totrans-281
   prefs: []
   type: TYPE_NORMAL
+  zh: 这种*自动化层次结构*在以下图中展示：
 - en: '![Figure 3.6 – The hierarchy of automation of ML model optimization, with AutoML
     as the most automated possibility ](img/B19525_03_11.png)'
   id: totrans-282
   prefs: []
   type: TYPE_IMG
+  zh: '![图3.6 – 机器学习模型优化自动化的层次结构，其中AutoML是最自动化的可能性](img/B19525_03_11.png)'
 - en: 'Figure 3.11: The hierarchy of automation of ML model optimization, with AutoML
     as the most automated possibility.'
   id: totrans-283
   prefs: []
   type: TYPE_NORMAL
+  zh: 图3.11：机器学习模型优化自动化的层次结构，其中AutoML是最自动化的可能性。
 - en: That, in a nutshell, is how the different levels of training abstraction link
     together.
   id: totrans-284
   prefs: []
   type: TYPE_NORMAL
+  zh: 总结来说，这就是不同层次的训练抽象是如何相互关联的。
 - en: In the next few sections, we will discuss how to get started building out implementations
     of hyperparameter optimization and AutoML. We will not cover “hand cranking” as
     that is self-explanatory.
   id: totrans-285
   prefs: []
   type: TYPE_NORMAL
+  zh: 在接下来的几节中，我们将讨论如何开始构建超参数优化和AutoML的实现。我们不会涵盖“手动操作”，因为这很容易理解。
 - en: Optimizing hyperparameters
   id: totrans-286
   prefs:
   - PREF_H2
   type: TYPE_NORMAL
+  zh: 优化超参数
 - en: 'When you fit some sort of mathematical function to data, some values are tuned
     during the fitting or training procedure: these are called **parameters**. For
     ML, there is a further level of abstraction where we have to define the values
@@ -2073,6 +2220,7 @@
   id: totrans-287
   prefs: []
   type: TYPE_NORMAL
+  zh: 当你将某种数学函数拟合到数据上时，一些值在拟合或训练过程中被调整：这些被称为**参数**。对于机器学习，我们有一个更高级别的抽象，我们必须定义告诉我们所采用的算法*如何更新参数*的值。这些值被称为**超参数**，它们的选择是训练机器学习算法的重要*暗黑艺术*之一。
 - en: 'The following tables list some hyperparameters that are used for common ML
     algorithms to show you the different forms they may take. These lists are not
     exhaustive but are there to highlight that hyperparameter optimization is not
@@ -2080,255 +2228,310 @@
   id: totrans-288
   prefs: []
   type: TYPE_NORMAL
+  zh: 以下表格列出了一些用于常见机器学习算法的超参数，以展示它们可能采取的不同形式。这些列表并不全面，但旨在强调超参数优化并非一项简单的练习：
 - en: '| **Algorithm** | **Hyperparameters** | **What This Controls** |'
   id: totrans-289
   prefs: []
   type: TYPE_TB
+  zh: '| **算法** | **超参数** | **这控制什么** |'
 - en: '| Decision Trees andRandom Forests |'
   id: totrans-290
   prefs: []
   type: TYPE_TB
+  zh: '| 决策树和随机森林 |'
 - en: Tree depth.
   id: totrans-291
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 树的深度。
 - en: Min/max leaves.
   id: totrans-292
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 最小/最大叶子节点。
 - en: '|'
   id: totrans-293
   prefs: []
   type: TYPE_NORMAL
+  zh: '|'
 - en: How many levels are in your trees.
   id: totrans-294
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 你的树有多少层。
 - en: How much branching can occur at each level.
   id: totrans-295
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 每个级别可以发生的分支数量。
 - en: '|'
   id: totrans-296
   prefs: []
   type: TYPE_NORMAL
+  zh: '|'
 - en: '| Support Vector Machines |'
   id: totrans-297
   prefs: []
   type: TYPE_TB
+  zh: '| 支持向量机 |'
 - en: C
   id: totrans-298
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: C
 - en: Gamma
   id: totrans-299
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: Gamma
 - en: '|'
   id: totrans-300
   prefs: []
   type: TYPE_NORMAL
+  zh: '|'
 - en: Penalty for misclassification.
   id: totrans-301
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 误分类的惩罚。
 - en: The radius of influence of the training points for **Radial Basis Function**
     (**RBF**) kernels.
   id: totrans-302
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 训练点对**径向基函数**（**RBF**）核的影响半径。
 - en: '|'
   id: totrans-303
   prefs: []
   type: TYPE_NORMAL
+  zh: '|'
 - en: '| Neural Networks(numerous architectures) |'
   id: totrans-304
   prefs: []
   type: TYPE_TB
+  zh: '| 神经网络（众多架构） |'
 - en: Learning rate.
   id: totrans-305
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 学习率。
 - en: Number of hidden layers.
   id: totrans-306
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 隐藏层数量。
 - en: Activation function.
   id: totrans-307
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 激活函数。
 - en: Many more.
   id: totrans-308
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 许多更多。
 - en: '|'
   id: totrans-309
   prefs: []
   type: TYPE_NORMAL
+  zh: '|'
 - en: Update step sizes.
   id: totrans-310
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 更新步长大小。
 - en: How deep your network is.
   id: totrans-311
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 你的网络有多深。
 - en: The firing conditions of your neurons.
   id: totrans-312
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 你神经元的触发条件。
 - en: '|'
   id: totrans-313
   prefs: []
   type: TYPE_NORMAL
+  zh: '|'
 - en: '| Logistic Regression |'
   id: totrans-314
   prefs: []
   type: TYPE_TB
+  zh: '| 逻辑回归 |'
 - en: Solver
   id: totrans-315
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 求解器
 - en: Regularization type.
   id: totrans-316
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 正则化类型。
 - en: Regularization prefactor.
   id: totrans-317
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 正则化预因子。
 - en: '|'
   id: totrans-318
   prefs: []
   type: TYPE_NORMAL
+  zh: '|'
 - en: How to minimize the loss.
   id: totrans-319
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 如何最小化损失。
 - en: How to prevent overfitting/make the problem well behaved.
   id: totrans-320
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 如何防止过拟合/使问题表现良好。
 - en: The strength of the regularization type.
   id: totrans-321
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 正则化类型的强度。
 - en: '|'
   id: totrans-322
   prefs: []
   type: TYPE_NORMAL
+  zh: '|'
 - en: 'Table 3.1: Some hyperparameters and what they control for some supervised algorithms.'
   id: totrans-323
   prefs: []
   type: TYPE_NORMAL
+  zh: 表3.1：一些超参数及其对某些监督算法的控制。
 - en: 'Further examples can be seen in the following table:'
   id: totrans-324
   prefs: []
   type: TYPE_NORMAL
+  zh: 更多的示例可以在以下表格中看到：
 - en: '| **Algorithm** | **Hyperparameters** | **What This Controls** |'
   id: totrans-325
   prefs: []
   type: TYPE_TB
+  zh: '| **算法** | **超参数** | **这控制什么** |'
 - en: '| K-Nearest Neighbors |'
   id: totrans-326
   prefs: []
   type: TYPE_TB
+  zh: '| K最近邻 |'
 - en: K
   id: totrans-327
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: K
 - en: Distance metric.
   id: totrans-328
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 距离度量。
 - en: '|'
   id: totrans-329
   prefs: []
   type: TYPE_NORMAL
+  zh: '|'
 - en: The number of clusters.
   id: totrans-330
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 聚类的数量。
 - en: How to define the distance between points.
   id: totrans-331
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 如何定义点之间的距离。
 - en: '|'
   id: totrans-332
   prefs: []
   type: TYPE_NORMAL
+  zh: '|'
 - en: '| DBSCAN |'
   id: totrans-333
   prefs: []
   type: TYPE_TB
+  zh: '| DBSCAN |'
 - en: Epsilon
   id: totrans-334
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: Epsilon
 - en: Minimum number of samples.
   id: totrans-335
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 最小样本数。
 - en: Distance metric.
   id: totrans-336
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 距离度量。
 - en: '|'
   id: totrans-337
   prefs: []
   type: TYPE_NORMAL
+  zh: '|'
 - en: The max distance to be considered neighbors.
   id: totrans-338
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 考虑邻居的最大距离。
 - en: How many neighbors are required to be considered core.
   id: totrans-339
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 需要多少邻居才能被认为是核心。
 - en: How to define the distance between points.
   id: totrans-340
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 如何定义点之间的距离。
 - en: '|'
   id: totrans-341
   prefs: []
   type: TYPE_NORMAL
+  zh: '|'
 - en: 'Table 3.2: Some hyperparameters and what they control for some unsupervised
     algorithms.'
   id: totrans-342
   prefs: []
   type: TYPE_NORMAL
+  zh: 表3.2：一些超参数及其对某些无监督算法的控制。
 - en: All of these hyperparameters have their own specific set of values they can
     take. This range of hyperparameter values for the different potential algorithms
     you want to apply to your ML solution means that there are a lot of ways to define
@@ -2337,6 +2540,7 @@
   id: totrans-343
   prefs: []
   type: TYPE_NORMAL
+  zh: 所有这些超参数都有它们自己可以取的特定值集。这个超参数值的范围对于你想要应用于你的机器学习解决方案的不同潜在算法意味着有无数种定义一个*工作*模型（意味着一个不会破坏你使用的实现）的方法，但你是如何找到*最优*模型的呢？
 - en: This is where hyperparameter search comes in. The concept is that for a finite
     number of hyperparameter value combinations, we want to find the set that gives
     the best model performance. This is another optimization problem that’s similar
@@ -2344,15 +2548,18 @@
   id: totrans-344
   prefs: []
   type: TYPE_NORMAL
+  zh: 这就是超参数搜索的用武之地。其概念是，对于有限数量的超参数值组合，我们希望找到一组能给出最佳模型性能的值。这是另一个类似于最初训练的优化问题！
 - en: In the following sections, we will discuss two very popular hyperparameter optimization
     libraries and show you how to implement them in a few lines of Python.
   id: totrans-345
   prefs: []
   type: TYPE_NORMAL
+  zh: 在接下来的章节中，我们将讨论两个非常流行的超参数优化库，并展示如何在几行Python代码中实现它们。
 - en: IMPORTANT NOTE
   id: totrans-346
   prefs: []
   type: TYPE_NORMAL
+  zh: 重要提示
 - en: It is important to understand which algorithms are being used for optimization
     in these hyperparameter libraries, as you may want to use a couple of different
     implementations from each to compare different approaches and assess performance.
@@ -2366,11 +2573,13 @@
   id: totrans-347
   prefs: []
   type: TYPE_NORMAL
+  zh: 理解这些超参数库中使用的算法非常重要，因为你可能希望从每个库中使用几个不同的实现来比较不同的方法和评估性能。如果你没有查看它们在底层是如何工作的，你可能会轻易地进行不公平的比较——或者更糟糕的是，你可能会在不知情的情况下比较几乎相同的东西！如果你对这些解决方案的工作原理有一些深入了解，你也将能够更好地判断它们何时有益，何时过度。目标是掌握一些这些算法和方法，因为这将帮助你设计更全面的训练系统，其中算法调整方法相互补充。
 - en: Hyperopt
   id: totrans-348
   prefs:
   - PREF_H3
   type: TYPE_NORMAL
+  zh: Hyperopt
 - en: '**Hyperopt** is an open source Python package that bills itself as being *for
     serial and parallel optimization over awkward search spaces, which may include
     real-valued, discrete, and conditional dimensions*. Check out the following link
@@ -2380,6 +2589,7 @@
   id: totrans-349
   prefs: []
   type: TYPE_NORMAL
+  zh: '**Hyperopt**是一个开源的Python包，自称是*用于复杂搜索空间的串行和并行优化，这些搜索空间可能包括实值、离散和条件维度*。更多信息请查看以下链接：[https://github.com/Hyperopt/Hyperopt](https://github.com/Hyperopt/Hyperopt)。在撰写本文时，版本0.2.5包含了三个算法，用于在用户提供的搜索空间中执行优化：'
 - en: '**Random search**: This algorithm essentially selects random numbers within
     your provided ranges of parameter values and tries them. It then evaluates which
     sets of numbers provide the best performance according to your chosen objective
@@ -2388,6 +2598,7 @@
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: '**随机搜索**：该算法本质上是在你提供的参数值范围内选择随机数并尝试它们。然后根据你选择的性能目标函数评估哪些数字组合提供了最佳性能。'
 - en: '**Tree of Parzen Estimators** (**TPE**): This is a Bayesian optimization approach
     that models distributions of hyperparameters below and above a threshold for the
     objective function (roughly *good* and *bad* scorers), and then aims to draw more
@@ -2396,6 +2607,7 @@
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: '**帕累托树估计器**（**TPE**）：这是一种贝叶斯优化方法，它对目标函数阈值以下和以上的超参数分布进行建模（大致为*好*和*坏*的评分者），然后旨在从*好*的超参数分布中抽取更多值。'
 - en: '**Adaptive TPE**: This is a modified version of TPE that allows for some optimization
     of the search, as well as the ability to create an ML model to help guide the
     optimization process.'
@@ -2403,6 +2615,7 @@
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: '**自适应TPE**：这是TPE的一个修改版本，它允许对搜索进行一些优化，以及创建一个机器学习模型来帮助指导优化过程。'
 - en: 'The Hyperopt repository and documentation contain several nice and detailed
     worked examples. We will not go through these here. Instead, we will learn how
     to use this for a simple classification model, such as the one we defined in *Chapter
@@ -2410,6 +2623,7 @@
   id: totrans-353
   prefs: []
   type: TYPE_NORMAL
+  zh: Hyperopt的存储库和文档包含了一些很好的详细示例。我们在这里不会详细介绍这些示例。相反，我们将学习如何使用它来构建一个简单的分类模型，例如我们在*第一章*，*机器学习工程导论*中定义的模型。让我们开始吧：
 - en: 'In Hyperopt, we must define the hyperparameters that we want to optimize across.
     For example, for a typical logistic regression problem, we could define the space
     of hyperparameters to cover, whether we want to reuse parameters that were learned
@@ -2422,6 +2636,7 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 在Hyperopt中，我们必须定义我们想要优化的超参数。例如，对于一个典型的逻辑回归问题，我们可以定义超参数空间，包括我们是否希望每次都重用从先前模型运行中学习到的参数（`warm_start`），我们是否希望模型在决策函数中包含偏差（`fit_intercept`），用于决定何时停止优化的容差设置（`tol`），正则化参数（`C`），我们想要尝试的`solver`，以及任何训练运行中的最大迭代次数`max_iter`：
 - en: '[PRE38]'
   id: totrans-355
   prefs:
@@ -2440,6 +2655,8 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 然后，我们必须定义一个要优化的目标函数。在我们的分类算法的情况下，我们可以简单地定义我们想要最小化的`loss`函数为1减去`f1-score`。请注意，如果您使用`fmin`功能，Hyperopt
+    允许您的目标函数通过您的返回语句提供运行统计信息和元数据。如果您这样做，唯一的要求是您必须返回一个标记为`loss`的值和一个有效的状态值从`Hyperopt.STATUS_STRING`列表中（默认为`ok`，如果计算中存在您想要标记为失败的问题则为`fail`）：
 - en: '[PRE39]'
   id: totrans-357
   prefs:
@@ -2451,6 +2668,7 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 现在，我们必须使用 `fmin` 方法与 **TPE** 算法进行优化：
 - en: '[PRE40]'
   id: totrans-359
   prefs:
@@ -2463,6 +2681,7 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: '`best` 的内容是一个包含您在定义的搜索空间中所有最佳超参数的字典。因此，在这种情况下，我们有以下内容：'
 - en: '[PRE41]'
   id: totrans-361
   prefs:
@@ -2474,11 +2693,13 @@
   id: totrans-362
   prefs: []
   type: TYPE_NORMAL
+  zh: 然后，您可以使用这些超参数来定义您的模型，以便在数据上进行训练。
 - en: Optuna
   id: totrans-363
   prefs:
   - PREF_H3
   type: TYPE_NORMAL
+  zh: Optuna
 - en: '**Optuna** is a software package that has an extensive series of capabilities
     based on some core design principles, such as its **define-by-run** API and modular
     architecture. *Define-by-run* here refers to the fact that, when using Optuna,
@@ -2489,6 +2710,8 @@
   id: totrans-364
   prefs: []
   type: TYPE_NORMAL
+  zh: '**Optuna** 是一个基于一些核心设计原则（如其 **define-by-run** API 和模块化架构）的软件包。在这里，“define-by-run”指的是，当使用
+    Optuna 时，用户不需要定义要测试的完整参数集，这是 **define-and-run**。相反，他们可以提供一些初始值，并要求 Optuna 建议要运行的实验集。这为用户节省了时间，并减少了代码的复杂度（对我来说是两个大优点！）。'
 - en: 'Optuna contains four basic search algorithms: **grid search**, **random search**,
     **TPE**, and the **Covariance Matrix Adaptation Evolution Strategy** (**CMA-ES**)
     algorithm. We covered the first three previously, but CMA-ES is an important addition
@@ -2501,6 +2724,8 @@
   id: totrans-365
   prefs: []
   type: TYPE_NORMAL
+  zh: Optuna 包含四种基本搜索算法：**网格搜索**、**随机搜索**、**TPE**和**协方差矩阵自适应进化策略**（**CMA-ES**）算法。我们之前已经介绍了前三种，但
+    CMA-ES 是混合中的一项重要补充。正如其名称所暗示的，它基于进化算法，并从多元高斯分布中抽取超参数样本。然后，它使用给定目标函数评估分数的排名来动态更新高斯分布的参数（协方差矩阵是其中之一）以帮助快速且稳健地在搜索空间中找到最优解。
 - en: The key thing that makes Optuna’s optimization process different from Hyperopt,
     however, is in its application of **pruning** or **automated early stopping**.
     During optimization, if Optuna detects evidence that a trial of a set of hyperparameters
@@ -2510,11 +2735,14 @@
   id: totrans-366
   prefs: []
   type: TYPE_NORMAL
+  zh: 然而，使 Optuna 的优化过程与 Hyperopt 不同的关键因素在于其应用了**剪枝**或**自动早期停止**。在优化过程中，如果 Optuna
+    检测到一组超参数的试验不会导致更好的整体训练算法，它将终止该试验。该软件包的开发者建议，通过减少不必要的计算，这可以在超参数优化过程中带来整体效率的提升。
 - en: 'Here, we’re looking at the same example we looked at previously, but we are
     now using Optuna instead of Hyperopt:'
   id: totrans-367
   prefs: []
   type: TYPE_NORMAL
+  zh: 这里，我们正在查看之前查看过的相同示例，但现在我们使用 Optuna 而不是 Hyperopt：
 - en: 'First, when using Optuna, we can work using an object known as `Study`, which
     provides us with a convenient way to fold our search space into our `objective`
     function:'
@@ -2522,6 +2750,8 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 首先，当使用 Optuna 时，我们可以使用一个称为 `Study` 的对象来工作，它为我们提供了一个方便的方法将搜索空间折叠到我们的 `objective`
+    函数中：
 - en: '[PRE42]'
   id: totrans-369
   prefs:
@@ -2533,6 +2763,7 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 现在，我们必须以与 Hyperopt 示例中相同的方式设置数据：
 - en: '[PRE43]'
   id: totrans-371
   prefs:
@@ -2547,6 +2778,7 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 现在，我们可以定义我们之前提到的`Study`对象，并告诉它我们希望如何优化`objective`函数返回的值，包括在`study`中运行多少次试验的指导。在这里，我们将再次使用TPE采样算法：
 - en: '[PRE44]'
   id: totrans-373
   prefs:
@@ -2559,6 +2791,7 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 现在，我们可以通过`study.best_trial.params`变量访问最佳参数，它为我们提供了以下最佳情况下的值：
 - en: '[PRE45]'
   id: totrans-375
   prefs:
@@ -2570,10 +2803,12 @@
   id: totrans-376
   prefs: []
   type: TYPE_NORMAL
+  zh: 如你所见，Optuna也非常简单易用且功能强大。现在，让我们来看看自动化层次结构的最后一级：AutoML。
 - en: IMPORTANT NOTE
   id: totrans-377
   prefs: []
   type: TYPE_NORMAL
+  zh: 重要注意事项
 - en: You will notice that these values are different from the ones returned by Hyperopt.
     This is because we have only run 16 trials in each case, so we are not effectively
     subsampling the space. If you run either of the Hyperopt or Optuna samples a few
@@ -2584,23 +2819,27 @@
   id: totrans-378
   prefs: []
   type: TYPE_NORMAL
+  zh: 你会注意到这些值与Hyperopt返回的值不同。这是因为我们每种情况下只运行了16次试验，所以我们并没有有效地对空间进行子采样。如果你连续几次运行Hyperopt或Optuna样本，你可能会得到相当不同的结果，原因相同。这里给出的例子只是为了展示语法，但如果你有兴趣，你可以将迭代次数设置得非常高（或者创建更小的空间进行采样），两种方法的结果应该大致收敛。
 - en: AutoML
   id: totrans-379
   prefs:
   - PREF_H2
   type: TYPE_NORMAL
+  zh: AutoML
 - en: The final level of our hierarchy is the one where we, as the engineer, have
     the least direct control over the training process, but where we also potentially
     get a good answer for very little effort!
   id: totrans-380
   prefs: []
   type: TYPE_NORMAL
+  zh: 我们层次结构的最后一级是我们作为工程师对训练过程直接控制最少的一级，但也是我们可能以极少的努力获得良好答案的地方！
 - en: The development time that’s required to search through many hyperparameters
     and algorithms for your problem can be large, even when you code up reasonable-looking
     search parameters and loops.
   id: totrans-381
   prefs: []
   type: TYPE_NORMAL
+  zh: 为了搜索你问题的许多超参数和算法，所需的开发时间可能很大，即使你编写了看起来合理的搜索参数和循环。
 - en: Given this, the past few years have seen the deployment of several **AutoML**
     libraries and tools in a variety of languages and software ecosystems. The hype
     surrounding these techniques has meant they have had a lot of airtime, which has
@@ -2613,10 +2852,12 @@
   id: totrans-382
   prefs: []
   type: TYPE_NORMAL
+  zh: 因此，在过去的几年里，已经部署了多种语言的多种**AutoML**库和工具。围绕这些技术的炒作意味着它们获得了大量的关注，这导致一些数据科学家质疑他们的工作何时会被自动化。正如我们在本章前面提到的，在我看来，宣布数据科学的死亡是极其过早的，并且从组织和业务绩效的角度来看也是危险的。这些工具被赋予了如此伪神话的地位，以至于许多公司可能会相信，仅仅使用它们几次就能解决他们所有的数据科学和机器学习问题。
 - en: They are wrong, but they are also right.
   id: totrans-383
   prefs: []
   type: TYPE_NORMAL
+  zh: 他们是错的，但也是对的。
 - en: These tools and techniques *are* very powerful and *can* help make some things
     better, but they are not a magical *plug-and-play* panacea. Let’s explore these
     tools and start to think about how to incorporate them into our ML engineering
@@ -2624,11 +2865,13 @@
   id: totrans-384
   prefs: []
   type: TYPE_NORMAL
+  zh: 这些工具和技术**确实**非常强大，并且**可以**帮助改善某些事情，但它们并不是一个神奇的**即插即用**的万能药。让我们来探讨这些工具，并开始思考如何将它们融入我们的机器学习工程工作流程和解决方案中。
 - en: auto-sklearn
   id: totrans-385
   prefs:
   - PREF_H3
   type: TYPE_NORMAL
+  zh: auto-sklearn
 - en: One of our favorite libraries, good old Scikit-Learn, was always going to be
     one of the first targets for building a popular AutoML library. One of the very
     powerful features of auto-sklearn is that its API has been designed so that the
@@ -2637,6 +2880,7 @@
   id: totrans-386
   prefs: []
   type: TYPE_NORMAL
+  zh: 我们最喜欢的库之一，古老的Scikit-Learn，注定会成为构建流行AutoML库的第一个目标之一。auto-sklearn的一个非常强大的特性是，它的API被设计得非常灵活，使得优化模型和超参数的主要对象可以无缝地替换到你的代码中。
 - en: 'As usual, an example will show this more clearly. In the following example,
     we will assume that the `Wine` dataset (a favorite for this chapter) has already
     been retrieved and split into train and test samples in line with other examples,
@@ -2644,12 +2888,14 @@
   id: totrans-387
   prefs: []
   type: TYPE_NORMAL
+  zh: 如同往常，一个例子将更清楚地展示这一点。在下面的例子中，我们将假设`Wine`数据集（本章的宠儿）已经被检索并按照其他示例（如*检测漂移*部分中的示例）分割成训练样本和测试样本：
 - en: 'First, since this is a classification problem, the main thing we need to get
     from `auto-sklearn` is the `autosklearn.classification` object:'
   id: totrans-388
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 首先，由于这是一个分类问题，我们需要从`auto-sklearn`中获取的主要东西是`autosklearn.classification`对象：
 - en: '[PRE46]'
   id: totrans-389
   prefs:
@@ -2665,6 +2911,7 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 我们必须首先定义我们的`auto-sklearn`对象。这提供了几个参数，帮助我们定义模型和超参数调整过程将如何进行。在这个例子中，我们将为整体优化提供一个秒数上限，并为任何单个对ML模型的调用提供一个秒数上限：
 - en: '[PRE47]'
   id: totrans-391
   prefs:
@@ -2678,6 +2925,8 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 然后，就像我们拟合一个正常的`sklearn`分类器一样，我们可以拟合`auto-sklearn`对象。正如我们之前提到的，`auto-sklearn`
+    API已经被设计得看起来很熟悉：
 - en: '[PRE48]'
   id: totrans-393
   prefs:
@@ -2690,12 +2939,14 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 现在我们已经拟合了对象，我们可以开始分析对象在优化运行期间所取得的成果。
 - en: 'First, we can see which models were tried and which were kept in the object
     as part of the final ensemble:'
   id: totrans-395
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 首先，我们可以看到尝试了哪些模型，哪些被保留在对象中作为最终集成的一部分：
 - en: '[PRE49]'
   id: totrans-396
   prefs:
@@ -2707,6 +2958,7 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 我们可以获取运行的主要统计数据：
 - en: '[PRE50]'
   id: totrans-398
   prefs:
@@ -2718,6 +2970,7 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 然后，我们可以预测一些文本特征，正如预期的那样：
 - en: '[PRE51]'
   id: totrans-400
   prefs:
@@ -2730,6 +2983,7 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 最后，我们可以使用我们最喜欢的指标计算器来检查我们的表现——在这种情况下，是`sklearn metrics`模块：
 - en: '[PRE52]'
   id: totrans-402
   prefs:
@@ -2742,16 +2996,19 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 如您所见，开始使用这个强大的库非常简单，尤其是如果您已经熟悉`sklearn`。
 - en: Next, let’s discuss how we extend this concept to neural networks, which have
     an extra layer of complexity due to their different potential model architectures.
   id: totrans-404
   prefs: []
   type: TYPE_NORMAL
+  zh: 接下来，让我们讨论如何将这个概念扩展到神经网络，由于它们的潜在模型架构不同，神经网络有一个额外的复杂层。
 - en: AutoKeras
   id: totrans-405
   prefs:
   - PREF_H3
   type: TYPE_NORMAL
+  zh: AutoKeras
 - en: A particular area where AutoML has been a big hit is neural networks. This is
     because for a neural network, the question of *what is the best model?* is a very
     complicated one. For our typical classifiers, we can usually think of a relatively
@@ -2764,22 +3021,26 @@
   id: totrans-406
   prefs: []
   type: TYPE_NORMAL
+  zh: AutoML在神经网络领域取得了巨大成功的一个特定领域是因为，对于神经网络来说，“什么是最优模型？”这个问题非常复杂。对于我们的典型分类器，我们通常可以想到一个相对较短、有限的算法列表来尝试。对于神经网络，我们没有这样一个有限的列表。相反，我们有一个本质上无限的神经网络*架构*集合；例如，将神经元组织成层以及它们之间的连接。寻找最优神经网络架构是一个问题，其中强大的优化可以使作为ML工程师或数据科学家的您的生活变得容易得多。
 - en: In this instance, we are going to explore an AutoML solution built on top of
     the very popular neural network API library known as Keras. Unbelievably, the
     name of this package is – you guessed it – AutoKeras!
   id: totrans-407
   prefs: []
   type: TYPE_NORMAL
+  zh: 在这个例子中，我们将探索一个基于非常流行的神经网络API库（名为Keras）构建的AutoML解决方案。难以置信，这个包的名字是——您猜对了——AutoKeras！
 - en: 'For this example, we will, once again, assume that the `Wine` dataset has been
     loaded so that we can focus on the details of the implementation. Let’s get started:'
   id: totrans-408
   prefs: []
   type: TYPE_NORMAL
+  zh: 对于这个例子，我们再次假设`Wine`数据集已经被加载，这样我们就可以专注于实现细节。让我们开始吧：
 - en: 'First, we must import the `autokeras` library:'
   id: totrans-409
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 首先，我们必须导入`autokeras`库：
 - en: '[PRE53]'
   id: totrans-410
   prefs:
@@ -2794,6 +3055,7 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 现在，是时候享受乐趣了，对于`autokeras`来说，这一点尤其简单！由于我们的数据是有结构的（表格形式，具有定义的架构），我们可以使用`StructuredDataClassifier`对象，它封装了自动神经网络架构和超参数搜索的底层机制：
 - en: '[PRE54]'
   id: totrans-412
   prefs:
@@ -2807,6 +3069,7 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 然后，我们只需拟合这个分类器对象，注意到它与`sklearn` API的相似性。记住，我们假设训练数据和测试数据存在于`pandas DataFrames`中，就像本章其他示例中那样：
 - en: '[PRE55]'
   id: totrans-414
   prefs:
@@ -2819,6 +3082,7 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: AutoKeras中的训练对象包含一个方便的评估方法。让我们使用这个方法来看看我们的解决方案有多准确：
 - en: '[PRE56]'
   id: totrans-416
   prefs:
@@ -2832,16 +3096,19 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 有了这些，我们已经成功地在几行Python代码中执行了神经网络架构和超参数搜索。一如既往，阅读解决方案文档以获取有关您可以提供给不同方法的参数的更多信息。
 - en: Now that we’ve covered how to create performant models, in the next section,
     we will learn how to persist these models so that they can be used in other programs.
   id: totrans-418
   prefs: []
   type: TYPE_NORMAL
+  zh: 现在我们已经介绍了如何创建性能良好的模型，在下一节中，我们将学习如何持久化这些模型，以便它们可以在其他程序中使用。
 - en: Persisting your models
   id: totrans-419
   prefs:
   - PREF_H1
   type: TYPE_NORMAL
+  zh: 持久化你的模型
 - en: In the previous chapter, we introduced some of the basics of model version control
     using MLflow. In particular, we discussed how to log metrics for your ML experiments
     using the MLflow Tracking API. We are now going to build on this knowledge and
@@ -2850,6 +3117,7 @@
   id: totrans-420
   prefs: []
   type: TYPE_NORMAL
+  zh: 在上一章中，我们介绍了使用MLflow的一些模型版本控制的基本知识。特别是，我们讨论了如何使用MLflow跟踪API记录您的ML实验的指标。现在，我们将在此基础上构建，并考虑我们的训练系统应该与模型控制系统的一般触点。
 - en: First, let’s recap what we’re trying to do with the training system. We want
     to automate (as far as possible) a lot of the work that was done by the data scientists
     in finding the first working model, so that we can continually update and create
@@ -2868,6 +3136,7 @@
   id: totrans-421
   prefs: []
   type: TYPE_NORMAL
+  zh: 首先，让我们回顾一下我们希望通过训练系统要完成的事情。我们希望尽可能自动化数据科学家在寻找第一个工作模型时所做的许多工作，这样我们就可以持续更新并创建新的模型版本，这些版本在未来仍然可以解决问题。我们还希望有一个简单的机制，允许将训练过程的结果与将在生产中执行预测的解决方案部分共享。我们可以将我们的模型版本控制系统视为连接我们在第二章“机器学习开发过程”中讨论的ML开发过程不同阶段的桥梁。特别是，我们可以看到跟踪实验结果的能力使我们能够在“Play”阶段保持结果，并在“Develop”阶段在此基础上进行构建。我们还可以在“Develop”阶段相同的地点跟踪更多的实验、测试运行和超参数优化结果。然后，我们可以开始标记性能良好的模型为部署的良好候选者，从而弥合“Develop”和“Deploy”开发阶段之间的差距。
 - en: 'If we focus on MLflow for now (though plenty of other solutions are available
     that fulfill the need for a model version control system), then MLflow’s Tracking
     and Model Registry functionalities nicely slot into these bridging roles. This
@@ -2875,16 +3144,19 @@
   id: totrans-422
   prefs: []
   type: TYPE_NORMAL
+  zh: 如果我们现在专注于MLflow（尽管还有许多其他解决方案可以满足模型版本控制系统所需的需求），那么MLflow的跟踪和模型注册功能很好地填补了这些桥梁角色。这在下图中以示意图的形式表示：
 - en: '![Figure 3.9 – How the MLflow Tracking and Model Registry functionalities can
     help us progress through the different stages of the ML development process ](img/B19525_03_12.png)'
   id: totrans-423
   prefs: []
   type: TYPE_IMG
+  zh: '![图3.9 – MLflow跟踪和模型注册表功能如何帮助我们通过ML开发过程的不同阶段](img/B19525_03_12.png)'
 - en: 'Figure 3.12: How the MLflow Tracking and Model Registry functionalities can
     help us progress through the different stages of the ML development process.'
   id: totrans-424
   prefs: []
   type: TYPE_NORMAL
+  zh: 图3.12：MLflow跟踪和模型注册表功能如何帮助我们通过ML开发过程的不同阶段。
 - en: In *Chapter 2*, *The Machine Learning Development Process*, we only explored
     the basics of the MLflow Tracking API for storing experimental model run metadata.
     Now, we will briefly dive into how to store production-ready models in a very
@@ -2896,6 +3168,7 @@
   id: totrans-425
   prefs: []
   type: TYPE_NORMAL
+  zh: 在*第2章*，*机器学习开发过程*中，我们只探讨了MLflow跟踪API的基本功能，用于存储实验模型运行元数据。现在，我们将简要介绍如何以非常有序的方式存储生产就绪模型，以便您可以开始执行模型部署。这是模型可以通过准备阶段进行推进的过程，如果您愿意，您可以在生产中交换模型。这是任何提供模型并作为部署解决方案一部分运行的训练系统的极其重要的部分，这正是本书的主题！
 - en: As alluded to previously, the functionality that we need in MLflow is called
     **Model Registry**, which enables you to manage the staging of models across your
     development life cycle. Here, we will walk through examples of how to take a logged
@@ -2907,6 +3180,7 @@
   id: totrans-426
   prefs: []
   type: TYPE_NORMAL
+  zh: 如前所述，我们在MLflow中需要的功能称为**模型注册表**，它使您能够管理模型在整个开发周期中的部署。在这里，我们将通过示例了解如何将记录的模型推送到注册表，如何更新注册表中的信息，例如模型版本号，然后如何将模型推进不同的生命周期阶段。我们将通过学习如何在其他程序中从注册表中检索给定的模型来结束本节，如果我们想要在分开的训练和预测服务之间共享模型，这是一个关键点。
 - en: Before we dive into the Python code for interacting with Model Registry, we
     have one important piece of setup to perform. The registry only works if a database
     is being used to store the model metadata and parameters. This is different from
@@ -2917,12 +3191,14 @@
   id: totrans-427
   prefs: []
   type: TYPE_NORMAL
+  zh: 在我们深入研究与模型注册表交互的Python代码之前，我们有一个重要的设置要执行。注册表仅在数据库用于存储模型元数据和参数时才有效。这与仅使用文件后端存储的基本跟踪API不同。这意味着在将模型推送到模型注册表之前，我们必须启动一个具有数据库后端的MLflow服务器。您可以通过在终端中执行以下命令使用本地运行的**SQLite**数据库来完成此操作。
 - en: 'You will have to run this before the code snippets in the rest of this section
     (this command is stored in a short Bash script in this book’s GitHub repository,
     under [https://github.com/PacktPublishing/Machine-Learning-Engineering-with-Python/blob/main/Chapter03/mlflow-advanced/start-mlflow-server.sh](https://github.com/PacktPublishing/Machine-Learning-Engineering-with-Python/blob/main/Chapter03/mlflow-advanced/start-mlflow-server.sh)):'
   id: totrans-428
   prefs: []
   type: TYPE_NORMAL
+  zh: 您必须在阅读本节其余部分的代码片段之前运行此命令（此命令存储在本书的GitHub仓库中的简短Bash脚本中，位于[https://github.com/PacktPublishing/Machine-Learning-Engineering-with-Python/blob/main/Chapter03/mlflow-advanced/start-mlflow-server.sh](https://github.com/PacktPublishing/Machine-Learning-Engineering-with-Python/blob/main/Chapter03/mlflow-advanced/start-mlflow-server.sh)）：
 - en: '[PRE57]'
   id: totrans-429
   prefs: []
@@ -2933,12 +3209,14 @@
   id: totrans-430
   prefs: []
   type: TYPE_NORMAL
+  zh: 现在，后端数据库已启动并运行，我们可以将其作为模型工作流程的一部分使用。让我们开始吧：
 - en: 'Let’s begin by logging some metrics and parameters for one of the models we
     trained earlier in this chapter:'
   id: totrans-431
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 让我们从记录本章早期训练的某个模型的指标和参数开始：
 - en: '[PRE58]'
   id: totrans-432
   prefs:
@@ -2951,6 +3229,7 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 在相同的代码块中，我们现在可以将模型记录到模型注册表中，并为模型提供一个名称以便稍后引用：
 - en: '[PRE59]'
   id: totrans-434
   prefs:
@@ -3068,6 +3347,7 @@
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: '**管道对象**：这是将汇集我们所需所有步骤的对象，特别是`sklearn`要求实例化的管道对象由转换器和估计器的序列组成，所有中间对象都具有`.fit()`和`.transform()`方法，最后一步是一个至少具有`.fit()`方法的估计器。我们将在下两点中解释这些术语。这种条件的原因是，`pipeline`对象将继承序列中最后一个项目的方法，因此我们必须确保最后一个对象中存在`.fit()`。'
 - en: '**Estimators**: The estimator class is the base object in `scikit-learn` and
     anything in the package that can be fit on data and then predict on data, therefore
     the `.fit()` and `.predict()` methods, is a subclass of the estimator class.'
@@ -3075,6 +3355,7 @@
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: '**估计器**：估计器类是`scikit-learn`中的基本对象，任何可以在数据上拟合并预测数据的包中的内容，因此`.fit()`和`.predict()`方法是估计器类的子类。'
 - en: '**Transformers**: In **Scikit-Learn**, transformers are any estimators that
     have a `.transform()` or `.fit_transform()` method and, as you can guess, are
     mainly focused on transforming datasets from one form to another rather than performing
@@ -3083,6 +3364,7 @@
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: '**转换器**：在**Scikit-Learn**中，转换器是任何具有`.transform()`或`.fit_transform()`方法的估计器，正如你可以猜到的，它们主要专注于将数据集从一种形式转换为另一种形式，而不是执行预测。'
 - en: The use of the `pipeline` object really helps facilitate the simplification
     of your code, as rather than writing several different fitting, transforming,
     and predicting steps as their own function calls with datasets and then managing
@@ -3091,6 +3373,7 @@
   id: totrans-454
   prefs: []
   type: TYPE_NORMAL
+  zh: 使用`pipeline`对象确实有助于简化你的代码，因为你不必编写多个不同的拟合、转换和预测步骤作为它们自己的函数调用，并管理数据流，你只需将它们全部组合在一个对象中，该对象为你管理这些操作并使用相同的简单API。
 - en: 'There are new transformers and features being added to Scikit-Learn all the
     time, which means that it become possible to build more and more useful pipelines.
     For example, at the time of writing, Scikit-Learn versions greater than 0.20 also
@@ -3102,12 +3385,14 @@
   id: totrans-455
   prefs: []
   type: TYPE_NORMAL
+  zh: Scikit-Learn不断添加新的转换器和功能，这意味着可以构建越来越有用的管道。例如，在撰写本文时，Scikit-Learn版本大于0.20也包含`ColumnTransformer`对象，它允许你构建对特定列执行不同操作的管道。这正是我们之前讨论的逻辑回归营销模型示例所希望做的，我们希望标准化数值并`one-hot`编码分类变量。让我们开始吧：
 - en: 'To create this pipeline, you need to import the `ColumnTransformer` and `Pipeline`
     objects:'
   id: totrans-456
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 要创建此管道，你需要导入`ColumnTransformer`和`Pipeline`对象：
 - en: '[PRE63]'
   id: totrans-457
   prefs:
@@ -3121,6 +3406,7 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 为了展示如何在管道组成的转换器内部链式调用步骤，我们将在稍后添加一些插补。为此，我们需要导入`SimpleImputer`对象：
 - en: '[PRE64]'
   id: totrans-459
   prefs:
@@ -3134,6 +3420,7 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 现在，我们必须定义包含插补和缩放两个步骤的数值转换器子管道，我们还必须定义将应用到此数值列的名称，以便我们可以在以后使用它们：
 - en: '[PRE65]'
   id: totrans-461
   prefs:
@@ -3146,6 +3433,7 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 接下来，我们必须对分类变量执行类似的步骤，但在这里，我们只需要定义一个`one-hot`编码器的转换步骤：
 - en: '[PRE66]'
   id: totrans-463
   prefs:
@@ -3159,6 +3447,7 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 我们必须使用`ColumnTransformer`对象将这些预处理步骤汇集到一个单一的对象中，称为`preprocessor`，这将把我们的`transformers`应用到DataFrame的适当列上：
 - en: '[PRE67]'
   id: totrans-465
   prefs:
@@ -3171,6 +3460,7 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 最后，我们想在前面步骤的末尾添加ML模型步骤并最终完成管道。我们将称之为`clf_pipeline`：
 - en: '[PRE68]'
   id: totrans-467
   prefs:
@@ -3184,6 +3474,7 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 这是我们的第一个ML训练管道。`scikit-learn` API的美丽之处在于，`clf_pipeline`对象现在可以像库中的标准算法一样被调用。所以，这意味着我们可以编写以下内容：
 - en: '[PRE69]'
   id: totrans-469
   prefs:
@@ -3194,6 +3485,7 @@
   id: totrans-470
   prefs: []
   type: TYPE_NORMAL
+  zh: 这将依次运行管道中所有步骤的`fit`方法。
 - en: The previous example was relatively basic, but there are a few ways you can
     make this sort of pipeline more sophisticated if your use case requires it. One
     of the simplest and most extensible is the ability in Scikit-Learn to create custom
@@ -3206,6 +3498,7 @@
   id: totrans-471
   prefs: []
   type: TYPE_NORMAL
+  zh: 之前的例子相对简单，但如果你需要更复杂的管道，有几种方法可以使这种管道更复杂。其中最简单且最可扩展的是Scikit-Learn创建自定义转换器对象的能力，这些对象继承自基类。你可以通过从`BaseEstimator`和`TransformerMixIn`类继承并定义自己的转换逻辑来实现这一点。作为一个简单的例子，让我们构建一个转换器，它接受指定的列并添加一个浮点数。这只是一个简单的示意图，向你展示如何实现；我无法想象在大多数情况下，将单个浮点数添加到你的列中会有多大帮助！
 - en: '[PRE70]'
   id: totrans-472
   prefs: []
@@ -3215,6 +3508,7 @@
   id: totrans-473
   prefs: []
   type: TYPE_NORMAL
+  zh: 你可以将这个转换器添加到你的`pipeline`中：
 - en: '[PRE71]'
   id: totrans-474
   prefs: []
@@ -3229,6 +3523,7 @@
   id: totrans-475
   prefs: []
   type: TYPE_NORMAL
+  zh: 这个添加数字的例子实际上并不是使用基于类的转换器定义的最佳用例，因为这个操作是无状态的。由于没有训练或对输入值进行复杂操作的需求，需要类保留和更新其状态，所以我们实际上只是封装了一个函数。添加自定义步骤的第二种方式利用了这一点，并使用`FunctionTransformer`类来封装你提供的任何函数：
 - en: '[PRE72]'
   id: totrans-476
   prefs: []
@@ -3239,6 +3534,7 @@
   id: totrans-477
   prefs: []
   type: TYPE_NORMAL
+  zh: 通过构建这些示例，你可以开始创建可以执行任何你想要的特征工程任务的复杂管道。
 - en: To conclude this section, we can clearly see that the ability to abstract the
     steps that are performing feature engineering and training your model into a single
     object is very powerful, as it means you can reuse this object in various places
@@ -3247,15 +3543,18 @@
   id: totrans-478
   prefs: []
   type: TYPE_NORMAL
+  zh: 为了结束本节，我们可以清楚地看到，将执行特征工程和训练模型的步骤抽象成一个单一对象的能力非常强大，这意味着你可以在各个地方重用这个对象，并使用它构建更复杂的流程，而无需不断重写实现的细节。抽象是一件好事！
 - en: We will now turn to another way of writing pipelines, using Spark ML.
   id: totrans-479
   prefs: []
   type: TYPE_NORMAL
+  zh: 现在我们将转向另一种编写管道的方法，使用Spark ML。
 - en: Spark ML pipelines
   id: totrans-480
   prefs:
   - PREF_H2
   type: TYPE_NORMAL
+  zh: Spark ML管道
 - en: 'There is another toolset we have been using throughout this book that will
     be particularly important when we discuss scaling up our solutions: Apache Spark
     and its ML ecosystem. We will see that building a similar pipeline with Spark
@@ -3264,6 +3563,7 @@
   id: totrans-481
   prefs: []
   type: TYPE_NORMAL
+  zh: 在本书中，我们一直在使用的一个工具集，在我们讨论扩展我们的解决方案时将特别重要：Apache Spark及其ML生态系统。我们将看到，使用Spark ML构建类似的管道需要略微不同的语法，但关键概念与Scikit-Learn的情况非常相似。
 - en: There are a few important points to mention about PySpark pipelines. Firstly,
     in line with good programming practices in Scala, which Spark is written in, objects
     are treated as **immutable**, so transformations do not occur *in place*. Instead,
@@ -3273,6 +3573,7 @@
   id: totrans-482
   prefs: []
   type: TYPE_NORMAL
+  zh: 关于PySpark管道有一些重要的事项需要提及。首先，与Spark所使用的Scala语言中的良好编程实践一致，对象被视为**不可变**的，因此转换不会在原地发生。相反，会创建新的对象。这意味着任何转换的输出都将在你的原始DataFrame（或者确实是在新的DataFrame中）中需要创建新的列。
 - en: Secondly, the Spark ML estimators (that is, the ML algorithms) all require the
     features to be assembled into one tuple-like object in a single column. This contrasts
     with Scikit-Learn, where you can keep all the features in their columns in your
@@ -3283,6 +3584,7 @@
   id: totrans-483
   prefs: []
   type: TYPE_NORMAL
+  zh: 其次，Spark ML估计器（即ML算法）都需要将特征组装成一个单列中的类似元组的对象。这与Scikit-Learn形成对比，在Scikit-Learn中，你可以将所有特征保留在其数据对象的列中。这意味着你需要习惯使用**组装器**，这些是用于将不同的特征列拉在一起的实用工具，尤其是在你处理必须以不同方式转换才能被算法使用的混合分类和数值特征时。
 - en: Thirdly, Spark has many functions that use **lazy evaluation**, meaning that
     they are only executed when they’re triggered by specific actions. This means
     that you can build up your entire ML pipeline and not have to transform any data.
@@ -3292,6 +3594,7 @@
   id: totrans-484
   prefs: []
   type: TYPE_NORMAL
+  zh: 第三，Spark有许多使用**延迟评估**的函数，这意味着它们只有在被特定操作触发时才会执行。这意味着你可以构建整个ML管道，而不必转换任何数据。延迟评估的原因是Spark中的计算步骤存储在一个**有向无环图**（**DAG**）中，这样在执行计算步骤之前，执行计划可以被优化，这使得Spark非常高效。
 - en: Finally – and this is a small point – it is commonplace to write PySpark variables
     using *camel case* rather than the common *snake case*, which is often used for
     Python variables (for instance, **variableName** versus `variable_name`). This
@@ -3300,6 +3603,7 @@
   id: totrans-485
   prefs: []
   type: TYPE_NORMAL
+  zh: 最后——这是一个小点——使用*骆驼命名法*而不是常见的*蛇形命名法*来编写PySpark变量是常见的，后者通常用于Python变量（例如，**variableName**与`variable_name`）。这样做是为了使代码与继承自Spark底层**Scala**代码的此约定的PySpark函数保持一致。
 - en: The Spark ML pipelines API utilizes concepts of Transformer and Estimator in
     a similar way to how the Scikit-Learn pipeline API did, with some important differences.
     The first difference is that Transformers in Spark ML implement `.transform()`
@@ -3311,21 +3615,27 @@
   id: totrans-486
   prefs: []
   type: TYPE_NORMAL
+  zh: Spark ML管道API以类似于Scikit-Learn管道API的方式利用Transformer和Estimator的概念，但也有一些重要的区别。第一个区别是Spark
+    ML中的Transformer实现`.transform()`方法，但不实现`.fit_transform()`方法。其次，Spark ML中的Transformer和Estimator对象是无状态的，因此一旦训练完成，它们就不会改变，并且只包含模型元数据。它们不存储有关原始输入数据的任何信息。一个相似之处在于，在Spark
+    ML中，管道也被视为Estimator。
 - en: We will now build a basic example to show how to build a training pipeline using
     the Spark ML API.
   id: totrans-487
   prefs: []
   type: TYPE_NORMAL
+  zh: 我们现在将构建一个基本示例，以展示如何使用Spark ML API构建训练管道。
 - en: 'Let’s take a look:'
   id: totrans-488
   prefs: []
   type: TYPE_NORMAL
+  zh: 让我们看看：
 - en: 'First, we must one-hot encode the categorical features for the previous example
     using the following syntax:'
   id: totrans-489
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 首先，我们必须使用以下语法对前一个示例中的分类特征进行独热编码：
 - en: '[PRE73]'
   id: totrans-490
   prefs:
@@ -3337,6 +3647,7 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 对于数值列，我们必须进行插补：
 - en: '[PRE74]'
   id: totrans-492
   prefs:
@@ -3351,6 +3662,7 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 然后，我们必须执行标准化。在这里，我们需要在应用`StandardScaler`时稍微聪明一点，因为它一次只能应用于一列。因此，在将我们的数值特征填充到单个特征向量中之后，我们需要为每个数值特征创建一个缩放器：
 - en: '[PRE75]'
   id: totrans-494
   prefs:
@@ -3363,6 +3675,7 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 然后，我们必须将数值和分类转换的特征组合成一个特征列：
 - en: '[PRE76]'
   id: totrans-496
   prefs:
@@ -3375,6 +3688,7 @@
   prefs:
   - PREF_OL
   type: TYPE_NORMAL
+  zh: 最后，我们可以定义我们的模型步骤，将其添加到`pipeline`中，然后进行训练和转换：
 - en: '[PRE77]'
   id: totrans-498
   prefs:
@@ -3386,6 +3700,7 @@
   id: totrans-499
   prefs: []
   type: TYPE_NORMAL
+  zh: 你可以将模型管道持久化，就像持久化任何`Spark`对象一样，例如，通过使用：
 - en: '[PRE78]'
   id: totrans-500
   prefs: []
@@ -3396,6 +3711,7 @@
   id: totrans-501
   prefs: []
   type: TYPE_NORMAL
+  zh: 其中`path`是你目标位置的路劲。然后，你可以通过使用以下方式将这个管道读入内存：
 - en: '[PRE79]'
   id: totrans-502
   prefs: []
@@ -3407,16 +3723,19 @@
   id: totrans-503
   prefs: []
   type: TYPE_NORMAL
+  zh: 以下是我们在PySpark中使用**Spark ML**构建训练管道的方法。这个示例展示了足够的内容，让你开始使用API并构建你自己的、更复杂的管道。
 - en: We will now conclude this chapter with a brief summary of everything we have
     covered.
   id: totrans-504
   prefs: []
   type: TYPE_NORMAL
+  zh: 现在，我们将以本章所涵盖内容的简要总结来结束本章。
 - en: Summary
   id: totrans-505
   prefs:
   - PREF_H1
   type: TYPE_NORMAL
+  zh: 摘要
 - en: In this chapter, we learned about the important topic of how to build up our
     solutions for training and staging the ML models that we want to run in production.
     We split the components of such a solution into pieces that tackled training the
@@ -3425,6 +3744,7 @@
   id: totrans-506
   prefs: []
   type: TYPE_NORMAL
+  zh: 在本章中，我们学习了如何构建我们想要在生产中运行的ML模型的训练和部署解决方案的重要主题。我们将这个解决方案的组件分解为处理模型训练、模型持久化、模型服务和触发模型重新训练的各个部分。我将之称为“模型工厂”。
 - en: We got into the more technical details of some important concepts with a deep
     dive into what training an ML model really means, which we framed as learning
     about how ML models learn. Some time was then spent on the key concepts of feature
@@ -3435,6 +3755,7 @@
   id: totrans-507
   prefs: []
   type: TYPE_NORMAL
+  zh: 我们深入探讨了某些重要概念的技术细节，深入研究了训练ML模型真正意味着什么，我们将之定义为学习ML模型是如何学习的。然后，我们花了一些时间讨论特征工程的关键概念，即在这个过程中你如何将数据转换成ML模型可以理解的形式。随后是关于如何考虑你的训练系统可以运行的不同模式的章节，我将之称为“训练-持久”和“训练-运行”。
 - en: We then discussed how you can perform drift detection on your models and the
     data they are consuming using a variety of techniques. This included some examples
     of performing drift detection using the Alibi Detect and Evidently packages and
@@ -3442,6 +3763,7 @@
   id: totrans-508
   prefs: []
   type: TYPE_NORMAL
+  zh: 我们随后讨论了如何使用各种技术在你的模型及其消耗的数据上执行漂移检测。这包括了一些使用Alibi Detect和Evidently包执行漂移检测的示例，以及如何计算特征重要性的讨论。
 - en: We then covered the concept of how the training process can be automated at
     various levels of abstraction, before explaining how to programmatically manage
     the staging of your models with MLflow Model Registry. The final section covered
@@ -3449,27 +3771,34 @@
   id: totrans-509
   prefs: []
   type: TYPE_NORMAL
+  zh: 然后，我们介绍了训练过程可以在不同抽象级别自动化的概念，并在解释如何使用MLflow模型注册表程序化地管理你的模型阶段之后，最后部分涵盖了如何在Scikit-Learn和Spark
+    ML包中定义训练管道。
 - en: In the next chapter, we will find out how to package up some of these concepts
     in a Pythonic way so that they can be deployed and reused seamlessly in other
     projects.
   id: totrans-510
   prefs: []
   type: TYPE_NORMAL
+  zh: 在下一章中，我们将找出如何以Pythonic的方式打包一些这些概念，以便它们可以在其他项目中无缝部署和重用。
 - en: Join our community on Discord
   id: totrans-511
   prefs:
   - PREF_H1
   type: TYPE_NORMAL
+  zh: 加入我们的社区Discord
 - en: 'Join our community’s Discord space for discussion with the author and other
     readers:'
   id: totrans-512
   prefs: []
   type: TYPE_NORMAL
+  zh: 加入我们的社区Discord空间，与作者和其他读者进行讨论：
 - en: '[https://packt.link/mle](https://packt.link/mle)'
   id: totrans-513
   prefs: []
   type: TYPE_NORMAL
+  zh: '[https://packt.link/mle](https://packt.link/mle)'
 - en: '![](img/QR_Code102810325355484.png)'
   id: totrans-514
   prefs: []
   type: TYPE_IMG
+  zh: '![二维码](img/QR_Code102810325355484.png)'
