@@ -1,0 +1,1242 @@
+- en: '9'
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Building an Extract, Transform, Machine Learning Use Case
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Similar to *Chapter 8*, *Building an Example ML Microservice*, the aim of this
+    chapter will be to try to crystallize a lot of the tools and techniques we have
+    learned about throughout this book and apply them to a realistic scenario. This
+    will be based on another use case introduced in *Chapter 1*, *Introduction to
+    ML Engineering*, where we imagined the need to cluster taxi ride data on a scheduled
+    basis. So that we can explore some of the other concepts introduced throughout
+    the book, we will assume as well that for each taxi ride, there is also a series
+    of textual data from a range of sources, such as traffic news sites and transcripts
+    of calls between the taxi driver and the base, joined to the core ride information.
+    We will then pass this data to a **Large Language Model** (**LLM**) for summarization.
+    The result of this summarization can then be saved in the target data location
+    alongside the basic ride date to provide important context for any downstream
+    investigations or analysis of the taxi rides. We will also build on our previous
+    knowledge of Apache Airflow, which we will use as the orchestration tool for our
+    pipelines, by discussing some more advanced concepts to make your Airflow jobs
+    more robust, maintainable, and scalable. We will explore this scenario so that
+    we can outline the key decisions we would make if building a solution in the real
+    world, as well as discuss how to implement it by leveraging what has been covered
+    in other chapters.
+  prefs: []
+  type: TYPE_NORMAL
+- en: This use case will allow us to explore what is perhaps the most used pattern
+    in **machine learning** (**ML**) solutions across the world—that of the batch
+    inference process. Due to the nature of retrieving, transforming, and then performing
+    ML on data, I have termed this **Extract, Transform, Machine Learning** (**ETML**).
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We will work through this example in the following sections:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Understanding the batch processing problem
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Designing an ETML solution
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Selecting the tools
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Executing the build
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: All of these topics will help us understand the particular decisions and steps
+    we need to take in order to build a successful ETML solution.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the next section, we will revisit the high-level problem introduced in *Chapter
+    1*, *Introduction to ML Engineering*, and explore how to map the business requirements
+    to technical solution requirements, given everything we have learned in the book
+    so far.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Technical requirements
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'As in the other chapters, to create the environment to run the code examples
+    in this chapter you can run:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE0]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'This will include installs of Airflow, PySpark, and some supporting packages.
+    For the Airflow examples, we can just work locally, and assume that if you want
+    to deploy to the cloud, you can follow the details given in *Chapter 5*, *Deployment
+    Patterns and Tools*. If you have run the above `conda` command then you will have
+    installed Airflow locally, along with PySpark and the Airflow PySpark connector
+    package, so you can run Airflow as standalone with the following command in the
+    terminal:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE1]'
+  prefs: []
+  type: TYPE_PRE
+- en: This will then instantiate a local database and all relevant Airflow components.
+    There will be a lot of output to the terminal, but near the end of the first phase
+    of output, you should be able to spot details about the local server that is running,
+    including a generated user ID and password. See *Figure 9.1* for an example.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![A screenshot of a computer code  Description automatically generated with
+    low confidence](img/B19525_09_01.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 9.1: Example of local login details created upon running Airflow in
+    standalone mode. As the message says, do not use this mode for production!'
+  prefs: []
+  type: TYPE_NORMAL
+- en: If you navigate to the URL provided (in the second line of the screenshot you
+    can see that the app is `Listening at http://0.0.0.0:8080`), you will see a page
+    like that shown in *Figure 9.2*, where you can use the local username and password
+    to log in (see *Figure 9.3*). When you log in to the standalone version of Airflow,
+    you are presented with many examples of DAGs and jobs that you can base your own
+    workloads on.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/B19525_09_02.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 9.2: The login page of the standalone Airflow instance running on a
+    local machine.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![A screenshot of a computer  Description automatically generated with medium
+    confidence](img/B19525_09_03.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 9.3: The landing page after logging in to the standalone Airflow instance.
+    The page has been populated with a series of example DAGs.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Now that we have done some of the preliminary setup, let’s move on to discussing
+    the details of the problem we will try to solve before we build out our solution.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Understanding the batch processing problem
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'In *Chapter 1*, *Introduction to ML Engineering*, we saw the scenario of a
+    taxi firm that wanted to analyze anomalous rides at the end of every day. The
+    customer had the following requirements:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Rides should be clustered based on ride distance and time, and anomalies/outliers
+    identified.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Speed (distance/time) was not to be used, as analysts would like to understand
+    long-distance rides or those with a long duration.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The analysis should be carried out on a daily schedule.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The data for inference should be consumed from the company’s data lake.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The results should be made available for consumption by other company systems.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Based on the description in the introduction to this chapter, we can now add
+    some extra requirements:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The system’s results should contain information on the rides classification
+    as well as a summary of relevant textual data.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Only anomalous rides need to have textual data summarized.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'As we did in *Chapter 2*, *The Machine Learning Development Process*, and *Chapter
+    8*, *Building an Example ML Microservice*, we can now build out some user stories
+    from these requirements, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**User story 1**: As an operations analyst or data scientist, I want to be
+    given clear labels of rides that are anomalous when considering their ride times
+    in minutes and ride distances in miles so that I can perform further analysis
+    and modeling on the volume of anomalous rides. The criteria for what counts as
+    an anomaly should be determined by an appropriate ML algorithm, which defines
+    an anomaly with respect to the other rides for the same day.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**User story 2**: As an operations analyst or data scientist, I want to be
+    provided with a summary of relevant textual data so that I can do further analysis
+    and modeling on the reasons for some rides being anomalous.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**User story 3**: As an internal application developer, I want all output data
+    sent to a central location, preferably in the cloud, so that I can easily build
+    dashboards and other applications with this data.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**User story 4**: As an operations analyst or data scientist, I would like
+    to receive a report every morning by 09.00\. This report should clearly show which
+    rides were anomalous or “normal” as defined by the selected ML algorithm. This
+    will enable me to update my analyses and provide an update to the logistics managers.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: User story 1 should be taken care of by our general clustering approach, especially
+    since we are using the **Density-Based Spatial Clustering of Applications with
+    Noise** (**DBSCAN**) algorithm, which provides a label of *-1* for outliers.
+  prefs: []
+  type: TYPE_NORMAL
+- en: User story 2 can be accommodated by leveraging the capabilities of LLMs that
+    we discussed in *Chapter 7*, *Deep Learning, Generative AI, and LLMOps*. We can
+    send the textual data we are given as part of the input batch to a GPT model with
+    an appropriately formatted prompt; the prompt formatting can be done with LangChain
+    or vanilla Python logic.
+  prefs: []
+  type: TYPE_NORMAL
+- en: User story 3 means that we have to push the results to a location on the cloud
+    that can then be picked up either by a data engineering pipeline or a web application
+    pipeline. To make this as flexible as possible, we will push results to an assigned
+    **Amazon Web Services** (**AWS**) **Simple Storage Service** (**S3**) bucket.
+    We will initially export the data in the **JavaScript Object Notation** (**JSON**)
+    format, which we have already met in several chapters, as this is a format that
+    is often used in application development and can be read in by most data engineering
+    tools.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The final user story, user story 4, gives us guidance on the scheduling we require
+    for the system. In this case, the requirements mean we should run a daily batch
+    job.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Let’s tabulate these thoughts in terms of some ML solution technical requirements,
+    as shown in *Table 9.1*.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '| **User Story** | **Details** | **Technical Requirements** |'
+  prefs: []
+  type: TYPE_TB
+- en: '| 1 | As an operations analyst or data scientist, I want to be given clear
+    labels of rides that have anomalously long ride times or distances so that I can
+    perform further analysis and modeling on the volume of anomalous rides. |'
+  prefs: []
+  type: TYPE_TB
+- en: Algorithm type = anomaly detection/clustering/outlier detection.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Features = ride time and distance.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '|'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '| 2 | As an operations analyst or data scientist, I want to be provided with
+    a summary of relevant textual data so that I can do further analysis and modeling
+    on the reasons for some rides being anomalous. |'
+  prefs: []
+  type: TYPE_TB
+- en: Algorithm type = text summarization.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Potential models = transformers like BERT, and LLMs like GPT models.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Input requirements = formatted prompts.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '|'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '| 3 | As an internal application developer, I want all output data sent to
+    a central location, preferably in the cloud, so that I can easily build dashboards
+    and other applications with this data. | System output destination = S3 on AWS.
+    |'
+  prefs: []
+  type: TYPE_TB
+- en: '| 4 | As an operations analyst or data scientist, I would like to see the output
+    data for the previous day’s rides every morning so that I can update my analyses
+    and provide an update to the logistics managers. | Batch frequency = daily. |'
+  prefs: []
+  type: TYPE_TB
+- en: 'Table 9.1: Translating user stories to technical requirements.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The process of taking some user stories and translating them into potential
+    technical requirements is a very important skill for an ML engineer, and it can
+    really help speed up the design and implementation of a potential solution. For
+    the rest of the chapter, we will use the information in *Table 9.1*, but to help
+    you practice this skill, can you think of some other potential user stories for
+    the scenario given and what technology requirements these might translate to?
+    Here are some thoughts to get you started:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: A data scientist in the firm may want to try and build models to predict customer
+    satisfaction based on a variety of features of the rides, including times and
+    perhaps any of the traffic issues mentioned in the textual data. How often may
+    they want this data? What data would they need? What would they do with it specifically?
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The developers of the mobile app in the firm may want to have forecasts of expected
+    ride times based on traffic and weather conditions to render for users. How could
+    they do this? Can the data come in batches, or should it be an event-driven solution?
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Senior management may want reports compiled of the firm’s performance across
+    several variables in order to make decisions. What sort of data may they want
+    to see? What ML models would provide more insight? How often does the data need
+    to be prepared, and what solutions could the results be shown in?
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Now that we have done some of the initial work required to understand what we
+    need the system to do and how it may do it, we can now move on to bringing these
+    together into some initial designs.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Designing an ETML solution
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'The requirements clearly point us to a solution that takes in some data and
+    augments it with ML inference, before outputting the data to a target location.
+    Any design we come up with must encapsulate these steps. This is the description
+    of any ETML solution, and this is one of the most used patterns in the ML world.
+    In my opinion it will remain important for a long time to come as it is particularly
+    suited to ML applications where:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**Latency is not critical**: If you can afford to run on a schedule and there
+    are no high-throughput or low-latency response time requirements, then running
+    as an ETML batch is perfectly acceptable.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**You need to batch the data for algorithmic reasons**: A great example of
+    this is the clustering approach we will use here. There are ways to perform clustering
+    in an online setting, where the model is continually updated as new data comes
+    in, but some approaches are simpler if you have all the relevant data taken together
+    in the relevant batch. Similar arguments can apply to deep learning models, which
+    will require large batches of data to be processed on GPUs in parallel for maximum
+    efficiency.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**You do not have event-based or streaming mechanisms available**: Many organizations
+    may still operate in batch mode simply because they have to! It can require investment
+    to move to appropriate platforms that work in a different mode, and this may not
+    have always been made available.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**It is simpler**: Related to the previous point, getting event-based or streaming
+    systems set up can take some learning for your team, whereas batching is relatively
+    intuitive and easy to get started with.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Now, let’s start discussing the design. The key elements our design has to cover
+    were articulated in *Table 9.1*. We can then start to build out a design diagram
+    that covers the most important aspects, including starting to pin down which technologies
+    are used for which processes. *Figure 9.4* shows a simplified design diagram that
+    starts to do this and shows how we can use an Airflow pipeline to pull data from
+    an S3 bucket, storing our clustered data in S3 as an intermediate data storage
+    step, before proceeding to summarize the text data using the LLM and exporting
+    the final result to our final target S3 location.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/B19525_09_04.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 9.4: High-level design for the ETML clustering and summarization system.
+    Steps 1–3 of the overall pipelines are the clustering steps and 4–6 are the summarization
+    steps.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the next section, we will look at some potential tools we can use to solve
+    this problem, given everything we have learned in previous chapters.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Selecting the tools
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: For this example, and pretty much whenever we have an ETML problem, our main
+    considerations boil down to a few simple things, namely the selection of the interfaces
+    we need to build, the tools we need to perform the transformation and modeling
+    at the scale we require, and how we orchestrate all of the pieces together. The
+    next few sections will cover each of these in turn.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Interfaces and storage
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: When we execute the extract and load parts of ETML, we need to consider how
+    to interface with the systems that store our data. It is important that whichever
+    database or data technology we extract from, we use the appropriate tools to extract
+    at whatever scale and pace we need. In this example, we can use S3 on AWS for
+    our storage; our interfacing can be taken care of by the AWS `boto3` library and
+    the AWS CLI. Note that we could have selected a few other approaches, some of
+    which are listed in *Table 9.2* along with their pros and cons.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '| **Potential Tools** | **Pros** | **Cons** |'
+  prefs: []
+  type: TYPE_TB
+- en: '| The AWS CLI, S3, and `boto3` |'
+  prefs: []
+  type: TYPE_TB
+- en: Relatively simple to use, and extensive documentation.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Connects to a wide variety of other AWS tools and services.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '|'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Not cloud-agnostic.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Not applicable to other environments or technologies.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '|'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '| SQL database and JDBC/ODBC connector |'
+  prefs: []
+  type: TYPE_TB
+- en: Relatively tool-agnostic.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Cross-platform and cloud.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Optimized storage and querying possible.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '|'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Requires data modeling and database administration.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Not optimized for unstructured data.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '|'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '| Vendor-supplied cloud data warehouse via their API |'
+  prefs: []
+  type: TYPE_TB
+- en: Often good documentation and examples to follow.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Good optimizations in place.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Modern platforms have good connectivity to other well-used platforms.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Managed services available across multiple clouds.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '|'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Requires data modeling and database administration.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Can sometimes support unstructured data but is not always easy to implement.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Can be expensive.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '|'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Table 9.2: Data storage and interface options for the ETML solution with some
+    potential pros and cons.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Based on these options, it seems like using the AWS CLI, S3 and the `boto3`
+    package will be the simplest mechanism that provides the most flexibility in this
+    scenario. In the next section, we will consider the decisions we must make around
+    the scalability of our modeling approach. This is very important when working
+    with batches of data, which could be extremely large in some cases.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Scaling of models
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'In *Chapter 6*, *Scaling Up*, we discussed some of the mechanisms to scale
+    up our analytics and ML workloads. We should ask ourselves whether any of these,
+    or even other methods, apply to the use case at hand and use them accordingly.
+    This works the other way too: if we are looking at relatively small amounts of
+    data, there is no need to provision a large amount of infrastructure, and there
+    may be no need to spend time creating very optimized processing. Each case should
+    be examined on its own merits and within its own context.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: We have listed some of the options for the clustering part of the solution and
+    their pros and cons in *Table 9.3*.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '| **Potential Tools** | **Pros** | **Cons** |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Spark ML | Can scale to very large datasets. | Requires cluster management.Can
+    have large overheads for smaller datasets or processing requirements.Relatively
+    limited algorithm set. |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Spark with pandas **User-Defined Function** (**UDF**) | Can scale to very
+    large datasets.Can use any Python-based algorithm. | Might not make sense for
+    some problems where parallelization is not easily applicable. |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Scikit-learn | Well known by many data scientists.Can run on many different
+    types of infrastructure.Small overheads for training and serving. | Not very inherently
+    scalable. |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Ray AIR or Ray Serve | Relatively easy-to-use API.Good integration with many
+    ML libraries. |'
+  prefs: []
+  type: TYPE_TB
+- en: Requires cluster management with new types of clusters (Ray clusters).
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Newer skillset for ML engineers.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '|'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Table 9.3: Options for the modeling part of the ETML solution, with their pros
+    and cons and with a particular focus on scalability and ease of use.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Given these options, and assuming that the data volumes are not large for this
+    example, we can comfortably stick with the Scikit-learn modeling approach, as
+    this provides maximum flexibility and will likely be most easily usable by the
+    data scientists in the team. It should be noted that the conversion of the Scikit-learn
+    code to using a pandas UDF in Spark can be accomplished at a later date, with
+    not too much work, if more scalable behavior is required.
+  prefs: []
+  type: TYPE_NORMAL
+- en: As explained above, however, clustering is only one part of the “ML” in this
+    ETML solution, the other being the text summarization part. Some potential options
+    and pros and cons are shown in *Table 9.4*.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '| **Potential Tools** | **Pros** | **Cons** |'
+  prefs: []
+  type: TYPE_TB
+- en: '| GPT-X models from OpenAI (or another vendor) |'
+  prefs: []
+  type: TYPE_TB
+- en: Simple to use – we’ve already met this in *Chapter 7*, *Deep Learning, Generative
+    AI, and LLMOps*.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Potentially the most performant models available.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '|'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Can become expensive.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Not as in control of the model.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Lack of visibility of data and model lineage.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '|'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '| Open-source LLMs |'
+  prefs: []
+  type: TYPE_TB
+- en: More transparent lineage of the data and model.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: More stable (you are in control of the model).
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '|'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Large infrastructure requirements.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Requires very specialized skills if optimization is required.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: More operational management is required (LLMOps).
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '|'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '| Any other non-LLM deep learning model, e.g., a BERT variant |'
+  prefs: []
+  type: TYPE_TB
+- en: Can be easier to set up than some open-source LLMs.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Extensively studied and documented.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Easier to retrain and fine-tune (smaller models).
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Vanilla MLOps applicable.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: May not require prompt engineering.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '|'
+  prefs: []
+  type: TYPE_NORMAL
+- en: More operational overhead than an API call (but less than hosting an LLM).
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Less performant.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '|'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Table 9.4: Tooling options for the text summarization component of the EMTL
+    solution.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Now that we have explored the tooling decisions we have to make around scalable
+    ML models, we will move on to another important topic for ETML solutions—how we
+    manage the scheduling of batch processing.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Scheduling of ETML pipelines
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'The kind of batch process that ETML corresponds to is often something that
+    ties in quite nicely with daily batches, but given the other two points outlined
+    previously, we may need to be careful about when we schedule our jobs—for example,
+    a step in our pipeline may need to connect to a production database that does
+    not have a read replica (a copy of the database specifically just for reading).
+    If this were the case, then we may cause major performance issues for users of
+    any solutions utilizing that database if we start hammering it with queries at
+    9 a.m. on a Monday morning. Similarly, if we run overnight and want to load into
+    a system that is undergoing other batch upload processes, we may create resource
+    contention, slowing down the process. There is no *one-size-fits-all* answer here;
+    it is just important to consider your options. We look at the pros and cons of
+    using some of the tools we have met throughout the book for the scheduling and
+    job management of this problem in the following table:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '| **Potential Tools** | **Pros** | **Cons** |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Apache Airflow |'
+  prefs: []
+  type: TYPE_TB
+- en: Good scheduling management.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Relatively easy-to-use API.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Good documentation.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Cloud-hosted services are available, such as AWS **Managed Workflows for Apache
+    Airflow** (**MWAA**).
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Flexible for use across ML, data engineering, and other workloads.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '|'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Can take time to test pipelines.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Cloud services like MWAA can be expensive.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Airflow is relatively general-purpose (potentially also a pro), and does not
+    have too much specific functionality for ML workloads.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '|'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '| ZenML |'
+  prefs: []
+  type: TYPE_TB
+- en: Relatively easy-to-use API.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Good documentation.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Designed for ML engineers.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Multiple useful MLOps integrations.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: A cloud option is available.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '|'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Can take time to test pipelines.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Slightly steeper learning curve compared to Airflow.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '|'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '| Kubeflow |'
+  prefs: []
+  type: TYPE_TB
+- en: Relatively easy-to-use API.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Good documentation.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Simplifies the use of Kubernetes substantially if that is required.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '|'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Requires an AWS variant for use on AWS.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Slightly steeper learning curve than the others.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Can be harder to debug at times due to Kubernetes under the hood.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '|'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Table 9.5: Pros and cons of using Apache Airflow to manage our scheduling.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Given what we have in *Tables 9.3*, *9.4*, and *9.5*, all of the options considered
+    have really strong pros and not too many cons. This means that there are many
+    possible combinations of technology that will allow us to solve our problems.
+    The requirements for our problem have stipulated that we have relatively small
+    datasets that need to be processed in batches every day, first with some kind
+    of clustering or anomaly detection algorithm before further analysis using an
+    LLM. We can see that selecting `scikit-learn` for the modeling package, a GPT
+    model from OpenAI called via the API, and Apache Airflow for orchestration can
+    fit the bill. Again, this is not the only combination we could have gone with.
+    It might be fun for you to take the example we work through in the rest of the
+    chapter and try some of the other tools. Knowing multiple ways to do something
+    is a key skill for an ML engineer that can help you adapt to many different situations.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The next section will discuss how we can proceed with the execution of the solution,
+    given this information.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Executing the build
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Execution of the build, in this case, will be very much about how we take the
+    **proof-of-concept** code shown in *Chapter 1*, *Introduction to ML Engineering*,
+    and then split this out into components that can be called by another scheduling
+    tool such as Apache Airflow.
+  prefs: []
+  type: TYPE_NORMAL
+- en: This will provide a showcase of how we can apply some of the ML engineering
+    skills we learned throughout the book. In the next few sections, we will focus
+    on how to build out an Airflow pipeline that leverages a series of different ML
+    capabilities, creating a relatively complex solution in just a few lines of code.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Building an ETML pipeline with advanced Airflow features
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: We already discussed Airflow in detail in *Chapter 5*, *Deployment Patterns
+    and Tools*, but there we covered more of the details around how to deploy your
+    DAGs on the cloud. Here we will focus on building in more advanced capabilities
+    and control flows into your DAGs. We will work locally here on the understanding
+    that when you want to deploy, you can use the process outlined in *Chapter 5*.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'First we will look at some good DAG design practices. Many of these are direct
+    applications of some of the good software engineering practices we discussed throughout
+    the book; for a good review of some of these you can go back to *Chapter 4*, *Packaging
+    Up*. Here we will emphasize how these can be applied to Airflow:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**Embody separation of concerns for your tasks**: As discussed in *Chapter
+    4*, separation of concerns is all about ensuring that specific pieces of code
+    or software perform specific functions with minimal overlap. This can also be
+    phrased as “atomicity,” using the analogy of building up your solution with “atoms”
+    of specific, focused functionality. At the level of Airflow DAGs we can embody
+    this principle by ensuring our DAGs are built of tasks that have one clear job
+    to do in each case. So, in this example we clearly have the “extract,” “transform,”
+    “ML,” and “load” stages, for which it makes sense to have specific tasks in each
+    case. Depending on the complexity of those tasks they may even be split further.
+    This also helps us to create good control flows and error handling, as it is far
+    easier to anticipate, test, and manage failure modes for smaller, more atomic
+    pieces of code. We will see this in practice with the code examples in this section.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Use retries**: You can pass in several arguments to Airflow steps that help
+    control how the task will operate under different circumstances. An important
+    aspect of this is the concept of “retries,” which tells the task to, you guessed
+    it, try the process again if there is a failure. This is a nice way to build in
+    some resiliency to your system, as there could be all sorts of reasons for a temporary
+    failure in a process, such as a drop in network connectivity if it includes a
+    REST API call over HTTP. You can also introduce delays between retries and even
+    exponential backoff, which is when your retries have increasing time delays between
+    them. This can help if you hit an API with rate limits, for example, where the
+    exponential backoff will mean the system is allowed to hit the endpoint again.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Mandate idempotency in your DAGs**: Idempotency is the quality of code that
+    returns the same result when run multiple times on the same inputs. It can easily
+    be assumed that most programs work this way but that is definitely not the case.
+    We have made extensive use of Python objects in this book that contain internal
+    states, for example, ML models in `scikit-learn` or neural networks in PyTorch.
+    This means that it should not be taken for granted that idempotency is a feature
+    of your solution. Idempotency is very useful, especially in ETML pipelines, because
+    it means if you need to perform retries then you know that this will not lead
+    to unexpected side effects. You can enforce idempotency at the level of your DAG
+    by enforcing it at the level of your tasks that make up the DAG. The challenge
+    for an EMTL application is that we obviously have ML models, which I’ve just mentioned
+    can be a challenge for this concept! So, some thought is required to make sure
+    that retries and the ML steps of your pipeline can play nicely together.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Leverage the Airflow operators and provider package ecosystem**: Airflow
+    comes with a large list of operators to perform all sorts of tasks, and there
+    are several packages designed to help integrate with other tools called *provider
+    packages*. The advice here is to **use them**. This speaks to the points discussed
+    in *Chapter 4*, *Packaging Up,* about “not reinventing the wheel” and ensures
+    that you can focus on building the appropriate logic you need for your workloads
+    and system and not on creating boilerplate integrations. For example, we can use
+    the Spark provider package. We can install it with:'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '[PRE2]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'Then in a DAG we can submit a Spark application, for example one contained
+    within a script called `spark-script.py`, for a run with:'
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: '[PRE3]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: '**Use** `with DAG() as dag`: In the example above you will see that we used
+    this pattern. This context manager pattern is one of the three main ways you can
+    define a DAG, the other two being using the DAG constructor and passing it to
+    all tasks in your pipeline or using a decorator to convert a function to a DAG.
+    The use of a context manager means, as in any usage of it in Python, that any
+    resources defined within the context are cleaned up correctly even if the code
+    block exists with an exception. The mechanism that uses the constructor requires
+    passing `dag=dag_name` into every task you define in the pipeline, which is quite
+    laborious. Using the decorator is quite clean for basic DAGs but can become quite
+    hard to read and maintain if you build more complex DAGs.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Remember to test (!)**: After reading the rest of this book and becoming
+    a confident ML engineer, I can hear you shouting at the page, “What about testing?!”,
+    and you would be right to shout. Our code is only as good as the tests we can
+    run on it. Luckily for us Airflow provides some out-of-the-box functionality that
+    enables local testing and debugging of your DAGs. For debugging in your IDE or
+    editor, if your DAG is called `dag`, like in the example above, all you need to
+    do is add the below snippet to your DAG definition file to run the DAG in a local,
+    serialized Python process within your chosen debugger. This does not run the scheduler;
+    it just runs the DAG steps in a single process, which means it fails fast and
+    gives quick feedback to the developer:'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '[PRE4]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: We can also use `pytest` like we did in *Chapter 4*, *Packaging Up*, and elsewhere
+    in the book.
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Now that we have discussed some of the important concepts we can use, we will
+    start to build up the Airflow DAG in some detail, and we will try and do this
+    in a way that shows you how to build some resiliency into the solution.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'First, it is important to note that, for this example, we will actually perform
+    the ETML process twice: once for the clustering component and once for the text
+    summarization. Doing it this way means that we can use *intermediary storage*
+    in between the steps, in this case, AWS S3 again, in order to introduce some resiliency
+    into the system. This is so because if the second step fails, it doesn’t mean
+    the first step’s processing is lost. The example we will walk through does this
+    in a relatively straightforward way, but as always in this book, remember that
+    the concepts can be extended and adapted to use tooling and processes of your
+    choice, as long as the fundamentals remain solid.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let’s start building this DAG! It is a relatively short one that only contains
+    two tasks; we will show the DAG first and then expand on the details:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE5]'
+  prefs: []
+  type: TYPE_PRE
+- en: '`extract_cluster_load_task`: This task will extract the input data from the
+    appropriate S3 bucket and perform some clustering using DBSCAN, before loading
+    the original data joined to the model output to the intermediary storage location.
+    For simplicity we will use the same bucket for intermediate storage, but this
+    could be any location or solution that you have connectivity to.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`extract_summarize_load_task`: Similarly, the first step here is to extract
+    the data from S3 using the boto3 library. The next step is to take the data and
+    then call the appropriate LLM to perform summarization on the text fields selected
+    in the data, specifically those that contain information on the local news, weather,
+    and traffic reports for the day of the batch run.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: You will have noticed upon reading the DAG that the reason the DAG definition
+    is so short is that we have abstracted away most of the logic into subsidiary
+    modules, in line with the principles of keeping it simple, separating our concerns,
+    and applying modularity. See *Chapter 4*, *Packaging Up*, for an in-depth discussion
+    of these and other important concepts.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The first component that we use in the DAG is the functionality contained in
+    the `Clusterer` class under `utils.cluster`. The full definition of this class
+    is given below. I have omitted standard imports for brevity:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE6]'
+  prefs: []
+  type: TYPE_PRE
+- en: Note that the constructor of the class contains a reference to a default set
+    of `model_params`. These can be read in from a configuration file. I have included
+    them here for visibility. The actual clustering and labeling method within the
+    class is relatively simple; it just standardizes the incoming features, applies
+    the DBSCAN clustering algorithm, and then exports the originally extracted dataset,
+    which now includes the cluster labels. One important point to note is that the
+    features used for clustering are supplied as a list so that this can be extended
+    in the future if desired, or if richer data for clustering is available, simply
+    by altering the `op_kwargs` argument supplied to the first task’s `PythonOperator`
+    object in the DAG.
+  prefs: []
+  type: TYPE_NORMAL
+- en: After the first task, which uses the `Clusterer` class, runs successfully, a
+    JSON is produced giving the source records and their cluster labels. Two random
+    examples from the produced file are given in *Figure 9.5*.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![A picture containing text, screenshot, font, document  Description automatically
+    generated](img/B19525_09_05.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 9.5: Two example records of the data produced after the clustering step
+    in the ETML pipeline.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'You may have noticed that, at the top of this example, another utility class
+    is imported, the `Extractor` class from the `utils.extractor` module. This is
+    simply a wrapper around some `boto3` functionality and is defined below:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE7]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Now let’s move on to the definition of the other class used in the DAG, the
+    `LLMSummarizer` from the `utils.summarize` module:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE8]'
+  prefs: []
+  type: TYPE_PRE
+- en: You can see that this class follows a similar design pattern to the one used
+    in the `Clusterer` class, only now the method that we utilize has the role of
+    prompting an OpenAI LLM of our choosing, using a standard template that we have
+    hardcoded. Again, this prompt template can be extracted out into a configuration
+    file that is packaged up with the solution, but is shown here for visibility.
+    The prompt asks that the LLM summarizes the relevant pieces of contextual information
+    supplied, concerning local news, weather, and traffic reports, so that we have
+    a concise summary that can be used for downstream analysis or to render in a user
+    interface. A final important point to note here is that the method to generate
+    the summary, which wraps a call to OpenAI APIs, has a `try except` clause that
+    will allow for a fallback to a different model if the first model call experiences
+    any issues. At the time of writing in May 2023, OpenAI APIs still show some brittleness
+    when it comes to latency and rate limits, so steps like this allow you to build
+    in more resilient workflows.
+  prefs: []
+  type: TYPE_NORMAL
+- en: An example output from the application of the `LLMSummarizer` class when running
+    the DAG is given in *Figure 9.6*.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![A picture containing text, screenshot, font  Description automatically generated](img/B19525_09_06.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 9.6: An example output from the LLMSummarizer; you can see that it takes
+    in the news, weather, and traffic information and produces a concise summary that
+    can help any downstream consumers of this data understand what it means for overall
+    traffic conditions.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: A potential area of optimization in this piece of code is around the prompt
+    template used, as there is the potential for some nice prompt engineering to try
+    and shape the output from the LLM to be more consistent. You could also use a
+    tool like LangChain, which we met in *Chapter 7*, *Deep Learning, Generative AI,
+    and LLMOps*, to perform more complex prompting of the model. I leave this as a
+    fun exercise for the reader.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Now that we have defined all the logic for our DAG and the components it uses,
+    how will we actually configure this to run, even in standalone mode? When we deployed
+    a DAG to **MWAA**, the AWS-hosted and managed Airflow solution, in *Chapter 4*,
+    you may recall that we had to send our DAG to a specified bucket that was then
+    read in by the system.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'For your own hosted or local Airflow instances the same point applies; this
+    time we need to send the DAG to a `dags` folder, which is located in the `$AIRFLOW_HOME`
+    folder. If you have not explicitly configured this for your installation of Airflow
+    you will use the default, which is typically in a folder called `airflow` under
+    your `home` directory. To find this and lots of other useful information you can
+    execute the following command, which produces the output shown in *Figure 9.7*:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE9]'
+  prefs: []
+  type: TYPE_PRE
+- en: '![A screenshot of a computer program  Description automatically generated with
+    medium confidence](img/B19525_09_07.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 9.7: The output from the airflow info command.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Once you have found the location of the `$AIRFLOW_HOME` folder, if there isn’t
+    a folder called `dags` already, create one. For simple, self-contained DAGs that
+    do not use sub-modules, all you need to do to mock up deployment is to copy the
+    DAG over to this folder, similar to how we sent our DAG to S3 in the example with
+    MWAA in *Chapter 5*. Since we use multiple sub-modules in this example we can
+    either decide to install them as a package, using the techniques developed in
+    *Chapter 4*, *Packaging Up*, and make sure that it is available in the Airflow
+    environment, or we can simply send the sub-modules into the same `dags` folder.
+    For simplicity that is what we will do here, but please consult the official Airflow
+    documentation for details on this.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Once we have copied over the code, if we access the Airflow UI, we should be
+    able to see our DAG like in *Figure 9.8*. As long as the Airflow server is running,
+    the DAG will run on the supplied schedule. You can also trigger manual runs in
+    the UI for testing.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![A screenshot of a computer  Description automatically generated with medium
+    confidence](img/B19525_09_08.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 9.8: The ETML DAG in the Airflow UI.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Running the DAG will result in the intermediary and final output JSON files
+    being created in the S3 bucket, as shown in *Figure 9.9*.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![A screenshot of a computer  Description automatically generated with low
+    confidence](img/B19525_09_09.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 9.9: The successful run of the DAG creates the intermediate and final
+    JSON files.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: And with that, we have now built an ETML pipeline that takes in some taxi ride
+    data, clusters this based on ride distance and time, and then performs text summarization
+    on some contextual information using an LLM.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Summary
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: This chapter has covered how to apply a lot of the techniques learned in this
+    book, in particular from *Chapter 2*, *The Machine Learning Development Process*,
+    *Chapter 3*, *From Model to Model Factory*, *Chapter 4*, *Packaging Up*, and *Chapter
+    5*, *Deployment Patterns and Tools*, to a realistic application scenario. The
+    problem, in this case, concerned clustering taxi rides to find anomalous rides
+    and then performing NLP on some contextual text data to try and help explain those
+    anomalies automatically. This problem was tackled using the ETML pattern, which
+    I offered up as a way to rationalize typical batch ML engineering solutions. This
+    was explained in detail. A design for a potential solution, as well as a discussion
+    of some of the tooling choices any ML engineering team would have to go through,
+    was covered. Finally, a deep dive into some of the key pieces of work that would
+    be required to make this solution production-ready was performed. In particular
+    we showed how you can use good object-orientated programming techniques to wrap
+    ML functionality spanning the Scikit-learn package, the AWS `boto3` library, and
+    OpenAI APIs to use LLMs to create some complex functionality. We also explored
+    in detail how to use more complex features of Airflow to orchestrate these pieces
+    of functionality in ways that are resilient.
+  prefs: []
+  type: TYPE_NORMAL
+- en: With that, you have not only completed this chapter but also the second edition
+    of *Machine Learning Engineering with Python*, so congratulations! Throughout
+    this book, we have covered a wide variety of topics related to ML engineering,
+    from how to build your teams and what development processes could look like, all
+    the way through to packaging, scaling, scheduling, deploying, testing, logging,
+    and a whole bunch of stuff in between. We have explored AWS and managed cloud
+    services, we have performed deep dives into open-source technologies that give
+    you the ability to orchestrate, pipeline, and scale, and we have also explored
+    the exciting new world of LLMs, generative AI, and LLMOps.
+  prefs: []
+  type: TYPE_NORMAL
+- en: There are so many topics to cover in this fast-moving, ever-changing, and exhilarating
+    world of ML engineering and MLOps that one book could never do the whole field
+    justice. This second edition, however, has attempted to improve upon the first
+    by providing some more breadth and depth in areas I think will be important to
+    help develop the next generation of ML engineering talent. It is my hope that
+    you come away from reading this book not only feeling well equipped but also as
+    excited as I am every day to go out and build the future. If you work in this
+    space, or you are moving into it, then you are doing so at what I believe is a
+    truly unique time in history. As ML systems are required to keep becoming more
+    powerful, pervasive, and performant, I believe the demand for ML engineering skills
+    is only going to grow. I hope this book has given you the tools you need to take
+    advantage of that, and that you have enjoyed the ride as much as I have!
+  prefs: []
+  type: TYPE_NORMAL
+- en: Join our community on Discord
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'Join our community’s Discord space for discussion with the author and other
+    readers:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[https://packt.link/mle](https://packt.link/mle)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/QR_Code102810325355484.png)'
+  prefs: []
+  type: TYPE_IMG

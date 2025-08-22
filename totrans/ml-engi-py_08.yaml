@@ -1,0 +1,1457 @@
+- en: '8'
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Building an Example ML Microservice
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: This chapter will be all about bringing together some of what we have learned
+    in the book so far with a realistic example. This will be based on one of the
+    scenarios introduced in *Chapter 1*, *Introduction to ML Engineering*, where we
+    were required to build a forecasting service for store item sales. We will discuss
+    the scenario in a bit of detail and outline the key decisions that have to be
+    made to make a solution a reality, before showing how we can employ the processes,
+    tools, and techniques we have learned through out this book to solve key parts
+    of the problem from an ML engineering perspective. By the end of this chapter,
+    you should come away with a clear view of how to build your own ML microservices
+    for solving a variety of business problems.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In this chapter, we will cover the following topics:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Understanding the forecasting problem
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Designing our forecasting service
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Selecting the tools
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Training at scale
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Serving the models with FastAPI
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Containerizing and deploying to Kubernetes
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Each topic will provide an opportunity for us to walk through the different
+    decisions we have to make as engineers working on a complex ML delivery. This
+    will provide us with a handy reference when we go out and do this in the real
+    world!
+  prefs: []
+  type: TYPE_NORMAL
+- en: With that, let’s get started and build a forecasting microservice!
+  prefs: []
+  type: TYPE_NORMAL
+- en: Technical requirements
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'The code examples in this chapter will be simpler to follow if you have the
+    following installed and running on your machine:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Postman or another API development tool
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: A local Kubernetes cluster manager like minikube or kind
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The Kubernetes CLI tool, `kubectl`
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'There are several different `conda` environment `.yml` files contained in the
+    `Chapter08` folder in the book’s GitHub repo for the technical examples, as there
+    are a few different sub-components. These are:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '`mlewp-chapter08-train`: This specifies the environment for running the training
+    scripts.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`mlewp-chapter08-serve`: This specifies the environment for the local FastAPI
+    web service build.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`mlewp-chapter08-register`: This gives the environment specification for running
+    the MLflow tracking server.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'In each case, create the Conda environment, as usual, with:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE0]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The Kubernetes examples in this chapter also require some configuration of
+    the cluster and the services we will deploy; these are given in the `Chapter08/forecast`
+    folder under different `.yml` files. If you are using kind, you can create a cluster
+    with a simple configuration by running:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE1]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Or you can use one of the configuration `.yaml` files provided in the repository:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE2]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Minikube does not provide an option to read in a cluster configuration `.yaml`
+    like kind, so instead, you should simply run:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE3]'
+  prefs: []
+  type: TYPE_PRE
+- en: to deploy your local cluster.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Understanding the forecasting problem
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'In *Chapter 1*, *Introduction to ML Engineering*, we considered the example
+    of an ML team that has been tasked with providing forecasts of items at the level
+    of individual stores in a retail business. The fictional business users had the
+    following requirements:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The forecasts should be rendered and accessible via a web-based dashboard.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The user should be able to request updated forecasts if necessary.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The forecasts should be carried out at the level of individual stores.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Users will be interested in their own regions/stores in any one session and
+    not be concerned with global trends.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The number of requests for updated forecasts in any one session will be small.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Given these requirements, we can work with the business to create the following
+    user stories, which we can put into a tool such as Jira, as explained in *Chapter
+    2*, *The Machine Learning Development Process*. Some examples of user stories
+    covering these requirements would be the following:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**User Story 1**: As a local logistics planner, I want to log in to a dashboard
+    in the morning at 09:00 and be able to see forecasts of item demand at the store
+    level for the next few days so that I can understand transport demand ahead of
+    time.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**User Story 2**: As a local logistics planner, I want to be able to request
+    an update of my forecast if I see it is out of date. I want the new forecast to
+    be returned in under 5 minutes so that I can make decisions on transport demand
+    effectively.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**User Story 3**: As a local logistics planner, I want to be able to filter
+    for forecasts for specific stores so that I can understand what stores are driving
+    demand and use this in decision-making.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: These user stories are very important for the development of the solution as
+    a whole. As we are focused on the ML engineering aspects of the problem, we can
+    now dive into what these mean for building the solution.
+  prefs: []
+  type: TYPE_NORMAL
+- en: For example, the desire to *be able to see forecasts of item demand at the store
+    level* can be translated quite nicely into a few technical requirements for the
+    ML part of the solution. This tells us that the target variable will be the number
+    of items required on a particular day. It tells us that our ML model or models
+    need to be able to work at the store level, so either we have one model per store
+    or the concept of the store can be taken in as some sort of feature.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Similarly, the requirement that the user wants to *be able to request an update
+    of my forecast if I see it is out of date ... I want the new forecast to be retrieved
+    in under five minutes* places a clear latency requirement on training. We cannot
+    build something that takes days to retrain, so this may suggest that one model
+    built across all of the data may not be the best solution.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Finally, the request *I want to be able to filter for forecasts for specific
+    stores* again supports the notion that whatever we build must utilize some sort
+    of store identifier in the data but not necessarily as a feature for the algorithm.
+    So, we may want to start thinking of application logic that will take a request
+    for the forecast for a specific store, identified by this store ID, then the ML
+    model and forecast are retrieved only for that store via some kind of lookup or
+    retrieval that uses this ID in a filter.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Walking through this process, we can see how just a few lines of requirements
+    have allowed us to start fleshing out how we will tackle the problem in practice.
+    Some of these thoughts and others could be consolidated upon a little brainstorming
+    among our team for the project in a table like that of *Table 8.1*:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '| **User Story** | **Details** | **Technical Requirements** |'
+  prefs: []
+  type: TYPE_TB
+- en: '| 1 | As a local logistics planner, I want to log in to a dashboard in the
+    morning at 09:00 and be able to see forecasts of item demand at the store level
+    for the next few days so that I can understand transport demand ahead of time.
+    |'
+  prefs: []
+  type: TYPE_TB
+- en: Target variable = item demand.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Forecast horizon – 1-7 days.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: API access for a dashboard or other visualization solution.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '|'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '| 2 | As a local logistics planner, I want to be able to request an update
+    of my forecast if I see it is out of date. I want the new forecast to be returned
+    in under 5 minutes so that I can make decisions on transport demand effectively.
+    |'
+  prefs: []
+  type: TYPE_TB
+- en: Lightweight retraining.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Model per store.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '|'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '| 3 | As a local logistics planner, I want to be able to filter for forecasts
+    for specific stores so that I can understand what stores are driving demand and
+    use this in decision-making. |'
+  prefs: []
+  type: TYPE_TB
+- en: Model per store.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '|'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Table 8.1: Translating user stories to technical requirements.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Now we will build on our understanding of the problem by starting to pull together
+    a design for the ML piece of the solution.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Designing our forecasting service
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: The requirements in the *Understanding the forecasting problem* section are
+    the definitions of the targets we need to hit, but they are not the method for
+    getting there. Drawing on our understanding of design and architecture from *Chapter
+    5*, *Deployment Patterns and Tools*, we can start building out our design.
+  prefs: []
+  type: TYPE_NORMAL
+- en: First, we should confirm what kind of design we should be working on. Since
+    we need dynamic requests, it makes sense that we follow the microservice architecture
+    discussed in *Chapter 5*, *Deployment Patterns and Tools*. This will allow us
+    to build a service that has the sole focus of retrieving the right model from
+    our model store and performing the requested inference. The prediction service
+    should therefore have interfaces available between the dashboard and the model
+    store.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Furthermore, since a user may want to work with a few different store combinations
+    in any one session and maybe switch back and forth between the forecasts of these,
+    we should provide a mechanism for doing so that is performant.
+  prefs: []
+  type: TYPE_NORMAL
+- en: It is also clear from the scenario that we can quite easily have a very high
+    volume of requests for predictions but a lower request for model updates. This
+    means that separating out training and prediction will make sense and that we
+    can follow the train-persist process outlined in *Chapter 3*, *From Model to Model
+    Factory*. This will mean that prediction will not be dependent on a full training
+    run every time and that retrieval of models for prediction is relatively fast.
+  prefs: []
+  type: TYPE_NORMAL
+- en: What we have also gathered from the requirements is that our training system
+    doesn’t necessarily need to be triggered by drift monitoring in this case, but
+    by dynamic requests made by the user. This adds a bit of complexity as it means
+    that our solution should not retrain for every request coming in but be able to
+    determine whether retraining is worth it for a given request or whether the model
+    is already up to date. For example, if four users log on and are looking at the
+    same region/store/item combination and all request a retrain, it is pretty clear
+    that we do not need to retrain our model four times! Instead, what should happen
+    is that the training system registers a request, performs a retrain, and then
+    safely ignores the other requests.
+  prefs: []
+  type: TYPE_NORMAL
+- en: There are several ways to serve ML models, as we have discussed several times
+    throughout this book. One very powerful and flexible way is to wrap the models,
+    or the model serving logic, into a standalone service that is limited to only
+    performing tasks required for the serving of the ML inference. This is the serving
+    pattern that we will consider in this chapter and it is the classic “microservice”
+    architecture, where different pieces of functionality are broken down into their
+    own distinct and separated services. This builds resiliency and extensibility
+    into your software systems so it is a great pattern to become comfortable with.
+    This is also particularly amenable to the development of ML systems, as these
+    have to consist of training, inference, and monitoring services, as outlined in
+    *Chapter 3*, *From Model to Model Factory*. This chapter will walk through how
+    to serve an ML model using a microservice architecture, using a few different
+    approaches with various pros and cons. You will then be able to adapt and build
+    on these examples in your own future projects.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We can bring these design points together into a high-level design diagram,
+    for example, in *Figure 8.1*:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/B19525_08_01.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 8.1: High-level design for the forecasting microservice.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The next section will focus on taking these high-level design considerations
+    to a lower level of detail as we perform some tool selection ahead of development.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Selecting the tools
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Now that we have a high-level design in mind and we have written down some clear
+    technical requirements, we can begin to select the toolset we will use to implement
+    our solution.
+  prefs: []
+  type: TYPE_NORMAL
+- en: One of the most important considerations on this front will be what framework
+    we use for modeling our data and building our forecasting functionality. Given
+    that the problem is a time-series modeling problem with a need for fast retraining
+    and prediction, we can consider the pros and cons of a few options that may fit
+    the bill before proceeding.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The results of this exercise are shown in *Table 8.2*:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '| **Tool/Framework** | **Pros** | **Cons** |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Scikit-learn |'
+  prefs: []
+  type: TYPE_TB
+- en: Already understood by almost all data scientists.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Very easy-to-use syntax.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Lots of great community support.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Good feature engineering and pipelining support.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '|'
+  prefs: []
+  type: TYPE_NORMAL
+- en: No native time-series modeling capabilities (but the popular `sktime` package
+    does have these).
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Will require more feature engineering to apply models to time-series data.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '|'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '| Prophet |'
+  prefs: []
+  type: TYPE_TB
+- en: Purely focused on forecasting.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Has inbuilt hyperparameter optimization capabilities.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Provides a lot of functionality out of the box.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Often gives accurate results on a wide variety of problems.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Provides confidence intervals out of the box.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '|'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Not as commonly used as scikit-learn (but still relatively popular).
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Underlying methods are quite sophisticated – may lead to black box usage by
+    data scientists.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Not inherently scalable.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '|'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '| Spark ML |'
+  prefs: []
+  type: TYPE_TB
+- en: Natively scalable to large volumes.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Good feature engineering and pipelining support.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '|'
+  prefs: []
+  type: TYPE_NORMAL
+- en: No native time-series modeling capabilities.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Algorithm options are relatively limited.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Can be harder to debug.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '|'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Table 8.2: The considered pros and cons of some different ML toolkits for solving
+    this forecasting problem.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Based on the information in *Table 8.2*, it looks like the **Prophet** library
+    would be a good choice and offer a nice balance between predictive power, the
+    desired time-series capabilities, and experience among the developers and scientists
+    on the team.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The data scientists could then use this information to build a proof-of-concept,
+    with code much like that shown in *Chapter 1*, *Introduction to ML Engineering*,
+    in the *Example 2: Forecasting API* section, which applies Prophet to a standard
+    retail dataset.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: This covers the ML package we will use for modeling, but what about the other
+    components? We need to build something that allows the frontend application to
+    request actions be taken by the backend, so it is a good idea to consider some
+    kind of web application framework. We also need to consider what happens when
+    this backend application is hit by many requests, so it makes sense to build it
+    with scale in mind. Another consideration is that we are tasked with training
+    not one but several models in this use case, one for each retail store, and so
+    we should try and parallelize the training as much as possible. The last pieces
+    of the puzzle are going to be the use of a model management tool and the need
+    for an orchestration layer in order to trigger training and monitoring jobs on
+    a schedule or dynamically.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Putting all of this together, we can make some design decisions about the lower-level
+    tooling required on top of using the Prophet library. We can summarize these in
+    the following list:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**Prophet**: We met the Prophet forecasting library in *Chapter 1*, *Introduction
+    to ML Engineering*. Here we will provide a deeper dive into that library and how
+    it works before developing a training pipeline to create the types of forecasting
+    models we saw for that retail use case in the first chapter.'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '**Kubernetes**: As discussed in *Chapter 6*, *Scaling Up*, this is a platform
+    for orchestrating multiple containers across compute clusters and allows you to
+    build highly scalable ML model-serving solutions. We will use this to host the
+    main application.'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '**Ray Train**: We already met Ray in *Chapter 6*, *Scaling Up*. Here we will
+    use Ray Train to train many different Prophet forecasting models in parallel,
+    and we will also allow these jobs to be triggered upon a request to the main web
+    service handling the incoming requests.'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '**MLflow**: We met MLflow in *Chapter 3*, *From Model to Model Factory*, and
+    this will be used as our model registry.'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '**FastAPI**: For Python, the go-to backend web frameworks are typically Django,
+    Flask, and FastAPI. We will use FastAPI to create the main backend routing application
+    that will serve the forecasts and interact with the other components of the solution.
+    FastAPI is a web framework designed to be simple to use and for building highly
+    performant web applications and is currently being used by some high-profile organizations,
+    including Uber, Microsoft, and Netflix (according to the FastAPI homepage).'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: There has been some recent discussion around the potential for memory leaks
+    when using FastAPI, especially for longer-running services. This means that ensuring
+    you have enough RAM on the machines running your FastAPI endpoints can be very
+    important. In many cases, this does not seem to be a critical issue, but it is
+    an active topic being discussed within the FastAPI community. For more on this,
+    please see [https://github.com/tiangolo/fastapi/discussions/9082](https://github.com/tiangolo/fastapi/discussions/9082).
+    Other frameworks, such as **Litestar**, [https://litestar.dev/](https://litestar.dev/),
+    do not seem to have the same issue, so feel free to play around with different
+    web frameworks for the serving layer in the following example and in your projects.
+    FastAPI is still a very useful framework with lots of benefits so we will proceed
+    with it in this chapter; it is just important to bear this point in mind.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In this chapter, we are going to focus on the components of this system that
+    are relevant to serving the models at scale, as the scheduled train and retrain
+    aspects will be covered in *Chapter 9*, *Building an Extract, Transform, Machine
+    Learning Use Case*. The components we focus on can be thought to consist of our
+    “serving layer,” although I will show you how to use Ray to train several forecasting
+    models in parallel.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Now that we have made some tooling choices, let’s get building our ML microservice!
+  prefs: []
+  type: TYPE_NORMAL
+- en: Training at scale
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: When we introduced Ray in *Chapter 6*, *Scaling Up*, we mentioned use cases
+    where the data or processing time requirements were such that using a very scalable
+    parallel computing framework made sense. What was not made explicit is that sometimes
+    these requirements come from the fact that we actually want to train *many models*,
+    not just one model on a large amount of data or one model more quickly. This is
+    what we will do here.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The retail forecasting example we described in *Chapter 1*, *Introduction to
+    ML Engineering* uses a data set with several different retail stores in it. Rather
+    than creating one model that could have a store number or identifier as a feature,
+    a better strategy would perhaps be to train a forecasting model for each individual
+    store. This is likely to give better accuracy as the features of the data at the
+    store level which may give some predictive power will not be averaged out by the
+    model looking at a combination of all the stores together. This is therefore the
+    approach we will take, and this is where we can use Ray’s parallelism to train
+    multiple forecasting models simultaneously.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'To use **Ray** to do this, we need to take the training code we had in *Chapter
+    1*, and adapt it slightly. First, we can bring together the functions we had for
+    pre-processing the data and for training the forecasting models. Doing this means
+    that we are creating one serial process that we can then distribute to run on
+    the shard of the data corresponding to each store. The original functions for
+    preprocessing and training the models were:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE4]'
+  prefs: []
+  type: TYPE_PRE
+- en: We can now combine these into a single function that will take a `pandas` DataFrame,
+    preprocess that data, train a Prophet forecasting model and then return predictions
+    on the test set, the training dataset, the test dataset and the size of the training
+    set, here labelled by the `train_index` value. Since we wish to distribute the
+    application of this function, we need to use the `@ray.remote` decorator that
+    we introduced in *Chapter 6*, *Scaling Up*. We pass in the `num_returns=4` argument
+    to the decorator to let Ray know that this function will return four values in
+    a tuple.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE5]'
+  prefs: []
+  type: TYPE_PRE
+- en: Now that we have our remote function we just need to apply it. First, we assume
+    that the dataset has been read into a `pandas` DataFrame in the same manner as
+    in *Chapter 1*, *Introduction to ML Engineering*. The assumption here is that
+    the dataset is small enough to fit in memory and doesn’t require computationally
+    intense transformations. This has the advantage of allowing us to use `pandas`
+    relatively smart data ingestion logic, which allows for various formatting of
+    the header row for example, as well as apply any filtering or transformation logic
+    we want to before distribution using that now familiar `pandas` syntax. If the
+    dataset was larger or the transformations more intense, we could have used the
+    `ray.data.read_csv()` method from the Ray API to read the data in as a Ray Dataset.
+    This reads the data into an Arrow data format, which has its own data manipulation
+    syntax.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Now, we are ready to apply our distributed training and testing. First, we can
+    retrieve all of the store identifiers from the dataset, as we are going to train
+    a model for each one.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE6]'
+  prefs: []
+  type: TYPE_PRE
+- en: Before we do anything else we will initialize the Ray cluster using the `ray.init()`
+    command we met in *Chapter 6*, *Scaling Up*. This avoids performing the intitialization
+    when we first call the remote function, meaning we can get accurate timings of
+    the actual processing if we perform any benchmarking. To aid performance, we can
+    also use `ray.put()` to store the pandas DataFrame in the Ray object store. This
+    stops us replicating this dataset every time we run a task. Putting an object
+    in the store returns an id, which you can then use for function arguments just
+    like the original object.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE7]'
+  prefs: []
+  type: TYPE_PRE
+- en: Now, we need to submit our Ray tasks to the cluster. Whenever you do this, a
+    Ray object reference is returned that will allow you to retrieve the data for
+    the process when we use `ray.get` to collect the results. The syntax I’ve used
+    here may look a bit complicated, but we can break it down piece by piece. The
+    core Python function `map`, just applies the list operation to all of the elements
+    of the result of the `zip` syntax. The `zip(*iterable)` pattern allows us to unzip
+    all of the elements in the list comprehension, so that we can have a list of prediction
+    object references, training data object references, test data object references
+    and finally the training index object references. Note the use of `df_id` for
+    referencing the stored dataframe in the object store.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE8]'
+  prefs: []
+  type: TYPE_PRE
+- en: We then need to get the actual results of these tasks, which we can do by using
+    `ray.get()` as discussed.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE9]'
+  prefs: []
+  type: TYPE_PRE
+- en: You can then access the values of these for each model with `ray_results['predictions'][<index>]`
+    and so on.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the Github repository, the file `Chapter08/train/train_forecasters_ray.py`
+    runs this syntax and an example for loop for training the Prophet models one by
+    one in serial fashion for comparison. Using the `time` library for the measurements
+    and running the experiment on my Macbook with four CPUs being utilized by the
+    Ray cluster, I was able to train 1,115 Prophet models in just under 40 seconds
+    using Ray, compared to around 3 minutes 50 seconds using the serial code. That’s
+    an almost six-fold speedup, without doing much optimization!
+  prefs: []
+  type: TYPE_NORMAL
+- en: We did not cover the saving of the models and metadata into MLFlow, which you
+    can do using the syntax we discussed in depth in *Chapter 3*, *From Model to Model
+    Factory*. To avoid lots of communication overhead, it may be best to store the
+    metadata temporarily as the result of the training process, like we have done
+    in the dictionary storing the predictions and then write everything to MLFlow
+    at the end. This means you do not slow down the Ray processes with communications
+    to the MLFlow server. Note also that we could have optimized this parallel processing
+    even further by using the Ray Dataset API discussed and altering the transformation
+    logic to use Arrow syntax. A final option would also have been to use **Modin**,
+    previously known as Pandas on Ray, which allows you to use `pandas` syntax whilst
+    leveraging the parallelism of Ray.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Let’s now start building out the serving layer for our solution, so that we
+    can use these forecasting models to generate results for other systems and users.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Serving the models with FastAPI
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: The simplest and potentially most flexible approach to serving ML models in
+    a microservice with Python is in wrapping the serving logic inside a lightweight
+    web application. Flask has been a popular option among Python users for many years
+    but now the FastAPI web framework has many advantages, which means it should be
+    seriously considered as a better alternative.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Some of the features of FastAPI that make it an excellent choice for a lightweight
+    microservice are:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**Data validation**: FastAPI uses and is based on the **Pydantic** library,
+    which allows you to enforce type hints at runtime. This allows for the implementation
+    of very easy-to-create data validation steps that make your system way more robust
+    and helps avoid edge case behaviors.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Built-in async workflows**: FastAPI gives you asynchronous task management
+    out of the box with `async` and `await` keywords, so you can build the logic you
+    will need in many cases relatively seamlessly without resorting to extra libraries.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Open specifications**: FastAPI is based on several open source standards
+    including the **OpenAPI REST API standard** and the **JSON Schema** declarative
+    language, which helps create automatic data model documentation. These specs help
+    keep the workings of FastAPI transparent and very easy to use.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Automatic documentation generation**: The last point mentioned this for data
+    models, but FastAPI also auto-generates documentation for your entire service
+    using SwaggerUI.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Performance**: Fast is in the name! FastAPI uses the **Asynchronous Server
+    Gateway Interface** (**ASGI**) standard, whereas other frameworks like Flask use
+    the **Web Server Gateway Interface** (**WSGI**). The ASGI can process more requests
+    per unit of time and does so more efficiently, as it can execute tasks without
+    waiting for previous tasks to finish. The WSGI interface executes specified tasks
+    sequentially and so takes longer to process requests.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: So, the above are the reasons why it might be a good idea to use FastAPI to
+    serve the forecasting models in this example, but how do we go about doing that?
+    That is what we will now cover.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Any microservice has to have data come into it in some specified format; this
+    is called the “request.” It will then return data, known as the “response.” The
+    job of the microservice is to ingest the request, execute a series of tasks that
+    the request either defines or gives input for, create the appropriate output,
+    and then transform that into the specified request format. This may seem basic,
+    but it is important to recap and gives us the starting point for designing our
+    system. It is clear that we will have to take into account the following points
+    in our design:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**Request and response schemas**: Since we will be building a REST API, it
+    is natural that we will specify the data model for the request and responses as
+    JSON objects with associated schemas. The key when doing this is that the schemas
+    are as simple as possible and that they contain all the information necessary
+    for the client (the requesting service) and the server (the microservice) to perform
+    the appropriate actions. Since we are building a forecasting service, the request
+    object must provide enough information to allow the system to provide an appropriate
+    forecast, which the upstream solution calling the service can present to users
+    or perform further logic on. The response will have to contain the actual forecast
+    data points or some pointer toward the location of the forecast.'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '**Compute**: The creation of the response object, in this case, a forecast,
+    requires computation, as discussed in *Chapter 1*, *Introduction to ML Engineering*.'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: A key consideration in designing ML microservices is the size of this compute
+    resource and the appropriate tooling needed to execute it. As an example, if you
+    are running a computer vision model that requires a large GPU in order to perform
+    inference, you cannot do this on the server running the web application backend
+    if that is only a small machine running a CPU. Similarly, if the inference step
+    requires the ingestion of a terabyte of data, this may require us to use a parallelization
+    framework like Spark or Ray running on a dedicated cluster, which by definition
+    will have to be running on different machines from the serving web application.
+    If the compute requirements are small enough and fetching data from another location
+    is not too intense, then you may be able to run the inference on the same machine
+    hosting the web application.
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: '**Model management**: This is an ML service, so, of course, there are models
+    involved! This means, as discussed in detail in *Chapter 3*, *From Model to Model
+    Factory*, we will need to implement a robust process for managing the appropriate
+    model versions. The requirements for this example also mean that we have to be
+    able to utilize many different models in a relatively dynamic fashion. This will
+    require some careful consideration and the use of a model management tool like
+    MLflow, which we met in *Chapter 3* as well. We also have to consider our strategies
+    for updating and rolling back models; for example, will we use blue/green deployments
+    or canary deployments, as discussed in *Chapter 5*, *Deployment Patterns and Tools*.'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '**Performance monitoring**: For any ML system, as we have discussed at length
+    throughout the book, monitoring the performance of models will be critically important,
+    as will taking appropriate action to update or roll back these models. If the
+    truth data for any inference cannot be immediately given back to the service,
+    then this will require its own process for gathering together truth and inferences
+    before performing the desired calculations on them.'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: These are some of the important points we will have to consider as we build
+    our solution. In this chapter, we will focus on points 1 and 3, as *Chapter 9*
+    will cover how to build training and monitoring systems that run in a batch setting.
+    Now that we know some of the things we want to factor into our solution, let’s
+    get on and start building!
+  prefs: []
+  type: TYPE_NORMAL
+- en: Response and request schemas
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: If the client is asking for a forecast for a specific store, as we are assuming
+    in the requirements, then this means that the request should specify a few things.
+    First, it should specify the store, using some kind of store identifier that will
+    be kept in common between the data models of the ML microservice and the client
+    application.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Second, the time range for the forecast should be provided in an appropriate
+    format that can be easily interpreted and serviced by the application. The systems
+    should also have logic in place to create appropriate forecast time windows if
+    none are provided in the request, as it is perfectly reasonable to assume if a
+    client is requesting “a forecast for store X,” then we can assume some default
+    behavior that provides a forecast for some time period from now into the future
+    will likely be useful to the client application.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The simplest request JSON schema that satisfies this is then something like:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE10]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'As this is a JSON object, all of the fields are strings, but they are populated
+    with values that will be easily interpretable within our Python application. The
+    Pydantic library will also help us to enforce data validation, which we will discuss
+    later. Note that we should also allow for the client application to request multiple
+    forecasts, so we should allow for this JSON to be extended to allow for lists
+    of request objects:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE11]'
+  prefs: []
+  type: TYPE_PRE
+- en: As mentioned, we would like to build our application logic so that the system
+    would still work even if the client only made a request specifying the `store_id`,
+    and then we infer the appropriate forecast horizon to be from now to some time
+    in the future.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'This means our application should work when the following is submitted as the
+    JSON body in the API call:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE12]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'To enforce these constraints on the request, we can use the Pydantic functionality
+    where we inherit from the Pydantic `BaseModel` and create a data class defining
+    the type requirements we have just made:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE13]'
+  prefs: []
+  type: TYPE_PRE
+- en: As you can see, we have enforced here that the `store_id` is a string, but we
+    have allowed for the beginning and end dates for the forecast to be given as `None`.
+    If the dates are not specified, we could make a reasonable assumption based on
+    our business knowledge that a useful forecast time window would be from the datetime
+    of the request to seven days from now. This could be something that is changed
+    or even provided as a configuration variable in the application config. We will
+    not deal with that particular aspect here to focus on the more the more exciting
+    stuff, so this is left as fun exercise for the reader!
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The forecasting model in our case will be based on the Prophet library, as
+    discussed, and this requires an index that contains the datetimes for the forecast
+    to run over. To produce this based on the request, we can write a simple helper
+    function:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE14]'
+  prefs: []
+  type: TYPE_PRE
+- en: This logic then allows us to create the input to the forecasting model once
+    it is retrieved from the model storage layer, in our case, MLflow.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The response object has to return the forecast in some data format, and it
+    is always imperative that you return enough information for the client application
+    to be able to conveniently associate the returned object with the response that
+    triggered its creation. A simple schema that satisfies this would be something
+    like:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE15]'
+  prefs: []
+  type: TYPE_PRE
+- en: We will allow for this to be extended as a list in the same way as the request
+    JSON schema. We will work with these schemas for the rest of this chapter. Now,
+    let’s look at how we will manage the models in the application.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Managing models in your microservice
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: In *Chapter 3*, *From Model to Model Factory*, we discussed in detail how you
+    can use MLflow as a model artifact and metadata storage layer in your ML systems.
+    We will do the same here, so let’s assume that you have an MLflow Tracking server
+    already running and then we just need to define our logic for interacting with
+    it. If you need a refresher, feel free to revisit *Chapter 3*.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We will need to write some logic that does the following:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Checks there are models available for use in production in the MLflow server.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Retrieves a version of the model satisfying any criteria we wish to set, for
+    example, that the model was not trained more than a certain number of days ago
+    and that it has validation metrics within a chosen range.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Caches the model for use and reuse during the forecasting session if desired.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Does all of the above for multiple models if that is required from the response
+    object.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'For point 1, we will have to have models tagged as ready for production in
+    the MLflow model registry and then we can use the `MlflowClient()` and `mlflow
+    pyfunc` functionality we met in *Chapter 3*, *From Model to Model Factory*:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE16]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'For point 2, we can retrieve the metrics for a given model by using the MLflow
+    functionality we will describe below. First, using the name of the model, you
+    retrieve the model’s metadata:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE17]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'This will return a dataset like this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE18]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'You can then use that data to retrieve the version via this object and then
+    retrieve the model version metadata:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE19]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'This contains metadata that looks something like:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE20]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The metrics information for this model version is associated with the `run_id`,
+    so we need to get that:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE21]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The value for the `run_id` would be something like:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE22]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'You can then use this information to get the model metrics for the specific
+    run, and then perform any logic you want on top of it. To retrieve the metric
+    values, you can use the following syntax:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE23]'
+  prefs: []
+  type: TYPE_PRE
+- en: As an example, you could use logic like the one applied in *Chapter 2* in the
+    *Continuous model performance testing* section and simply demand the root mean
+    squared error is below some specified value before allowing it to be used in the
+    forecasting service.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We may also want to allow for the service to trigger retraining if the model
+    is out of tolerance in terms of age; this could act as another layer of model
+    management on top of any training systems put in place.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'If our training process is orchestrated by an Airflow DAG running on AWS MWAA,
+    as we discussed in *Chapter 5*, *Deployment Patterns and Tools*, then the below
+    code could be used to invoke the training pipeline:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE24]'
+  prefs: []
+  type: TYPE_PRE
+- en: The next sections will outline how these pieces can be brought together so that
+    the FastAPI service can wrap around several pieces of this logic before discussing
+    how we containerize and deploy the app.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Pulling it all together
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: We have successfully defined our request and response schemas, and we’ve written
+    logic to pull the appropriate model from our model repository; now all that is
+    left to do is to tie all this together and perform the actual inference with the
+    model. There are a few steps to this, which we will break down now. The main file
+    for the FastAPI backend is called `app.py` and contains a few different application
+    routes. For the rest of the chapter, I will show you the necessary imports just
+    before each relevant piece of code, but the actual file follows the PEP8 convention
+    of imports at the top of the file.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'First, we define our logger and we set up some global variables to act as a
+    lightweight in-memory cache of the retrieved models and service handlers:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE25]'
+  prefs: []
+  type: TYPE_PRE
+- en: Using global variables to pass objects between application routes is only a
+    good idea if you know that this app will run in isolation and not create race
+    conditions by receiving requests from multiple clients simultaneously. When this
+    happens, multiple processes try and overwrite the variable. You can adapt this
+    example to replace the use of global variables with the use of a cache like **Redis**
+    or **Memcache** as an exercise!
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We then have to instantiate a `FastAPI` app object and we can define any logic
+    we want to run upon startup by using the start-up lifespan event method:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE26]'
+  prefs: []
+  type: TYPE_PRE
+- en: As already mentioned, FastAPI is great for supporting async workflows, allowing
+    for the compute resources to be used while awaiting for other tasks to complete.
+    The instantiation of the service handlers could be a slower process so this can
+    be useful to adopt here. When functions that use the `async` keyword are called,
+    we need to use the `await` keyword, which means that the rest of the function
+    where the `async` function has been called can be suspended until a result is
+    returned and the resources used for tasks elsewhere. Here we have only one handler
+    to instantiate, which will handle connections to the MLflow Tracking server.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The `registry.mlflow.handler` module is one I have written containing the `MLFlowHandler`
+    class, with methods we will use throughout the app. The following are the contents
+    of that module:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE27]'
+  prefs: []
+  type: TYPE_PRE
+- en: As you can see, this handler has methods for checking the MLflow Tracking server
+    is up and running and getting production models. You could also add methods for
+    querying the MLflow API to gather the metrics data we mentioned before.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Returning to the main `app.py` file now, I’ve written a small health check
+    endpoint to get the status of the service:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE28]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Next comes a method to get the production model for a given retail store ID.
+    This function checks if the model is already available in the `global` variable
+    (acting as a simple cache) and if it isn’t there, adds it. You could expand this
+    method to include logic around the age of the model or any other metrics you wanted
+    to use to decide whether or not to pull the model into the application:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE29]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Finally, we have the forecasting endpoint, where the client can hit this application
+    with the request objects we defined before and get the forecasts based on the
+    Prophet models we retrieve from MLflow. Just like in the rest of the book, I’ve
+    omitted longer comments for brevity:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE30]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'You can then run the app locally with:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE31]'
+  prefs: []
+  type: TYPE_PRE
+- en: And you can add the `–reload` flag if you want to develop the app while it is
+    running. If you use Postman (or `curl` or any other tool of your choice) and query
+    this endpoint with a request body as we described previously, see *Figure 8.2*,
+    you will get an output like that shown in *Figure 8.3*.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/B19525_08_02.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 8.2: A request to the ML microservice in the Postman app.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/B19525_08_03.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 8.3: The response from the ML microservice when querying with Postman.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: And that’s it, we have a relatively simple ML microservice that will return
+    a Prophet model forecast for retail stores upon querying the endpoint! We will
+    now move on to discussing how we can containerize this application and deploy
+    it to a Kubernetes cluster for scalable serving.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Containerizing and deploying to Kubernetes
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: When we introduced Docker in *Chapter 5*, *Deployment Patterns and Tools*, we
+    showed how you can use it to encapsulate your code and then run it across many
+    different platforms consistently.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Here we will do this again, but with the idea in mind that we don’t just want
+    to run the application as a singleton on a different piece of infrastructure,
+    we actually want to allow for many different replicas of the microservice to be
+    running simultaneously with requests being routed effectively by a load balancer.
+    This means that we can take what works and make it work at almost arbitrarily
+    large scales.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We will do this by executing several steps:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Containerize the application using Docker.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Push this Docker container to Docker Hub to act as our container storage location
+    (you could use another container management solution like AWS Elastic Container
+    Registry or similar solutions on another cloud provider for this step).
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Create a Kubernetes cluster. We will do this locally using minikube, but you
+    can do this on a cloud provider using its managed Kubernetes service. On AWS,
+    this is **Elastic Kubernetes Service** (**EKS**).
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Define a service and load balancer on the cluster that can scale. Here we will
+    introduce the concept of manifests for programmatically defining service and deployment
+    characteristics on Kubernetes clusters.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Deploy the service and test that it is working as expected.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Let us now go through these steps in the next section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Containerizing the application
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'As introduced earlier in the book, if we want to use Docker, we need to give
+    instructions for how to build the container and install any necessary dependencies
+    in a Dockerfile. For this application, we can use one that is based on one of
+    the available FastAPI container images, assuming we have a file called `requirements.txt`
+    that contains all of our Python package dependencies:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE32]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We can then build this Docker container using the following command, where
+    I have named the container `custom-forecast-service`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE33]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Once this has been successfully built, we need to push it to Docker Hub. You
+    can do this by logging in to Docker Hub in the terminal and then pushing to your
+    account by running:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE34]'
+  prefs: []
+  type: TYPE_PRE
+- en: This means that other build processes or solutions can download and run your
+    container.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Note that before you push to Docker Hub, you can test that the containerized
+    application runs by executing a command like the following, where I have included
+    a platform flag in order to run the container locally on my MacBook Pro:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE35]'
+  prefs: []
+  type: TYPE_PRE
+- en: Now that we have built and shared the container, we can now work on scaling
+    this up with a deployment to Kubernetes.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Scaling up with Kubernetes
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: Working with Kubernetes can be a steep learning curve for even the most seasoned
+    developers, so we will only scratch the surface here and give you enough to get
+    started on your own learning journey. This section will walk you through the steps
+    you need to deploy your ML microservice onto a Kubernetes cluster running locally,
+    as it takes the same steps to deploy to a remotely hosted cluster (with minor
+    modifications). Operating Kubernetes clusters seamlessly in production requires
+    consideration of topics such as networking, cluster resource configuration and
+    management, security policies, and much more. Studying all of these topics in
+    detail would require an entire book in itself. In fact, an excellent resource
+    to get up to speed on many of these details is *Kubernetes in Production Best
+    Practices* by Aly Saleh and Murat Karsioglu. In this chapter, we will instead
+    focus on understanding the most important steps to get you up and running and
+    developing ML microservices using Kubernetes.
+  prefs: []
+  type: TYPE_NORMAL
+- en: First, let’s get set up for Kubernetes development. I will use minikube here,
+    as it has some handy utilities for setting up services that can be called via
+    REST API calls. Previously in this book, I used kind (Kubernetes in Docker), and
+    you can use this here; just be prepared to do some more work and use the documentation.
+  prefs: []
+  type: TYPE_NORMAL
+- en: To get set up with minikube on your machine, follow the installation guide in
+    the official docs for your platform at [https://minikube.sigs.k8s.io/docs/start/](https://minikube.sigs.k8s.io/docs/start/).
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Once minikube is installed, you can spin up your first cluster using default
+    configurations with:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE36]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Once the cluster is up and running, you can deploy the `fast-api` service to
+    the cluster with the following command in the terminal:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE37]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'where `direct-kube-deploy.yaml` is a manifest that contains the following code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE38]'
+  prefs: []
+  type: TYPE_PRE
+- en: This manifest defines a Kubernetes Deployment that creates and manages two replicas
+    of a Pod template containing a container named `fast-api`, which runs the Docker
+    image we created and published previously, `electricweegie/custom-forecast-service:latest`.
+    It also defines resource limits for the containers running inside the Pods and
+    ensures that the containers are listening on port `8000`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Now that we have created a Deployment with the application in it, we need to
+    expose this solution to incoming traffic, preferably through a load balancer so
+    that incoming traffic can be efficiently routed to the different replicas of the
+    application. To do this in minikube, you have to perform a few steps:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Network or host machine access is not provided by default to the Services running
+    on the minikube cluster, so we have to create a route to expose the cluster IP
+    address using the `tunnel` command:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE39]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'Open a new terminal window. This allows the tunnel to keep running, and then
+    you need to create a Kubernetes Service with type `LoadBalancer` that will access
+    the `deployment` we have already set up:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE40]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'You can then get the external IP for accessing the Service by running:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE41]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'This should give an output that looks something like:'
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: '[PRE42]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: You will then be able to use the `EXTERNAL-IP` of the load balancer service
+    to hit the API, so you can navigate to Postman, or your other API development
+    tool, and use `http://<EXTERNAL-IP>:8080` as the root URL for the FastAPI service
+    that you have now successfully built and deployed to Kubernetes!
+  prefs: []
+  type: TYPE_NORMAL
+- en: Deployment strategies
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'As discussed in *Chapter 5*, *Deployment Patterns and Tools*, there are several
+    different strategies you can use to deploy and update your ML services. There
+    are two components to this: one is the deployment strategy for the models and
+    the other is the deployment strategy for the hosting application or pipelines
+    that serve the models. These can both be executed in tandem as well.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Here we will discuss how to take the application we just deployed to Kubernetes
+    and update it using canary and blue/green deployment strategies. Once you know
+    how to do this for the base application, performing a similar update strategy
+    for the models can be added in by specifying in the canary or blue/green deployment
+    a model version that has an appropriate tag. As an example, we could use the “staging”
+    stage of the model registry in MLflow to give us our “blue” model, and then upon
+    transition to “green,” ensure that we have moved this model to the “production”
+    stage in the model registry using the syntax outlined earlier in the chapter and
+    in *Chapter 3*, *From Model to Model Factory*.
+  prefs: []
+  type: TYPE_NORMAL
+- en: As a canary deployment is a deployment of the new version of the application
+    in a smaller subset of the production environment, we can create a new deployment
+    manifest that enforces only one replica (this could be more on larger clusters)
+    of the canary application is created and run. In this case, this only requires
+    that you edit the previous manifest number of replicas to “1.”
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'To ensure that the canary deployment is accessible to the same load balancer,
+    we have to utilize the concept of resource labels in Kubernetes. We can then deploy
+    a load balancer that selects resources with the desired label. An example manifest
+    for deploying such a load balancer is given below:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE43]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Or using the same minkube syntax as above:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE44]'
+  prefs: []
+  type: TYPE_PRE
+- en: After deploying this load balancer and the canary deployment, you can then implement
+    monitoring of the logs on the cluster or on your model in order to determine if
+    the canary is successful and should get more traffic. In that case, you would
+    just update the deployment manifest to contain more replicas.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Blue/green deployments will work in a very similar way; in each case, you just
+    edit the Deployment manifest to label the application as blue or green, The core
+    difference between blue/green and canary deployments though is that the switching
+    of the traffic is a bit more abrupt, where here we can have the load balancer
+    service switch production traffic to the green deployment with the following command,
+    which uses the `kubectl` CLI to patch the definition of the selector in the service:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE45]'
+  prefs: []
+  type: TYPE_PRE
+- en: And that is how you perform canary and blue/green deployments in Kubernetes,
+    and how you can use it to try different versions of the forecasting service; give
+    it a try!
+  prefs: []
+  type: TYPE_NORMAL
+- en: Summary
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In this chapter, we walked through an example of how to take the tools and techniques
+    from the first seven chapters of this book and apply them together to solve a
+    realistic business problem. We discussed in detail how the need for a dynamically
+    triggered forecasting algorithm can lead very quickly to a design that requires
+    several small services to interact seamlessly. In particular, we created a design
+    with components responsible for handling events, training models, storing models,
+    and performing predictions. We then walked through how we would choose our toolset
+    to build to this design in a real-world scenario, by considering things such as
+    appropriateness for the task at hand, as well as likely developer familiarity.
+    Finally, we carefully defined the key pieces of code that would be required to
+    build the solution to solve the problem repeatedly and robustly.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the next, and final, chapter, we will build out an example of a batch ML
+    process. We will name the pattern that this adheres to **Extract**, **Transform**,
+    **Machine Learning**, and explore what key points should be covered in any project
+    aiming to build this type of solution.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Join our community on Discord
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'Join our community’s Discord space for discussion with the author and other
+    readers:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[https://packt.link/mle](https://packt.link/mle)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/QR_Code102810325355484.png)'
+  prefs: []
+  type: TYPE_IMG
