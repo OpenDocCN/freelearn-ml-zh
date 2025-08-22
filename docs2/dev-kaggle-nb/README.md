@@ -1,6 +1,6 @@
-# Python 应用监督学习
+# Kaggle 笔记本开发指南
 
-> 原文：[`annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47`](https://annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47)
+> 原文：[`annas-archive.org/md5/24dfa97e36ead23596f0ef3b74ce3f05`](https://annas-archive.org/md5/24dfa97e36ead23596f0ef3b74ce3f05)
 > 
 > 译者：[飞龙](https://github.com/wizardforcel)
 > 
