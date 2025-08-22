@@ -1,6 +1,6 @@
-# 11
 
-# 识别 Azure OpenAI 服务的功能
+
+# 第十一章：识别 Azure OpenAI 服务的功能
 
 在本章的最后一部分，我们将探讨 Azure OpenAI 服务的功能。如果你还记得，OpenAI 是 ChatGPT 和 DALL-E 等目前一些最受欢迎的**生成人工智能**（**GenAI**）产品背后的公司。
 

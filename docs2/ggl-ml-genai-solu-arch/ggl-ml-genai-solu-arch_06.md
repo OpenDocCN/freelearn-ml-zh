@@ -1,6 +1,6 @@
-# 4
 
-# 利用 Google Cloud 的高级 AI 服务
+
+# 第四章：利用 Google Cloud 的高级 AI 服务
 
 现在您已经拥有了关于 AI/ML 和 Google Cloud 的信息武器库，您已经准备好开始深入研究和在云中实施 AI/ML 工作负载了——这正是本章将要做的！您将从使用 Google Cloud 的高级 AI/ML API 开始，例如自然语言 API 和视觉 API，这些 API 使您能够使用由 Google 训练和维护的模型来实现 AI/ML 功能。然后，您将使用 Vertex AI AutoML 训练您自己的 ML 模型，而无需任何 AI/ML 专业知识。
 

@@ -1,6 +1,6 @@
-# 8
 
-# 识别常见 NLP 工作负载场景的特征
+
+# 第八章：识别常见 NLP 工作负载场景的特征
 
 在 *第七章* 中，*识别用于计算机视觉任务的 Azure 工具和服务*，你发现了使用 Azure AI Vision Studio 工具的 Azure AI 视觉服务，然后你学习了 Azure AI Video Indexer 服务。
 

@@ -1,6 +1,6 @@
-# 6
 
-# 使用 JavaScript 添加行为
+
+# 第六章：使用 JavaScript 添加行为
 
 # 简介
 

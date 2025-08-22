@@ -1,6 +1,6 @@
-# 14
 
-# 使用 ChatGPT 构建 Fashion-MNIST 的 MLP 模型
+
+# 第十四章：使用 ChatGPT 构建 Fashion-MNIST 的 MLP 模型
 
 # 简介
 

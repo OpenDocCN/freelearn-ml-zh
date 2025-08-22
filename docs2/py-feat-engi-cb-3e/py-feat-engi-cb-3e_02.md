@@ -1,6 +1,6 @@
-# 2
 
-# 对分类变量进行编码
+
+# 第二章：对分类变量进行编码
 
 `Home owner`变量具有`owner`和`non-owner`的值，是分类变量，同样`Marital status`变量具有`never married`、`married`、`divorced`和`widowed`的值，也是分类变量。在一些分类变量中，标签具有内在顺序；例如，在`Student's grade`变量中，`A`、`B`、`C`和`Fail`的值是有序的，其中`A`是最高等级，`Fail`是最低等级。这些被称为`City`变量，具有`London`、`Manchester`、`Bristol`等值。
 

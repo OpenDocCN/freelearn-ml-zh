@@ -1,6 +1,6 @@
-# 15
 
-# 使用 ChatGPT 构建 CIFAR-10 的 CNN 模型
+
+# 第十五章：使用 ChatGPT 构建 CIFAR-10 的 CNN 模型
 
 # 引言
 
