@@ -1,0 +1,1378 @@
+# 第四章
+
+退火量子计算与量子退火
+
+爱情是一种不同类型的东西，热烈到足以让你融入*某种东西，相互融合，冷却并退火，成为比*你开始时*更坚固的焊接。
+
+—— 西奥多·斯特金
+
+在上一章中，我们研究了如何将不同的组合优化问题表述为 QUBO 实例，这些实例反过来又可以重写为在伊辛模型系统中寻找具有最小能量的状态的优化问题。在这一章中，我们将利用这一事实来介绍一种使用**量子退火器**——一种特殊的量子计算机——的方法，试图找到（近似）解决这些组合优化问题的方案。
+
+但是，为了做到这一点，我们首先需要更多地讨论哈密顿量和它们的基态，以及它们在退火量子计算中扮演的核心角色。
+
+本章我们将涵盖以下主题：
+
++   退火量子计算
+
++   量子退火
+
++   使用 Ocean 来表述和转换优化问题
+
++   使用 Leap 在量子退火器上解决优化问题
+
+我们开始了！
+
+# 4.1 退火量子计算
+
+在*第* **1*，*量子计算基础*这一章中，我们主要关注量子电路，但简要提到了还有其他等效的量子计算模型。其中之一是 2000 年由 Farhi、Goldstone、Gutmann 和 Sipser 在具有广泛影响力的论文[36]中提出的退火量子计算。
+
+*当使用量子电路时，我们通过离散的、顺序的步骤应用操作（我们心爱的量子门）。然而，退火量子计算依赖于连续变换的使用。具体来说，我们将使用一个随时间变化的哈密顿量 ![H(t)](img/file541.png "H(t)")，它将是根据时间依赖的薛定谔方程改变我们量子比特状态的驱动力：
+
+![H(t)\left| {\psi(t)} \right\rangle = i\hslash\frac{\partial}{\partial t}\left| {\psi(t)} \right\rangle.](img/file542.png "H(t)\left| {\psi(t)} \right\rangle = i\hslash\frac{\partial}{\partial t}\left| {\psi(t)} \right\rangle.")
+
+了解更多...
+
+如您所记，在*第* **1*，*量子计算基础*这一章中，我们讨论了**时间独立**的薛定谔方程。在这种情况下，哈密顿量——你可以将其视为一个可以描述系统能量的数学对象——在整个过程中保持不变。现在，我们将考虑这种能量可以随时间变化的情况。例如，如果你正在对你的量子比特应用电磁脉冲，并改变其强度或频率，这就是这种情况。
+
+*这个方程中的项是时变哈密顿量 ![H(t)](img/file541.png "H(t)"),系统的状态向量 ![\left| {\psi(t)} \right\rangle](img/psi(t)} \right\rangle"),虚数单位 ![i](img/file49.png "i")（定义为 ![i^{2} = - 1](img/file543.png "i^{2} = - 1"))，以及约化普朗克常数 ![\hslash](img/hslash")。*  *除了使用时变哈密顿量之外，我们还需要另一个新量子计算模型中的元素：**绝热****演化**的概念。粗略地说，绝热过程是一个系统“能量配置”变化“非常温和”的过程（这里有很多引号，不是吗？）。但是……这与量子计算有什么关系？它是如何帮助我们找到问题的解的呢？
+
+关键观察是，我们将考虑的问题，其最优解将对应于某些伊辛模型哈密顿量的最小能量或基态。因此，如果我们从一个基态（对于某个哈密顿量）的系统开始，并以绝热的方式演化它，我们知道它将在整个过程中保持在基态。我们不会添加足够的能量使系统“跳跃”到下一个能级：这在更“物理”的术语中，是从基态到**激发态**。我们可以利用这一点，因为如果我们设计程序，使得系统的最终哈密顿量的基态将给出我们问题的解，那么我们只需要测量系统以获得我们想要的解。
+
+重要注意事项
+
+简而言之，绝热量子计算背后的想法是从一个简单的哈密顿量开始，我们可以轻松地获得——并准备！——其基态，然后“小心”地演化它。我们这样做是为了保持始终处于基态，缓慢地改变我们的系统，直到其哈密顿量的基态成为我们问题的解。然后，砰！我们进行测量并得到我们的结果！
+
+当然，这里的关键是如何执行演化过程以确保它确实是绝热的。但别担心，**绝热定理**在这里为我们提供了支持。这个结果最初是由量子力学的两位创始人 Max Born 和 Vladimir Fock 证明的[18]，他们说，为了使你的过程是绝热的，它应该足够慢。你可能想知道：有多慢？嗯，总时间应该与**光谱****间隙**的平方成反比，这是在整个演化过程中哈密顿量的基态和第一个激发态之间能量的最小差值。
+
+这在直观上是非常合理的。如果基态和第一个激发态之间的能量总是有很大的差异，那么你可以稍微加快速度——你不会冒险跳到下一个能级。然而，如果差异很小，你最好小心行事，以免不小心走上能量阶梯的一步（或几步）！
+
+现在我们已经清楚地理解了绝热量子计算背后的思想，让我们使事情变得更加正式一些。假设你有一个问题，其哈密顿量![H_{1}](img/file544.png "H_{1}")的基态编码了你想要找到的结果。例如，![H_{1}](img/file544.png "H_{1}")可能是一个从 QUBO 问题转换而来的伊辛哈密顿量。现在，想象一下你的系统处于某个初始哈密顿量![H_{0}](img/file545.png "H_{0}")的基态。我们很快就会讨论如何选择![H_{0}](img/file545.png "H_{0}")，但在此我们先假设你能够足够容易地准备其基态，使其成为你的一个自然选择。
+
+假设我们运行整个过程的总时间为![T](img/file74.png "T")。我们将考虑的时间相关哈密顿量将具有以下形式
+
+![H(t) = A(t)H_{0} + B(t)H_{1},](img/file546.png "H(t) = A(t)H_{0} + B(t)H_{1},")
+
+其中![A](img/file183.png "A")和![B](img/file184.png "B")是接受区间![\lbrack 0,T\rbrack](img/rbrack")内输入的实值函数，满足![A(0) = B(T) = 1](img/file548.png "A(0) = B(T) = 1")和![A(T) = B(0) = 0](img/file549.png "A(T) = B(0) = 0")。请注意，![H(0) = H_{0}](img/file550.png "H(0) = H_{0}")和![H(T) = H_{1}](img/file551.png "H(T) = H_{1}")正好符合我们期望的结果。![A](img/file183.png "A")和![B](img/file184.png "B")函数的一个常见选择是设置![\left. A(t) = 1 - t\slash T \right.](img/left. A(t) = 1 - t\slash T \right.")和![\left. B(t) = t\slash T \right.](img/left. B(t) = t\slash T \right.")。然而，正如我们将在本章后面看到的，有时我们也会使用其他选项，前提是它们满足上述边界条件。
+
+阿哈罗诺夫等人证明了绝热量子计算与其它量子计算模型在多项式时间内等价，包括量子电路模型[4]。这意味着在这些模型中任何一种模型中能够高效计算的问题，在绝热量子计算中也能高效计算，反之亦然。因此，你可以根据你问题的具体情况选择使用这些模型中的任何一种，或者，正如我们将在下一节中看到的，根据你所拥有的量子计算机的类型。
+
+# 4.2 量子退火
+
+尽管我们刚刚看到，绝热量子计算在理论上是一个完美的量子电路模型的替代方案，但在其实际应用中，它通常以一个称为**量子****退火**的受限版本来实现。
+
+量子退火依赖于与绝热量子计算相同的核心理念：它从一个初始哈密顿量![H_{0}](img/file545.png "H_{0}")开始，一个最终哈密顿量![H_{1}](img/file544.png "H_{1}")，其基态编码了感兴趣问题的解，并通过使用某些函数![A](img/file183.png "A")和![B](img/file184.png "B")（如前节所述）逐渐改变作用哈密顿量从初始到最终，以减少![H_{0}](img/file545.png "H_{0}")的作用并增加![H_{1}](img/file544.png "H_{1}")的作用。然而，量子退火在两个方面偏离了完整的绝热量子计算。首先，在量子退火的实际实现中，可以实现的最终哈密顿量![H_{1}](img/file544.png "H_{1}")不能完全随意选择，而必须从某个特定的、受限的类别中选择。一个典型的选择是形式为 Ising 哈密顿量的选项
+
+![ - \sum\limits_{j,k}J_{jk}Z_{j}Z_{k} - \sum\limits_{j}h_{j}Z_{j},](img/limits_{j}h_{j}Z_{j},")
+
+这是我们之前在*第 3.1.3 节*中介绍过的量子版本。![J_{jk}](img/file342.png "J_{jk}")和![h_{j}](img/file343.png "h_{j}")系数可以在一定范围内自由选择。由于这种对最终哈密顿选择范围的限制，量子退火与绝热量子计算不同，不是通用的，只能用来解决特定（但仍然非常重要！）类型的问题。另一方面，基于量子退火的物理量子设备构建起来更简单，使得将这些**量子退火器**的规模扩大到数百甚至数千个量子比特成为可能。
+
+*在量子退火设置中，初始哈密顿量通常也固定为![H_{0} = - {\sum}_{j = 0}^{n - 1}X_{j}](img/sum}_{j = 0}^{n - 1}X_{j}")，其中![n](img/file244.png "n")是量子比特的数量，而![X_{j}](img/file556.png "X_{j}")表示张量积，其中![X](img/file9.png "X")矩阵作用于量子比特![j](img/file258.png "j")，其余位置由![I](img/file53.png "I")，即单位矩阵占据。![H_{0}](img/file545.png "H_{0}")的基态很容易看出是![{\otimes}_{i = 0}^{n - 1}\left| + \right\rangle](img/rangle")，即正态的 n 个副本的张量积，这相对容易制备，因为它完全未纠缠。
+
+练习 4.1
+
+证明![\left| \psi_{0} \right\rangle = {\otimes}_{i = 0}^{n - 1}\left| + \right\rangle](img/rangle")对于![H_{0} = - {\sum}_{j = 0}^{n - 1}X_{j}](img/sum}_{j = 0}^{n - 1}X_{j}")具有可能的最小能量，首先需要证明，对于每个![j](img/file258.png "j")和每个状态![\left| \psi \right\rangle](img/rangle")，都有![\left\langle \psi \right|X_{j}\left| \psi \right\rangle \leq 1](img/leq 1")，然后证明对于每个![j](img/file258.png "j")，都有![\left\langle \psi_{0} \right|X_{j}\left| \psi_{0} \right\rangle = 1](img/rangle = 1")。
+
+因此，量子退火中使用的哈密顿量由以下公式给出
+
+![H(t) = - A(t)\sum\limits_{j = 0}^{n - 1}X_{j} - B(t)\sum\limits_{j,k}J_{jk}Z_{j}Z_{k} - B(t)\sum\limits_{j}h_{j}Z_{j},](img/file561.png "H(t) = - A(t)\sum\limits_{j = 0}^{n - 1}X_{j} - B(t)\sum\limits_{j,k}J_{jk}Z_{j}Z_{k} - B(t)\sum\limits_{j}h_{j}Z_{j},")
+
+其中![J_{jk}](img/file342.png "J_{jk}")和![h_{j}](img/file343.png "h_{j}")是某些可调系数，而![A](img/file183.png "A")和![B](img/file184.png "B")是满足![A(0) = B(T) = 1](img/file548.png "A(0) = B(T) = 1")和![A(T) = B(0) = 0](img/file549.png "A(T) = B(0) = 0")的函数，其中![T](img/file74.png "T")是总的**退火时间**。在这种情况下，![A](img/file183.png "A")和![B](img/file184.png "B")被称为**退火计划**。
+
+与绝热量子计算模型相比，另一个重要的差异是，在量子退火中，演化过程不再保证是绝热的。这一决策有两个主要原因。正如你肯定记得的那样，谱隙是![H(t)](img/file541.png "H(t)")在![t \in \lbrack 0,T\rbrack](img/rbrack")范围内基态与第一个激发态之间差的最小值。计算这个谱隙可能非常困难。实际上，它可能比寻找我们正在寻找的基态还要困难，正如 Cubitt 等人所证明的[27]。第二个原因是，即使我们能够计算出过程成为绝热所需的时间，这个时间可能如此之大，以至于长时间运行系统演化既不实用，甚至可能不可能！
+
+因此，在量子退火中，我们运行演化过程一定的时间，这个时间不需要满足绝热性的条件，并希望仍然能够找到我们问题的最优解的近似解。实际上，我们并不严格需要保持在![H(t)](img/file541.png "H(t)")的基态。因为，最后，我们将要测量状态，只要我们最终状态中一个最优或足够好的解的振幅足够大就足够了。这是因为，那么，获得有用结果的可能性仍然很高。而且，当然，我们可以重复这个过程几次，并保留所有测量中的最佳结果！
+
+在 2011 年，加拿大公司 D-Wave 是第一家将量子退火商业化，正如我们刚才所描述的那样。这个量子退火器被称为 D-Wave One，它有![128](img/file563.png "128")个量子位，而 D-Wave 最新的量子设备之一，Advantage，有超过![5000](img/file564.png "5000")个量子位，并且你可以在线使用它！
+
+我们需要记住，在这些量子计算机中，演化过程通常不会是绝热的，因此不能保证在所有情况下都能找到精确解。但是，全世界许多研究团队和知名公司——从金融、物流到飞机制造等各个行业——都在积极探索量子退火器的实际应用。我们将在本章的剩余部分向你展示你如何尝试将它们用于自己的优化问题。
+
+使用 D-Wave 的量子退火器比你想象的要简单得多。首先，你需要遵循*附录* **D*，*安装工具*中的说明来安装 Ocean，这是 D-Wave 的量子退火 Python 库，并在 D-Wave Leap 上创建一个免费账户，这是一个云服务，你可以在这里每月获得一分钟免费计算时间，用于 D-Wave 的量子退火器。这可能看起来不多，但你将会看到这足以运行相当多的实验。
+
+*了解更多信息…
+
+如果每月一分钟对于你的退火需求来说不够，D-Wave Leap 和 Amazon Braket 都提供付费访问量子退火器。显然，这些服务的定价会随时间而变化，所以请检查他们的网站以查看当前的费率和条件。
+
+一旦一切设置完毕，你就可以访问量子退火器，以找到任何组合优化问题的近似解，无论你是将其编写为寻找伊辛模型基态的实例，还是将其编写为 QUBO 问题。例如，让我们尝试解决*图* **3.5*中图的 MaxCut 问题。正如你肯定记得的，我们可以将其表述为寻找以下基态：
+
+*![Z_{0}Z_{1} + Z_{0}Z_{2},](img/file565.png "Z_{0}Z_{1} + Z_{0}Z_{2},")
+
+这当然是一个伊辛哈密顿量，其中![J_{01} = J_{02} = 1](img/file566.png "J_{01} = J_{02} = 1")，其余的系数都是![0](img/file12.png "0")。
+
+我们需要告诉量子退火器的是这些是我们想要使用的系数，然后我们可以多次进行退火以获得一些可能解决我们问题的结果。为了指定问题，我们可以使用 Ocean 库中包含的`dimod`包，如下所示：
+
+```py
+
+import dimod 
+
+J = {(0,1):1, (0,2):1} 
+
+h = {} 
+
+problem = dimod.BinaryQuadraticModel(h, J, 0.0, dimod.SPIN) 
+
+print("The problem we are going to solve is:") 
+
+print(problem)
+
+```
+
+输出将是以下内容：
+
+```py
+
+The problem we are going to solve is: 
+
+BinaryQuadraticModel({0: 0.0, 1: 0.0, 2: 0.0}, 
+
+    {(1, 0): 1.0, (2, 0): 1.0}, 0.0, ’SPIN’)
+
+```
+
+在这里有几个需要注意的事项。首先，我们使用了`J`来表示二次项系数![2](img/file302.png "2") — `(0,1):1`将![J_{01}](img/file567.png "J_{01}")系数设置为 1，`(0,2):1`将![J_{02} = 1](img/file568.png "J_{02} = 1")设置为 1 — 并且使用`h`来表示线性项。那些我们没有指定的系数会自动由`BinaryQuadraticModel`构造函数设置为![0](img/file12.png "0")，但我们仍然需要传递`J`和`h`两个参数（即使在我们这个例子中，后者是空的）。注意，在输出中我们得到`(1,` `0):` `1.0,` `(2,` `0):` `1.0`，这似乎与我们使用的相反。但它们实际上是相同的，因为![Z_{0}Z_{1} = Z_{1}Z_{0}](img/file569.png "Z_{0}Z_{1} = Z_{1}Z_{0}")，因此情况是对称的。其次，我们使用了`0.0`作为**偏移量**的值，这是一个可以添加到哈密顿量中的常数项。最后，我们使用了`dimod``.``SPIN`参数，因为我们正在处理一个伊辛哈密顿量，因此我们的变量值是![1](img/file13.png "1")和![- 1](img/file312.png "- 1")。在一分钟内，我们将看到如何使用二进制变量。但在那之前，让我们使用以下代码在一个量子退火器上运行退火过程：
+
+```py
+
+from dwave.system import DWaveSampler 
+
+from dwave.system import EmbeddingComposite 
+
+sampler = EmbeddingComposite(DWaveSampler()) 
+
+result = sampler.sample(problem, num_reads=10) 
+
+print("The solutions that we have obtained are") 
+
+print(result)
+
+```
+
+我们在这里所做的是，首先导入`DWaveSampler`，这将使我们能够访问量子退火器，然后是`EmbeddingComposite`，这将允许我们将问题**映射**或**嵌入**到退火器的实际量子比特中——不要担心，我们稍后会详细解释。现在，你可以将其视为一种在计算机中选择一些量子比特的自动方式，这些量子比特将用来表示我们的变量。之后，我们创建了一个对象`sampler`，然后我们使用它来获取![10](img/file161.png "10")个样本或可能的解决方案。这就是实际在量子退火器上执行的地方。之后，我们只是打印结果，这些结果会因执行而异。这是因为我们正在使用实际的量子计算机，正如你所知，它本质上是一种概率性的。在我们的例子中，我们得到了以下结果：
+
+```py
+
+The solutions that we have obtained are 
+
+   0  1  2 energy num_oc. chain_. 
+
+0 +1 -1 -1   -2.0       6     0.0 
+
+1 -1 +1 +1   -2.0       4     0.0 
+
+[’SPIN’, 2 rows, 10 samples, 3 variables]
+
+```
+
+这意味着我们得到了两个不同的解：![z_{0} = 1](img/file570.png "z_{0} = 1")，![z_{1} = - 1](img/file571.png "z_{1} = - 1")，和![z_{2} = - 1](img/file572.png "z_{2} = - 1")，以及![z_{0} = - 1](img/file573.png "z_{0} = - 1")，![z_{1} = 1](img/file574.png "z_{1} = 1")，和![z_{2} = 1](img/file575.png "z_{2} = 1")，它们都具有能量![ - 2](img/file333.png "- 2")；第一个在![6](img/file576.png "6")次执行中被测量，第二个在剩余的![4](img/file143.png "4")次执行中被测量——我们将解释`chain_`
+
+`.` 数据表示章节中的后续内容。但与此同时，我们可以感到高兴。这两个解确实是我们图中的最大割，正如你可以轻松检查的那样！
+
+我们还可以从`result`变量中获取一些额外的信息。实际上，我们可以通过`result``.``first`访问最佳解，以及我们使用量子退火器的时间，通过`result``.``info``[``’``timing``’``][``’``qpu_access_time``’``]`。这是将从你的月度 60 秒中扣除的金额……或者如果你有付费计划，你将被收取的费用。在我们的例子中，我们使用退火器的时间是![15\, 832.16](img/, 832.16")，如果你没有意识到这实际上是以微秒为单位测量的，这个数字可能看起来很大。所以对于 10 个样本，我们使用了大约![0.016](img/file578.png "0.016")秒。那么，那一分钟的访问时间似乎不再那么短了，对吧？
+
+我们还可以使用`dimod`来处理 QUBO 问题。我们需要指定二次项![2](img/file302.png "2")的系数、线性系数——记住，在 QUBO 中，我们使用二进制变量，所以像![x_{3}^{2}](img/file579.png "x_{3}^{2}")这样的表达式可以被简化为![x_{3}](img/file580.png "x_{3}")——以及独立系数，这与 Ising 情况完全相同。唯一的区别是，在创建我们的`BinaryQuadraticModel`构造函数问题时，我们将使用`dimod``.``BINARY`参数。
+
+练习 4.2
+
+创建一个简单的 QUBO 问题实例，并使用退火器解决它。请注意，解决方案中变量的值将是![0](img/file12.png "0")和![1](img/file13.png "1")，而不是![1](img/file13.png "1")和![ - 1](img/file312.png "- 1")。
+
+这只是我们可以在量子退火器上运行的 simplest 类型的执行，其中我们使用了所有默认参数。但 Ocean 软件实现了许多其他功能，使我们能够更舒适地处理优化问题，并更精确地控制实验设置，包括退火时间和其他重要值。本章的其余部分将引导你了解最重要的功能和选项，帮助你最大限度地利用退火器的时间，从如何使用 Ocean 处理优化问题开始。
+
+# 4.3 使用 Ocean 来制定和转换优化问题
+
+正如我们刚才看到的，`BinaryQuadraticModel`类可以用来定义 Ising 和 QUBO 问题。但`dimod`还提供了其他模型和工具，这将使我们的生活变得容易一些。让我们首先研究如何方便地定义具有线性约束的问题。
+
+## 4.3.1 海洋中的约束二次模型
+
+你肯定记得一个像
+
+![\begin{array}{rlrl} {\text{Minimize}\quad} & {- 5x_{0} + 3x_{1} - 2x_{2}\qquad} & & \qquad \\ {\text{subject~to}\quad} & {x_{0} + x_{2} \leq 1,\qquad} & & \qquad \\ & {3x_{0} - x_{1} + 3x_{2} \leq 4\qquad} & & \qquad \\ & {x_{j} \in \{ 0,1\},\qquad j = 0,1,2\qquad} & & \qquad \\ & \qquad & & \\ \end{array}](img/end{array}")
+
+这是一个二元线性规划的一个例子。在*第* *3.4.1* *节* **3.4.1*，我们详细研究了这个问题族，并展示了通过使用松弛变量和惩罚项，可以将它们转换成 QUBO 和 Ising 模型。
+
+*所以，想象一下你想在一个量子退火器中解决上述问题。你需要执行所有那些无聊的转换来获得 QUBO 系数，然后使用它们来定义一个`BinaryQuadraticModel`对象吗？不！幸运的是，`dimod`提供了`ConstrainedQuadraticModel`类，它简化了处理涉及线性约束的问题的过程。
+
+为了将我们的二元线性规划实例化为`ConstrainedQuadraticModel`对象，我们首先需要定义我们想要使用的变量及其类型。在我们的情况下，我们有三个二元变量，我们可以用以下代码片段定义它们：
+
+```py
+
+x0 = dimod.Binary("x0") 
+
+x1 = dimod.Binary("x1") 
+
+x2 = dimod.Binary("x2")
+
+```
+
+根据这些说明，我们仅仅创建了三个二元变量，并且给它们标上了标签，这样我们就可以在数学表达式中使用它们，并在打印时容易识别它们。
+
+要了解更多...
+
+如果你使用过符号数学库（例如，SymPy），你会认识到这里的工作原理非常相似。
+
+现在，我们将定义一个`ConstrainedQuadraticModel`对象，并设置**目标**（我们寻求最小化的函数）以及问题的约束。为此，我们将使用我们刚刚创建的变量。这可以通过以下指令实现：
+
+```py
+
+blp = dimod.ConstrainedQuadraticModel() 
+
+blp.set_objective(-5*x0+3*x1-2*x2) 
+
+blp.add_constraint(x0 + x2 <= 1, "First constraint") 
+
+blp.add_constraint(3*x0 -x1 + 3*x2 <= 4, "Second constraint")
+
+```
+
+设置目标或添加约束会自动将所有涉及的变量添加到问题对象中。请注意，我们还提供了标签来识别约束。如果您不想这样做，那么`dimod`将随机为每个约束分配一个字母数字字符串，并将其用作其名称，如果您需要的话。如果您稍后想重命名任何一个，可以使用`relabel_constraints`方法。
+
+我们可以通过访问`blp`的`variables`、`objective`和`constraints`属性来检查`blp`的元素。因此，我们可以执行以下指令：
+
+```py
+
+print("Our variables are:") 
+
+print(blp.variables) 
+
+print("Our objective is:") 
+
+print(blp.objective) 
+
+print("Our constraints are:") 
+
+print(blp.constraints)
+
+```
+
+我们将得到类似以下的内容：
+
+```py
+
+Our variables are: 
+
+Variables([’x0’, ’x1’, ’x2’]) 
+
+Our objective is: 
+
+ObjectiveView({’x0’: -5.0, ’x1’: 3.0, ’x2’: -2.0}, {}, 0.0, 
+
+    {’x0’: ’BINARY’, ’x1’: ’BINARY’, ’x2’: ’BINARY’}) 
+
+Our constraints are: 
+
+{’First constraint’: Le(ConstraintView({’x0’: 1.0, ’x2’: 1.0}, {}, 0.0, 
+
+    {’x0’: ’BINARY’, ’x2’: ’BINARY’}), 1.0), ’Second constraint’: 
+
+    Le(ConstraintView({’x0’: 3.0, ’x1’: -1.0, ’x2’: 3.0}, {}, 0.0, 
+
+    {’x0’: ’BINARY’, ’x1’: ’BINARY’, ’x2’: ’BINARY’}), 4.0)}
+
+```
+
+注意，目标和约束在内部都表示为二次函数，因此它们正式具有二次项、线性项和一个偏移量或独立项。在我们的情况下，约束的线性部分是非空的，两种情况下的偏移量都是![0](img/file12.png "0")。
+
+要了解更多...
+
+如您从输出中可以看到，我们创建的约束是`dimod``.``sym``.``Le`类的实例，其中`Le`代表*小于或等于*。您也可以创建等式约束，这些约束将属于`dimod``.``sym``.``Eq`类，或者具有![\geq](img/geq")的不等式约束，这些约束将是`dimod``.``sym``.` `Ge`对象。当然，一个等式约束相当于一个`Le`约束加上一个具有相同左右两边的`Ge`约束。我们可以通过将所有内容乘以![− 1](img/file312.png "- 1")将`Le`约束转换为`Ge`约束——反之亦然。
+
+现在，我们知道如何使用`dimod`构建有约束的问题。在下一个小节中，我们将学习如何使用我们定义的问题来计算不同值赋值的成本，检查这些赋值是否满足约束，以及找到问题的最优解。
+
+## 4.3.2 使用 dimod 解决约束二次模型
+
+`dimod`包提供了许多工具来处理我们刚刚介绍的约束二次问题。例如，我们可以定义变量的值赋值，检查其是否可行，并使用以下指令计算之前小节中定义的问题的成本：
+
+```py
+
+sample1 = {"x0":1, "x1":1, "x2":1} 
+
+print("The assignment is", sample1) 
+
+print("Its cost is", blp.objective.energy(sample1)) 
+
+print("Is it feasible?",blp.check_feasible(sample1)) 
+
+print("The violations of the constraints are") 
+
+print(blp.violations(sample1))
+
+```
+
+我们使用的是![x_{0} = x_{1} = x_{2} = 1](img/file583.png "x_{0} = x_{1} = x_{2} = 1")的赋值，因此当我们执行代码时，我们获得以下输出：
+
+```py
+
+The assignment is {’x0’: 1, ’x1’: 1, ’x2’: 1} 
+
+Its cost is -4.0 
+
+Is it feasible? False 
+
+The violations of the constraints are 
+
+{’First constraint’: 1.0, ’Second constraint’: 1.0}
+
+```
+
+这告诉我们赋值不可行，`violations`方法告诉我们每个不等式左边比右边大多少。
+
+另一方面，如果我们想尝试![x_{0} = x_{1} = 0,x_{2} = 1](img/file584.png "x_{0} = x_{1} = 0,x_{2} = 1")的赋值，我们可以使用以下代码：
+
+```py
+
+sample2 = {"x0":0, "x1":0, "x2":1} 
+
+print("The assignment is", sample2) 
+
+print("Its cost is", blp.objective.energy(sample2)) 
+
+print("Is it feasible?",blp.check_feasible(sample2)) 
+
+print("The violations of the constraints are") 
+
+print(blp.violations(sample2))
+
+```
+
+我们得到的结果如下：
+
+```py
+
+The assignment is {’x0’: 0, ’x1’: 0, ’x2’: 1} 
+
+Its cost is -2.0 
+
+Is it feasible? True 
+
+The violations of the constraints are 
+
+{’First constraint’: 0.0, ’Second constraint’: -1.0}
+
+```
+
+在这种情况下，赋值是可行的，因此没有违反项是正的。
+
+`dimod`包还提供了一个穷举搜索求解器，它会尝试所有可能的赋值，并按照它们的成本从低到高进行排序。使用它和我们的例子一样简单，只需运行
+
+```py
+
+solver = dimod.ExactCQMSolver() 
+
+solution = solver.sample_cqm(blp) 
+
+print("The list of assignments is") 
+
+print(solution)
+
+```
+
+以获得
+
+```py
+
+The list of assignments is 
+
+  x0 x1 x2 energy num_oc. is_sat. is_fea. 
+
+6  1  0  1   -7.0       1 arra...   False 
+
+2  1  0  0   -5.0       1 arra...    True 
+
+7  1  1  1   -4.0       1 arra...   False 
+
+3  1  1  0   -2.0       1 arra...    True 
+
+4  0  0  1   -2.0       1 arra...    True 
+
+0  0  0  0    0.0       1 arra...    True 
+
+5  0  1  1    1.0       1 arra...    True 
+
+1  0  1  0    3.0       1 arra...    True 
+
+[’INTEGER’, 8 rows, 8 samples, 3 variables]
+
+```
+
+第一个数字只是赋值的标识符。其后是赋予变量的值。然后，我们找到赋值的成本——或者更准确地说，如果从哈密顿量的角度来解释，就是其能量。之后，是找到这个解决方案的次数，在这个求解器中这总是![1](img/file13.png "1")。最后，我们找到关于哪些约束得到满足以及解决方案是否可行等信息。非常重要的一点是，赋值是按照成本排序的，但其中一些可能不可行，甚至第一个也可能，就像在这个例子中一样。
+
+实际上，如果我们执行`solution``.``first`，我们将获得以下输出：
+
+```py
+
+Sample(sample={’x0’: 1, ’x1’: 0, ’x2’: 1}, energy=-7.0, 
+
+    num_occurrences=1, is_satisfied=array([False, False]), 
+
+    is_feasible=False)
+
+```
+
+其中我们可以看到这个赋值没有满足我们问题的两个约束中的任何一个。如果你想要问题的最优解，你应该始终先使用`filter`方法删除不可行的解，如下面的指令所示：
+
+```py
+
+feasible_sols = solution.filter(lambda s: s.is_feasible)
+
+```
+
+然后，如果你访问`feasible_sols``.``first`，你将得到
+
+```py
+
+Sample(sample={’x0’: 1, ’x1’: 0, ’x2’: 0}, energy=-5.0, num_occurrences=1, 
+
+    is_satisfied=array([ True,  True]), is_feasible=True)
+
+```
+
+这确实是我们的二进制线性规划问题的最优解。
+
+当然，所有这些计算都是用（非常低效的）经典算法完成的。在下一个小节中，我们将解释如何使用实际的量子退火器来尝试解决我们定义的问题。
+
+## 4.3.3 在量子退火器上运行约束问题
+
+尽管`ConstrainedQuadraticModel`类很有用，但我们不能用它来定义可以在量子退火器上运行的问题。为了做到这一点，我们首先需要消除约束，并创建一个`BinaryQuadraticModel`对象，我们可以在稍后将其在实际量子硬件上执行，就像我们在*第* **4.2* *节中所做的那样。幸运的是，多亏了 Ocean 库提供的实用工具，这个过程实际上非常简单。让我们通过一个例子来看看它是如何工作的。*
+
+*为了说明一般步骤，让我们用以下代码定义一个简单的约束问题：
+
+```py
+
+y0, y1 = dimod.Binaries(["y0", "y1"]) 
+
+cqm = dimod.ConstrainedQuadraticModel() 
+
+cqm.set_objective(-2*y0-3*y1) 
+
+cqm.add_constraint(y0 + 2*y1 <= 2)
+
+```
+
+我们可以通过使用`cqm_to_bqm`方法将这个约束问题转化为一个无约束问题，具体操作如下：
+
+```py
+
+qubo, invert = dimod.cqm_to_bqm(cqm, lagrange_multiplier = 5) 
+
+print(qubo)
+
+```
+
+在不久的将来，我们将解释`invert`是什么以及它是如何使用的，但现在让我们专注于这些指令的输出，它将类似于以下内容：
+
+```py
+
+BinaryQuadraticModel({’y0’: -17.0, ’y1’: -23.0, 
+
+    ’slack_03b79fa9-3faa-410c-800b-65cfaf281cdf_0’: -15.0, 
+
+    ’slack_03b79fa9-3faa-410c-800b-65cfaf281cdf_1’: -15.0}, 
+
+    {(’y1’, ’y0’): 20.0, 
+
+    (’slack_03b79fa9-3faa-410c-800b-65cfaf281cdf_0’, ’y0’): 10.0, 
+
+    (’slack_03b79fa9-3faa-410c-800b-65cfaf281cdf_0’, ’y1’): 20.0, 
+
+    (’slack_03b79fa9-3faa-410c-800b-65cfaf281cdf_1’, ’y0’): 10.0, 
+
+    (’slack_03b79fa9-3faa-410c-800b-65cfaf281cdf_1’, ’y1’): 20.0, 
+
+    (’slack_03b79fa9-3faa-410c-800b-65cfaf281cdf_1’, 
+
+    ’slack_03b79fa9-3faa-410c-800b-65cfaf281cdf_0’): 10.0}, 
+
+    20.0, ’BINARY’)
+
+```
+
+这听起来可能有些复杂，但我们保证它并不像看起来那么复杂。实际上，如果你已经从*第* **3* *章中了解到*QUBO:* *二次无约束二进制优化*，你完全可以自己计算出类似的结果！让我们来分解它。*
+
+*由于这是一个无约束问题，我们看到的是成本函数的指定。首先，我们有线性部分，它以`’``y0``’`开头：*
+
+`-17.0`。它告诉我们，在目标函数中，![y_{0}](img/file445.png "y_{0}")的系数是![ - 17](img/file585.png "- 17")，![y_{1}](img/file460.png "y_{1}")的系数是![ - 23](img/file586.png "- 23")，另外两个变量的系数是![ - 15](img/file587.png "- 15")。然后是二次部分，对于![y_{0}y_{1}](img/file589.png "y_{0}y_{1}")项，系数是![20](img/file588.png "20")，这是我们从`(’``y1``’，` `’``y0``’):` `20.0`值推断出来的，其他两个变量的乘积的系数是![10](img/file161.png "10")和![20](img/file588.png "20")。最后，![20](img/file588.png "20")是独立项或偏移量，我们还被告知所有变量都是二进制的。
+
+但是，所有这些系数从何而来？我们的好朋友`dimod`在这里所做的不外乎是应用我们在*第 3.4.1 节*中研究的转换。首先，引入两个松弛变量——带有相当丑陋的随机名称——将不等式约束转换为等式约束。然后，将等式约束作为惩罚项纳入成本函数中，惩罚系数（`lagrange_multiplier`参数）等于![5](img/file296.png "5")。就是这样！其实并没有那么神秘，对吧？
+
+*练习 4.3
+
+请检查`cqm_to_bqm`返回的 QUBO 问题是否与你在*第 3.4.1 节*中解释的转换所得到的结果一致。别忘了偏移量！
+
+*现在我们可以使用量子退火器来解决在`qubo`对象中定义的问题，就像我们在*第 4.2 节*中做的那样。例如，我们可以运行以下代码：*
+
+*```py
+
+sampler = EmbeddingComposite(DWaveSampler()) 
+
+result = sampler.sample(qubo, num_reads=10) 
+
+print("The solutions that we have obtained are") 
+
+print(result)
+
+```
+
+如果你还没有导入`EmbeddingComposite`和`DWaveSampler`，请务必导入。如果你运行这些指令，你将得到以下类似的输出：
+
+```py
+
+  slack_03b79fa9-3faa-410c-800b-65cfaf281cdf_0 ... y1 energy num_oc. ... 
+
+0                                            0 ...  1   -3.0       5 ... 
+
+1                                            1 ...  0   -2.0       3 ... 
+
+2                                            0 ...  0   -2.0       1 ... 
+
+3                                            0 ...  1    0.0       1 ... 
+
+[’BINARY’, 4 rows, 10 samples, 4 variables]
+
+```
+
+我们都可以同意这并不很有信息量。这里的问题是我们在看转换后问题的解，其中包括所有那些长而晦涩的松弛变量。当然，我们并不真正关心松弛变量的值——我们只是引入它们以便在不添加任何约束的情况下编写我们的问题。那么，我们能做什么呢？这就是`invert`对象发挥作用的地方！它允许我们从转换后问题的解中检索原始问题的解。因此，我们可以运行以下指令：
+
+```py
+
+samples = [] 
+
+occurrences = [] 
+
+for s in result.data(): 
+
+    samples.append(invert(s.sample)) 
+
+    occurrences.append(s.num_occurrences) 
+
+sampleset = dimod.SampleSet.from_samples_cqm(samples,cqm, 
+
+    num_occurrences=occurrences) 
+
+print("The solutions to the original problem are") 
+
+print(sampleset)
+
+```
+
+并获得以下输出，现在只显示原始变量：
+
+```py
+
+The solutions to the original problem are 
+
+  y0 y1 energy num_oc. is_sat. is_fea. 
+
+3  1  1   -5.0       1 arra...   False 
+
+0  0  1   -3.0       5 arra...    True 
+
+1  1  0   -2.0       3 arra...    True 
+
+2  1  0   -2.0       1 arra...    True 
+
+[’INTEGER’, 4 rows, 10 samples, 2 variables]
+
+```
+
+在这里，我们创建了一个新的`SampleSet`对象——这是`dimod`存储求解器或采样器结果的结构的类型——从变换问题获得的样本中。请注意，我们使用`invert`来消除松弛变量，并且通过将`cqm`问题传递给`from_samples_cqm`方法，计算了没有惩罚的能量以及每个分配的可行性状态。实际上，请注意，当我们打印变换问题的采样解时，我们获得了一个具有![0](img/file12.png "0")能量的解。它对应于分配![y_{0} = 1](img/file450.png "y_{0} = 1")和![y_{1} = 1](img/file590.png "y_{1} = 1")，在原始问题中，它们的能量是![- 5](img/file591.png "- 5")。这两种能量之间的差异来自于这个分配是不可行的，在无约束问题中，它因此受到惩罚。请注意，我们还使用了出现次数来跟踪每个解被采样的次数。
+
+因此，我们恢复了一些原始问题的解，但还有一些细节我们需要修复。第一个细节是，如果我们只想保留可行解，我们需要使用`filter`方法，就像我们在使用`ExactCMQSolver`时的前一小节中所做的那样。第二个细节与重复有关——我们可以在最后两个输出中观察到——设置![y_{0} = 1](img/file450.png "y_{0} = 1")和![y_{0} = 0](img/file455.png "y_{0} = 0")的解重复出现。这两个解来自变换问题的两个不同的分配，但它们只在松弛变量的值上有所不同。因此，当这些松弛变量被消除时，它们会产生完全相同的分配。如果我们想将它们视为应该一起考虑的解，我们可以使用`aggregate`方法。将所有这些放在一起，我们可以执行以下代码：
+
+```py
+
+final_sols = sampleset.filter(lambda s: s.is_feasible) 
+
+final_sols = final_sols.aggregate() 
+
+print("The final solutions are") 
+
+print(final_sols)
+
+```
+
+这将打印
+
+```py
+
+  y0 y1 energy num_oc. is_sat. is_fea. 
+
+0  0  1   -3.0       5 arra...    True 
+
+1  1  0   -2.0       4 arra...    True 
+
+[’INTEGER’, 2 rows, 9 samples, 2 variables]
+
+```
+
+这确实是我们用来解决我们问题的东西。
+
+在本节中，我们学习了如何处理约束问题以及如何通过穷举法和量子退火器来解决它们，将它们转化为量子计算机可以使用的东西，然后再回到原始公式。在下一节中，我们将研究如何更好地控制量子退火器的行为，以便找到我们哈密顿量的基态。让我们稍微调整一下那些闪亮的量子计算机的内部工作原理吧！
+
+# 4.4 使用 Leap 在量子退火器上解决优化问题
+
+到目前为止，我们在实际的量子退火器上运行了几个不同的优化问题。然而，我们始终使用默认参数，甚至不知道我们使用的量子计算机的特性。在本节中，我们将纠正这一点。我们将解释我们可以通过 D-Wave Leap 访问的不同类型的退火器。我们还将探索我们在使用这些设备时可以调整的几个超参数，并解释如何调整我们的问题在物理量子比特中的嵌入方式——我们最终将了解那个神秘的 `EmbeddingComposite` 对象的用途！
+
+## 4.4.1 The Leap annealers
+
+您可以通过使用此处的 `get_solvers` 方法列出您可以使用 Leap 账户访问的设备：
+
+```py
+
+from dwave.cloud import Client 
+
+for solver in Client.from_config().get_solvers(): 
+
+    print(solver)
+
+```
+
+结果将取决于您的实际访问权限，但对于一个典型的免费账户，您将看到如下内容：
+
+```py
+
+BQMSolver(id=’hybrid_binary_quadratic_model_version2’) 
+
+DQMSolver(id=’hybrid_discrete_quadratic_model_version1’) 
+
+CQMSolver(id=’hybrid_constrained_quadratic_model_version1’) 
+
+StructuredSolver(id=’Advantage_system6.1’) 
+
+StructuredSolver(id=’Advantage2_prototype1.1’) 
+
+StructuredSolver(id=’DW_2000Q_6’) 
+
+StructuredSolver(id=’Advantage_system4.1’)
+
+```
+
+在这种情况下，总共有七种不同的求解器，分为三种类型。首先，我们有标识符中包含单词 *hybrid* 的那些。我们将在本章后面讨论它们，但现在，只需知道它们结合经典和量子资源来解决问题即可。其他四种，称为 `DW_2000Q_6`、`Advantage_system4.1`、`Advantage_system6.1` 和 `Advantage2_prototype1.1`，是纯量子退火器。这些是我们使用 `DWaveSampler` 解决问题时所选择的设备，正如我们在本章中迄今为止所做的那样。让我们更详细地探索它们的属性。
+
+我们可以通过在 `DWaveSampler` 构造函数中使用 `solver` 参数来选择特定的退火器，然后使用 `properties` 属性访问设备的属性。例如，对于 `DW_2000Q_6` 退火器，我们可以运行以下指令
+
+```py
+
+from dwave.system import DWaveSampler 
+
+sampler=DWaveSampler(solver=’DW_2000Q_6’) 
+
+print("Name:",sampler.properties["chip_id"]) 
+
+print("Number of qubits:",sampler.properties["num_qubits"]) 
+
+print("Category:",sampler.properties["category"]) 
+
+print("Supported problems:",sampler.properties["supported_problem_types"]) 
+
+print("Topology:",sampler.properties["topology"]) 
+
+print("Range of reads:",sampler.properties["num_reads_range"])
+
+```
+
+以获得以下输出：
+
+```py
+
+Name: DW_2000Q_6 
+
+Number of qubits: 2048 
+
+Category: qpu 
+
+Supported problems: [’ising’, ’qubo’] 
+
+Topology: {’type’: ’chimera’, ’shape’: [16, 16, 4]} 
+
+Range of reads: [1, 10000]
+
+```
+
+如果我们用 `Advantage_system4` 做同样的事情
+
+`.1` 求解器，我们得到：
+
+```py
+
+Name: Advantage_system4.1 
+
+Number of qubits: 5760 
+
+Category: qpu 
+
+Supported problems: [’ising’, ’qubo’] 
+
+Topology: {’type’: ’pegasus’, ’shape’: [16]} 
+
+Range of reads: [1, 10000]
+
+```
+
+`Advantage_system6` 的属性
+
+`.1` 求解器将与名称不同之外完全相同。
+
+最后，对于 `Advantage2_prototype1`
+
+`.1` 求解器，我们得到以下输出：
+
+```py
+
+Name: Advantage2_prototype1.1 
+
+Number of qubits: 576 
+
+Category: qpu 
+
+Supported problems: [’ising’, ’qubo’] 
+
+Topology: {’type’: ’zephyr’, ’shape’: [4, 4]} 
+
+Range of reads: [1, 10000]
+
+```
+
+要了解更多...
+
+求解器还有许多我们尚未讨论的其他属性；我们将在 *第 4.4.2 节**4.4.2*，*4.4.3 节*，和 *4.4.4 节* 中研究一些最相关的属性。不过，您仍然可以通过 `properties` 字典访问它们，直接打印出来。但请注意：其中一些可能非常大，例如 `properties["qubits"]`，它包含有关设备中所有可能成千上万的量子比特的信息！
+
+*一些属性对于这四种设备是相同的。例如，我们可以看到，它们都是**qpu**类型，这意味着它们是**量子处理单元**或量子退火器。此外，它们都接受 QUBO 或 Ising 格式的**问题**——但不接受约束问题；这就是为什么我们不得不在上一节运行之前将它们转换的原因——并且都可以用来一次获得![1](img/file13.png "1")到![10,000](img/file592.png "10,000")个样本。除了量子比特的数量——在`Advantage_system4.1`和`Advantage_system6.1`设备中特别多——主要区别是**拓扑结构**。这指的是量子比特在机器中相互连接的方式，并决定了哪些**耦合**——或变量之间的连接——可以用来定义我们的问题……除非我们使用嵌入，这将帮助我们将系数映射到实际的量子比特连接。*
+
+`Advantage2_prototype1`
+
+`.1`求解器有一点特别。从名称中可以推断出，它是 D-Wave 将在 2023-2024 年推出的一系列新退火器的原型——这就是为什么现在它的量子比特数量比其他设备少，但完整版本已宣布将拥有超过![7000](img/file593.png "7000")个量子比特。它使用一种新的拓扑结构，称为 Zephyr，旨在增加连接性并减少错误。在撰写本文时，可用的设备不是最终版本。因此，我们不会在我们将要处理的示例中使用它，也不会详细描述其属性和拓扑结构。然而，请注意，我们关于如何与设备一起工作的所有解释，都可以无变化地应用于这个新的退火器。
+
+我们在*表* **4.1*中总结了退火器的某些属性。
+
+*| 退火器名称 | 量子比特数量 | 拓扑结构 |
+
+| `DW_2000Q_6` | 2048 | Chimera |
+| --- | --- | --- |
+| `Advantage_system4.1` | 5760 | Pegasus |
+| `Advantage_system6.1` | 5760 | Pegasus |
+| `Advantage2_prototype1.1` | 576 | Zephyr |
+
+**表 4.1**: 退火器属性摘要
+
+在下一小节中，我们将更详细地探讨退火器的拓扑结构以及我们如何在其中嵌入我们的问题。
+
+## 4.4.2 嵌入和退火器拓扑
+
+在当前的量子计算机中，无论是退火器还是基于门控的设备，技术困难阻止了量子比特以全连接的方式连接。事实上，每个量子比特通常仅与其邻居中的某些量子比特连接，我们只能在这些实际连接的量子比特之间应用两量子比特门或使用耦合（即在 Ising 模型中使用非零系数）。量子比特在特定量子芯片中的特定连接方式被称为其**拓扑结构**，有时在设计我们的算法或退火我们的问题时，了解这一点很重要。
+
+例如，`DW_2000Q_6` 热退火机的拓扑结构被称为 Chimera，正如我们在前一小节中看到的。它由 8 个量子比特组成的单元格组成，分为每组 4 个量子比特的两个组。一个组中的所有量子比特都连接到另一个组中的所有量子比特，但每个组内没有连接。对于图论爱好者来说，连接遵循一个完全二部图 ![K_{4,4}](img/file594.png "K_{4,4}")，这在 *图* **4.1* 中有所描述。
+
+*![图 4.1: Chimera 单元中的量子比特连接](img/file595.jpg)
+
+**图 4.1**: Chimera 单元中的量子比特连接
+
+`DW_2000Q_6` 计算机有 ![256](img/file596.png "256") 个这样的单元格，组织成一个 ![16 \times 16](img/times 16") 的网格，总共 ![8 \cdot 16 \cdot 16 = 2048](img/cdot 16 = 2048") 个量子比特，正如预期的那样。每个占据单元格中 ![0](img/file12.png "0") 到 ![3](img/file472.png "3") 位置的量子比特也连接到垂直相邻单元格中相同位置的量子比特。以类似的方式，每个位于 ![4](img/file143.png "4") 到 ![7](img/file465.png "7") 位置的量子比特也连接到水平相邻单元格中相同位置的量子比特。总共，每个量子比特将与同一单元格中的另外四个量子比特以及来自其他单元格的两个其他量子比特（或一个，如果它位于边界单元格中）相连。
+
+我们可以通过使用 `properties``[``"``couplers``"``]` 属性来获取所有连接的列表，如下所示：
+
+```py
+
+sampler=DWaveSampler(solver=’DW_2000Q_6’) 
+
+print("Couplings:",sampler.properties["couplers"])
+
+```
+
+运行此操作，我们将得到一个非常长的列表，其开头如下所示：
+
+```py
+
+[[0, 4], [1, 4], [2, 4], [3, 4], [0, 5], [1, 5], [2, 5], [3, 5], 
+
+[0, 6], [1, 6], [2, 6], [3, 6], [0, 7], [1, 7], [2, 7], [3, 7], 
+
+[4, 12], [8, 12], [9, 12], [10, 12], [11, 12], [5, 13], [8, 13], 
+
+[9, 13], [10, 13], [11, 13], [6, 14], [8, 14], [9, 14], [10, 14], 
+
+[11, 14], [7, 15], [8, 15], [9, 15], [10, 15], [11, 15], [12, 20], 
+
+[16, 20], [17, 20], [18, 20], [19, 20], [13, 21], [16, 21], 
+
+[17, 21], [18, 21], [19, 21], [16, 22], [17, 22]...
+
+```
+
+获取相同信息的另一种稍微更易读的方法是使用 `sampler``.``adjacency`，这将为我们提供一个按量子比特编号和值索引的字典，其中值指定了与键中的量子比特相连的量子比特。在我们的例子中，它开始如下所示：
+
+```py
+
+{0: {4, 5, 6, 7, 128}, 1: {4, 5, 6, 7, 129}, 
+
+ 2: {4, 5, 6, 7, 130}, 3: {4, 5, 6, 7, 131}, 
+
+ 4: {0, 1, 2, 3, 12}, 5: {0, 1, 2, 3, 13}, 
+
+ 6: {0, 1, 2, 3, 14}, 7: {0, 1, 2, 3, 15}, 
+
+ 8: {12, 13, 14, 15, 136}, ...
+
+```
+
+练习 4.4
+
+选择编号从 ![0](img/file12.png "0") 到 ![7](img/file465.png "7") 的量子比特，并检查它们的连接是否与我们在文本中描述的 Chimera 拓扑相符合。注意，它们都位于左上角的单元格中，因此它们将与右侧的一个单元格和下方的一个单元格相连。
+
+要了解更多…
+
+`Advantage_system4``.1` 和 `Advantage_system6` `.1` 热退火机使用一个称为 **Pegasus** 的拓扑结构。它也将量子比特分组到单元格中，但它们的结构比 Chimera 单元更复杂。每个量子比特最多连接到 ![15](img/file599.png "15") 个量子比特，而 `DW_2000Q_6` 中的最大连接数是 ![6](img/file576.png "6")。
+
+这种拓扑还包含 4 个量子比特的组，它们都相互连接，这使得将问题嵌入其中变得容易得多，正如我们将在 *第* **4.4.2* *节中看到的。
+
+详细描述 Pegasus 拓扑结构会让我们偏离我们的路径太远，但你可以在`Advantage_system4``.1`和`Advantage_system6` `.1`退火器对应的`QPU-Specific Physical Properties`文档的*第 2.3 节*中找到所有信息。你可以在[`docs.dwavesys.com/docs/latest/doc_physical_properties.html`](https://docs.dwavesys.com/docs/latest/doc_physical_properties.html)下载它，以及 D-Wave 量子计算机其他部分的相应文档。*关于 Chimera 拓扑的一个重要注意事项是它不包含三角形。也就是说，没有三个顶点都相互连接。因此，如果我们的 Ising 哈密顿量类似于![Z_{0}Z_{1} + Z_{0}Z_{2} + Z_{1}Z_{2}](img/file600.png "Z_{0}Z_{1} + Z_{0}Z_{2} + Z_{1}Z_{2}")，我们无法直接将其映射到`DW_2000Q_6`退火器中的量子比特。那么我们该怎么办？用这台计算机解决这样的问题是不可能的吗？别担心，嵌入技术就在这里来拯救这一天！
+
+**嵌入**本质上是一种将我们问题哈密顿量中的量子比特映射到退火器中的物理量子比特的方法。这里的技巧是这个映射不必是一对一的。实际上，我们可以使用几个物理量子比特（我们称之为**链**）来表示我们问题中的一个量子比特。在这种情况下，尽管如此，我们希望同一链中的所有量子比特在测量时都具有相同的值。为了确保这一点，我们需要使用负值且绝对值大的耦合强度。
+
+例如，如果量子比特![12](img/file601.png "12")和![20](img/file588.png "20")是同一链的一部分，那么![(12,20)](img/file602.png "(12,20)")的系数可以是，例如，![- 15](img/file587.png "- 15")。然后，项![- 15Z_{12}Z_{20}](img/file603.png "- 15Z_{12}Z_{20}")将成为我们想要最小化的自旋哈密顿量的一部分，并且它将使![Z_{12}](img/file604.png "Z_{12}")和![Z_{20}](img/file605.png "Z_{20}")相等变得非常可能，因为这将使总能量显著降低。
+
+当然，嵌入需要定义用于表示每个问题量子比特的物理量子比特（链），确保它们可以正确连接，并为链计算一些适当的耦合强度。这看起来可能非常复杂，但 Ocean 可以为我们自动计算嵌入。让我们看看，通过一个例子，我们如何为一个简单的情况来做这件事。我们可以使用以下代码：
+
+```py
+
+# Define the problem 
+
+J = {(0,1):1, (0,2):1, (1,2):1} 
+
+h = {} 
+
+triangle = dimod.BinaryQuadraticModel(h, J, 0.0, dimod.SPIN) 
+
+# Embed it and solve it on the DW_2000Q_6 annealer 
+
+sampler = EmbeddingComposite(DWaveSampler(solver = "DW_2000Q_6")) 
+
+result = sampler.sample(triangle, num_reads=10, 
+
+    return_embedding = True) 
+
+print("The samples obtained are") 
+
+print(result) 
+
+print("The embedding used was") 
+
+print(result.info["embedding_context"])
+
+```
+
+在这些说明中，我们首先定义了一个需要三个量子位连接在一起的问题，我们知道这直接使用我们选择的退火器是不可能的。但是，由于我们正在使用`EmbeddingComposite`，一种将我们的图嵌入实际退火器拓扑的方法会自动为我们找到，我们可以运行退火过程并获得一些样本。通过将`return_embedding`参数设置为`True`，我们还可以恢复嵌入信息。让我们看看运行此代码的输出可能是什么样子：
+
+```py
+
+The samples obtained are 
+
+   0  1  2 energy num_oc. chain_. 
+
+0 +1 -1 -1   -1.0       3     0.0 
+
+1 +1 +1 -1   -1.0       2     0.0 
+
+2 +1 -1 +1   -1.0       2     0.0 
+
+3 -1 +1 +1   -1.0       3     0.0 
+
+[’SPIN’, 4 rows, 10 samples, 3 variables] 
+
+The embedding used was 
+
+{’embedding’: {1: (1015, 1008), 0: (1011,), 2: (1012,)}, 
+
+’chain_break_method’: ’majority_vote’, ’embedding_parameters’: {}, 
+
+’chain_strength’: 1.9996979771955565}
+
+```
+
+如您所见，`EmbeddingComposite`以对用户完全透明的方式执行嵌入，实际上返回的样本仅指向原始问题中的变量。然而，在底层，变量![0](img/file12.png "0")已被映射到量子位![1011](img/file606.png "1011")，变量![2](img/file302.png "2")已被映射到量子位![1012](img/file607.png "1012")，而变量![1](img/file13.png "1")则由量子位![1008](img/file608.png "1008")和![1015](img/file609.png "1015")形成的链表示。这两个量子位的耦合强度几乎为![2](img/file302.png "2")，这比原始问题的系数要大，以防止链中的量子位具有不同的值。如果由于任何原因，链中的这两个量子位恰好接收不同的值，则称链为**断裂**，并且会使用`’``chain_break_method``’`中指定的方法为变量![1](img/file13.png "1")分配一个值。在这种情况下，该值将是链中量子位的简单多数投票。
+
+要了解更多信息…
+
+寻找一个合适的嵌入是一个![NP](img/file2.png "NP")-难问题。然而，Ocean 附带包含的`minorminer`包提供了寻找嵌入的启发式方法，这些方法在实践中通常效果良好。这些被`EmbeddingComposite`使用。
+
+除了`EmbeddingComposite`，Ocean 中还有其他类允许您为问题找到嵌入。例如，`AutoEmbeddingComposite`首先尝试直接在退火器上运行问题，不使用嵌入，只有在需要时才寻找一个；这可以在某些情况下节省一些计算时间。`FixedEmbeddingComposite`类不计算嵌入，而是使用作为参数传递的任何一个；在这种情况下，嵌入应该是一个具有之前输出所示格式的 Python 字典。我们还可以使用`LazyFixedEmbeddingComposite`，它只在第一次调用`sample`方法时为问题计算嵌入，并将其存储以供后续调用；另一方面，`EmbeddingComposite`在每次调用`sample`时都会重新计算嵌入。
+
+因此，这应该涵盖了将问题嵌入到任何退火拓扑结构中的大部分需求。但我们还没有完成！当在真实的量子设备上使用 Ocean 运行问题时，我们仍然可以控制一些额外的参数。我们将在下一小节中研究其中一些最重要的参数。
+
+## 4.4.3 控制退火参数
+
+你一定记得，从本章的开头开始，为了使演化是绝热的（因此，系统保持在最小能量状态），它需要足够慢。然而，在实践中很难满足这个条件，所以我们只是运行演化过程的一小段时间，这就是我们所说的量子退火。
+
+问题是：我们能在多大程度上控制 D-Wave 量子退火器的退火过程？结果是，我们可以做很多事情来尝试改善我们的组合优化问题的结果。首先（也是最明显的）是改变退火过程的持续时间。
+
+你可以使用以下指令轻松检查设备支持的退火时间范围以及其默认退火时间：
+
+```py
+
+sampler = DWaveSampler(solver = "Advantage_system4.1") 
+
+print("The default annealing time is", 
+
+    sampler.properties["default_annealing_time"],"microseconds") 
+
+print("The possible values for the annealing time (in microseconds)"\ 
+
+    " lie in the range",sampler.properties["annealing_time_range"])
+
+```
+
+在这种情况下，输出将如下所示：
+
+```py
+
+The default annealing time is 20.0 microseconds 
+
+The possible values for the annealing time (in microseconds) 
+
+    lie in the range [0.5, 2000.0]
+
+```
+
+练习 4.5
+
+检查`DW_2000Q_6`退火器的默认退火时间和退火时间范围。
+
+修改问题的退火时间非常简单。例如，假设我们想将其增加到![100](img/file389.png "100")微秒，并从我们在上一小节中定义的三角形问题中进行采样。那么，我们唯一需要做的修改就是在调用`sample`方法时添加`annealing_time`参数。例如，我们可以运行以下代码：
+
+```py
+
+J = {(0,1):1, (0,2):1, (1,2):1} 
+
+h = {} 
+
+triangle = dimod.BinaryQuadraticModel(h, J, 0.0, dimod.SPIN) 
+
+sampler = EmbeddingComposite(DWaveSampler(solver = "DW_2000Q_6")) 
+
+result = sampler.sample(triangle, num_reads=10, annealing_time = 100) 
+
+print("The samples obtained are") 
+
+print(result)
+
+```
+
+重要提示
+
+为了尝试获得更好的解决方案，你可能想将退火时间增加到其最大可能值。然而，警告你，这可能会产生两个不希望的结果。一方面，你运行退火过程的时间越长，外部相互作用影响系统状态并破坏计算的可能性就越高：你可能会得到更差的结果而不是更好的结果！另一方面，通过增加退火时间，你显然会花费更多的时间使用量子处理单元……并且你将相应地被收费！
+
+使用 Ocean，控制退火过程的选择并不仅限于修改退火时间。你还可以在一定程度上定制退火计划本身。正如我们已经知道的，这指的是表达式中的![A](img/file183.png "A")和![B](img/file184.png "B")函数。
+
+![H(t) = - A(t)\sum\limits_{j = 0}^{n - 1}X_{j} - B(t)\sum\limits_{j,k}J_{jk}Z_{j}Z_{k} - B(t)\sum\limits_{j}h_{j}Z_{j},](img/file561.png "H(t) = - A(t)\sum\limits_{j = 0}^{n - 1}X_{j} - B(t)\sum\limits_{j,k}J_{jk}Z_{j}Z_{k} - B(t)\sum\limits_{j}h_{j}Z_{j},")
+
+这定义了我们在退火过程中使用的哈密顿量。
+
+你可能记得，我们只要求![A](img/file183.png "A")和![B](img/file184.png "B")满足![A(0) = B(T) = 1](img/file548.png "A(0) = B(T) = 1")和![A(T) = B(0) = 0](img/file549.png "A(T) = B(0) = 0")，其中![T](img/file74.png "T")是总的退火时间，但我们并没有以任何方式限制![A](img/file183.png "A")和![B](img/file184.png "B")的行为，除了这些边界条件。D-Wave 的退火器有默认的计划。你可以在[`docs.dwavesys.com/docs/latest/doc_physical_properties.html`](https://docs.dwavesys.com/docs/latest/doc_physical_properties.html)找到它们，以及设备用户手册的退火计划部分，这些都可以在同一个网页上找到。我们可以通过指定我们希望在某个中间时间函数取的值来修改这些默认计划。
+
+我们可以通过一个实数对的列表定义一个自定义退火计划。每个对的第一个数字需要是一个以微秒为单位的时间值，第二个数字必须在![0](img/file12.png "0")和![1](img/file13.png "1")之间。这个第二个数字被称为**退火分数**，通常用![s](img/file610.png "s")表示。![s](img/file610.png "s")的值越高，![B](img/file184.png "B")的值就越高，而![A](img/file183.png "A")的值就越低。因此，当![s = 1](img/file611.png "s = 1")时，我们可以理解为![B](img/file184.png "B")是![1](img/file13.png "1")，而![A](img/file183.png "A")是 0；当![s = 0](img/file612.png "s = 0")时，我们可以理解为![A](img/file183.png "A")是![1](img/file13.png "1")，而![B](img/file184.png "B")是![0](img/file12.png "0")。
+
+我们可以使用两种类型的退火计划。第一种被称为**正向退火**，对应于我们从本章开始就一直在研究的常规退火过程。它从![(0,0)")]开始，到![(T,1)")]结束，其中![T](img/file74.png "T")是总的退火时间——当然，这个时间不能超过设备允许的最大退火时间。此外，![s](img/file610.png "s")的值必须随时间点单调增加。
+
+一个正向退火计划的例子可能是以下这样：
+
+```py
+
+forward_schedule=[[0.0, 0.0], [5.0, 0.25], [25, 0.75], [30, 1.0]]
+
+```
+
+在这种情况下，![s](img/file610.png "s")从![0](img/file12.png "0")开始，在 5 微秒时取值为![0.25](img/file615.png "0.25")，在 25 微秒时取值为![0.75](img/file616.png "0.75")，最后在 30 微秒时取值为![1](img/file13.png "1")，这是退火过程的结束。![s](img/file610.png "s")的增长将在计划中指定的点之间是线性的。要在设备中使用这个自定义计划，你只需要将其作为`anneal_schedule`参数传递。例如，你可以做如下操作：
+
+```py
+
+forward_schedule=[[0.0, 0.0], [5.0, 0.25], [25, 0.75], [30, 1.0]] 
+
+sampler = EmbeddingComposite(DWaveSampler()) 
+
+result = sampler.sample(triangle, num_reads=10, 
+
+    anneal_schedule = forward_schedule)
+
+```
+
+这里，`triangle`是我们之前定义的问题。
+
+要了解更多...
+
+控制退火时间表对于某些问题可能是有用的，特别是如果你知道在某些点上基态和第一个激发态更接近。在这种情况下，你可以使用自定义的时间表来减慢那些“危险”区域的退火过程，同时允许在其他不太有问题的时间间隔内加快退火。
+
+除了正向退火，我们还可以使用**反向退火**。在反向退火中，![s](img/file610.png "s")从![1](img/file13.png "1")开始，经过一段时间后减小，然后在退火过程的最后回到![1](img/file13.png "1")。一个反向退火的时间表示例可能是
+
+```py
+
+reverse_schedule=[[0.0, 1.0], [10.0, 0.5], [20, 1.0]]
+
+```
+
+其中，与正向退火的情况一样，![s](img/file610.png "s")的值在列表中给出的点之间进行线性插值。
+
+当使用反向退火时，你还需要指定一个初始状态。这是因为现在我们不是从一个我们已知基态的哈密顿量开始。你可以通过`sample`方法的`initial_state`参数来实现这一点。反向退火通常用于对已经拥有的近似解进行尝试，以找到更好的解。在这种情况下，我们将该解作为初始状态，我们降低最终哈密顿量的强度一段时间，然后再次增加，试图获得一个能量更低的新的解。
+
+我们可以使用两种不同的方式来使用反向退火。我们可以在调用`sample`时使用`reinitialize_state``=``True`选项，在相同的初始状态下运行多次退火过程。或者，我们可以通过设置`reinitialize_state``=``False`，将一次执行的最终（测量）状态作为下一次的初始状态。
+
+让我们现在看看一个例子，我们将在这个例子中应用反向退火到一个简单的问题上。以下代码，其中我们使用了之前定义的`triangle`问题，几乎是自解释的：
+
+```py
+
+reverse_schedule=[[0.0, 1.0], [10.0, 0.5], [20, 1.0]] 
+
+initial_state = {0:1, 1:1, 2:1} 
+
+sampler = EmbeddingComposite(DWaveSampler()) 
+
+result = sampler.sample(triangle, num_reads=10, 
+
+    anneal_schedule = reverse_schedule, 
+
+    reinitialize_state=False, initial_state = initial_state) 
+
+print("The samples obtained are") 
+
+print(result)
+
+```
+
+这些指令的可能输出可能是以下内容：
+
+```py
+
+The samples obtained are 
+
+   0  1  2 energy num_oc. chain_. 
+
+0 -1 +1 -1   -1.0       1     0.0 
+
+1 +1 +1 -1   -1.0       1     0.0 
+
+2 +1 +1 -1   -1.0       1     0.0 
+
+3 -1 +1 -1   -1.0       1     0.0 
+
+4 -1 -1 +1   -1.0       1     0.0 
+
+5 +1 -1 +1   -1.0       1     0.0 
+
+6 +1 +1 -1   -1.0       1     0.0 
+
+7 +1 +1 -1   -1.0       1     0.0 
+
+8 +1 -1 -1   -1.0       1     0.0 
+
+9 -1 +1 -1   -1.0       1     0.0 
+
+[’SPIN’, 10 rows, 10 samples, 3 variables]
+
+```
+
+要了解更多...
+
+一些研究人员发现，对于某些问题，反向退火可能比正向退火更有效。对于一个非常启发性的例子，请参阅 Carugno 等人撰写的论文[23]。
+
+现在，我们知道如何控制退火时间和时间表。在下一小节中，我们将解释为什么明智地设置耦合强度和惩罚项很重要，这是容易被忽视的，但可能会极大地影响我们执行的结果。
+
+## 4.4.4 耦合强度的重要性
+
+您肯定记得，在两种情况下，我们必须为一些任意常数选择值，这些常数用于设置退火器的耦合强度。第一种情况是在目标函数中引入约束作为惩罚项，使用`dimod`包中的`cqm_to_bqm`方法的`lagrange_multiplier`参数。第二种情况是在特定嵌入中为链选择耦合强度，这通常由`EmbeddingComposite`等类自动处理。
+
+很自然地，您会认为您希望这些常数尽可能大。毕竟，您对不满足问题约束的解不感兴趣，您也不希望您的链断裂。然而，有一个重要的细节使得选择这些常数的值比预期的要复杂一些。
+
+结果表明，您在 D-Wave 退火器中使用的量子比特耦合值的范围并不是任意大的。例如，以下指令允许我们检查`Advantage_system4`案例的可能值。
+
+`.1` 设备——当然，如果您更改求解器名称，您也可以获取任何其他退火器的值：
+
+```py
+
+sampler = DWaveSampler("Advantage_system4.1") 
+
+print("The coupling strength range is", sampler.properties["h_range"])
+
+```
+
+运行这些指令后，您将得到以下输出：
+
+```py
+
+The coupling strength range is [-4.0, 4.0]
+
+```
+
+这意味着，如果您设置耦合强度（即![J](img/file617.png "J")系数），其绝对值大于![4](img/file143.png "4")，最大的一个将被缩放到![4](img/file143.png "4")……并且您模型中的其余系数也将相应缩放。这可能导致一些值非常接近，甚至比设备的分辨率还要接近，从而影响退火过程的结果。让我们用一个例子来说明。
+
+以下代码定义了一个约束问题，将其转换为使用惩罚常数![M = 10](img/file618.png "M = 10")的无约束模型，并在`Advantage_system4`上运行它
+
+`.1` 采集 100 个样本。然后，它将样本转换回原始问题的变量，汇总结果，就像我们在*第 4.3.3 节*中做的那样，并显示每个获得的解决方案的频率：*
+
+*```py
+
+sampler = EmbeddingComposite(DWaveSampler("Advantage_system4.1")) 
+
+# Define the problem 
+
+x0 = dimod.Binary("x0") 
+
+x1 = dimod.Binary("x1") 
+
+x2 = dimod.Binary("x2") 
+
+blp = dimod.ConstrainedQuadraticModel() 
+
+blp.set_objective(-5*x0+3*x1-2*x2) 
+
+blp.add_constraint(x0 + x2 <= 1, "First constraint") 
+
+blp.add_constraint(3*x0 -x1 + 3*x2 <= 4, "Second constraint") 
+
+# Convert the problem and run it 
+
+qubo, invert = dimod.cqm_to_bqm(blp, lagrange_multiplier = 10) 
+
+result = sampler.sample(qubo, num_reads=100) 
+
+# Aggregate and show the results 
+
+samples = [] 
+
+occurrences = [] 
+
+for s in result.data(): 
+
+    samples.append(invert(s.sample)) 
+
+    occurrences.append(s.num_occurrences) 
+
+sampleset = dimod.SampleSet.from_samples_cqm(samples,blp, 
+
+    num_occurrences=occurrences) 
+
+print("The solutions to the original problem are") 
+
+print(sampleset.filter(lambda s: s.is_feasible).aggregate())
+
+```
+
+当我们运行这段代码时，我们得到了以下输出：
+
+```py
+
+The solutions to the original problem are 
+
+  x0 x1 x2 energy num_oc. is_sat. is_fea. 
+
+0  1  0  0   -5.0      21 arra...    True 
+
+1  1  1  0   -2.0      32 arra...    True 
+
+2  0  0  1   -2.0      11 arra...    True 
+
+3  0  0  0    0.0      17 arra...    True 
+
+4  0  1  1    1.0      10 arra...    True 
+
+5  0  1  0    3.0       9 arra...    True 
+
+[’INTEGER’, 6 rows, 100 samples, 3 variables]
+
+```
+
+因此，在 100 个样本中有 21 个我们得到了最优解，在 43 个更多的情况下，我们得到了第二低能量的解。还不错……但也不算很好。这个结果背后的不那么明显的问题是惩罚常数（`lagrange_multiplier` 参数）与目标函数能量范围相比太大。实际上，如果你在转换问题中使用 `ExactSolver`，你可以很容易地检查出在原始问题中不可行的所有分配在转换问题中的能量至少为 ![16](img/file619.png "16") 或更高，而可行解总是得到 ![3](img/file472.png "3") 或更低的能量。这是一个巨大的差距！
+
+但请注意，当我们把惩罚常数降低到 ![4](img/file143.png "4") 后再次运行相同的代码时发生了什么。在这种情况下，我们得到了以下结果：
+
+```py
+
+The solutions to the original problem are 
+
+  x0 x1 x2 energy num_oc. is_sat. is_fea. 
+
+0  1  0  0   -5.0      30 arra...    True 
+
+1  1  1  0   -2.0      31 arra...    True 
+
+2  0  0  1   -2.0      16 arra...    True 
+
+3  0  0  0    0.0       8 arra...    True 
+
+4  0  1  1    1.0      10 arra...    True 
+
+5  0  1  0    3.0       3 arra...    True 
+
+[’INTEGER’, 6 rows, 98 samples, 3 variables]
+
+```
+
+如你所见，最优解的频率已增加到 ![30](img/file620.png "30")，并且具有第二低能量的两个解，或多或少，与 `lagrange_multiplier` 实验中的次数相同。
+
+`=10`. 在这种情况下（通过使用 `ExactSolver` 检查），所有不可行解在转换问题中的能量至少为 ![4](img/file143.png "4")，因此所有可行解的能量都更低。但请注意，现在差距要小得多，我们只从 ![100](img/file389.png "100") 个样本中恢复了 ![98](img/file621.png "98") 个可行解。
+
+我们甚至尝试了一个更极端的实验，设置了 `lagrange_multiplier`
+
+`=1`. 当我们运行它时，我们得到了以下输出：
+
+```py
+
+The solutions to the original problem are 
+
+  x0 x1 x2 energy num_oc. is_sat. is_fea. 
+
+0  1  0  0   -5.0      76 arra...    True 
+
+1  0  0  1   -2.0       5 arra...    True 
+
+2  1  1  0   -2.0      11 arra...    True 
+
+3  0  0  0    0.0       1 arra...    True 
+
+4  0  1  1    1.0       1 arra...    True 
+
+[’INTEGER’, 5 rows, 94 samples, 3 variables]
+
+```
+
+优解的频率显著提高，高达 ![76](img/file622.png "76") 个样本中的 ![100](img/file389.png "100")。然而，我们也“丢失”了 6 个样本，因为它们对应于不可行解。在这种情况下，在转换问题中存在一些能量低至 ![- 2](img/file333.png "- 2") 的不可行解。这仍然比最优能量 ![- 5](img/file591.png "- 5") 要大，但这些不可行解的低能量有时会欺骗退火器选择它们，正如我们所看到的。
+
+设置一个好的惩罚常数可能很困难，因为它涉及到对问题解的能量分布有一些信息。但让这里的例子作为一个警告，你不应该为 `lagrange_multiplier` 使用任何值，因为设置得太高可能会影响你解的质量。如果有疑问，尝试一些不同的选项，并保留提供最佳结果的那个。
+
+要了解更多……
+
+当嵌入链的耦合强度值过大时，可能会发生类似的情况。幸运的是，`EmbeddingComposite`及其相关方法已经考虑了这一点，并将尝试将值保持在尽可能低，同时避免破坏许多链。但如果你出于某种原因需要创建自己的嵌入，不要轻率地选择耦合强度。
+
+你现在已经知道了如何调整控制量子退火的最重要参数，更重要的是，你理解了这些调整的含义。但结果证明，D-Wave 提供了除“纯”量子退火之外解决优化问题的其他方法。让我们在下面的子节中研究它们。
+
+## 4.4.5 经典和混合采样器
+
+我们已经看到，`dimod`提供了一个名为`ExactSolver`的经典求解器。而且它并不孤单！在 Ocean 中，我们还可以找到像`SimulatedAnnealing`或`SteepestDescentSolver`这样的求解器，它们根本不依赖于任何量子资源。
+
+在量子优化库中包含这些经典求解器的目的是双重的。一方面，它允许你尝试使用不同的方法来解决你的问题。另一方面，它们可以与量子退火器结合使用，D-Wave 称之为**混合求解器**。让我们简要研究这两个方面。
+
+### 经典求解器
+
+使用 Ocean 中的经典求解器非常简单。只要你有 QUBO 或 Ising 问题，你就可以使用任何经典求解器的`sample`方法来获取（近似）解决方案，就像你使用量子退火器一样。实际上，你还可以使用`num_reads`参数来指定你想要的样本数量。
+
+我们将在这个子节中剩余的部分描述 Ocean 在撰写时的经典求解器。
+
+`SteepestDescentSolver` 这包括在`greedy`包中，它是连续优化中梯度下降算法的离散版本（更多关于这一点在*第八章**8*，*什么是量子机器学习？*）。在每一步中，它选择一个方向（即一个变量翻转），在这个方向上能量的减少更大。我们可以像以下代码片段所示那样使用它，我们首先定义一个简单的 Ising 问题，然后从中采样：
+
+```py
+
+import greedy 
+
+import dimod 
+
+J = {(0,1):1, (1,2):1, (2,3):1, (3,0):1} 
+
+h = {} 
+
+problem = dimod.BinaryQuadraticModel(h, J, 0.0, dimod.SPIN) 
+
+# Sample with SteepestDescentSolver 
+
+solver = greedy.SteepestDescentSolver() 
+
+solution = solver.sample(problem, num_reads = 10) 
+
+print(solution.aggregate())
+
+```
+
+运行这些指令的输出将类似于以下内容：
+
+```py
+
+0  1  2  3 energy num_oc. num_st. 
+0 +1 -1 +1 -1   -4.0       5       1 
+2 -1 +1 -1 +1   -4.0       3       1 
+1 +1 -1 -1 +1    0.0       1       0 
+3 +1 +1 -1 -1    0.0       1       0 
+[’SPIN’, 4 rows, 10 samples, 4 variables]
+
+```
+
+正如你所见，这正是我们从使用量子求解器中已经熟知并喜爱的格式。
+
+要了解更多...
+
+除了`num_reads`参数之外，你还可以设置`initial_states`来指定下降将开始的解决方案。如果你不使用此参数，则初始状态将随机选择。在这种情况下，如果你希望结果可重复，可以使用`seed`参数。
+
+`TabuSolver` 这个求解器包含在 `tabu` 包中。它是一个 **局部** **搜索** 算法的例子。也就是说，它试图通过探索其邻居（例如，通过翻转一个变量可以获得的解决方案）来改进一个解决方案。在这方面，这种方法与 `SteepestDescentSolver` 中实现的贪婪下降算法有些相似，但它试图通过有时接受比当前解决方案能量更高的解决方案来避免陷入局部最小值，并且它还会“记住”已经访问过的解决方案，以便不再探索它们——这就是“禁忌”这个名字的由来。
+
+Ocean 实现了在 [72] 中描述的多起点禁忌算法。它可以按照以下说明使用：
+
+```py
+
+import tabu 
+
+solver = tabu.TabuSampler() 
+
+solution = solver.sample(problem, num_reads = 10) 
+
+print(solution.aggregate())
+
+```
+
+禁忌算法也接受 `initial_states` 和 `seed` 参数。
+
+`SimulatedAnnealingSampler` 这是在 `neal` 包中包含的，它实现了被称为 **模拟退火** 的启发式算法 [59]。它是一种探索在给定时刻考虑的候选解决方案的邻域的局部搜索算法。通过这种方式，它试图移动到能量更低的解决方案。然而，像禁忌搜索一样，它以一定的概率移动到能量更高的解决方案。这个概率由一个随时间减少的全球“温度”参数所限制，最终达到 ![0](img/file12.png "0")，这受到了金属在退火过程中冷却时变得不那么可塑的方式的启发——因此，该方法得名。实际上，有些人将量子退火视为模拟退火的一种量子版本。他们所做的类比是，初始哈密顿量 ![H_{0}](img/file545.png "H_{0}") 的强度可以理解为与模拟退火中的温度类似：它允许解决方案移动或“隧道”到某些邻近的解决方案，并且随着时间的推移而减少。模拟退火可以在 Ocean 中按以下方式使用：
+
+```py
+
+import neal 
+
+solver = neal.SimulatedAnnealingSampler() 
+
+solution = solver.sample(problem, num_reads = 10) 
+
+print(solution.aggregate())
+
+```
+
+如你所猜，`initial_states` 和 `seed` 参数也受到支持。
+
+这些采样器都是不使用量子资源的经典算法。然而，它们可以与量子退火器结合，正如我们在下一小节中所示。
+
+### 混合求解器
+
+除了量子退火器和经典求解器之外，Ocean 还为程序员提供了混合求解器，这些求解器试图结合两者的优点。你可能记得，在 *第 * *4.4.1* *节* **4.4.1** 中，这些混合求解器被列为通过你的 Leap 账户可用的设备之一。最后，学习如何使用它们的时候终于到了！
+
+*让我们从 `LeapHybridSampler` 开始。这个采样器接受 QUBO 和 Ising 问题，并且可以扩展到大量的变量，因为，在内部，它将问题分割，将不同的部分分配给经典求解器和量子退火器，然后从局部解中重建全局解。它的使用方式与我们迄今为止研究的采样器非常相似。例如，你可以运行以下指令，其中 `problem` 如前一小节定义——或者任何其他 QUBO 或 Ising 问题：
+
+```py
+
+import dwave.system 
+
+sampler = dwave.system.LeapHybridSampler() 
+
+solution = solver.sample(problem, num_reads = 10) 
+
+print(solution.aggregate())
+
+```
+
+`LeapHybridSampler` 和其他混合采样器的一个有趣特性被称为**配额转换率**。可以通过以下特性进行检查：
+
+```py
+
+sampler.properties["quota_conversion_rate"]
+
+```
+
+在 `LeapHybridSampler` 的情况下，它是 20。这意味着对于你使用的每个 20 微秒的混合采样器，你将只需支付 1 微秒的量子处理器访问费用，因为量子退火器并没有在整个计算中使用。很酷，对吧？
+
+Ocean 还提供了 `LeapHybridCQMSampler`，其使用方式与 `LeapHybridSampler` 类似，但用于有约束的问题，如我们在 *第* *4.3.3 节* *中定义的。最后，还有 `LeapHybridDQMSampler`，它与定义为 `DiscreteQuadraticModel` 类对象的离散二次问题一起工作。
+
+*要了解更多…
+
+我们尚未使用 `DiscreteQuadraticModel` 类，但它与 `BinaryQuadraticModel` 非常相似。主要区别在于它接受有限数量的不同值而不是仅仅 ![0](img/file12.png "0") 和 ![1](img/file13.png "1") 的变量。通过此类定义的问题可以通过**独热编码**转换为二值二次问题；也就是说，每个离散变量由一个 ![n](img/file244.png "n") 个二进制变量的向量表示，其中 ![n](img/file244.png "n") 是原始离散变量可以取的总值数。限制是，在给定时间只有一个这些变量可以取 ![1](img/file13.png "1") 的值。所以，如果二进制变量编号 ![3](img/file472.png "3") 是 ![1](img/file13.png "1")，这意味着原始变量取值为 ![3](img/file472.png "3")。
+
+这标志着我们对量子退火及其在组合优化中的应用的研究结束。但这类问题也可以通过基于量子电路模型的量子计算机设计的算法来解决。这将是下一章的主题。
+
+# 摘要
+
+在本章中，你学习了绝热量子计算模型，该模型与我们之前已经研究过的量子电路模型等价。绝热量子计算使用的是通过时间依赖的哈密顿量的连续演化，而不是离散量子门。你学习了如何选择这个哈密顿量来编码组合优化问题，以及如果演化足够慢，绝热定理将保证我们在过程的最后测量到基态。
+
+你还了解到，在实践中，量子退火被用来代替绝热量子计算，因为绝热演化可能需要太长时间，使得整个过程变得不可行。更重要的是，你现在知道如何通过 D-Wave Leap 使用实际的量子退火器以多种不同的方式找到组合优化问题的近似解。
+
+你还知道如何控制退火过程的几个参数，以提高你使用量子退火器可以找到的解决方案的质量。最后，你还学习了如何使用混合求解器，将大问题分解成更小的部分，并结合经典和量子技术来找到原始问题的全局解。
+
+我们现在将转向使用基于量子电路模型的量子计算机。但我们不会忘记优化问题和哈密顿量。实际上，正如你很快就会看到的，我们下一章的主题将是如何将量子退火离散化，以便可以使用量子门来实现。******************

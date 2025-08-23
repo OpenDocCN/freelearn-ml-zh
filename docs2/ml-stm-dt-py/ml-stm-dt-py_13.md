@@ -1,0 +1,442 @@
+# *第十章*：特征转换和扩展
+
+在上一章中，您已经看到了如何在流式和在线机器学习模型中管理漂移和漂移检测。漂移检测，虽然不是机器学习中的主要概念，但在生产中的机器学习是一个非常重要的辅助方面。
+
+尽管许多次要主题在机器学习中都很重要，但一些辅助主题对于在线模型尤为重要。漂移检测尤其重要，因为模型在重新学习时的自主性使得它对开发者或数据科学家来说稍微更黑盒。只要重新训练过程由漂移检测和类似方法正确管理，这就有很大的优势。
+
+在本章中，您将看到另一个对在线机器学习和流式学习有重要影响的次要机器学习主题。特征转换和扩展是在传统、批量机器学习中相对定义良好的实践。它们通常不会带来任何理论上的困难。
+
+在在线机器学习中，扩展和特征转换并不像传统的那样直接。必须将实践适应新数据可能并不完全与原始数据可比的情况。这引发了是否需要在每条新到达的数据上重新拟合特征转换和扩展器的问题，同时也引发了是否这些做法会引入偏差到您已经训练并持续再训练的模型中。
+
+本章涵盖的主题如下：
+
++   流式数据数据准备挑战
+
++   流式数据的数据扩展
+
++   在流式环境中转换特征
+
+# 技术要求
+
+您可以在以下链接在 GitHub 上找到本书的所有代码：[`github.com/PacktPublishing/Machine-Learning-for-Streaming-Data-with-Python`](https://github.com/PacktPublishing/Machine-Learning-for-Streaming-Data-with-Python)。如果您还不熟悉 Git 和 GitHub，以下是最简单的下载笔记本和代码示例的方法：
+
+1.  前往存储库的链接。
+
+1.  点击绿色的**代码**按钮。
+
+1.  选择**下载 ZIP**。
+
+当您下载 ZIP 文件时，在您的本地环境中解压缩它，您将能够通过您首选的 Python 编辑器访问代码。
+
+## Python 环境
+
+要跟随本书学习，您可以下载存储库中的代码，并使用您首选的 Python 编辑器执行它。
+
+如果您还不熟悉 Python 环境，我建议您查看 Anaconda ([`www.anaconda.com/products/individual`](https://www.anaconda.com/products/individual))，它包含 Jupyter Notebook 和 JupyterLabs，这两个都是执行笔记本的绝佳选择。它还包含 Spyder 和 VSCode，用于编辑脚本和程序。
+
+如果你难以在你的机器上安装 Python 或相关程序，你可以查看 Google Colab ([`colab.research.google.com/`](https://colab.research.google.com/)) 或 Kaggle Notebooks ([`www.kaggle.com/code`](https://www.kaggle.com/code))，这两个都允许你免费在线笔记本中运行 Python 代码，无需任何设置。
+
+注意
+
+书中的代码通常使用带有 Python 版本 *3.7.13* 的 Colab 和 Kaggle Notebooks，你可以设置自己的环境来模拟这种情况。
+
+# 流式数据数据准备的挑战
+
+在深入探讨特定算法和解决方案之前，让我们首先讨论一下为什么在处理以流式方式到达的数据时，数据准备可能有所不同。可以识别出多个原因，例如以下内容：
+
++   第一个，明显的问题是数据漂移。正如在前一章中详细讨论的那样，由于数据漂移，你的数据趋势和描述性统计可能会随着时间的推移而缓慢变化。如果你的特征工程或数据准备过程过于依赖你的数据遵循某些分布，当数据漂移发生时，你可能会遇到问题。由于前一章已经提出了许多解决方案，因此这个主题将在当前章节中不予考虑。
+
++   第二个问题是总体参数未知。在以流式方式观察数据时，你的总体参数估计可能会随着时间的推移而缓慢提高，这是可能的，甚至很可能是。正如在 *第三章* 中所见，你估计描述性统计的精度会随着你拥有的数据量而提高。当描述性统计估计在提高时，它们随时间变化的事实并不容易修复你的数据准备、特征工程、缩放等公式的公式：
+
+    +   作为这个问题的第一个例子，考虑范围。范围代表你观察到的数据的最大值和最小值。这在数据缩放和其他算法中得到了广泛的应用。现在，想象一下，一批数据中的范围（最小值和最大值）可能与数据的全局范围（全局最小值和全局最大值）不同。毕竟，当新数据到达时，你可能会观察到由于随机抽样的过程而高于或低于你历史数据中观察到的任何值的值。如果你没有正确处理，观察到高于你最大值的值可能会导致缩放时出现问题。
+
+    +   另一个例子是在使用正态分布进行缩放时。你的批次中的标准差和平均值可能与总体标准差和总体平均值不同。这可能导致你的缩放器在一段时间后表现不同，这是一种由你自己的缩放算法引起的数据漂移。显然，这必须避免。
+
++   存在许多此类问题的其他情况，包括在分类值中观察到新的类别，这可能导致你的 one-hot 编码器或使用分类变量的模型出现问题。你还可以想象，在数据中出现新的值类型，如 NAs 和 InFs，需要得到妥善管理，而不是让它们引起错误。这在一般情况下是正确的，但在处理流数据时，这往往比处理常规数据造成更多麻烦。
+
+在下一节中，我们将学习缩放是什么以及如何与之合作。
+
+# 为流数据缩放
+
+在本节的第一个部分，让我们先看看一些用于流式缩放数据的解决方案。在进入解决方案之前，让我们快速回顾一下缩放是什么以及它是如何工作的。
+
+## 介绍缩放
+
+数值变量可以是任何尺度，这意味着它们可以具有非常高的平均值或很低的平均值，例如。一些机器学习算法根本不受变量尺度的任何影响，而其他机器学习算法则可能受到强烈影响。
+
+缩放是将数值变量缩小范围，并可能缩小其标准差，到一个预指定的范围的做法。这将允许所有机器学习算法在没有问题的前提下从数据中学习。
+
+### 使用 MinMaxScaler 进行缩放
+
+为了实现这一目标，常用的方法是最小-最大缩放器。最小-最大缩放器将输入变量接受任何范围，并将所有值减少到介于该范围（`0`到`1`）之间，这意味着缩放变量的最小值将是`0`，缩放变量的最大值将是`1`。有时，会使用一个替代方案，其中最小值不是`0`，而是`-1`。
+
+最小-最大缩放的数学公式如下：
+
+![](img/Formula_10_001.jpg)
+
+### 使用 StandardScaler 进行缩放
+
+另一个非常常见的缩放方法是标准化。标准化是一种基于统计学的强有力方法，它允许你将任何变量转换回标准正态分布。标准正态分布的平均值为`0`，标准差为`1`。
+
+标准缩放器的数学公式如下：
+
+![](img/Formula_10_002.jpg)
+
+缩放变量的值不会在任何特定范围内；缩放变量的新值表示原始值与原始平均值之间的标准差数。一个非常极端的值（想象一下平均值的四到五个标准差之外）将具有四到五个的值，顺便说一下，这个值可以是正的也可以是负的。
+
+### 选择你的缩放方法
+
+缩放算法的选择取决于用例，通常在机器学习管道中使用不同的缩放方法与不同的算法进行调优是一个好主意。毕竟，缩放方法的选择会影响方法的训练性能。
+
+Min-Max 缩放器众所周知在处理异常值方面有困难。毕竟，一个非常极端的异常值会被设置为最大值，即`1`。然后，这可能会导致其他值被减少到一个更小的范围。
+
+StandardScaler 处理这个问题的方式更好，因为异常值仍然是异常值，只是在缩放变量中取高值。这同时可能是一个缺点，主要是在你使用需要值在`0`到`1`之间的机器学习算法时。
+
+## 适应流式上下文缩放
+
+现在我们来看看我们如何将每种方法适应流式数据的情况。我们将从 Min-Max 缩放器开始。
+
+### 将 MinMaxScaler 适应流式
+
+MinMaxScaler 在固定数据集上工作得很好。它保证了缩放数据的值将在`0`到`1`之间，正如某些机器学习算法所要求的。然而，在流式数据的情况下，这要难得多管理。
+
+当新数据一个接一个地到达（在流中），不可能决定最小值或最大值。毕竟，你不能期望一个值既是最小值又是最大值。当批处理时，也没有保证批最大值高于全局最大值，对于最小值也是如此。
+
+你可以使用训练数据来决定最小值和最大值，但问题是你新的数据可能会高于训练最大值或低于训练最小值。这将导致缩放值超出范围（`0`到`1`）。
+
+解决这个问题的方法是用运行中的最小值和最大值。这意味着你继续更新 MinMaxScaler，以便每次观察到更低的最低值时，你就在 MinMaxScaler 公式中更新最低值，每次观察到更高的最高值时，你就在公式中更新最高值。
+
+这种方法的优点是它保证了你的缩放数据始终在`0`和`1`之间。一个缺点是训练 MinMaxScaler 的第一个值会被缩放得很糟糕。这可以通过使用一些训练数据来初始化 MinMaxScaler 来轻松解决。异常值也可能成为问题，因为一个极端的异常值会强烈影响 MinMaxScaler 的公式，并且在那之后分数会有很大的不同。这可以通过使用如*第五章*中详细描述的异常值检测方法来解决。
+
+现在我们继续到一个自适应 MinMaxScaler 的 Python 实现：
+
+1.  为了做到这一点，我们将使用 Python 库`River`中 MinMaxScaler 的实现。我们将使用以下数据作为这个示例：
+
+代码块 10-1
+
+```py
+import numpy as np
+data = np.random.randint(0, 100, size=1000)
+```
+
+1.  可以使用以下代码创建这个数据的直方图：
+
+代码块 10-2
+
+```py
+import matplotlib.pyplot as plt
+plt.hist(data)
+```
+
+结果直方图看起来如下：
+
+![图 10.1 – 代码块 10-2 的结果直方图](img/B18335_10_1.jpg)
+
+图 10.1 – 代码块 10-2 的结果直方图
+
+1.  现在，为了缩放这些数据，让我们使用来自 River 的 `MinMaxScaler` 函数。通过遍历数据可以模拟数据以流式方式到达，而使用 `learn_one` 方法表明数据是逐步更新的：
+
+代码块 10-3
+
+```py
+!pip install river
+from river import preprocessing
+# convert the data to required format
+data_stream = [{'x':float(x)} for x in list(data)]
+# initialize list for scaled values
+data_scaled = []
+# initialize scaler
+my_scaler = preprocessing.MinMaxScaler()
+# streaming
+for observation in data_stream:
+  # learn (update)
+  my_scaler.learn_one(observation)
+  # scale the observation
+  scaled_obs = my_scaler.transform_one(observation)
+
+  # store the scaled result
+  data_scaled.append(scaled_obs['x'])
+```
+
+1.  现在，将很有趣地看到缩放数据的直方图。它可以创建如下：
+
+代码块 10-4
+
+```py
+import matplotlib.pyplot as plt
+plt.hist(data_scaled)
+```
+
+直方图如下所示：
+
+![图 10.2 – 代码块 10-4 的结果直方图](img/B18335_10_2.jpg)
+
+图 10.2 – 代码块 10-4 的结果直方图
+
+这个直方图清楚地表明我们已经成功将数据缩放到 `0` 到 `1` 的范围。
+
+现在你已经看到了 MinMaxScaler 的理论和实现，让我们现在看看 StandardScaler，这是该方法的一个常见替代方案。
+
+### 将标准缩放器适应流式处理
+
+在未来观察更多极端数据时，标准缩放可能遇到的问题，与 Min-Max 缩放中看到的问题并不完全相同。Min-Max 缩放器使用最小值和最大值来计算缩放方法，而标准缩放器使用均值和标准差。
+
+这之所以非常不同，是因为最小值和最大值在某个时间点被超越的可能性相对较高。这将导致缩放值高于 `1` 或低于 `0`，这可能会对你的机器学习算法造成真正的问题。
+
+在标准缩放器中，未来发生的任何极端值将影响你对全局均值和标准差的估计，但它们不太可能非常严重地影响它们。毕竟，均值和标准差对少数极端值的观察要敏感得多。
+
+在这个理论考虑的基础上，你可能会得出结论，实际上没有必要更新标准缩放器。然而，无论如何更新它可能更好，因为这是保持你的机器学习方法更新的好方法。这种增加的价值将比使用 Min-Max 缩放器时的影响小，但无论如何，这是一个最佳实践。
+
+你可以使用的一种解决方案是使用 `Riverml` 包中的 `AdaptiveStandardScaler`。它使用指数加权的移动平均和方差来确保在不过度强调的情况下考虑数据正态分布的轻微漂移。让我们看看如何使用 AdaptiveStandardScaler 的 Python 示例：
+
+1.  我们将使用以下数据作为本例：
+
+代码块 10-5
+
+```py
+import numpy as np
+data = np.random.normal(12, 15, size=1000)
+```
+
+1.  这组数据遵循正态分布，正如从直方图中所见。你可以按照以下步骤创建直方图：
+
+代码块 10-6
+
+```py
+import matplotlib.pyplot as plt
+plt.hist(data)
+```
+
+结果直方图如下所示：
+
+![图 10.3 – 代码块 10-6 的结果直方图](img/B18335_10_3.jpg)
+
+图 10.3 – 代码块 10-6 的结果直方图
+
+数据明显遵循正态分布，但它不是围绕 `0` 对齐的，也没有标准化到标准差为 `1`。
+
+1.  现在，为了扩展这些数据，让我们使用来自 River 的 `StandardScaler`。同样，我们将遍历数据以模拟流式传输。此外，我们再次使用 `learn_one` 方法逐步更新数据：
+
+代码块 10-7
+
+```py
+from river import preprocessing
+# convert the data to required format
+data_stream = [{'x':float(x)} for x in list(data)]
+# initialize list for scaled values
+data_scaled = []
+# initialize scaler
+my_scaler = preprocessing.StandardScaler()
+# streaming
+for observation in data_stream:
+  # learn (update)
+  my_scaler.learn_one(observation)
+  # scale the observation
+  scaled_obs = my_scaler.transform_one(observation)
+
+  # store the scaled result
+  data_scaled.append(scaled_obs['x'])
+```
+
+1.  为了验证它是否正确工作，让我们使用以下代码重新绘制直方图：
+
+代码块 10-8
+
+```py
+plt.hist(data_scaled)
+```
+
+这里展示了直方图：
+
+![图 10.4 – 代码块 10-8 的结果直方图
+
+![img/B18335_10_4.jpg]
+
+图 10.4 – 代码块 10-8 的结果直方图
+
+如您所见，数据明显集中在 `0` 附近，新的缩放值表示每个数据点与平均值相差多少个标准差。
+
+在下一节中，您将看到如何在流式环境中调整特征转换。
+
+# 在流式环境中转换特征
+
+数据缩放是机器学习数据预处理的一种方法，但许多其他统计方法也可以用于数据准备。在本章的第二部分，让我们深入了解**主成分分析**（**PCA**）方法，这是一种在机器学习开始时常用的数据准备方法。
+
+## 介绍 PCA
+
+PCA 是一种可以用于多种应用的机器学习方法。当处理高度多变量数据时，PCA 可以以解释的方式使用，即您可以使用它来理解并分析多变量数据集。这是数据分析中 PCA 的一个应用。
+
+使用 PCA 的另一种方式是为机器学习准备数据。从高层次的角度来看，PCA 可以被视为缩放的替代方案，它减少了数据变量的数量，使模型更容易拟合。这是与本章最相关的 PCA 应用，这也是它在示例中将如何使用的方式。
+
+## PCA 的数学定义
+
+PCA 在多变量数据（或具有多个列的数据）上工作。这些列通常具有业务定义。PCA 的目标是保留数据中的所有信息，但将当前的变量定义转换为具有不同解释的变量。
+
+新变量被称为**主成分**，它们是以这样的方式找到的：第一个成分包含尽可能多的变化，第二个成分是与第一个成分正交的成分，它解释了尽可能多的变化，同时保持正交。
+
+这里展示了一个示意图：
+
+![图 10.5 – PCA 的示意图概述
+
+![img/B18335_10_5.jpg]
+
+图 10.5 – PCA 的示意图概述
+
+这个例子清楚地展示了原始数据左侧如何转换为右侧的主成分。第一个主成分在信息量方面比任何原始变量都更有价值。当处理数百个变量时，您可以想象您只需要保留有限数量的组件（基于不同的标准和您的用例），这可能使您的机器学习算法更容易从数据中学习。
+
+## Python 中的常规 PCA
+
+为了在常规和增量 PCA 之间进行良好的比较，最好让每个人都跟上进度，并先快速举一个常规 PCA 的例子：
+
+1.  要做到这一点，让我们创建一些模拟样本数据来处理这个例子。我们可以创建如下的小示例数据集：
+
+代码块 10-9
+
+```py
+import numpy as np
+import pandas as pd
+X1 = np.random.normal(5, 1, size=100)
+X2 = np.random.normal(5, 0.5, size=100)
+data = pd.DataFrame({'X1': X1, 'X2': X1 + X2})
+data.head()
+```
+
+数据看起来如下：
+
+![图 10.6 – 结果数据![图片](img/B18335_10_6.jpg)
+
+图 10.6 – 结果数据
+
+1.  你可以按照以下方式绘制此数据：
+
+代码块 10-10
+
+```py
+import matplotlib.pyplot as plt
+plt.scatter(data['X1'], data['X2'])
+```
+
+散点图显示了一个与早期示意图中草图相当相似的绘图：
+
+![图 10.7 – 代码块 10-10 的结果图像![图片](img/B18335_10_7.jpg)
+
+图 10.7 – 代码块 10-10 的结果图像
+
+1.  现在我们使用常规 PCA 来识别组件并转换数据。以下代码块展示了如何使用`scikit-learn`来拟合 PCA：
+
+代码块 10-11
+
+```py
+from sklearn.decomposition import PCA
+my_pca = PCA()
+transformed_data = my_pca.fit_transform(data)
+transformed_data = pd.DataFrame(transformed_data, columns = ['PC1', 'PC2'])
+transformed_data.head()
+```
+
+转换后的数据看起来如下：
+
+![图 10.8 – 转换后的数据![图片](img/B18335_10_8.jpg)
+
+图 10.8 – 转换后的数据
+
+1.  我们可以像处理之前的数据一样绘制它。这可以通过以下代码完成：
+
+代码块 10-12
+
+```py
+plt.scatter(transformed_data['PC1'], transformed_data['PC2'])
+plt.xlim(-4, 4)
+plt.ylim(-4, 4)
+plt.show()
+```
+
+绘图看起来如下：
+
+![图 10.9 – 转换数据的绘图![图片](img/B18335_10_9.jpg)
+
+图 10.9 – 转换数据的绘图
+
+你可以清楚地看到，这非常类似于早期理论介绍中的结果绘图。这个 PCA 成功识别出第一个主成分是解释数据最大部分的组件。第二个组件解释了剩余数据（在第一个组件之后）的最大部分。
+
+## 增量 PCA 用于流处理
+
+在流处理上下文中，PCA 不能轻易地计算在单个数据点上。毕竟，你可以想象，确定单个数据点的标准差是不可能的，因此，没有可能确定最佳组件。
+
+提出的解决方案是通过批量处理来完成，并且批量计算 PCA 而不是一次性计算。`scikit-learn`包有一个名为`IncrementalPCA`的功能，允许你批量拟合 PCA。让我们使用以下代码在之前相同的数据上拟合`IncrementalPCA`并比较结果。使用`IncrementalPCA`拟合和转换的代码如下所示：
+
+代码块 10-13
+
+```py
+from sklearn.decomposition import IncrementalPCA
+```
+
+```py
+my_incremental_pca = IncrementalPCA(batch_size = 10)
+```
+
+```py
+transformed_data_2 = my_incremental_pca.fit_transform(data)
+```
+
+```py
+transformed_data_2 = pd.DataFrame(transformed_data_2, columns = ['PC1', 'PC2'])
+```
+
+```py
+transformed_data_2.head()
+```
+
+使用第二种方法转换的数据看起来如下：
+
+![图 10.10 – 使用增量 PCA 转换的数据![图片](img/B18335_10_10.jpg)
+
+图 10.10 – 使用增量 PCA 转换的数据
+
+现在，让我们也绘制这个数据的图，看看这个批处理 PCA 是否成功拟合了真实组件，或者它是否远离原始 PCA：
+
+代码块 10-14
+
+```py
+plt.scatter(transformed_data_2['PC1'], transformed_data_2['PC2'])
+```
+
+```py
+plt.xlim(-4, 4)
+```
+
+```py
+plt.ylim(-4, 4)
+```
+
+```py
+plt.show()
+```
+
+结果散点图如下所示：
+
+![图 10.11 – 使用增量 PCA 转换数据的散点图![图片](img/B18335_10_11.jpg)
+
+图 10.11 – 使用增量 PCA 转换数据的散点图
+
+这个散点图显示 PCA 已经正确拟合。不要被增量 PCA 反转了第一个组件（与前面的图像相比，图像左右镜像）的事实所迷惑。这并不是错误，只是镜像。这个增量 PCA 很好地捕捉了两个组件。
+
+# 摘要
+
+在本章中，你已经看到了一些常见的数据准备方法被应用于流式和在线数据。对于流式数据，重要的是要能够轻松地重新拟合或重新估计模型。
+
+在本章的第一部分，你已经看到了两种缩放方法。MinMaxScaler 将数据缩放到`0`到`1`的范围，因此需要确保新的数据点不会超出这个范围。StandardScaler 使用基于均值和标准差的统计归一化过程。
+
+本章的第二部分演示了常规 PCA 和一个新的增量版本，称为`IncrementalPCA`。这种增量方法允许你分批拟合 PCA，这在处理流式数据拟合 PCA 时可能很有帮助。
+
+在本章中，通过缩放和特征转换，以及在前一章中的漂移检测，你已经看到了流式机器学习的许多辅助任务。在接下来的章节中，你将看到机器学习和流式处理的第三个也是最后一个次要主题：灾难性遗忘：在线机器学习中可能发生的一个有影响的问题，会导致模型忘记重要的学习趋势。本章将解释如何检测和避免它。
+
+# 进一步阅读
+
++   *River 中的 MinMaxScaler*：[`riverml.xyz/latest/api/preprocessing/MinMaxScaler/`](https://riverml.xyz/latest/api/preprocessing/MinMaxScaler/)
+
++   *River 中的 StandardScaler*：[`riverml.xyz/latest/api/preprocessing/StandardScaler/`](https://riverml.xyz/latest/api/preprocessing/StandardScaler/)
+
++   *scikit-learn 中的 PCA*：[`scikit-learn.org/stable/modules/generated/sklearn.decomposition.PCA.html`](https://scikit-learn.org/stable/modules/generated/sklearn.decomposition.PCA.html)
+
++   *scikit-learn 中的增量 PCA*：[`scikit-learn.org/stable/modules/generated/sklearn.decomposition.IncrementalPCA.html`](https://scikit-learn.org/stable/modules/generated/sklearn.decomposition.IncrementalPCA.html)
