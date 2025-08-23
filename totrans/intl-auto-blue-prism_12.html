@@ -1,0 +1,358 @@
+<html><head></head><body>
+<div id="book-content">
+<div id="sbo-rt-content"><div id="_idContainer297">
+			<h1 id="_idParaDest-192" class="chapter-number"><a id="_idTextAnchor196"/>12</h1>
+			<h1 id="_idParaDest-193"><a id="_idTextAnchor197"/>Power Service Interruptions</h1>
+			<p>In this chapter, we’ll again be looking at a scenario modeled after a real-life use case. The examples in this chapter will focus on the post-production maintenance and ML model deployment activities that are important for continued IA solution operation. The goal of this chapter is to become familiar with model deployments, rollbacks, and exporting audit data <span class="No-Break">through SQL.</span></p>
+			<p>In this scenario, we’re a power utility company that has an existing ML model that’s already in production. This model predicts whether certain regions of the power grid will have an outage based on weather indicators, date and time indicators, measurements from current power infrastructure, and <span class="No-Break">historical data.</span></p>
+			<p>The IA team wants to use this existing model and build a new model for new automation. First, the outage ML model will be regularly called to predict whether heavily populated regions will have an outage. If a potential outage is detected, we want to then predict which customers are most likely to call the customer service hotline. The model to predict customer complaints will be developed as part of <span class="No-Break">this project.</span></p>
+			<p>Once we’ve predicted which customers are likely to call customer service, we will send them an SMS informing them of a potential power outage ahead of time. The aim of this IA project is to reduce the number of calls to customer service, which saves money, reduces phone queue wait times, and improves customer satisfaction. The proposal to build this new model and automation has been approved by the <span class="No-Break">governance board.</span></p>
+			<p>The outage prediction model is maintained by a separate, internal ML team. The decision is made to develop and maintain the customer complaints prediction model within the IA function as the necessary expertise <span class="No-Break">is present.</span></p>
+			<p>In this chapter, we’re going to cover the <span class="No-Break">following topics:</span></p>
+			<ul>
+				<li>ML model <span class="No-Break">background information</span></li>
+				<li><span class="No-Break">Solution design</span></li>
+				<li>Handling <span class="No-Break">model deployments</span></li>
+				<li>Exporting data <span class="No-Break">for audit</span></li>
+			</ul>
+			<h1 id="_idParaDest-194"><a id="_idTextAnchor198"/>Technical requirements</h1>
+			<p>Install SQL Server Management Studio <a href="https://aka.ms/ssmsfullsetup">https://aka.ms/ssmsfullsetup</a> so that you can execute queries against the BP database. SQL Server Management Studio is used in <em class="italic">Example 4</em> and <span class="No-Break"><em class="italic">Example 5</em></span><span class="No-Break">.</span></p>
+			<h1 id="_idParaDest-195"><a id="_idTextAnchor199"/>ML model background information</h1>
+			<p>Let’s<a id="_idIndexMarker904"/> analyze the requirements and characteristics of the two ML models (outage prediction and customer complaints). This information will help us understand the procedure needed to deploy and roll back the models. It will also help us determine what options we have to capture ML <span class="No-Break">auditing data.</span></p>
+			<h2 id="_idParaDest-196"><a id="_idTextAnchor200"/>Outage prediction model</h2>
+			<p>The <strong class="bold">outage prediction</strong> (<strong class="bold">OP</strong>) model<a id="_idIndexMarker905"/> is already being used elsewhere in the utility and is managed by a different internal team. We’ve<a id="_idIndexMarker906"/> received the necessary approvals to use their ML endpoint for the <span class="No-Break">IA solution.</span></p>
+			<h3>Consumption and deployment method</h3>
+			<p>The <a id="_idIndexMarker907"/>model is hosted on the intranet and is called using an HTTP API. As this is a pre-existing model, the deployment method is already determined. A <em class="italic">replacement</em> deployment methodology that requires downtime is used. The ML team will notify us when the model will be taken offline for maintenance. For model updates, the API endpoint is <em class="italic">overwritten</em>, meaning that only the latest version of the model can ever be called. This means that rolling back by changing the endpoint URL is <span class="No-Break">not possible.</span></p>
+			<h3>Prediction volumes</h3>
+			<p>After<a id="_idIndexMarker908"/> discussing with project stakeholders, we decide to focus the automation on four regions. This will be expanded in further phases of the project. We decide on a prediction interval of 30 minutes for every region, from 6:00 AM to 10:00 PM. Sending SMSs to customers outside of this time frame won’t be effective. This adds up to 112 calls to the API per day, which is an acceptable volume for the <span class="No-Break">ML team.</span></p>
+			<h3>HITL reviews, interface, and SLAs</h3>
+			<p>It’s not <a id="_idIndexMarker909"/>possible for anyone outside of experts to review <a id="_idIndexMarker910"/>predictions, so it’s decided that reviews aren’t<a id="_idIndexMarker911"/> needed. There are also no SLAs to meet since this isn’t an already existing (nor critical) process. Customers currently aren’t being notified ahead of time if there might be an outage. However, we’ve set a target to notify customers within 30 minutes of receiving a <em class="italic">potential outage</em> prediction from the <span class="No-Break">OP model.</span></p>
+			<h3>ML auditing</h3>
+			<p>While server<a id="_idIndexMarker912"/> logs can be requested from the ML team, the lead time to receive them is undefined because it isn’t something that they have an existing procedure or SLA for. Because of this, the IA team decides to retain a copy of the API calls to the model in BP. Since they work for public service, the IA team is conscious of maintaining an audit trail for their <span class="No-Break">ML calls.</span></p>
+			<p>We’ve finished gathering information about the OP model that’s relevant to the IA solution. Let’s look at the customer complaints <span class="No-Break">model next.</span></p>
+			<h2 id="_idParaDest-197"><a id="_idTextAnchor201"/>Customer complaints model</h2>
+			<p>The <strong class="bold">customer complaints</strong> (<strong class="bold">CC</strong>) model <a id="_idIndexMarker913"/>predicts whether a customer is likely to call the customer support <a id="_idIndexMarker914"/>hotline based on demographic information, billing data, time of day, past calling behavior, and so on. The model will be developed and maintained by the IA team. The team decides to build a <em class="italic">binary classification</em> model that predicts between <em class="italic">will call</em> and <em class="italic">won’t call</em> using either regression or tree-based techniques. These techniques are favored because they have some degree of interpretability inherent <span class="No-Break">to them.</span></p>
+			<h3>Consumption and deployment method</h3>
+			<p>The IA <a id="_idIndexMarker915"/>team decides to deploy the CC ML solution as a native Code Stage that will run directly on the Digital Workers themselves. This will be possible because of the type of algorithm that <span class="No-Break">is chosen.</span></p>
+			<h3>Prediction volumes</h3>
+			<p>The number of <a id="_idIndexMarker916"/>predictions needed depends on the number of residential electrical meters (customers) in the region. The largest region has roughly 10,000 customers. Assuming that it takes one minute to gather the model’s input data from various systems and make the prediction, it would require 334 digital workers to process 10,000 predictions within 30 minutes, which <span class="No-Break">is unacceptable.</span></p>
+			<p>To bring the amount of time needed to make predictions down to a manageable level, the IA team decides to have a completely separate BP Process that gathers the necessary input data. This Process will generate predictions for each customer in the target regions on a weekly basis. Using a weekly prediction (and not a live prediction) is deemed to be a reasonable compromise as the customer data that is input to the model doesn’t <span class="No-Break">change regularly.</span></p>
+			<p>The weekly customer complaint prediction results will be saved into a database. The saved prediction result can be used by the Process that sends SMSs if an outage is predicted for <span class="No-Break">a region.</span></p>
+			<p>Let’s assume that there are 20,000 residences in total in the four regions, each taking one minute to process. If we run the customer complaints prediction Process during off-peak hours, from 9:00 PM to 5:00 AM, it would require 6 digital workers to process 20,000 cases per week. After discussing with the business users, we are given the green light to run this CC prediction on six digital workers that are idle during off-peak hours, improving the overall utilization of <span class="No-Break">the workforce.</span></p>
+			<h3>HITL reviews, interface, and SLAs</h3>
+			<p>Human review of predictions<a id="_idIndexMarker917"/> is not needed as no one really knows how to predict whether someone is apt to call the hotline. There are also no<a id="_idIndexMarker918"/> SLAs to complete the prediction by, although we have self-imposed criteria of updating a customer’s <span class="No-Break">prediction</span><span class="No-Break"><a id="_idIndexMarker919"/></span><span class="No-Break"> weekly.</span></p>
+			<h3>ML auditing</h3>
+			<p>Auditing <a id="_idIndexMarker920"/>is required. Since the ML model is run from Code Stages, the logs must be saved <span class="No-Break">into BP.</span></p>
+			<p>We’ve finished looking at the two ML models. Let’s summarize the details that are relevant to the IA solution. This will inform us of how we can deploy, roll back, and retrieve ML logs <span class="No-Break">for auditing.</span></p>
+			<h2 id="_idParaDest-198"><a id="_idTextAnchor202"/>ML model summary</h2>
+			<p>A <a id="_idIndexMarker921"/>summary of the ML model characteristics that are relevant to the design and operation of the solution is provided in the <span class="No-Break">following table:</span></p>
+			<table id="table001-8" class="No-Table-Style _idGenTablePara-1">
+				<colgroup>
+					<col/>
+					<col/>
+					<col/>
+					<col/>
+					<col/>
+					<col/>
+				</colgroup>
+				<tbody>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="bold">Model</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="bold">Deployment method</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><strong class="bold">HITL </strong><span class="No-Break"><strong class="bold">review criteria</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><strong class="bold">HITL </strong><span class="No-Break"><strong class="bold">review interface</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><strong class="bold">HITL </strong><span class="No-Break"><strong class="bold">review SLA</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="bold">ML Auditing</strong></span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><span class="No-Break">OP</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">Replacement API</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">N/A</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">N/A</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">N/A</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>In the <span class="No-Break">IA solution</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><span class="No-Break">CC</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">Code Stage</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">N/A</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">N/A</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">N/A</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>In the <span class="No-Break">IA solution</span></p>
+						</td>
+					</tr>
+				</tbody>
+			</table>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Table 12.1: A summary of the ML model characteristics</p>
+			<h1 id="_idParaDest-199"><a id="_idTextAnchor203"/>Solution design</h1>
+			<p>We don’t need to consider designing <a id="_idIndexMarker922"/>separate Processes and Work Queues for <em class="italic">reviews</em> since reviews aren’t possible for either of the ML models. There’s also no need to <em class="italic">link</em> Work Queue Items between the two ML models as they are independent and <em class="italic">communicate</em> by saving the customer complaint prediction results in <span class="No-Break">a database.</span></p>
+			<p>Two main candidates for high-level solution design are possible. The first potential design is shown in the following diagram. In this design, we keep the Processes and Work Queues separate for the ML portions of the solution. This results in a four Process, four Work Queue design. It allows for independent scaling and targeted auditing of the ML models directly from the BP user interface. The major downsides of this first design are the number of licenses needed and the increased complexity <span class="No-Break">of scheduling.</span></p>
+			<div>
+				<div id="_idContainer284" class="IMG---Figure">
+					<img src="image/B18416_12_1.jpg" alt="Figure 12.1: Potential design 1: Separate Processes and Work Queues for the ML portions" width="1599" height="807"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 12.1: Potential design 1: Separate Processes and Work Queues for the ML portions</p>
+			<p>The next potential design is to not separate the ML into separate Processes and Work Queues. An <a id="_idIndexMarker923"/>example of this second design is shown in the following screenshot. With this design, we will need to either query the database manually to extract ML audit information or export the Session Logs as CSV and filter them <span class="No-Break">from there.</span></p>
+			<div>
+				<div id="_idContainer285" class="IMG---Figure">
+					<img src="image/B18416_12_2.jpg" alt="Figure 12.2: Potential design 2: Don’t separate Processes and Work Queues for the ML portions" width="1614" height="248"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 12.2: Potential design 2: Don’t separate Processes and Work Queues for the ML portions</p>
+			<p>Let’s consider the need to <em class="italic">scale</em> ML predictions separately from its main Process. For the OP model, the prediction volumes are low, so there isn’t any reason to scale ML independently from the main Process. For the CC model, the bottleneck will likely be in retrieving all of the necessary input data from the various CRM, customer support, and billing systems. The ML portion only contributes to a fraction of the total execution time, and there’s a one-to-one relationship between a customer and a prediction, so it isn’t necessary to scale the CC model <span class="No-Break">predictions separately.</span></p>
+			<p>Next, let’s consider the <em class="italic">auditability</em> needs. There’s no need to give feedback on any reviewed results since reviews aren’t possible in this use case. While it would be possible for the customer support team to inform the IA team whether someone has actually called following a service interruption, this is something that will happen outside <span class="No-Break">of BP.</span></p>
+			<p>There may be a need to allow parties external to the IA team to access Session Logs for export. An alternative to exporting data from BP is to query the DB directly. The IA team doesn’t anticipate needing to export Session Log data regularly for the purpose of ML auditing, or to check the ML logs for specific Sessions or Items, so the likelihood of needing to perform exporting actions from the BP user interface is low. The IA team decides to perform ML auditing through the BP database. The solution design chosen is the simpler one in <span class="No-Break"><em class="italic">Figure 12</em></span><span class="No-Break"><em class="italic">.2</em></span><span class="No-Break">.</span></p>
+			<h1 id="_idParaDest-200"><a id="_idTextAnchor204"/>Handling model deployments</h1>
+			<p>Imagine that the IA solution has been<a id="_idIndexMarker924"/> implemented and is running in production already. We receive word from the ML team that the OP model, which is maintained by a different internal team, will be updated, and that downtime will occur. Recall that only one version of the OP model is live and that previous versions cannot be called. Let’s go through an example of what the IA team needs to do on the day that the OP model <span class="No-Break">gets updated.</span></p>
+			<h2 id="_idParaDest-201"><a id="_idTextAnchor205"/>Example 1 – Outage prediction model deployment</h2>
+			<p>In this <a id="_idIndexMarker925"/>example, we will go through the steps needed to deploy a new version of the OP model for use in BP. Recall that the OP model uses a <em class="italic">replacement</em> deployment strategy. This example has seven <span class="No-Break">high-level steps:</span></p>
+			<ol>
+				<li>Importing the <strong class="source-inline">.bprelease</strong> sample (created from the Synchronous <span class="No-Break">Review template).</span></li>
+				<li>Running the Process once to create <span class="No-Break">Session Logs.</span></li>
+				<li>Retiring <span class="No-Break">the Schedule.</span></li>
+				<li>Waiting for the Sessions <span class="No-Break">to complete.</span></li>
+				<li>Changing the Environment Variable that stores the <span class="No-Break">model version.</span></li>
+				<li>Unretiring <span class="No-Break">the Schedule.</span></li>
+				<li>Running <a id="_idIndexMarker926"/>the Process with the new model to create <span class="No-Break">Session Logs.</span></li>
+			</ol>
+			<h3>Import the Release</h3>
+			<p>Let’s import a Release<a id="_idIndexMarker927"/> that has been developed based on the design in <span class="No-Break"><em class="italic">Figure 12</em></span><span class="No-Break"><em class="italic">.2</em></span><span class="No-Break">.</span></p>
+			<ol>
+				<li>Download the Release from <span class="No-Break">GitHub: </span><a href="https://github.com/PacktPublishing/Intelligent-Automation-with-Blue-Prism/blob/main/ch12/Ex_1_Outage_Prediction_Model_Deployment.bprelease"><span class="No-Break">https://github.com/PacktPublishing/Intelligent-Automation-with-Blue-Prism/blob/main/ch12/Ex_1_Outage_Prediction_Model_Deployment.bprelease</span></a><span class="No-Break">.</span></li>
+				<li>Import the Release <span class="No-Break">into BP..</span></li>
+				<li>Ensure that two Processes, one Object, two Work Queues, two Schedules, three Environment Variables, and two Credentials have <span class="No-Break">been imported.</span></li>
+			</ol>
+			<p class="IMG---Figure"> </p>
+			<div>
+				<div id="_idContainer286" class="IMG---Figure">
+					<img src="image/B18416_12_3.jpg" alt="Figure 12.3 – The contents of .bprelease" width="325" height="490"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 12.3 – The contents of .bprelease</p>
+			<ol>
+				<li value="4">Visit <em class="italic">System</em> | <em class="italic">Security</em> | <em class="italic">Credentials</em>. Open the <strong class="bold">Ch12 OP Prediction Kill Switch</strong> Credential <a id="_idIndexMarker928"/>and ensure that the <em class="italic">Access Rights</em> are granted to the <strong class="bold">01 – Outage Prediction Notification</strong> Process, in addition to the correct Roles <span class="No-Break">and Resources.</span></li>
+				<li>Visit <em class="italic">System</em> | <em class="italic">Security</em> | <em class="italic">Credentials</em>. Open the <strong class="bold">Ch12 CC Prediction Kill Switch</strong> Credential and ensure that the <em class="italic">Access Rights</em> are granted to the <strong class="bold">02 – Customer Complaint Prediction</strong> Process, in addition to the correct Roles <span class="No-Break">and</span><span class="No-Break"><a id="_idIndexMarker929"/></span><span class="No-Break"> Resources.</span></li>
+			</ol>
+			<p>After importing, we need to run the Process once to generate some Session <span class="No-Break">Log data.</span></p>
+			<h3>Run the Process</h3>
+			<p>Execute the Process <a id="_idIndexMarker930"/>once from the Control Room so that Session Logs are generated. While the Session Logs aren’t needed for this example, they are needed for <span class="No-Break"><em class="italic">Example 4</em></span><span class="No-Break">:</span></p>
+			<ol>
+				<li>Run the <strong class="bold">01 – Outage Prediction Notification</strong> Process once from the Control Room. Wait for the Session <span class="No-Break">to complete.</span></li>
+				<li>Open <em class="italic">Control</em> | <em class="italic">Queue Management</em> | <em class="italic">Ch12</em> | <em class="italic">01 – Outage Prediction Notification</em>. See that four Items, each representing one of the four regions, have <span class="No-Break">been created.</span></li>
+			</ol>
+			<p>Next, let’s begin deploying the new OP ML model. The first step is to retire the Schedule that runs the Process that calls the OP model prediction, <em class="italic">01 – Outage </em><span class="No-Break"><em class="italic">Prediction Notification</em></span><span class="No-Break">.</span></p>
+			<h3>Retire the Schedule</h3>
+			<p>Two Schedules were imported in<a id="_idIndexMarker931"/> the Release. We only need to retire the <em class="italic">Ch12 Outage Prediction Notification</em> Schedule, since that’s the one that runs the Process which calls the OP <span class="No-Break">prediction model.</span></p>
+			<p>Under <em class="italic">Control</em> | <em class="italic">Scheduler</em>, right-click on the <em class="italic">Ch12 Outage Prediction Notification</em> Schedule and choose <em class="italic">Retire</em>. You should be able to retire even if there are Sessions that are <span class="No-Break">still executing.</span></p>
+			<p class="IMG---Figure"> </p>
+			<div>
+				<div id="_idContainer287" class="IMG---Figure">
+					<img src="image/B18416_12_4.jpg" alt="Figure 12.4: Retire the Ch12 Outage Prediction Notification Schedule" width="429" height="128"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 12.4: Retire the Ch12 Outage Prediction Notification Schedule</p>
+			<p>After retiring the Schedule, we need to ensure that no active Sessions are running the <strong class="bold">01 - Outage Prediction </strong><span class="No-Break"><strong class="bold">Notification</strong></span><span class="No-Break"> Process.</span></p>
+			<h3>Wait for the Sessions to stop</h3>
+			<p>There are a few <a id="_idIndexMarker932"/>things we can do here, and they depend on how much time we have before the ML model is taken offline. If the ML model will be taken offline very shortly, we can trigger the OP Model’s kill switch. This will halt execution just prior to calling the ML algorithm. If the Choice Stage on the Main Page is correctly designed, we can retry the Work Queue Items that are marked as Exceptions due to activating the kill switch. Upon retrying, execution should resume to the point right before the ML prediction is called. If the amount of time that we have is greater than the expected amount of time for the current Item to complete, we can <em class="italic">Request Stop</em> on all of the in-flight Sessions. Finally, if we have lots of time, we can wait for all of the Sessions <span class="No-Break">to complete:</span></p>
+			<ol>
+				<li>Under <em class="italic">Control</em> | <em class="italic">Session Management</em>, select <strong class="bold">01 – Outage Prediction Notification</strong> as the <em class="italic">Process</em> filter. Ensure that all of the other filters are set <span class="No-Break">to </span><span class="No-Break"><strong class="bold">All</strong></span><span class="No-Break">.</span></li>
+			</ol>
+			<div>
+				<div id="_idContainer288" class="IMG---Figure">
+					<img src="image/B18416_12_5.jpg" alt="Figure 12.5 – Filter Session Management to see the 01 – Outage Prediction Notification Process" width="1043" height="122"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 12.5 – Filter Session Management to see the 01 – Outage Prediction Notification Process</p>
+			<ol>
+				<li value="2">Wait until all Sessions have finished running, Request Stop on the Sessions, or trigger the <strong class="bold">Ch12 OP Prediction Kill Switch</strong>. The one that should be used will depend on the expected execution time for one Work Queue Item, and how much time there is before the model is <span class="No-Break">taken offline.</span></li>
+			</ol>
+			<p>Now, let’s assume that some time has passed, and we’ve been notified that the ML deployment has completed. The next steps are to modify the <strong class="bold">Ch12 OP Model Version</strong> Environment Variable and to unretire <span class="No-Break">the Schedule.</span></p>
+			<h3>Update the Environment Variable to the new ML model version</h3>
+			<p>Since the <a id="_idIndexMarker933"/>OP model only has one version, we need to keep track of when it’s updated manually. In this case, we need to update a <strong class="source-inline">DateTime</strong> Environment Variable. Once the model version is updated, we can allow Schedules to resume. Under <em class="italic">System</em> | <em class="italic">Processes</em> | <em class="italic">Environment Variables</em>, edit the value of the <strong class="bold">Ch12 OP Model Version</strong> Environment <a id="_idIndexMarker934"/>Variable so that it uses the current date <span class="No-Break">and time.</span></p>
+			<h3>Unretire the Schedules</h3>
+			<p>Now we wait for the ML <a id="_idIndexMarker935"/>team to inform us that the new model is ready to use. Once we’ve been notified, we can unretire the schedules so that processing can begin again. Under <em class="italic">Control</em> | <em class="italic">Retired Schedules</em>, right-click on the <em class="italic">Ch12 Outage Prediction Notification</em> Schedule, and <span class="No-Break"><em class="italic">Unretire</em></span><span class="No-Break"> it.</span></p>
+			<h3>Run the Process with the new model</h3>
+			<p>Run the <strong class="bold">01 – Outage Prediction Notification</strong> Process from the Control Room again. This step is only needed to<a id="_idIndexMarker936"/> generate Session Logs for a <span class="No-Break">future example.</span></p>
+			<p>We’ve completed the steps needed to deploy a new version of the OP model, which required downtime, into our IA solution. Now let’s look at how we can deploy a new version of the CC model which uses a <span class="No-Break">Code Stage.</span></p>
+			<h2 id="_idParaDest-202"><a id="_idTextAnchor206"/>Example 2 – Customer complaint model deployment</h2>
+			<p>Let’s suppose that the <a id="_idIndexMarker937"/>CC ML model Object has been updated and that this deployment doesn’t require any new DLLs. Note that the model version (1.5.3) before deployment can be found as a Data Item on the <strong class="source-inline">Initialise</strong> Page of the <strong class="bold">Customer Complaints ML Model</strong> Object. Also, note that the Action that returns the predicted result also returns the model version as well. This means that we don’t need to use an Environment Variable to store the <span class="No-Break">model version.</span></p>
+			<div>
+				<div id="_idContainer289" class="IMG---Figure">
+					<img src="image/B18416_12_6.jpg" alt="Figure 12.6: The CC ML Object Action returns the model version." width="732" height="316"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 12.6: The CC ML Object Action returns the model version.</p>
+			<p>This example has three <span class="No-Break">high-level steps:</span></p>
+			<ol>
+				<li>Running the <strong class="bold">02 – Customer Complaints Prediction</strong> Process once to create <span class="No-Break">Session Logs.</span></li>
+				<li>Deploying the new model by importing <span class="No-Break">an Object.</span></li>
+				<li>Running the Process again to create <span class="No-Break">Session Logs.</span></li>
+			</ol>
+			<p>Our first step<a id="_idIndexMarker938"/> is to run the existing Process once to generate some Session Log data. This data will be used in <span class="No-Break"><em class="italic">Example 5</em></span><span class="No-Break">.</span></p>
+			<h3>Run the Process</h3>
+			<p>Execute the Process <a id="_idIndexMarker939"/>once from the Control Room so that Session Logs are generated. From the Control Room, run the <strong class="bold">02 – Customer Complaints Prediction</strong> Process once. This will create 20 Items (customers), who belong to one of the four regions. Next, we need to download the Object and verify that the model version has <span class="No-Break">been updated.</span></p>
+			<h3>Download, check the model version, and import the Object</h3>
+			<p>In this case, the<a id="_idIndexMarker940"/> updated model <a id="_idIndexMarker941"/>is provided as a <strong class="source-inline">.bpobject</strong> file. We need to download it and verify that the model version is not the same as the previous <span class="No-Break">version (1.5.3):</span></p>
+			<ol>
+				<li>Download the Object from <span class="No-Break">GitHub: </span><a href="https://github.com/PacktPublishing/Intelligent-Automation-with-Blue-Prism/blob/main/ch12/Ex_2_BPA_Object_Customer_Complaints_ML_Model.bpobject"><span class="No-Break">https://github.com/PacktPublishing/Intelligent-Automation-with-Blue-Prism/blob/main/ch12/Ex_2_BPA_Object_Customer_Complaints_ML_Model.bpobject</span></a><span class="No-Break">.</span></li>
+				<li>Import the downloaded Object <span class="No-Break">into BP.</span></li>
+				<li>Under <em class="italic">Studio | Objects | </em><em class="italic">Ch12</em>, open the <strong class="bold">Customer Complaints ML Model</strong> Object in the <span class="No-Break">Object Studio.</span></li>
+				<li>On the <strong class="source-inline">Initialise</strong> Page, verify that the <strong class="bold">Model Version</strong> Data Item has been<a id="_idIndexMarker942"/> updated by the developers from the previous <span class="No-Break">version (1.5.3).</span></li>
+			</ol>
+			<div>
+				<div id="_idContainer290" class="IMG---Figure">
+					<img src="image/B18416_12_7.jpg" alt="Figure 12.7: Verify that the Model Version Data Item has been changed from 1.5.3" width="302" height="174"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 12.7: Verify that the Model Version Data Item has been changed from 1.5.3</p>
+			<p>We’ve <a id="_idIndexMarker943"/>confirmed that the model version has changed. Since this is a Code Stage deployment, without any new DLLs, importing the new Object is all that we need to do. In-flight Sessions from before the Object import will still be using the old Object definition with the previous model version. New Sessions that start after the Object import will use the updated Object and <span class="No-Break">model version.</span></p>
+			<p>If you want to be safer, you can check if the model version has been updated before importing it into BP. If the file is a <strong class="source-inline">.bpobject</strong> file, you can open it in any text editor and search for <em class="italic">Model Version</em>. You can also perform a similar search if the file is a <strong class="source-inline">.</strong><span class="No-Break"><strong class="source-inline">bprelease</strong></span><span class="No-Break"> file.</span></p>
+			<div>
+				<div id="_idContainer291" class="IMG---Figure">
+					<img src="image/B18416_12_8.jpg" alt="Figure 12.8: The model version can be viewed by opening the .bpobject file in Notepad" width="879" height="175"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 12.8: The model version can be viewed by opening the .bpobject file in Notepad</p>
+			<p>Finally, let’s run the Process again, to generate Session Logs with the updated <span class="No-Break">model version.</span></p>
+			<h3>Use the new ML model</h3>
+			<p>Execute the Process<a id="_idIndexMarker944"/> again from the Control Room. These Session Logs are required for <em class="italic">Example 5</em>. From the Control Room, run the <strong class="bold">02 – Customer Complaints Prediction</strong> <span class="No-Break">Process again.</span></p>
+			<p>We’ve completed the steps required to deploy a Code Stage-based model that didn’t require any new <strong class="source-inline">.dll</strong> files to be copied. This was straightforward and only required importing the new Object file. Next, let’s look at the steps needed to roll back this ML <span class="No-Break">model deployment.</span></p>
+			<h2 id="_idParaDest-203"><a id="_idTextAnchor207"/>Example 3 – Rollback customer complaint model deployment</h2>
+			<p>Suppose that we’ve<a id="_idIndexMarker945"/> found an issue with the new CC model. Let’s go through the exercise of rolling back to the previous version. This example has three <span class="No-Break">high-level steps:</span></p>
+			<ol>
+				<li>Activating the kill <span class="No-Break">switch (optional).</span></li>
+				<li>Finding and importing the previous version of <span class="No-Break">the Object.</span></li>
+				<li>Running the <strong class="bold">02 – Customer Complaints Prediction</strong> Process once to create <span class="No-Break">Session Logs.</span></li>
+			</ol>
+			<p>If there are Sessions that are underway, we can consider turning on the kill switch, to prevent any further calls to the CC <span class="No-Break">ML model.</span></p>
+			<h3>Activate the customer complaint model kill switch (optional)</h3>
+			<p>If the<a id="_idIndexMarker946"/> issue with the model is critical, we can optionally trigger the kill switch, so that further predictions won’t be made using the CC model. We can activate the kill switch by invalidating <span class="No-Break">the Credential.</span></p>
+			<ol>
+				<li>Visit <em class="italic">System</em> | <em class="italic">Security</em> | <em class="italic">Credentials</em>. Double-click on the <strong class="bold">Ch12 CC Prediction Kill </strong><span class="No-Break"><strong class="bold">Switch</strong></span><span class="No-Break"> Credential.</span></li>
+				<li>Tick the <em class="italic">Marked as invalid</em> box and <span class="No-Break">press </span><span class="No-Break"><em class="italic">OK</em></span><span class="No-Break">.</span></li>
+			</ol>
+			<p>Now that Sessions can no longer use the CC model any further, we can begin the rollback procedure. First, let’s get a copy of the <span class="No-Break">previous Object.</span></p>
+			<h3>Obtain and import the previous Object</h3>
+			<p>There are a few ways to<a id="_idIndexMarker947"/> obtain an old version of an Object. You can retrieve it from a previous Release, and only re-import the Object. You might also have a copy in a shared location or version control system. If you don’t have a readily available copy of the previous Object, we can export it through the <em class="italic">Compare</em> function <span class="No-Break">in BP.</span></p>
+			<p class="callout-heading">Important note</p>
+			<p class="callout">BP Customer Support will often provide customers with database maintenance scripts. One of these scripts deletes historical versions of Objects and Processes in the <strong class="source-inline">BPAAuditEvents</strong> table if they’re older than a certain number of days. This could prevent you from using the <em class="italic">Compare</em> function. Please check with your database team to determine whether this maintenance script is <span class="No-Break">in use.</span></p>
+			<ol>
+				<li>Click once on the <strong class="bold">Customer Complaints ML Model</strong> Object under <em class="italic">Studio</em> | <em class="italic">Objects</em> | <em class="italic">Ch12</em>. The Object’s version history will appear on <span class="No-Break">the right.</span></li>
+				<li>Hold down the <em class="italic">Ctrl</em> button and select the two latest versions of <span class="No-Break">the Object.</span></li>
+			</ol>
+			<div>
+				<div id="_idContainer292" class="IMG---Figure">
+					<img src="image/B18416_12_9.jpg" alt="Figure 12.9: Select the two latest versions of the Object" width="1567" height="397"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 12.9: Select the two latest versions of the Object</p>
+			<ol>
+				<li value="3">Right-click <a id="_idIndexMarker948"/>and choose <em class="italic">Compare</em>. This opens the Business Object Comparison window. See that the two Objects have different <span class="No-Break">model versions.</span></li>
+			</ol>
+			<div>
+				<div id="_idContainer293" class="IMG---Figure">
+					<img src="image/B18416_12_10.jpg" alt="Figure 12.10: Open the Object Comparison window" width="663" height="366"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 12.10: Open the Object Comparison window</p>
+			<ol>
+				<li value="4">Click on <em class="italic">File</em> | <em class="italic">Export Left Side</em> in the <em class="italic">Business Object </em><span class="No-Break"><em class="italic">Comparison</em></span><span class="No-Break"> window.</span></li>
+			</ol>
+			<div>
+				<div id="_idContainer294" class="IMG---Figure">
+					<img src="image/B18416_12_11.jpg" alt="Figure 12.11: Export the previous version of the Object" width="272" height="184"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 12.11: Export the previous version of the Object</p>
+			<ol>
+				<li value="5">Save the exported Object to a location of <span class="No-Break">your choice.</span></li>
+				<li>Import the<a id="_idIndexMarker949"/> saved Object back into BP and overwrite the <span class="No-Break">latest version.</span></li>
+			</ol>
+			<p>Next, let’s run the Process to generate Session Logs with the <span class="No-Break">old model.</span></p>
+			<h3>Use the old ML model</h3>
+			<p>Execute the <a id="_idIndexMarker950"/>Process again from the Control Room. This data will be used in <em class="italic">Example 5</em>. From the Control Room, run the <strong class="bold">02 – Customer Complaints Prediction</strong> <span class="No-Break">Process again.</span></p>
+			<p>We’ve finished looking at examples of how to deploy new versions of the OP and CC models. We also went through an example of how to roll back the CC model, which used a Code Stage. Next, let’s look at the next major ongoing task that is needed for IA, which is exporting data for <span class="No-Break">ML auditing.</span></p>
+			<h1 id="_idParaDest-204"><a id="_idTextAnchor208"/>Exporting data for audit</h1>
+			<p>Based on the solution<a id="_idIndexMarker951"/> design, the easiest way to extract ML-related logs is to <a id="_idIndexMarker952"/>query the Session Logs database tables directly. Let’s go through an example of what query to use and what we should expect to see after requesting for the ML logs to be extracted from the database. In production, it’s expected that these steps would be performed by a <span class="No-Break">database administrator.</span></p>
+			<p class="callout-heading">Important note</p>
+			<p class="callout">The SQL query in the following example assumes that you are using the <strong class="source-inline">BPASessionLog_NonUnicode</strong> table to store your logs. Replace that table with <strong class="source-inline">BPASessionLog_Unicode</strong> in the query if you’re using <span class="No-Break">Unicode logging.</span></p>
+			<h2 id="_idParaDest-205"><a id="_idTextAnchor209"/>Example 4 – Exporting OP model data through SQL</h2>
+			<p>In this example, we’ll be<a id="_idIndexMarker953"/> querying the inputs, outputs, and model <a id="_idIndexMarker954"/>version used for every call to the <em class="italic">OP model</em> through SQL Server Management Studio. This example relies on having completed <em class="italic">Example 1</em>, where we executed the <strong class="bold">01 – Outage Prediction Notification</strong> Process twice, once before deployment and <span class="No-Break">once after.</span></p>
+			<p>We expect to see <em class="italic">four</em> Session Log records with an older <strong class="source-inline">DateTime</strong> model version and <em class="italic">four</em> Session Log records with a newer <strong class="source-inline">DateTime</strong> <span class="No-Break">model version:</span></p>
+			<ol>
+				<li>Open SQL Server Management Studio and connect to your BP <span class="No-Break">database server.</span></li>
+				<li>Right-click on your database in the <em class="italic">Object Explorer</em> (IA in the following image). Choose <em class="italic">New Query</em>. An empty query editor window <span class="No-Break">will appear.</span></li>
+			</ol>
+			<div>
+				<div id="_idContainer295" class="IMG---Figure">
+					<img src="image/B18416_12_12.jpg" alt="Figure 12.12: Open a new Query window" width="258" height="209"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 12.12: Open a new Query window</p>
+			<ol>
+				<li value="3">Copy and paste the following query into the editor window and <em class="italic">execute</em> it: <strong class="source-inline">SELECT * FROM (SELECT logid, stagename, LAG(result, 1, 0) OVER(ORDER BY logid) as modelversion, attributexml, startdatetime from BPASessionLog_NonUnicode WHERE stagename in ('Log [Model Version]', 'Set [Prediction] and [Confidence Score]') AND processname = '01 - Outage Prediction Notification') as tbl WHERE stagename = 'Set [Prediction] and [</strong><span class="No-Break"><strong class="source-inline">Confidence Score]';</strong></span><span class="No-Break">.</span></li>
+				<li>Verify that your result looks similar to the result shown in <span class="No-Break"><em class="italic">Figure 12</em></span><em class="italic">.13</em>. The <em class="italic">modelversion</em> column shows the value of the <strong class="bold">Ch12 OP Model Version</strong> Environment Variable. Notice that the <em class="italic">modelversion</em> of the first four rows differs from the last four rows. The <em class="italic">attributexml</em> column shows the values of any other input and output parameters of the model that you want to store in the <em class="italic">Set [Prediction] and [Confidence Score]</em> Multi <span class="No-Break">Calc Stage.</span></li>
+			</ol>
+			<div>
+				<div id="_idContainer296" class="IMG---Figure">
+					<img src="image/B18416_12_13.jpg" alt="Figure 12.13: The query result for extracting the ML Session Logs for audit" width="1084" height="226"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 12.13: The query result for extracting the ML Session Logs for audit</p>
+			<p>We’ve finished exporting the Session Logs that tell us the model version, inputs, and outputs of the OP ML model. The query that we used was taken from <a href="B18416_09.xhtml#_idTextAnchor146"><span class="No-Break"><em class="italic">Chapter 9</em></span></a>, and it can be used by any Process that’s developed using the IA template from <a href="B18416_07.xhtml#_idTextAnchor114"><span class="No-Break"><em class="italic">Chapter 7</em></span></a>, with just a few <a id="_idIndexMarker955"/>modifications. The only change that we <a id="_idIndexMarker956"/>made here is to modify the name of <span class="No-Break">the Process.</span></p>
+			<p>Now, suppose that we want to also export the ML audit logs for the CC model that’s called using an Object and Code Stage. We’ll see that the steps and the query are almost exactly <span class="No-Break">the same.</span></p>
+			<h2 id="_idParaDest-206"><a id="_idTextAnchor210"/>Example 5 – Exporting customer complaint model data through SQL</h2>
+			<p>In this<a id="_idIndexMarker957"/> example, we’ll be<a id="_idIndexMarker958"/> querying the inputs, outputs, and model version used for every call to the <em class="italic">CC model</em> through SQL Server Management Studio. This example makes use of the Session Logs generated from <em class="italic">Example 2</em> and <em class="italic">Example 3</em>, so make sure to go through those <span class="No-Break">examples first.</span></p>
+			<p>We expect to see 60 rows returned, where each row represents a customer. The first 20 rows are from before the ML model is updated and should show model version <em class="italic">1.5.3</em>. The next 20 rows are from after updating the ML model and should show model version <em class="italic">1.6.0</em>. The last 20 rows are from after rolling back the model and should show model <span class="No-Break">version </span><span class="No-Break"><em class="italic">1.5.3</em></span><span class="No-Break">:</span></p>
+			<ol>
+				<li>Open SQL Server Management Studio and connect to your BP <span class="No-Break">database server.</span></li>
+				<li>Right-click on your database in the <em class="italic">Object Explorer</em>. Choose <em class="italic">New Query</em>. An empty query editor window <span class="No-Break">will appear.</span></li>
+				<li>Copy and paste the following query into the editor window and <em class="italic">execute</em> it: <strong class="source-inline">SELECT * FROM (SELECT logid, stagename, LAG(result, 1, 0) OVER(ORDER BY logid) as modelversion, attributexml, startdatetime from BPASessionLog_NonUnicode WHERE stagename in ('Log [Model Version]', 'Set [Prediction] and [Confidence Score]') AND processname = '02 - Customer Complaints Prediction') as tbl WHERE stagename = 'Set [Prediction] and [Confidence Score]';</strong>. The only difference between this query and the query in <em class="italic">Example 4</em> is that the name of the Process <span class="No-Break">has changed.</span></li>
+				<li>Verify that 60 rows are returned by the query, with the first 20 rows having <em class="italic">modelversion</em> 1.5.3, the<a id="_idIndexMarker959"/> next 20 rows having <em class="italic">modelversion</em> 1.6.0, and the final 20 rows <a id="_idIndexMarker960"/>having <span class="No-Break"><em class="italic">modelversion</em></span><span class="No-Break"> 1.5.3.</span></li>
+			</ol>
+			<p>We’ve completed exporting the ML audit logs for the CC model. Since it uses the IA template, we only needed to change the name of the Process in <span class="No-Break">the query.</span></p>
+			<h1 id="_idParaDest-207"><a id="_idTextAnchor211"/>Summary</h1>
+			<p>In this chapter, we went through a scenario-based example of a power utility company that used two different ML models. The first model predicts grid outages. It’s API-hosted and maintained by an internal ML team. The second model predicts whether customers will call the customer support hotline and is developed and maintained by the IA team. This customer complaint model is deployed through a Code Stage. From analyzing the characteristics and requirements of both ML models, we came up with a solution design that did not separate ML into individual Processes and <span class="No-Break">Work Queues.</span></p>
+			<p>Next, we focused on two critical tasks that are needed for IA. These are deploying new ML models and extracting ML-specific data for audit purposes. We went through examples of deploying both the OP and CC models and rolling back the CC one. Finally, we looked at how ML Session Log data can be extracted directly through SQL for <span class="No-Break">auditing purposes.</span></p>
+			<p>While mechanically simple, thinking through the steps needed, and practicing how to deploy and rollback ML models is a must for mature IA teams. ML will only receive more and more scrutiny in the future, not just from management, but the legal system as well. If an issue with a model is found, we need to be able to quickly roll back and figure out which customers have been affected by the <span class="No-Break">ML prediction.</span></p>
+			<p>In the next and final chapter, we’ll take a look at the wider BP product ecosystem. We’ll discuss four additional IA-related products, and how they can contribute to your firm’s IA program. Finally, we’ll also discuss three important <span class="No-Break">IA trends.</span></p>
+		</div>
+	</div>
+</div>
+</body></html>

@@ -1,0 +1,1486 @@
+<html><head></head><body>
+<div id="book-content">
+<div id="sbo-rt-content"><div id="_idContainer283">
+			<h1 id="_idParaDest-175" class="chapter-number"><a id="_idTextAnchor179"/>11</h1>
+			<h1 id="_idParaDest-176"><a id="_idTextAnchor180"/>Processing Refunds</h1>
+			<p>In this chapter, we’ll examine a scenario with the goal of solidifying the concepts presented in this book. This includes how to choose which IA template to use to start development, auditing, kill switches, and more. We’ll analyze the ML requirements of the use case, design a solution, and implement the <span class="No-Break">solution’s structure.</span></p>
+			<p>The scenario used throughout this chapter is modeled on the <em class="italic">real-life</em> use case of an online retailer. This retailer is looking to automate the approval of refund requests received through email. This use case features <em class="italic">multiple ML models</em>, where one is internally developed and the others aren’t. We’ve previously only discussed solution designs for Processes with one ML model, but we’ll see that we can extend the designs and templates presented in this book to multiple models <span class="No-Break">as well.</span></p>
+			<p>The IA team is building a solution to handle refund requests that are sent to the online retailer’s customer service email. The business wants to use ML to determine whether an email is asking to initiate a refund. If so, the case continues to <span class="No-Break">be processed.</span></p>
+			<p>Next, the business users want to extract useful entities from the email, such as the order number and the item costs. If this data is extracted with a high enough confidence, while fulfilling other business criteria, the refund request is <span class="No-Break">automatically processed.</span></p>
+			<p>If an automated refund request is successful, the business users will then use generative AI to create an email response to send to the customer. The business has already developed a prompt to use with the generative AI model. There’s a strategic initiative for the company to use more AI technologies and appear technologically innovative. Customers who have their email refund request automatically approved will be informed that their case was completed using automation <span class="No-Break">and AI.</span></p>
+			<p>The customer support team has an SLA to provide the first customer response (not resolution) within 48 hours of receiving an email. They hope that an IA solution can provide a complete resolution to a portion of the refund requests in 48 <span class="No-Break">hours instead.</span></p>
+			<p>In this chapter, our role is that of a solution designer and developer on the IA team. We’re going to cover the following <span class="No-Break">main topics:</span></p>
+			<ul>
+				<li>ML model <span class="No-Break">background information</span></li>
+				<li><span class="No-Break">Solution design</span></li>
+				<li><span class="No-Break">Implementation</span></li>
+			</ul>
+			<p class="callout-heading">Important note</p>
+			<p class="callout">The example in this chapter focuses on designing and implementing the IA solution <em class="italic">structure</em>. Details regarding the normal business logic aren’t discussed. The full solution, including ML API calls, won’t be implemented as well as those details are easily implemented and have been covered in <span class="No-Break">earlier chapters.</span></p>
+			<h1 id="_idParaDest-177"><a id="_idTextAnchor181"/>Technical requirements</h1>
+			<p>The IA Process template was discussed in <a href="B18416_07.xhtml#_idTextAnchor114"><span class="No-Break"><em class="italic">Chapter 7</em></span></a>. If you haven’t gone through that chapter, download and import the <strong class="source-inline">.bprelease</strong> file from <a href="https://github.com/PacktPublishing/Intelligent-Automation-with-Blue-Prism/tree/main/ch7">https://github.com/PacktPublishing/Intelligent-Automation-with-Blue-Prism/tree/main/ch7</a>. The examples in this chapter will be based on one of <span class="No-Break">the templates.</span></p>
+			<h1 id="_idParaDest-178"><a id="_idTextAnchor182"/>ML model background information</h1>
+			<p>This<a id="_idIndexMarker819"/> scenario <a id="_idIndexMarker820"/>uses three ML models: an <strong class="bold">email classifier (EC)</strong>, an <strong class="bold">entity recognition model (ER)</strong>, and <strong class="bold">generative AI (GAI)</strong>. Before designing the <a id="_idIndexMarker821"/>solution, we need to understand some specific <a id="_idIndexMarker822"/>characteristics of the ML models. The IA team works with the business users, the data science team, and the ML vendor’s documentation to answer the <span class="No-Break">following questions:</span></p>
+			<ul>
+				<li>Who develops and maintains <span class="No-Break">the model?</span></li>
+				<li>What’s the consumption and deployment methodology of the <span class="No-Break">ML model?</span></li>
+				<li>Is auditing of the ML <span class="No-Break">model needed?</span></li>
+				<li>What are the estimated volumes of <span class="No-Break">ML predictions?</span></li>
+				<li>What are the criteria for <span class="No-Break">HITL reviews?</span><ul><li>What are the SLAs <span class="No-Break">for review?</span></li><li>Is auditing of HITL <span class="No-Break">reviews needed?</span></li><li>What <a id="_idIndexMarker823"/>interface will be used to <span class="No-Break">review predictions?</span></li></ul></li>
+			</ul>
+			<h2 id="_idParaDest-179"><a id="_idTextAnchor183"/>EC model</h2>
+			<p>The <a id="_idIndexMarker824"/>business only wants<a id="_idIndexMarker825"/> to identify whether an email is requesting a refund. They don’t need to predict between other email categories, such as product inquiries and complaints. After discussing with the internal data science team, they decide to develop a <em class="italic">binary classification model</em> that predicts between a <em class="italic">refund request</em> and <em class="italic">not a </em><span class="No-Break"><em class="italic">refund request</em></span><span class="No-Break">.</span></p>
+			<h3>Consumption and deployment method</h3>
+			<p>The <a id="_idIndexMarker826"/>EC model will be hosted on the intranet and called through an HTTP API. Since this model has yet to be developed, the IA team asks the ML operations team to use a <em class="italic">blue-green</em> style of deployment. The IA team wants to give themselves the option of doing no-downtime rollbacks of the model if needed. The IA team also asks for a model version to be returned in the API response, in case they need to store it for auditing purposes. The data science team agrees with <span class="No-Break">these requests.</span></p>
+			<h3>Prediction volumes</h3>
+			<p>After <a id="_idIndexMarker827"/>interviewing customer support staff, we find that they receive ~500 emails per day, of which 70 are refund requests. The customer support team estimates that around 20 out of 70 refund requests will meet the criteria needed for <span class="No-Break">automatic approval.</span></p>
+			<h3>HITL reviews, interface, and SLAs</h3>
+			<p>From<a id="_idIndexMarker828"/> previous experience with classifying emails, the data science team expects the accuracy of the binary classifier to be very high. As a result, the <a id="_idIndexMarker829"/>team decides to not require HITL reviews but to <em class="italic">randomly sample 5%</em> of the predictions (around 25 per day) to validate that the model is performing correctly over time. Employees from the customer support team will perform these reviews in addition to their regular tasks. The IA team decides to make the EC prediction review <em class="italic">non-blocking</em>, meaning that we don’t wait for the review to complete in order to continue <span class="No-Break">automated processing.</span></p>
+			<p>The interface for<a id="_idIndexMarker830"/> review is to forward the customer’s email to a newly created email distribution list that will be monitored by customer support. The reviewer <a id="_idIndexMarker831"/>simply replies to the email with <em class="italic">Y</em> to indicate that it is a refund request or <em class="italic">N</em> to indicate that <span class="No-Break">it isn’t.</span></p>
+			<h3>ML auditing</h3>
+			<p>Since the <a id="_idIndexMarker832"/>model will be maintained by the data science team, the prediction input and output logs will be available from the API web server. The data science team agrees to make logs available for six months, meaning that we have the flexibility to decide whether we want to keep a copy of the logs in BP as well <span class="No-Break">for convenience.</span></p>
+			<p>Let’s discuss the next model which is used to extract data from <span class="No-Break">the email.</span></p>
+			<h2 id="_idParaDest-180"><a id="_idTextAnchor184"/>Entity recognition model</h2>
+			<p>The <strong class="bold">entity recognition</strong> (<strong class="bold">ER</strong>) ML model needs to identify either an order number or a product name and price <a id="_idIndexMarker833"/>from the email text in order to continue <a id="_idIndexMarker834"/>processing. The IA team finds that there are numerous off-the-shelf services that can extract the data that’s needed after testing some online <span class="No-Break">commercial offerings.</span></p>
+			<h3>Consumption and deployment method</h3>
+			<p>The IA <a id="_idIndexMarker835"/>team decides to use a pre-trained model that’s hosted on a cloud provider that they have an existing relationship with. Since we’ve chosen a generic, hosted ML solution, we can’t control when the model gets updated. We need to actively monitor the vendor website to see if a new model is available. The API endpoint for this model is <em class="italic">versioned</em>, meaning<a id="_idIndexMarker836"/> that we can switch between different versions of the ER model <span class="No-Break">as needed.</span></p>
+			<h3>Prediction volumes</h3>
+			<p>The <a id="_idIndexMarker837"/>ER model is only used after the EC model when an email is believed to be a refund request. Customer support has given us a rough expectation of ~70 predictions per day. After taking the costs of using this API into consideration, the governance board decides that it’s still worthwhile <span class="No-Break">to pursue.</span></p>
+			<h3>HITL reviews, interface, and SLAs</h3>
+			<p>Since ER <a id="_idIndexMarker838"/>returns <em class="italic">multiple</em> labels and confidence levels, we decide to use a thresholding scheme with multiple conditions. After obtaining historical refund request emails from customer support, we run experiments to determine the appropriate threshold values for HITL review of ER <span class="No-Break">model predictions.</span></p>
+			<p>First, we require <a id="_idIndexMarker839"/>manual review if we’ve extracted an order ID, and the order ID has less than 97% confidence. Next, we review predictions where either the product name or price has a confidence lower than 93%. Finally, we review all predictions regardless of confidence where an extracted price is higher than $300. Since the review method is complex, requiring the correction of multiple labels, the team decides to present the review data to reviewers through a custom-built <span class="No-Break">web interface.</span></p>
+			<p>Since we’re <a id="_idIndexMarker840"/>targeting the resolution of cases within 48 hours, the team tentatively decides to have a review SLA of <span class="No-Break">24 hours.</span></p>
+			<h3>ML auditing</h3>
+			<p>Since the <a id="_idIndexMarker841"/>ER model is a third-party API, the IA team will need to keep track of the prediction inputs, outputs, and model versions in BP. While we could visit the cloud portal’s dashboards to view historical usage records, they are hidden behind different approval processes that are more complex than finding the data from <span class="No-Break">inside BP.</span></p>
+			<p>The discussion of the ER model is complete. Next, we’ll discuss the third ML model, which is <span class="No-Break">generative AI.</span></p>
+			<h2 id="_idParaDest-181"><a id="_idTextAnchor185"/>Generative AI model</h2>
+			<p>The customer <a id="_idIndexMarker842"/>service team wants to use GAI to create email replies for <a id="_idIndexMarker843"/>customers who have their refund requests automatically approved. While we could simply use an email template, the company wants to maintain its image of being technology-focused and forward-thinking to customers <span class="No-Break">and investors.</span></p>
+			<h3>Consumption and deployment method</h3>
+			<p>As the IA team can't access enough GPU processing power to develop a GAI model in-house, the team decides to use a hosted API solution. From<a id="_idIndexMarker844"/> looking at the API documentation, we find that the vendor uses a <em class="italic">continuous model upgrade scheme</em>. This means that the model behind the API endpoint is constantly being updated and that updates occur without notifying customers. The exact model version that is used is returned in the API response, but there’s no way to explicitly call an older version of the model. This makes the model version not so useful as it’s only possible to call the latest version of the model. The prompt that is sent to the GAI API will be the same for <span class="No-Break">every customer.</span></p>
+			<h3>Prediction volumes</h3>
+			<p>It’s<a id="_idIndexMarker845"/> estimated that 20 emails will be sent per day. After taking these costs into account, the use case is still deemed to <span class="No-Break">be viable.</span></p>
+			<h3>HITL reviews, interface, and SLAs</h3>
+			<p>The <a id="_idIndexMarker846"/>customer support team has tested the third-party GAI service and is happy with the email responses that are generated. The business has also created a static disclaimer that will be appended at the bottom of every email after the <a id="_idIndexMarker847"/>GAI response. This is done to remove ambiguity in case the GAI text is unclear. This disclaimer will make it clear to customers that their refund case was automatically processed, and approved, and that the email text is AI <a id="_idIndexMarker848"/>generated. Because of this disclaimer, the team doesn’t intend to review any of the GAI-generated emails. A contributing factor to choosing GAI is that it’s a positive customer outcome, which is inherently <span class="No-Break">low risk.</span></p>
+			<h3>ML auditing</h3>
+			<p>The<a id="_idIndexMarker849"/> email message that’s generated must be sent to the customer through the CRM system, and not directly through a mail server. A copy of what was emailed to the customer can always be found through the CRM. Since the business team doesn’t intend to change the prompt, the IA team decides that keeping a copy of the input to each API call is unneeded. Although the model version is returned in the prediction response, there’s no way to actually specify which version of the model we want to call. We can decide whether we want to store the model version, although it isn’t <span class="No-Break">particularly useful.</span></p>
+			<p>We’ve now gathered the information needed about the three ML models to come up with a <span class="No-Break">solution design.</span></p>
+			<h2 id="_idParaDest-182"><a id="_idTextAnchor186"/>ML model summary</h2>
+			<p>A summary of<a id="_idIndexMarker850"/> the ML model characteristics that are relevant to the design and implementation of the solution is <span class="No-Break">as follows:</span></p>
+			<table id="table001-7" class="No-Table-Style _idGenTablePara-1">
+				<colgroup>
+					<col/>
+					<col/>
+					<col/>
+					<col/>
+					<col/>
+					<col/>
+				</colgroup>
+				<tbody>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="bold">Model</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="bold">Deployment method</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><strong class="bold">HITL </strong><span class="No-Break"><strong class="bold">review criteria</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><strong class="bold">HITL </strong><span class="No-Break"><strong class="bold">review interface</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><strong class="bold">HITL </strong><span class="No-Break"><strong class="bold">review SLA</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="bold">ML Auditing</strong></span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><span class="No-Break">EC</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">Blue-green API</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Random <span class="No-Break">sampling, 5%</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">Email</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">N/A</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>On <span class="No-Break">API servers</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><span class="No-Break">ER</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Unknown, but the API <span class="No-Break">is versioned</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Thresholding with multiple <span class="No-Break">conditions</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">Website</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">24 hours</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>In the <span class="No-Break">IA solution</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><span class="No-Break">GAI</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Continuous, and the API response contains the <span class="No-Break">model version</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">N/A</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">N/A</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">N/A</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>In the customer <span class="No-Break">support system</span></p>
+						</td>
+					</tr>
+				</tbody>
+			</table>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Table 11.1: A summary of the ML model characteristics</p>
+			<p>With this information about the ML model, we can begin our <span class="No-Break">solution design.</span></p>
+			<h1 id="_idParaDest-183"><a id="_idTextAnchor187"/>Solution design</h1>
+			<p>We need to consider how many Processes and Work Queues are appropriate for our solution. Recall from <a href="B18416_05.xhtml#_idTextAnchor075"><span class="No-Break"><em class="italic">Chapter 5</em></span></a> that an ML solution can have a separate Process/Work Queue for the ML model and for the HITL review. Let’s look at each ML model separately to determine whether additional Processes and Queues will <span class="No-Break">be needed.</span></p>
+			<h2 id="_idParaDest-184"><a id="_idTextAnchor188"/>Email classification model</h2>
+			<p>The EC ML <a id="_idIndexMarker851"/>model logs will be accessible directly from the on-premises API server, so from a logging perspective, there’s no need to have them saved in a separate Work Queue. There’s also no need to scale the ML predictions independently from the main Process. As a result, the IA team decides that a separate Process and Work Queue for the EC ML model <span class="No-Break">is unnecessary.</span></p>
+			<p>Next, the IA team considers the HITL review requirements. Roughly 25 emails will be randomly sampled for review each day. Since the model is developed in-house, it makes sense to send corrected predictions back to the data scientists so that the model can be improved. The team decides to have a <em class="italic">separate Process and Work Queue for the HITL review</em> portion of the <span class="No-Break">EC model.</span></p>
+			<h2 id="_idParaDest-185"><a id="_idTextAnchor189"/>Entity recognition model</h2>
+			<p>Since the<a id="_idIndexMarker852"/> ER model is an external API and performs a critical part of the overall business process, we want to keep an audit trail of the inputs and outputs of the model. This leads us to a design where the <em class="italic">ER model prediction has a separate Process and </em><span class="No-Break"><em class="italic">Work Queue</em></span><span class="No-Break">.</span></p>
+			<p>The review method is also complex and requires a custom-developed web interface. We’d like to control the creation of the shared data used for review and audit any human corrections to the predictions. For these reasons, we decide to have a <em class="italic">separate Process and Work Queue for the HITL review</em> portion of the <span class="No-Break">ER model.</span></p>
+			<h2 id="_idParaDest-186"><a id="_idTextAnchor190"/>Generative AI model</h2>
+			<p>There’s no <a id="_idIndexMarker853"/>need to keep track of the input to the GAI model in the logs because the prompt is static. The API response (email text) will also be saved into the customer support system, so auditing of the ML prediction results does not need to be done from BP. There’s also no need for HITL as there will be boilerplate text sent along with the GAI-generated email, which lowers the chance of misunderstanding the email. The IA team decides to <em class="italic">not have separate Processes and Work Queues for the GAI portion</em> of <span class="No-Break">the solution.</span></p>
+			<h2 id="_idParaDest-187"><a id="_idTextAnchor191"/>Solution design diagram</h2>
+			<p>Overall, a high-level BP solution design for the ML portion looks like <span class="No-Break">the following.</span></p>
+			<div>
+				<div id="_idContainer270" class="IMG---Figure">
+					<img src="image/B18416_11_1.jpg" alt="Figure 11.1: A diagram of the Processes and Work Queues of the solution design" width="1650" height="677"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 11.1: A diagram of the Processes and Work Queues of the solution design</p>
+			<p>Process 1 is the main process, which contains the business logic and the Stages that call the EC and the GAI models. After the EC prediction is made, Items that are randomly sampled are added to Work Queue 2 (A). Since the review is non-blocking, Process 2, which checks an email inbox for <em class="italic">Y</em> and <em class="italic">N</em> replies to emails can be scheduled to run during <span class="No-Break">off-peak hours.</span></p>
+			<p>For emails that are predicted as refund requests, processing continues until we need to make a prediction using the ER model. Processing halts, and input data to the ER model is added to Work Queue 3 (B). If the ER prediction doesn’t need human review (C), the Item resumes its work in Process 1. If the ER prediction requires review, it gets added to Work Queue 4 (D). Once HITL review for the ER prediction is complete, the Item’s Status will be updated in Queue 1 (E), so that processing <span class="No-Break">can continue.</span></p>
+			<h1 id="_idParaDest-188"><a id="_idTextAnchor192"/>Implementation</h1>
+			<p>After completing the IA solution design based on the characteristics of the three models discussed above, the developers start to build the overall structure of the solution, starting from the <span class="No-Break">IA templates.</span></p>
+			<h2 id="_idParaDest-189"><a id="_idTextAnchor193"/>Example 1 – Creating the solution structure from IA templates</h2>
+			<p>Instead of<a id="_idIndexMarker854"/> jumping into the development of the business logic and Objects, we want to create the solution design structure to ensure that the coordination between the different Processes and Work Queues behave as intended. In this example, we will build the solution structure from nine <span class="No-Break">high-level steps:</span></p>
+			<ol>
+				<li>Use <strong class="bold">Save As</strong> on one of the templates from <a href="B18416_07.xhtml#_idTextAnchor114"><span class="No-Break"><em class="italic">Chapter 7</em></span></a> to create the overall <span class="No-Break">Process structure.</span></li>
+				<li>Create the <span class="No-Break">Work Queues.</span></li>
+				<li>Change the Data Items on the <strong class="source-inline">Main Page</strong> of each Process and <strong class="bold">Get Next Item</strong> to reference the newly created <span class="No-Break">Work Queues.</span></li>
+				<li>Modify Process 1 of our solution to add Pages related to calling the EC and GAI ML model <span class="No-Break">predictions directly.</span></li>
+				<li>Change the Data Items on the <strong class="source-inline">IA Data</strong> Page of each Process, which store the Tags, Statuses, and Item Data Fields that are used to keep Item Data consistent across different Work Queues of <span class="No-Break">the solution.</span></li>
+				<li>Find and replace the <strong class="source-inline">IA Data</strong> Page Data Items in Process <strong class="bold">01 - Processing Refunds</strong> to fix some of the broken references to renamed Data Items. Fix the remaining issues <span class="No-Break">by hand.</span></li>
+				<li>Find and replace the <strong class="source-inline">IA Data</strong> Page Data Items in Process <strong class="bold">02 – Email Classifier HITL Review</strong> to fix the broken references to renamed Data Items. Delete unneeded logic to update Work Queue 1 when the review <span class="No-Break">is complete.</span></li>
+				<li>Find and replace the <strong class="source-inline">IA Data</strong> Page Data Items in Process <strong class="bold">03 – Entity Recognition</strong> to fix the broken references to renamed Data Items. Fix the remaining issues <span class="No-Break">by hand.</span></li>
+				<li>Find <a id="_idIndexMarker855"/>and replace the <strong class="source-inline">IA Data</strong> Page Data Items in Process <strong class="bold">04 – Entity Recognition </strong><span class="No-Break"><strong class="bold">HITL Review</strong></span><span class="No-Break">.</span></li>
+			</ol>
+			<p>Let’s start off by saving the templates as <span class="No-Break">new Processes.</span></p>
+			<h3>Save the template Processes as new Processes</h3>
+			<p>If we look at <span class="No-Break"><em class="italic">Figure 11</em></span><em class="italic">.1</em>, our<a id="_idIndexMarker856"/> solution is basically template 3 from <a href="B18416_07.xhtml#_idTextAnchor114"><span class="No-Break"><em class="italic">Chapter 7</em></span></a>, with the HITL Review Process and Queue added twice. Let’s open the relevant Process templates and save them as <span class="No-Break">new Processes:</span></p>
+			<ol>
+				<li>Navigate to the Studio section of BP. Create a new Group named <em class="italic">Ch11</em> <span class="No-Break">under Processes.</span></li>
+				<li>Expand the <em class="italic">Ch7</em> | <em class="italic">IA Template 3 - 3 Process 3 </em><span class="No-Break"><em class="italic">Queue</em></span><span class="No-Break"> Group.</span></li>
+				<li>Open the <strong class="bold">01 - Business Logic</strong> Process. Use <em class="italic">File</em> | <em class="italic">Save As</em> to save this as a new Process named <strong class="bold">01 - Processing Refunds</strong> in the <em class="italic">Ch11</em> Group. Close the resulting Process <span class="No-Break">Studio window.</span></li>
+				<li>Open the <strong class="bold">02 - ML Prediction</strong> Process. Use <em class="italic">File</em> | <em class="italic">Save As</em> to save this as a new Process named <strong class="bold">03 - Entity Recognition</strong> (note the renaming from 02 to 03) in the <em class="italic">Ch11</em> Group. Close the resulting Process <span class="No-Break">Studio window.</span></li>
+				<li>Open the <strong class="bold">03 - HITL Review</strong> Process. Use <em class="italic">File</em> | <em class="italic">Save As</em> to save this as a new Process named <strong class="bold">04 - Entity Recognition HITL Review</strong> (note the renaming from 03 to 04) in the <em class="italic">Ch11</em> Group. Keep the Process Studio <span class="No-Break">window open.</span></li>
+				<li>With the <strong class="bold">04 - Entity Recognition HITL Review</strong> Process still open, use <em class="italic">File</em> | <em class="italic">Save As</em> to save this as a new Process named <strong class="bold">02 - Email Classifier HITL Review</strong> in the <em class="italic">Ch11</em> Group. Close the resulting Process <span class="No-Break">Studio window.</span></li>
+				<li>Verify<a id="_idIndexMarker857"/> that your <em class="italic">Ch11</em> Group contains the following <span class="No-Break">four Processes:</span></li>
+			</ol>
+			<p class="IMG---Figure"> </p>
+			<div>
+				<div id="_idContainer271" class="IMG---Figure">
+					<img src="image/B18416_11_2.jpg" alt="Figure 11.2: The contents of the Processes in Group Ch11" width="284" height="111"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 11.2: The contents of the Processes in Group Ch11</p>
+			<h3>Create the Work Queues</h3>
+			<p>The next step <a id="_idIndexMarker858"/>needed to create a functioning solution structure is to create the four <span class="No-Break">Work Queues:</span></p>
+			<ol>
+				<li>Navigate to the <em class="italic">System</em> | <em class="italic">Workflows</em> | <em class="italic">Work Queues</em> area <span class="No-Break">of BP.</span></li>
+				<li>Right-click on the <em class="italic">Queues</em> area and create a new Group <span class="No-Break">named </span><span class="No-Break"><em class="italic">Ch11</em></span><span class="No-Break">.</span></li>
+				<li>Create four Work Queues inside the <em class="italic">Ch11</em> Group. Name the Queues identically to the Processes shown in <span class="No-Break"><em class="italic">Figure 11</em></span><em class="italic">.2</em>. Leave the Key Names as <em class="italic">Field 1</em> for the <span class="No-Break">time being.</span></li>
+				<li>Verify that the <em class="italic">Ch11</em> Group in Work Queues looks like <span class="No-Break">the following:</span></li>
+			</ol>
+			<p class="IMG---Figure"> </p>
+			<div>
+				<div id="_idContainer272" class="IMG---Figure">
+					<img src="image/B18416_11_3.jpg" alt="Figure 11.3: The contents of the Work Queues in Group Ch11" width="309" height="130"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 11.3: The contents of the Work Queues in Group Ch11</p>
+			<p>We’ve finished <a id="_idIndexMarker859"/>creating the Work Queues and Process solution structure. Next, we need to change the Processes to match the solution diagram in <span class="No-Break"><em class="italic">Figure 11</em></span><span class="No-Break"><em class="italic">.1</em></span><span class="No-Break">.</span></p>
+			<h3>Modify the template’s Work Queue Data Items</h3>
+			<p>The arrows in <a id="_idIndexMarker860"/>the solution diagram in <span class="No-Break"><em class="italic">Figure 11</em></span><em class="italic">.1</em> show which Work Queues each Process needs to interact with. For each Process, we need to create a Data Item referencing each Work Queue that it has an <em class="italic">outbound arrow</em> to, in addition to its own Work Queue. The complete list of Data Items needed for each Process’ <strong class="source-inline">Main Page</strong> is shown in the <span class="No-Break">following table:</span></p>
+			<table id="table002-6" class="No-Table-Style _idGenTablePara-1">
+				<colgroup>
+					<col/>
+					<col/>
+					<col/>
+				</colgroup>
+				<tbody>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="bold">Process Name</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><strong class="bold">Data </strong><span class="No-Break"><strong class="bold">Item Name</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><strong class="bold">Data Item </strong><span class="No-Break"><strong class="bold">Initial Value</strong></span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><strong class="bold">01 - </strong><span class="No-Break"><strong class="bold">Processing Refunds</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">Queue Name</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><strong class="bold">01 - </strong><span class="No-Break"><strong class="bold">Processing Refunds</strong></span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><strong class="bold">01 - </strong><span class="No-Break"><strong class="bold">Processing Refunds</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Queue <span class="No-Break">Name 2</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><strong class="bold">02 - Email Classifier </strong><span class="No-Break"><strong class="bold">HITL Review</strong></span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><strong class="bold">01 - </strong><span class="No-Break"><strong class="bold">Processing Refunds</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Queue <span class="No-Break">Name 3</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><strong class="bold">03 - </strong><span class="No-Break"><strong class="bold">Entity Recognition</strong></span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><strong class="bold">02 - Email Classifier </strong><span class="No-Break"><strong class="bold">HITL Review</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Queue <span class="No-Break">Name 2</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><strong class="bold">02 - Email Classifier </strong><span class="No-Break"><strong class="bold">HITL Review</strong></span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><strong class="bold">03 - </strong><span class="No-Break"><strong class="bold">Entity Recognition</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">Queue Name</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><strong class="bold">01 - </strong><span class="No-Break"><strong class="bold">Processing Refunds</strong></span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><strong class="bold">03 - </strong><span class="No-Break"><strong class="bold">Entity Recognition</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Queue <span class="No-Break">Name 3</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><strong class="bold">03 - </strong><span class="No-Break"><strong class="bold">Entity Recognition</strong></span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><strong class="bold">03 - </strong><span class="No-Break"><strong class="bold">Entity Recognition</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Queue <span class="No-Break">Name 4</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><strong class="bold">04 - Entity Recognition </strong><span class="No-Break"><strong class="bold">HITL Review</strong></span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><strong class="bold">04 - Entity Recognition </strong><span class="No-Break"><strong class="bold">HITL Review</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">Queue Name</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><strong class="bold">01 - </strong><span class="No-Break"><strong class="bold">Processing Refunds</strong></span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><strong class="bold">04 - Entity Recognition </strong><span class="No-Break"><strong class="bold">HITL Review</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Queue <span class="No-Break">Name 4</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><strong class="bold">04 - Entity Recognition </strong><span class="No-Break"><strong class="bold">HITL Review</strong></span></p>
+						</td>
+					</tr>
+				</tbody>
+			</table>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Table 11.2: The Data Items needed to store the Work Queue names</p>
+			<p>Let’s edit <a id="_idIndexMarker861"/>each Process to use the <span class="No-Break">correct Queues:</span></p>
+			<ol>
+				<li>Open Process <strong class="bold">01 - Processing Refunds</strong> in the <span class="No-Break">Process Studio.</span></li>
+				<li>Navigate to the <span class="No-Break"><strong class="source-inline">Main Page</strong></span><span class="No-Break">.</span></li>
+				<li>Modify the Data Items in the <em class="italic">Process Settings</em> Block to match rows 1 to 3 of <em class="italic">Table 11.2</em>. Ensure that the Data Items have the <em class="italic">Hide from other pages in the process</em> <span class="No-Break">box unticked.</span></li>
+				<li>Modify the <em class="italic">two</em> <strong class="bold">Get Next Item</strong> Stages so that they use the Queue that is named identically to the current Process. For <strong class="bold">01 - Processing Refunds</strong>, set <em class="italic">Queue Name</em> to <strong class="bold">[</strong><span class="No-Break"><strong class="bold">Queue Name]</strong></span><span class="No-Break">.</span></li>
+				<li>Repeat <em class="italic">steps 1 - 4</em> for the three other Processes. For <em class="italic">step 3</em>, use row 4 for Process 2, rows 5 - 7 for Process 3, and rows 8 - 9 for Process 4. For <em class="italic">step 4</em>, use <strong class="bold">[Queue Name 2]</strong> for Process 2, <strong class="bold">[Queue Name 3]</strong> for Process 3, and <strong class="bold">[Queue Name 4]</strong> for <span class="No-Break">Process 4.</span></li>
+				<li>Verify that for Process <strong class="bold">01 - Processing Refunds</strong>, you have <span class="No-Break">the following:</span></li>
+			</ol>
+			<div>
+				<div id="_idContainer273" class="IMG---Figure">
+					<img src="image/B18416_11_4.jpg" alt="Figure 11.4: The three Queue Data Items for Process 1" width="462" height="310"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 11.4: The three Queue Data Items for Process 1</p>
+			<p class="list-inset">For<a id="_idIndexMarker862"/> Process <strong class="bold">02 - Email Classifier HITL Review</strong>, you should <span class="No-Break">have this:</span></p>
+			<div>
+				<div id="_idContainer274" class="IMG---Figure">
+					<img src="image/B18416_11_5.jpg" alt="Figure 11.5: The Queue Data Item for Process 2" width="401" height="136"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 11.5: The Queue Data Item for Process 2</p>
+			<p class="list-inset">For Process <strong class="bold">03 - Entity Recognition</strong>, you should <span class="No-Break">have this:</span></p>
+			<div>
+				<div id="_idContainer275" class="IMG---Figure">
+					<img src="image/B18416_11_6.jpg" alt="Figure 11.6: The three Queue Data Items for Process 3" width="458" height="309"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 11.6: The three Queue Data Items for Process 3</p>
+			<p class="list-inset">For Process <strong class="bold">04 - Entity Recognition HITL Review</strong>, you should <span class="No-Break">have this:</span></p>
+			<div>
+				<div id="_idContainer276" class="IMG---Figure">
+					<img src="image/B18416_11_7.jpg" alt="Figure 11.7: The two Queue Data Items for Process 4" width="458" height="234"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 11.7: The two Queue Data Items for Process 4</p>
+			<p>Ensure <a id="_idIndexMarker863"/>that you save the Processes so that you don’t lose your changes. Next, let’s add the missing ML logic Pages to Process <strong class="bold">01 - Processing Refunds</strong>, as there are additional ML predictions that we need to call that aren’t present in <span class="No-Break">the template.</span></p>
+			<h3>Add missing ML Pages to 01 - Processing Refunds</h3>
+			<p>We’ve started <a id="_idIndexMarker864"/>off this example by cloning <em class="italic">IA Template 3</em>. The template doesn’t have Process 1 make any ML predictions directly. However, our solution requires that Process 1 directly predicts using the EC and GAI models. Our solution also needs to randomly sample the EC model. Finally, we also need to push data into two Queues instead of just one. Let’s add these changes to Process 1 by cloning existing Pages from the <span class="No-Break">other templates:</span></p>
+			<ol>
+				<li>Open Process <strong class="bold">03 - Entity Recognition</strong> in the <span class="No-Break">Process Studio.</span></li>
+				<li>Right-click on the <strong class="source-inline">01 ML Prediction</strong> Page tab and <span class="No-Break">select </span><span class="No-Break"><strong class="bold">Copy</strong></span><span class="No-Break">.</span></li>
+			</ol>
+			<div>
+				<div id="_idContainer277" class="IMG---Figure">
+					<img src="image/B18416_11_8.jpg" alt="Figure 11.8: Right-click on the 01 ML Prediction Page in Process 3 and select Copy" width="303" height="173"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 11.8: Right-click on the 01 ML Prediction Page in Process 3 and select Copy</p>
+			<ol>
+				<li value="3">Open Process <strong class="bold">01 - Processing Refunds</strong> in the <span class="No-Break">Process Studio.</span></li>
+				<li>Right-click on the <strong class="source-inline">Main Page</strong> tab and <span class="No-Break">select </span><span class="No-Break"><strong class="bold">Paste</strong></span><span class="No-Break">.</span></li>
+			</ol>
+			<div>
+				<div id="_idContainer278" class="IMG---Figure">
+					<img src="image/B18416_11_9.jpg" alt="Figure 11.9: Right-click on Main Page in Process 1 and select Paste" width="271" height="190"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 11.9: Right-click on Main Page in Process 1 and select Paste</p>
+			<ol>
+				<li value="5">Rename the newly pasted Page <strong class="bold">02a Email </strong><span class="No-Break"><strong class="bold">Classifier Prediction</strong></span><span class="No-Break">.</span></li>
+				<li>Right-click on the <strong class="source-inline">Main Page</strong> tab and select <span class="No-Break"><strong class="bold">Paste</strong></span><span class="No-Break"> again.</span></li>
+				<li>Rename the newly pasted Page <strong class="bold">05 Generative </strong><span class="No-Break"><strong class="bold">AI Prediction</strong></span><span class="No-Break">.</span></li>
+				<li>Switch back to Process <strong class="bold">03 - Entity Recognition</strong> in the <span class="No-Break">Process Studio.</span></li>
+				<li>Right-click on the <strong class="source-inline">02 Random Sampling</strong> Page tab and <span class="No-Break">select </span><span class="No-Break"><strong class="bold">Copy</strong></span><span class="No-Break">.</span></li>
+				<li>Switch back to Process <strong class="bold">01 - Processing Refunds</strong> in the <span class="No-Break">Process Studio.</span></li>
+				<li>Right-click on the <strong class="source-inline">Main Page</strong> tab and <span class="No-Break">select </span><span class="No-Break"><strong class="bold">Paste</strong></span><span class="No-Break">.</span></li>
+				<li>Rename the newly pasted Page <strong class="bold">02b </strong><span class="No-Break"><strong class="bold">Random Sampling</strong></span><span class="No-Break">.</span></li>
+				<li>Rename the <strong class="source-inline">02 Push to Queue</strong> Page <strong class="bold">02d Push to </strong><span class="No-Break"><strong class="bold">Queue 3</strong></span><span class="No-Break">.</span></li>
+				<li>Right-click on the <strong class="source-inline">02d Push to Queue 3</strong> Page tab and <span class="No-Break">select </span><span class="No-Break"><strong class="bold">Copy</strong></span><span class="No-Break">.</span></li>
+				<li>Right-click <a id="_idIndexMarker865"/>on the <strong class="source-inline">Main Page</strong> tab and <span class="No-Break">select </span><span class="No-Break"><strong class="bold">Paste</strong></span><span class="No-Break">.</span></li>
+				<li>Rename the newly pasted Page to <strong class="bold">02c Push to </strong><span class="No-Break"><strong class="bold">Queue 2</strong></span><span class="No-Break">.</span></li>
+				<li>Modify the <em class="italic">Work</em> Block on the <strong class="source-inline">Main Page</strong> so that it looks like the following. The <a id="_idIndexMarker866"/>additions to the Block are shown in <span class="No-Break">bold font.</span></li>
+			</ol>
+			<div>
+				<div id="_idContainer279" class="IMG---Figure">
+					<img src="image/B18416_11_10.jpg" alt="Figure 11.10: Add the new Pages to the Work Block of Process 01 - Processing Refunds" width="811" height="1055"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 11.10: Add the new Pages to the Work Block of Process 01 - Processing Refunds</p>
+			<p>Now, the <strong class="source-inline">Main Page</strong> for Process 1 has placeholder Pages for the high-level steps needed to complete the ML potions of the solution. Our next task will be to change the Data Items on the <strong class="source-inline">IA </strong><span class="No-Break"><strong class="source-inline">Data</strong></span><span class="No-Break"> Pages.</span></p>
+			<h3>Modify each template’s IA Data Pages</h3>
+			<p>Recall that<a id="_idIndexMarker867"/> each Process in our template has a Page named <strong class="source-inline">IA Data</strong> that contains Data Items used to coordinate the creation of columns in <strong class="bold">Item Data</strong> across different Work Queues. There are also Data Items that contain Statuses and Tags that control the flow of Work Queue Items across the different Processes. The Data Items on these Pages need to be changed to accommodate the <span class="No-Break">solution structure.</span></p>
+			<p>Process 1, <strong class="bold">01 - Processing Refunds</strong>, has the greatest number of Data Items (17) on this Page, as its <strong class="bold">Item Data</strong> needs to store information concerning all three <span class="No-Break">ML models.</span></p>
+			<table id="table003-5" class="No-Table-Style _idGenTablePara-1">
+				<colgroup>
+					<col/>
+					<col/>
+					<col/>
+				</colgroup>
+				<tbody>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><strong class="bold">Data </strong><span class="No-Break"><strong class="bold">Item Name</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><strong class="bold">Data </strong><span class="No-Break"><strong class="bold">Item Value</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="bold">Purpose</strong></span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Prediction Item Data Field Name - <span class="No-Break">EC</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><strong class="bold">Prediction - </strong><span class="No-Break"><strong class="bold">EC</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>The Item Data Field Name that stores the EC model’s <span class="No-Break">predicted result</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Confidence Item Data Field Name - <span class="No-Break">EC</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><strong class="bold">Confidence - </strong><span class="No-Break"><strong class="bold">EC</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>The Item Data Field Name that stores the EC model’s <span class="No-Break">confidence score</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Prediction Item Data Field Name - <span class="No-Break">ER</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><strong class="bold">Prediction - </strong><span class="No-Break"><strong class="bold">ER</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>The Item Data Field Name that stores the ER model’s <span class="No-Break">predicted result</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Reviewed Prediction Item Data Field Name - <span class="No-Break">ER</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><strong class="bold">Reviewed Prediction - </strong><span class="No-Break"><strong class="bold">ER</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>The Item Data Field Name that stores the reviewed value of the <span class="No-Break">ER model</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Prediction Item Data Field Name - <span class="No-Break">GAI</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><strong class="bold">Prediction - </strong><span class="No-Break"><strong class="bold">GAI</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>The Item Data Field Name that stores the GAI model’s <span class="No-Break">predicted result</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Confidence Item Data Field Name - <span class="No-Break">GAI</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><strong class="bold">Confidence - </strong><span class="No-Break"><strong class="bold">GAI</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>The Item Data Field Name that stores the GAI prediction’s <span class="No-Break">confidence score</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Queue 1 Item ID Item Data <span class="No-Break">Field Name</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><strong class="bold">Queue 1 </strong><span class="No-Break"><strong class="bold">Item ID</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>The Item Data Field Name used to store Work Queue 1’s Item ID in <span class="No-Break">other Queues</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Queue 2 Item ID Item Data <span class="No-Break">Field Name</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><strong class="bold">Queue 2 </strong><span class="No-Break"><strong class="bold">Item ID</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>The Item Data Field Name used to store Work Queue 2’s (EC) Item ID in <span class="No-Break">this Queue</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Queue 3 Item ID Item Data <span class="No-Break">Field Name</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><strong class="bold">Queue 3 </strong><span class="No-Break"><strong class="bold">Item ID</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>The Item Data Field Name used to store Work Queue 3’s (ER) Item ID in <span class="No-Break">this Queue</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Prediction Complete Status - <span class="No-Break">EC</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><strong class="bold">Prediction Complete - </strong><span class="No-Break"><strong class="bold">EC</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>The Status used to indicate that the EC prediction <span class="No-Break">is completed</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Prediction Complete Status - <span class="No-Break">GAI</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><strong class="bold">Prediction Complete - </strong><span class="No-Break"><strong class="bold">GAI</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>The Status used to indicate that the GAI prediction <span class="No-Break">is completed</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Manual Review Not Required Status - <span class="No-Break">ER</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><strong class="bold">Manual Review Not Required - </strong><span class="No-Break"><strong class="bold">ER</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>The Status used to indicate that an ER prediction does not need <span class="No-Break">HITL review</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Manual Review Complete Status - <span class="No-Break">ER</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><strong class="bold">Manual Review Complete - </strong><span class="No-Break"><strong class="bold">ER</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>The Status used to indicate that HITL review of an ER prediction <span class="No-Break">is completed</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Waiting ML Prediction Tag - <span class="No-Break">ER</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><strong class="bold">Waiting ML Prediction - </strong><span class="No-Break"><strong class="bold">ER</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>The Tag used to show that the Item is waiting for an ER <span class="No-Break">model prediction</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Manual Review Required Tag - <span class="No-Break">ER</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><strong class="bold">Manual Review Required - </strong><span class="No-Break"><strong class="bold">ER</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>The Tag used to show that the Item is waiting for HITL review of an <span class="No-Break">ER prediction</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Throw Exception Review Text - <span class="No-Break">ER</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="bold">BE</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>This is how the reviewer of the ER model can indicate to Process 1 that it should throw a <span class="No-Break">Business Exception</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Force HITL Review – <span class="No-Break">EC</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="bold">False</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>This is a Session Variable that controls whether we want to force all EC predictions to <span class="No-Break">undergo review</span></p>
+						</td>
+					</tr>
+				</tbody>
+			</table>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Table 11.3: 17 Data Items needed for Process 1 on the IA Data Page</p>
+			<p>Process 2 (<strong class="bold">02 - Email Classifier HITL Review</strong>) is really only used to facilitate the logging of <a id="_idIndexMarker868"/>review data for randomly sampled EC predictions so that it can be fed back to the data science team. It doesn’t have any relation to Processes 3 and 4. It also doesn’t need to inform Process 1 if a review has been completed either. As a result, the number of Data Items on the <strong class="source-inline">IA Data</strong> page is far fewer than for <span class="No-Break">Process 1.</span></p>
+			<table id="table004-3" class="No-Table-Style _idGenTablePara-1">
+				<colgroup>
+					<col/>
+					<col/>
+					<col/>
+				</colgroup>
+				<tbody>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><strong class="bold">Data </strong><span class="No-Break"><strong class="bold">Item Name</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><strong class="bold">Data </strong><span class="No-Break"><strong class="bold">Item Value</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="bold">Purpose</strong></span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Reviewed Prediction Item Data Field Name - <span class="No-Break">EC</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Reviewed Prediction - <span class="No-Break">EC</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>The Item Data Field Name that stores the human corrected EC <span class="No-Break">prediction value</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Review Justification Item Data Field Name - <span class="No-Break">EC</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Review Justification - <span class="No-Break">EC</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>The Item Data Field Name that stores the reason why the prediction value has <span class="No-Break">been modified</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Review Data Created Item Data Field Name - <span class="No-Break">EC</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Review Data Created - <span class="No-Break">EC</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>This Item Data Field Name stores whether the review data record has been <span class="No-Break">created yet</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Manual Review Complete Status - <span class="No-Break">EC</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Manual Review Complete - <span class="No-Break">EC</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>The Status used to indicate that HITL review of an EC prediction <span class="No-Break">is completed</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Disable HITL Review - <span class="No-Break">EC</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">False</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>This is a Session Variable that can be used to disable all HITL reviews for the <span class="No-Break">EC model</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Force Create Review Data - <span class="No-Break">EC</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">False</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>This is a Session Variable that can be used to forcibly recreate all <span class="No-Break">review records</span></p>
+						</td>
+					</tr>
+				</tbody>
+			</table>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Table 11.4: Six Data Items needed for Process 2 on the IA Data Page</p>
+			<p>Process 3 (<strong class="bold">03 - Entity Recognition</strong>) needs to<a id="_idIndexMarker869"/> communicate with Processes 1 (<strong class="bold">01 - Processing Refunds</strong>) and 4 (<strong class="bold">04 - Entity Recognition HITL Review</strong>). As a result, there are 11 Data Items <span class="No-Break">to create:</span></p>
+			<table id="table005-2" class="No-Table-Style _idGenTablePara-1">
+				<colgroup>
+					<col/>
+					<col/>
+					<col/>
+				</colgroup>
+				<tbody>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><strong class="bold">Data </strong><span class="No-Break"><strong class="bold">Item Name</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><strong class="bold">Data </strong><span class="No-Break"><strong class="bold">Item Value</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="bold">Purpose</strong></span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Prediction Item Data Field Name - <span class="No-Break">ER</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Prediction - <span class="No-Break">ER</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>The Item Data Field Name that stores the ER model’s <span class="No-Break">predicted result</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Confidence Item Data Field Name - <span class="No-Break">ER</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Confidence - <span class="No-Break">ER</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>The Item Data Field Name that stores the ER model’s prediction <span class="No-Break">confidence score</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Queue 1 Item ID Item Data <span class="No-Break">Field Name</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Queue 1 <span class="No-Break">Item ID</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>The Item Data Field Name used to store Work Queue 1’s Item ID in <span class="No-Break">other Queues</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Queue 3 Item ID Item Data <span class="No-Break">Field Name</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Queue 3 <span class="No-Break">Item ID</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>The Item Data Field Name used to store Work Queue 3’s (ER) Item ID in <span class="No-Break">this Queue</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Queue 4 Item ID Item Data <span class="No-Break">Field Name</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Queue 4 <span class="No-Break">Item ID</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>The Item Data Field Name used to store Work Queue 4’s (GAI) Item ID in <span class="No-Break">this Queue</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Prediction Complete Status - <span class="No-Break">ER</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Prediction Complete - <span class="No-Break">ER</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>The Status used to indicate that the ER prediction <span class="No-Break">is completed</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Manual Review Required Tag - <span class="No-Break">ER</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Manual Review Required - <span class="No-Break">ER</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>The Tag used to show that the Item is waiting for HITL review of an <span class="No-Break">ER prediction</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Manual Review Not Required Status - <span class="No-Break">ER</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Manual Review Not Required - <span class="No-Break">ER</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>The Status used to indicate that an ER prediction does not need <span class="No-Break">HITL review</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Waiting ML Prediction Tag - <span class="No-Break">ER</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Waiting ML Prediction - <span class="No-Break">ER</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>The Tag used to show that the Item is waiting for an ER <span class="No-Break">model prediction</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Manual Review Required Tag - <span class="No-Break">ER</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Manual Review Required - <span class="No-Break">ER</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>The Tag used to show that the Item is waiting for HITL review of an <span class="No-Break">ER prediction</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Force HITL Review - <span class="No-Break">ER</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">False</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>This is a Session Variable that controls whether we want to force all ER predictions to <span class="No-Break">undergo review</span></p>
+						</td>
+					</tr>
+				</tbody>
+			</table>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Table 11.5: 11 Data Items needed for Process 3 on the IA Data Page</p>
+			<p>Process 4 (<strong class="bold">04 - Entity Recognition HITL Review</strong> ) has eight <a id="_idIndexMarker870"/>Data Items <span class="No-Break">to create:</span></p>
+			<table id="table006" class="No-Table-Style _idGenTablePara-1">
+				<colgroup>
+					<col/>
+					<col/>
+					<col/>
+				</colgroup>
+				<tbody>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><strong class="bold">Data </strong><span class="No-Break"><strong class="bold">Item Name</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><strong class="bold">Data </strong><span class="No-Break"><strong class="bold">Item Value</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="bold">Purpose</strong></span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Reviewed Prediction Item Data Field Name - <span class="No-Break">ER</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Reviewed Prediction - <span class="No-Break">ER</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>The Item Data Field Name that stores the reviewed value of the <span class="No-Break">ER model</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Review Justification Item Data Field Name - <span class="No-Break">ER</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Review Justification - <span class="No-Break">ER</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>The Item Data Field Name that stores the reason why the prediction value has <span class="No-Break">been modified</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Review Data Created Item Data Field Name - <span class="No-Break">ER</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Review Data Created - <span class="No-Break">ER</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>This Item Data Field Name stores whether the review data record has been <span class="No-Break">created yet</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Queue 1 Item ID Item Data <span class="No-Break">Field Name</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Queue 1 <span class="No-Break">Item ID</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>The Item Data Field Name used to store Work Queue 1’s Item ID in <span class="No-Break">other Queues</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Manual Review Complete Status - <span class="No-Break">ER</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Manual Review Complete - <span class="No-Break">ER</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>The Status used to indicate that HITL review of an ER prediction <span class="No-Break">is completed</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Manual Review Required Tag - <span class="No-Break">ER</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>Manual Review Required - <span class="No-Break">ER</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>The Tag used to show that the Item is waiting for HITL review of an <span class="No-Break">ER prediction</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Disable HITL Review - <span class="No-Break">ER</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">False</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>This is a Session Variable that can be used to disable all HITL reviews for the <span class="No-Break">ER model</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>Force Create Review Data - <span class="No-Break">ER</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break">False</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>This is a Session Variable that can be used to forcibly recreate all <span class="No-Break">review records</span></p>
+						</td>
+					</tr>
+				</tbody>
+			</table>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Table 11.6: Eight Data Items needed for Process 4 on the IA Data Page</p>
+			<p>Now let’s <a id="_idIndexMarker871"/>make changes to the <strong class="source-inline">IA Data</strong> Pages according to the <span class="No-Break">tables above.</span></p>
+			<ol>
+				<li>Open the <strong class="bold">01 - Processing Refunds</strong> Process in the <span class="No-Break">Process Studio.</span></li>
+				<li>Delete all of the Data Items on the <strong class="source-inline">IA </strong><span class="No-Break"><strong class="source-inline">Data</strong></span><span class="No-Break"> Page.</span></li>
+				<li>Create new Data Items on this Page according to <em class="italic">Table 11.3</em>. All of the Data Items need to be global with Data Type <strong class="source-inline">Text</strong>. The only exceptions are the Session Variables, which also need to be global, but with Data Type <strong class="source-inline">Flag</strong> and the Exposure set <span class="No-Break">to </span><span class="No-Break"><em class="italic">Session</em></span><span class="No-Break">.</span></li>
+				<li>Repeat steps 1 to 3, except with the other Processes. Process 2 should create Data Items according to <em class="italic">Table 11.4</em>, Process 3 should use <em class="italic">Table 11.5</em>, and Process 4 should <a id="_idIndexMarker872"/>use <span class="No-Break"><em class="italic">Table 11.6</em></span><span class="No-Break">.</span></li>
+			</ol>
+			<p>After recreating the Data Items on the <strong class="source-inline">IA Data</strong> Page, we will have numerous broken references to previous Data Items. We will be fixing <span class="No-Break">these next.</span></p>
+			<h3>Fix IA Data Page references and logic for Process 1</h3>
+			<p>Recall that <a id="_idIndexMarker873"/>Process 1 is supposed to hold the main business logic, perform the EC prediction, and perform the GAI prediction. While we could fix the broken Data Item references by going through the Process Studio, clicking on the <em class="italic">Errors</em> button, and finding each error, we’ll speed up our work by exporting the Process as XML, and doing a find/replace. Then we’ll re-import the Process and fix the remaining issues by hand. Let’s start with the changes that are required for <span class="No-Break">Process 1:</span></p>
+			<ol>
+				<li>Open the <strong class="bold">01 - Processing Refunds</strong> Process in the <span class="No-Break">Process Studio.</span></li>
+				<li>Click on <em class="italic">File</em> | <em class="italic">Export</em> | <em class="italic">This Process</em>. Save the <strong class="source-inline">.bpprocess</strong> file to a location of your choice. Close the <span class="No-Break">Process Studio.</span></li>
+				<li>Open the <strong class="source-inline">.bpprocess</strong> file in a text editor, such <span class="No-Break">as Notepad.</span></li>
+				<li>Perform the seven following find/replaces in your text editor. Save the <strong class="source-inline">.</strong><span class="No-Break"><strong class="source-inline">bpprocess</strong></span><span class="No-Break"> file:</span></li>
+			</ol>
+			<table id="table007" class="No-Table-Style _idGenTablePara-1">
+				<colgroup>
+					<col/>
+					<col/>
+				</colgroup>
+				<tbody>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="bold">Find Text</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="bold">Replace Text</strong></span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>[Manual Review <span class="No-Break">Complete Status]</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>[Manual Review Complete Status - <span class="No-Break">ER]</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>[Manual Review Not <span class="No-Break">Required Status]</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>[Manual Review Not Required Status - <span class="No-Break">ER]</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>[Manual Review <span class="No-Break">Required Tag]</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>[Manual Review Required Tag - <span class="No-Break">ER]</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>[Waiting ML <span class="No-Break">Prediction Tag]</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>[Waiting ML Prediction Tag - <span class="No-Break">ER]</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>[Throw Exception <span class="No-Break">Review Text]</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>[Throw Exception Review Text - <span class="No-Break">ER]</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>[Force <span class="No-Break">HITL Review]</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>[Force HITL Review - <span class="No-Break">EC]</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>[Reviewed Prediction Item Data <span class="No-Break">Field Name]</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>[Reviewed Prediction Item Data Field Name - <span class="No-Break">ER]</span></p>
+						</td>
+					</tr>
+				</tbody>
+			</table>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Table 11.7 – Seven find/replaces for Process 1</p>
+			<p>5.	Return<a id="_idIndexMarker874"/> to the main BP software. Click on <em class="italic">File</em> | <em class="italic">Import</em> | <em class="italic">Process / Object</em>. Choose the <strong class="source-inline">.bpprocess</strong> file that was just saved and overwrite the <span class="No-Break">existing Process.</span></p>
+			<p>6.	Open the <strong class="bold">01 - Processing Refunds</strong> Process in the <span class="No-Break">Process Studio.</span></p>
+			<p>7.	Open the <strong class="bold">02a Email Classifier Prediction</strong> Page. On this Page, we’ll need to rename the Inputs of three <span class="No-Break">Action Stages.</span></p>
+			<p>8.	Open the Properties of the <strong class="bold">Add [Confidence Score] to [Item Data]</strong> Action. Change the <em class="italic">Field Name</em> Input <strong class="bold">[Confidence Item Data Field name - </strong><span class="No-Break"><strong class="bold">EC]</strong></span><span class="No-Break">.</span></p>
+			<p>9.	Open the Properties of the <strong class="bold">Add [Prediction] to [Item Data]</strong> Action. Change the <em class="italic">Field Name</em> Input <strong class="bold">[Prediction Item Data Field name - </strong><span class="No-Break"><strong class="bold">EC]</strong></span><span class="No-Break">.</span></p>
+			<p>10.	Open the Properties of the <strong class="source-inline">Set </strong><strong class="bold">[Status] to "Prediction Complete"</strong> Action. Change the <em class="italic">Status</em> Input <strong class="bold">[Prediction Complete Status - </strong><span class="No-Break"><strong class="bold">EC]</strong></span><span class="No-Break">.</span></p>
+			<p>11.	Open the <strong class="source-inline">02b Random Sampling</strong> Page. On this Page, we’ll delete four Stages and add a new <span class="No-Break">Page Stage.</span></p>
+			<p>12.	Delete the four Stages between <em class="italic">Require Manual Review?</em> and <em class="italic">End</em>. These Stages are unneeded because we don’t need to wait for the EC prediction to be reviewed in order to continue <span class="No-Break">automated processing.</span></p>
+			<p>13.	Create a new Page reference to <strong class="source-inline">02c Push to Queue 2</strong>. Connect the <em class="italic">Yes</em> path of the Decision Stage to this Page Stage and connect the Page Stage to <em class="italic">End</em>. This creates the logic where a randomly sampled prediction gets pushed into a new Queue <span class="No-Break">for review.</span></p>
+			<p>14.	Connect the <em class="italic">No</em> path directly <span class="No-Break">to </span><span class="No-Break"><em class="italic">End</em></span><span class="No-Break">.</span></p>
+			<p>15.	Open the <strong class="source-inline">02c Push to Queue 2</strong> Page. On this Page, we’ll delete one <span class="No-Break">Action Stage.</span></p>
+			<p>16.	Delete the <strong class="bold">Add Tag “Waiting for ML Prediction”</strong> Action. Connect the <strong class="bold">Add To Queue 2</strong> Action to the <strong class="bold">Append “Queue 2 Item ID” to [Item </strong><span class="No-Break"><strong class="bold">Data]</strong></span><span class="No-Break"> Action.</span></p>
+			<p>17.	Open the <strong class="source-inline">02d Push to Queue 3</strong> Page. Here, we need to rename a Collection and consequently change every other Action Stage on this Page to use this renamed Collection. We also need to change the Item Data Field Names that are <span class="No-Break">being used.</span></p>
+			<p>18.	Rename<a id="_idIndexMarker875"/> the Collection from <strong class="bold">Queue 2 Item Data</strong> to <strong class="bold">Queue 3 </strong><span class="No-Break"><strong class="bold">Item Data</strong></span><span class="No-Break">.</span></p>
+			<p>19.	Open the Properties of the <strong class="bold">Utility - Collection Manipulation:Copy Rows</strong> Action. Change the <em class="italic">Output Collection</em> Output to <strong class="bold">Queue 3 </strong><span class="No-Break"><strong class="bold">Item Data</strong></span><span class="No-Break">.</span></p>
+			<p>20.	Open the Properties of the <strong class="bold">Append “Queue 1 Item ID” to [Queue 2 Item Data]</strong> Action. Rename it <strong class="bold">Append “Queue 1 Item ID” to [Queue 3 Item Data]</strong>. Change the <em class="italic">Collection</em> Input to be <strong class="bold">[Queue 3 Item Data]</strong> and the <em class="italic">Appended Collection</em> Output to <strong class="bold">Queue 3 </strong><span class="No-Break"><strong class="bold">Item Data</strong></span><span class="No-Break">.</span></p>
+			<p>21.	Open the Properties of the <strong class="bold">Add to Queue 2</strong> Action. Rename it <strong class="bold">Add to Queue 3</strong>. Change the <em class="italic">Queue Name</em> Input to <strong class="bold">[Queue Name 3]</strong> and the <em class="italic">Data</em> Input to <strong class="bold">[Queue 3 </strong><span class="No-Break"><strong class="bold">Item Data]</strong></span><span class="No-Break">.</span></p>
+			<p>22.	Open the Properties of the <strong class="bold">Append “Queue 2 Item ID” to [Item Data]</strong> Action. Rename it <strong class="bold">Append “Queue 3 Item ID” to [Item Data]</strong>. Change the <em class="italic">Field Name</em> Input to <strong class="bold">[Queue 3 Item ID Item Data </strong><span class="No-Break"><strong class="bold">Field Name]</strong></span><span class="No-Break">.</span></p>
+			<p>23.	Open the <strong class="source-inline">04 Work Step Using the ML Prediction</strong> Page. On this Page, we need to change references to <strong class="bold">[Prediction Item Data Field Name - </strong><span class="No-Break"><strong class="bold">ER]</strong></span><span class="No-Break">.</span></p>
+			<p>24.	Open the Properties of the <strong class="bold">Set [Prediction] as original prediction</strong> Action. Change the <em class="italic">Field Name</em> Input to <strong class="bold">[Prediction Item Data Field Name - </strong><span class="No-Break"><strong class="bold">ER]</strong></span><span class="No-Break">.</span></p>
+			<p>25.	Open the <strong class="source-inline">05 Generative AI Prediction</strong> Page. Here, we need to change references to the GAI Item Data Collection Fields <span class="No-Break">and Status.</span></p>
+			<p>26.	Open the Properties of the <strong class="bold">Add [Confidence Score] to [Item Data]</strong> Action. Change the <em class="italic">Field Name</em> Input to <strong class="bold">[Confidence Item Data Field name - </strong><span class="No-Break"><strong class="bold">GAI]</strong></span><span class="No-Break">.</span></p>
+			<p>27.	Open the Properties of the <strong class="bold">Add [Prediction] to [Item Data]</strong> Action. Change the <em class="italic">Field Name</em> Input to <strong class="bold">[Prediction Item Data Field name - </strong><span class="No-Break"><strong class="bold">GAI]</strong></span><span class="No-Break">.</span></p>
+			<p>28.	Open<a id="_idIndexMarker876"/> the Properties of the <strong class="bold">Set [Status] to “Prediction Complete”</strong> Action. Change the <em class="italic">Status</em> Input to <strong class="bold">[Prediction Complete Status - </strong><span class="No-Break"><strong class="bold">GAI]</strong></span><span class="No-Break">.</span></p>
+			<p>We’ve finished modifying Process 1. Let’s continue with <span class="No-Break">Process 2.</span></p>
+			<h3>Fix IA Data Page references for Process 2 and delete unneeded logic</h3>
+			<p>Process 2, contains<a id="_idIndexMarker877"/> the HITL review checking logic for the EC model. Again, we’ll use the find/replace method to speed up<a id="_idIndexMarker878"/> <span class="No-Break">our work:</span></p>
+			<ol>
+				<li>Open the <strong class="bold">02 – Email Classifier HITL Review</strong> Process in the <span class="No-Break">Process Studio.</span></li>
+				<li>Click on <em class="italic">File</em> | <em class="italic">Export</em> | <em class="italic">This Process</em>. Save the <strong class="source-inline">.bpprocess</strong> file to a location of your choice. Close the <span class="No-Break">Process Studio.</span></li>
+				<li>Open the <strong class="source-inline">.bpprocess</strong> file in a text editor, such <span class="No-Break">as Notepad.</span></li>
+				<li>Perform the six following find/replaces in your text editor. Save the <strong class="source-inline">.</strong><span class="No-Break"><strong class="source-inline">bpprocess</strong></span><span class="No-Break"> file.</span></li>
+			</ol>
+			<table id="table008" class="No-Table-Style _idGenTablePara-1">
+				<colgroup>
+					<col/>
+					<col/>
+				</colgroup>
+				<tbody>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="bold">Find Text</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="bold">Replace Text</strong></span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>[Disable <span class="No-Break">HITL Review]</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>[Disable HITL Review - <span class="No-Break">EC]</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>[Force Create <span class="No-Break">Review Data]</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>[Force Create Review Data - <span class="No-Break">EC]</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>[Reviewed Prediction Item Data <span class="No-Break">Field Name]</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>[Reviewed Prediction Item Data Field Name - <span class="No-Break">EC]</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>[Review Justification Item Data <span class="No-Break">Field Name]</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>[Review Justification Item Data Field Name - <span class="No-Break">EC]</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>[Review Data Created Item Data <span class="No-Break">Field Name]</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>[Review Data Created Item Data Field Name - <span class="No-Break">EC]</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>[Manual Review <span class="No-Break">Complete Status]</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>[Manual Review Complete Status - <span class="No-Break">EC]</span></p>
+						</td>
+					</tr>
+				</tbody>
+			</table>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Table 11.8 – Six find/replaces for Process 2</p>
+			<p>5.	Return to the main BP software. Click on <em class="italic">File</em> | <em class="italic">Import</em> | <em class="italic">Process / Object</em>. Choose the <strong class="source-inline">.bpprocess</strong> file that was just saved and overwrite the <span class="No-Break">existing Process.</span></p>
+			<p>6.	Open the <strong class="source-inline">02 Check for Reviewed Predictions</strong> Page. Here, we need to delete the logic used to update the Work Queue Item for Work Queue 1 since that is no <span class="No-Break">longer needed.</span></p>
+			<p>7.	Connect <a id="_idIndexMarker879"/>the <em class="italic">Review Complete?</em> Decision Stage’s <em class="italic">No</em> path directly to <a id="_idIndexMarker880"/>an <span class="No-Break"><em class="italic">End</em></span><span class="No-Break"> Stage.</span></p>
+			<p>8.	Delete all of the Stages shown in the following diagram, as they are related to updating Work Queue 1’s Item. Updating Process 1 when a review is complete is not needed according to <span class="No-Break">the design.</span></p>
+			<div>
+				<div id="_idContainer280" class="IMG---Figure">
+					<img src="image/B18416_11_11.jpg" alt="Figure 11.11: Stages to delete from Page 02 Check for Reviewed Predictions" width="749" height="1013"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 11.11: Stages to delete from Page 02 Check for Reviewed Predictions</p>
+			<p>9.	Connect the<a id="_idIndexMarker881"/> Anchor<a id="_idIndexMarker882"/> under <em class="italic">Set [Item Data]</em> to Action <strong class="bold">Update Status to “Manual </strong><span class="No-Break"><strong class="bold">Review Complete”</strong></span><span class="No-Break">.</span></p>
+			<p>We’ve now finished making changes to Process 2. Let’s continue with <span class="No-Break">Process 3.</span></p>
+			<h3>Fix IA Data Page references and logic for Process 3</h3>
+			<p>Process 3 performs the <a id="_idIndexMarker883"/>ML steps for the ER model. Let’s fix the Item Data references for this Process. We’ll again export the Process in <strong class="source-inline">.bpprocess</strong> format, and perform find/replaces on the text to speed up <span class="No-Break">our work:</span></p>
+			<ol>
+				<li>Open Process <strong class="bold">03 – Entity Recognition</strong> in the <span class="No-Break">Process Studio.</span></li>
+				<li>Click on <em class="italic">File</em> | <em class="italic">Export</em> | <em class="italic">This Process</em>. Save the <strong class="source-inline">.bpprocess</strong> file to a location of your choice. Close the <span class="No-Break">Process Studio.</span></li>
+				<li>Open the <strong class="source-inline">.bpprocess</strong> file in a text editor, such <span class="No-Break">as Notepad.</span></li>
+				<li>Perform the eight following find/replaces in your text editor. Save the <strong class="source-inline">.</strong><span class="No-Break"><strong class="source-inline">bpprocess</strong></span><span class="No-Break"> file.</span></li>
+			</ol>
+			<table id="table009" class="No-Table-Style _idGenTablePara-1">
+				<colgroup>
+					<col/>
+					<col/>
+				</colgroup>
+				<tbody>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="bold">Find Text</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="bold">Replace Text</strong></span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>[Force <span class="No-Break">HITL Review]</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>[Force HITL Review - <span class="No-Break">ER]</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>[Prediction Item Data <span class="No-Break">Field Name]</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>[Prediction Item Data Field Name - <span class="No-Break">ER]</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>[Confidence Item Data <span class="No-Break">Field Name]</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>[Confidence Item Data Field Name - <span class="No-Break">ER]</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>[Prediction <span class="No-Break">Complete Status]</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>[Prediction Complete Status - <span class="No-Break">ER]</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>[Manual Review <span class="No-Break">Required Status]</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>[Manual Review Required Status - <span class="No-Break">ER]</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>[Manual Review Not <span class="No-Break">Required Status]</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>[Manual Review Not Required Status - <span class="No-Break">ER]</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>[Waiting ML <span class="No-Break">Prediction Tag]</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>[Waiting ML Prediction Tag - <span class="No-Break">ER]</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>[Manual Review <span class="No-Break">Required Tag]</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>[Manual Review Required Tag - <span class="No-Break">ER]</span></p>
+						</td>
+					</tr>
+				</tbody>
+			</table>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Table 11.9 – Eight find/replaces for Process 3</p>
+			<p>5.	Return<a id="_idIndexMarker884"/> to the main BP software. Click on <em class="italic">File</em> | <em class="italic">Import</em> | <em class="italic">Process / Object</em>. Choose the <strong class="source-inline">.bpprocess</strong> file that was just saved and overwrite the <span class="No-Break">existing Process.</span></p>
+			<p>6.	Open the <strong class="bold">03 – Entity Recognition</strong> Process in the <span class="No-Break">Process Studio.</span></p>
+			<p>7.	Open the <strong class="source-inline">02 Thresholding</strong> Page. On this Page, we’ll replace the <strong class="bold">Intelligent</strong> <strong class="bold">Automation::Get Threshold by Label</strong> Action with a placeholder <span class="No-Break">Calculation Stage.</span></p>
+			<p>8.	Replace the <strong class="bold">Utility – Intelligent Automation::Get Threshold by Label</strong> Action with a Calculation Stage named <em class="italic">Implement Threshold Logic</em>. Set the <em class="italic">Expression</em> to <strong class="bold">0.8</strong> and <em class="italic">Store Result In</em> as <strong class="bold">Threshold Value</strong>. This will act as a placeholder for the actual <span class="No-Break">threshold logic.</span></p>
+			<p>9.	Open the <strong class="source-inline">03b Push to Queue 3 and Update Queue 1 Item</strong> Page. Rename this Page <strong class="source-inline">03b Push to Queue 4 and Update Queue 1 Item</strong>. Here, we need to rename a Collection and consequently change every other Action Stage on this Page to use this <span class="No-Break">renamed Collection.</span></p>
+			<p>10.	Rename the <strong class="bold">Queue 3 Item Data</strong> Collection <strong class="bold">Queue 4 </strong><span class="No-Break"><strong class="bold">Item Data</strong></span><span class="No-Break">.</span></p>
+			<p>11.	Open the Properties of the <strong class="bold">Utility - Collection Manupulation:Copy Rows</strong> Action. Change the <em class="italic">Output Collection</em> Output to <strong class="bold">Queue 4 </strong><span class="No-Break"><strong class="bold">Item Data</strong></span><span class="No-Break">.</span></p>
+			<p>12.	Open the Properties of the <strong class="bold">Append "Queue 2 Item ID" to [Queue 3 Item Data]</strong> Action. Rename it to <strong class="bold">Append "Queue 3 Item ID" to [Queue 4 Item Data]</strong>. Change the <em class="italic">Collection</em> Input to <strong class="bold">[Queue 4 Item Data]</strong>. Change the <em class="italic">Field Name</em> Input to <strong class="bold">[Queue 3 Item ID Item Data Field Name]</strong>. Change the <em class="italic">Appended Collection</em> Output to be <strong class="bold">Queue 4 </strong><span class="No-Break"><strong class="bold">Item Data</strong></span><span class="No-Break">.</span></p>
+			<p>13.	Open the Properties of the <strong class="bold">Add to Queue 3</strong> Action. Rename it to <strong class="bold">Add to Queue 4</strong>. Change the <em class="italic">Queue Name</em> Input to <strong class="bold">[Queue Name 4]</strong> and the <em class="italic">Data</em> Input to be <strong class="bold">[Queue 4 </strong><span class="No-Break"><strong class="bold">Item Data]</strong></span><span class="No-Break">.</span></p>
+			<p>14.	Open the<a id="_idIndexMarker885"/> Properties of the <strong class="bold">Add Queue 3 Item ID to [Queue 1 Item Data]</strong> Action. Rename it to <strong class="bold">Add Queue 4 Item ID to [Queue 1 Item Data]</strong>. Change the <em class="italic">Field Name</em> Input to <strong class="bold">[Queue 4 Item ID Item Data </strong><span class="No-Break"><strong class="bold">Field Name]</strong></span><span class="No-Break">.</span></p>
+			<p>Finally, let’s make the reference changes needed for <span class="No-Break">Process 4.</span></p>
+			<h3>Fix IA Data Page references for Process 4</h3>
+			<p>Process 4 <a id="_idIndexMarker886"/>performs the HITL review steps for the ER model.  Let’s fix the Item Data references for this Process. We only need to perform the find/replaces, no other changes to the Process logic <span class="No-Break">are needed:</span></p>
+			<ol>
+				<li>Open the <strong class="bold">04 – Entity Recognition HITL Review</strong> Process in the <span class="No-Break">Process Studio.</span></li>
+				<li>Click on <em class="italic">File</em> | <em class="italic">Export</em> | <em class="italic">This Process</em>. Save the <strong class="source-inline">.bpprocess</strong> file to a location of your choice. Close the <span class="No-Break">Process Studio.</span></li>
+				<li>Open the <strong class="source-inline">.bpprocess</strong> file in a text editor, such <span class="No-Break">as Notepad.</span></li>
+				<li>Perform the seven following find/replaces in your text editor. Save the <strong class="source-inline">.</strong><span class="No-Break"><strong class="source-inline">bpprocess</strong></span><span class="No-Break"> file.</span></li>
+			</ol>
+			<table id="table010" class="No-Table-Style _idGenTablePara-1">
+				<colgroup>
+					<col/>
+					<col/>
+				</colgroup>
+				<tbody>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="bold">Find Text</strong></span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p><span class="No-Break"><strong class="bold">Replace Text</strong></span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>[Disable <span class="No-Break">HITL Review]</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>[Disable HITL Review - <span class="No-Break">ER]</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>[Force Create <span class="No-Break">Review Data]</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>[Force Create Review Data - <span class="No-Break">ER]</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>[Reviewed Prediction Item Data <span class="No-Break">Field Name]</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>[Reviewed Prediction Item Data Field Name - <span class="No-Break">ER]</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>[Review Justification Item Data <span class="No-Break">Field Name]</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>[Review Justification Item Data Field Name - <span class="No-Break">ER]</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>[Review Data Created Item Data <span class="No-Break">Field Name]</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>[Review Data Created Item Data Field Name - <span class="No-Break">ER]</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>[Manual Review <span class="No-Break">Complete Status]</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>[Manual Review Complete Status - <span class="No-Break">ER]</span></p>
+						</td>
+					</tr>
+					<tr class="No-Table-Style">
+						<td class="No-Table-Style">
+							<p>[Manual Review <span class="No-Break">Required Tag]</span></p>
+						</td>
+						<td class="No-Table-Style">
+							<p>[Manual Review Required Tag - <span class="No-Break">ER]</span></p>
+						</td>
+					</tr>
+				</tbody>
+			</table>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Table 11.10 – Seven find/replaces for Process 4</p>
+			<p>5.	Return<a id="_idIndexMarker887"/> to the main BP software. Click on <em class="italic">File</em> | <em class="italic">Import</em> | <em class="italic">Process / Object</em>. Choose the <strong class="source-inline">.bpprocess</strong> file that was just saved and overwrite the <span class="No-Break">existing Process.</span></p>
+			<p>We’ve finished creating the structure of the solution design shown in <span class="No-Break"><em class="italic">Figure 11</em></span><em class="italic">.1</em>. A model solution can be found on GitHub: <a href="https://github.com/PacktPublishing/Intelligent-Automation-with-Blue-Prism/blob/main/ch11/Ex_1_Creating_the_Solution_Structure.bprelease">https://github.com/PacktPublishing/Intelligent-Automation-with-Blue-Prism/blob/main/ch11/Ex_1_Creating_the_Solution_Structure.bprelease</a>. The changes that were made to the template are highlighted in orange font on the Process diagrams. Process 1 also loads three Items into Work Queue 1 to facilitate testing the solution flow. If you’d like, publish the four Processes and run the model solution in the Process Studio to confirm that the solution flow matches <span class="No-Break">the design.</span></p>
+			<p>Now that we have the structure of the solution in place, let’s add in some of the IA details that we know of for <span class="No-Break">Process 1.</span></p>
+			<h2 id="_idParaDest-190"><a id="_idTextAnchor194"/>Example 2 – Implementing the IA details in Process 1</h2>
+			<p>After<a id="_idIndexMarker888"/> verifying that the solution structure works, we decide to proceed further with the IA implementation. As the EC model is internally developed, we don’t have a test API to use <span class="No-Break">just yet.</span></p>
+			<p>The previous discussions with the business users and ML team, have led to a number of decisions around the review criteria and auditing. These are captured in <em class="italic">Table 11.1</em>. Some of these ML requirements can be implemented even without a finalized model. In this example, we’ll be implementing some of those details in eight <span class="No-Break">high-level steps:</span></p>
+			<ol>
+				<li>Import<a id="_idIndexMarker889"/> the model solution to use as a starting <span class="No-Break">point (optional).</span></li>
+				<li>Add a mock <span class="No-Break">EC prediction.</span></li>
+				<li>Remove the EC prediction <span class="No-Break">BP logging.</span></li>
+				<li>Create an EC model <span class="No-Break">kill switch.</span></li>
+				<li>Change the EC prediction’s random sampling rate <span class="No-Break">to 5%.</span></li>
+				<li>Add a mock <span class="No-Break">GAI prediction.</span></li>
+				<li>Remove the GAI prediction <span class="No-Break">BP logging.</span></li>
+				<li>Create a <a id="_idIndexMarker890"/>GAI model <span class="No-Break">kill switch.</span></li>
+			</ol>
+			<h3>Download and import the solution structure</h3>
+			<p>This<a id="_idIndexMarker891"/> is an optional step if you haven’t completed <em class="italic">Example 1</em>. Download the Release from (<a href="https://github.com/PacktPublishing/Intelligent-Automation-with-Blue-Prism/blob/main/ch11/Ex_1_Creating_the_Solution_Structure.bprelease">https://github.com/PacktPublishing/Intelligent-Automation-with-Blue-Prism/blob/main/ch11/Ex_1_Creating_the_Solution_Structure.bprelease</a>) and import it into BP. Verify that it contains four Processes, four Work Queues, and <span class="No-Break">one Credential.</span></p>
+			<div>
+				<div id="_idContainer281" class="IMG---Figure">
+					<img src="image/B18416_11_12.jpg" alt="Figure 11.12 – The Release contents to start Example 2" width="322" height="329"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 11.12 – The Release contents to start Example 2</p>
+			<h3>Add a mock EC prediction</h3>
+			<p>The EC <a id="_idIndexMarker892"/>prediction API isn’t finalized yet, but we’d still like to test different branches of our Process flow, depending on if the prediction is <em class="italic">refund</em> or <em class="italic">not a refund</em>. We know that roughly 70/500 = 14% emails received daily will be actual refund requests, so let’s create fake predictions using a random number generator, which sets the prediction to be <em class="italic">refund</em> 14% of <span class="No-Break">the time:</span></p>
+			<ol>
+				<li>Open the <strong class="bold">01 – Processing Refunds</strong> Process in the <span class="No-Break">Process Studio.</span></li>
+				<li>Open the <strong class="source-inline">02a Email Classifier Prediction</strong> Page and locate the orange Block <span class="No-Break">named </span><span class="No-Break"><em class="italic">Predict</em></span><span class="No-Break">.</span></li>
+				<li>Delete the <span class="No-Break">placeholder </span><span class="No-Break"><em class="italic">Note</em></span><span class="No-Break">.</span></li>
+				<li>Create a <strong class="source-inline">Number</strong> Data Item named <strong class="bold">Refund Percentage</strong>. Set the Initial Value <span class="No-Break">to </span><span class="No-Break"><strong class="bold">14</strong></span><span class="No-Break">.</span></li>
+				<li>Create a <strong class="source-inline">Number</strong> Data Item named <span class="No-Break"><strong class="bold">Random Value</strong></span><span class="No-Break">.</span></li>
+				<li>Create a <strong class="source-inline">Text</strong> Data Item named <strong class="bold">Predicted Value</strong>. Set the Initial Value to <strong class="bold">Not </strong><span class="No-Break"><strong class="bold">a Refund</strong></span><span class="No-Break">.</span></li>
+				<li>Add a <strong class="bold">Utility – Intelligent Automation::Random Integer In Range</strong> Action. Set the <em class="italic">Lower Limit</em> Input to <strong class="bold">1</strong> and the <em class="italic">Upper Limit</em> Input to <strong class="bold">100</strong>. Set the <em class="italic">Output</em> Value to <strong class="bold">Random Value</strong>. Link to it from the <em class="italic">Log [Model Version]</em> <span class="No-Break">Calculation Stage.</span></li>
+				<li>Add a Decision Stage named <em class="italic">Refund?</em> Under the Action from the previous step. Set the <em class="italic">Expression</em> to <strong class="bold">[Random Value] &lt;= [Refund Percentage]</strong>. Link to this from the <span class="No-Break">Action Stage.</span></li>
+				<li>Add a Calculation Stage named <em class="italic">Set Predicted Value to Refund</em>. Set the <em class="italic">Expression</em> to <strong class="bold">"Refund"</strong> and <em class="italic">Store Result In</em> to <strong class="bold">Predicted Value</strong>. Link the <em class="italic">Yes</em> path of the <em class="italic">Refund?</em> Decision Stage to this Stage. Link this Stage to the <em class="italic">Set [Prediction] and [Confidence Score]</em> Multi <span class="No-Break">Calc Stage.</span></li>
+				<li>Link the <em class="italic">No</em> path of the <em class="italic">Refund?</em> Decision Stage to the <em class="italic">Set [Prediction] and [Confidence Score]</em> Multi <span class="No-Break">Calc Stage.</span></li>
+				<li>Open the <em class="italic">Set [Prediction] and [Confidence Score]</em> Multi Calc Stage. Change the Expression of the first row to <strong class="bold">[</strong><span class="No-Break"><strong class="bold">Predicted Value]</strong></span><span class="No-Break">.</span></li>
+				<li>Verify that <a id="_idIndexMarker893"/>your diagram looks like <span class="No-Break">the following:</span></li>
+			</ol>
+			<div>
+				<div id="_idContainer282" class="IMG---Figure">
+					<img src="image/B18416_11_13.jpg" alt="Figure 11.13 – Create a mock EC prediction" width="796" height="494"/>
+				</div>
+			</div>
+			<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 11.13 – Create a mock EC prediction</p>
+			<p>Now that we have the EC mock prediction, let’s delete the model <span class="No-Break">version logging.</span></p>
+			<h3>Remove the EC model logging</h3>
+			<p>Recall that the <a id="_idIndexMarker894"/>EC model calls will be logged on the API server’s side. We don’t need to log it from BP. Turning off the logging will reduce the amount of data stored in <span class="No-Break">the database.</span></p>
+			<ol>
+				<li>Delete the <em class="italic">Log [Model Version]</em> Calculation Stage. Link the Stages that were before and after this deleted Stage to bridge the gap. Ensure that you link the <em class="italic">No</em> Path of the previous <span class="No-Break">Decision Stage.</span></li>
+				<li>Open the <em class="italic">Set [Prediction] and [Confidence Score]</em> Multi Calc Stage. Set <em class="italic">Stage logging</em> to <span class="No-Break"><em class="italic">Errors only</em></span><span class="No-Break">.</span></li>
+				<li>Delete the <strong class="bold">temp</strong> and <strong class="bold">Model Version</strong> <span class="No-Break">Data Items.</span></li>
+			</ol>
+			<p>While we’re still on the <strong class="source-inline">02a Email Classifier Prediction</strong> Page, we should also create a unique kill switch for <span class="No-Break">this model.</span></p>
+			<h3>Create a unique kill switch for the EC prediction</h3>
+			<p>The <a id="_idIndexMarker895"/>kill switch in the template is a placeholder. Let’s put a real one in place by creating a Credential and an Environment Variable and editing the kill <span class="No-Break">switch logic:</span></p>
+			<ol>
+				<li>Visit <em class="italic">System</em> | <em class="italic">Security</em> | <span class="No-Break"><em class="italic">Credentials</em></span><span class="No-Break">.</span></li>
+				<li>Click <em class="italic">New</em> and set the Name to <strong class="bold">Ch11 EC </strong><span class="No-Break"><strong class="bold">Kill Switch</strong></span><span class="No-Break">.</span></li>
+				<li>Click on the <em class="italic">Access Rights</em> tab. Under <em class="italic">Security Roles</em>, choose <em class="italic">All Roles</em>. Under <em class="italic">Processes (legacy)</em>, choose <em class="italic">All Processes</em>. Under <em class="italic">Resources (legacy)</em>, choose <em class="italic">All Resources</em>. This is not best practices and is only being done for ease <span class="No-Break">of demonstration.</span></li>
+				<li>Visit <em class="italic">System</em> | <em class="italic">Processes</em> | <span class="No-Break"><em class="italic">Environment Variables</em></span><span class="No-Break">.</span></li>
+				<li>Click on <em class="italic">Add Variable</em>. Name it <strong class="bold">Ch11 Example 2 EC Kill Switch Name</strong>. Set the Type to <strong class="source-inline">Text</strong> and the Value to <strong class="bold">Ch11 EC </strong><span class="No-Break"><strong class="bold">Kill Switch</strong></span><span class="No-Break">.</span></li>
+				<li>Return to the Process Studio, to the <strong class="source-inline">02a Email Classifier </strong><span class="No-Break"><strong class="source-inline">Prediction</strong></span><span class="No-Break"> Page.</span></li>
+				<li>Change the <strong class="bold">Kill Switch Credential Name</strong> Data Item Exposure to <em class="italic">Environment</em>. Set the Name to <strong class="bold">Ch11 Example 2 EC Kill </strong><span class="No-Break"><strong class="bold">Switch Name</strong></span><span class="No-Break">.</span></li>
+				<li>Open the Properties <a id="_idIndexMarker896"/>of the <strong class="bold">Get Kill Switch Credential</strong> Action. Change the <em class="italic">Credential Name</em> Input to <strong class="bold">[Ch11 Example 2 EC Kill </strong><span class="No-Break"><strong class="bold">Switch Name]</strong></span><span class="No-Break">.</span></li>
+			</ol>
+			<p>We’ve finished creating the kill switch for the EC model. Next, let’s set the EC model’s random sampling rate according to <span class="No-Break">the requirements.</span></p>
+			<h3>Change the EC sampling rate to 5%</h3>
+			<p>To change the<a id="_idIndexMarker897"/> random sampling rate, we’ll create a <strong class="source-inline">Number</strong> Environment Variable and set it to <em class="italic">5</em>. Then we’ll change the diagram to make use of this <span class="No-Break">Environment Variable:</span></p>
+			<ol>
+				<li>Visit <em class="italic">System</em> | <em class="italic">Processes</em> | <span class="No-Break"><em class="italic">Environment Variables</em></span><span class="No-Break">.</span></li>
+				<li>Click on <em class="italic">Add Variable</em>. Name it <strong class="bold">Ch11 Example 2 EC Random Sampling Target</strong>. Set the Type to <strong class="source-inline">Number</strong> and the Value <span class="No-Break">to </span><span class="No-Break"><strong class="bold">5.0</strong></span><span class="No-Break">.</span></li>
+				<li>Return to the Process Studio’s <strong class="bold">01 – </strong><span class="No-Break"><strong class="bold">Processing Refunds</strong></span><span class="No-Break">.</span></li>
+				<li>Open the <strong class="source-inline">02b Random </strong><span class="No-Break"><strong class="source-inline">Sampling</strong></span><span class="No-Break"> Page.</span></li>
+				<li>Change the <strong class="bold">Random Sampling Rate</strong> Data Item’s Exposure to <em class="italic">Environment</em>. Choose <strong class="bold">Ch11 Example 2 EC Random Sampling Target</strong> as <span class="No-Break">the </span><span class="No-Break"><em class="italic">Name</em></span><span class="No-Break">.</span></li>
+				<li>Change <a id="_idIndexMarker898"/>the Expression of the <em class="italic">Require Manual Review?</em> Decision Stage to <strong class="bold">[Force HITL Review - EC] OR [Random Number] &lt; [Ch11 Example 2 EC Random </strong><span class="No-Break"><strong class="bold">Sampling Target]</strong></span><span class="No-Break">.</span></li>
+			</ol>
+			<p>We’ve finished implementing some of the requirements for the EC model. Let’s move to the GAI model next and create a mock GAI <span class="No-Break">prediction call.</span></p>
+			<h3>Add a mock GAI prediction</h3>
+			<p>While the GAI<a id="_idIndexMarker899"/> model is available to be called, doing so incurs costs. We still want to have a mock GAI call and to save using actual calls until later. For this, we’ll simply hard-code an email text message as the result of a <span class="No-Break">GAI prediction:</span></p>
+			<ol>
+				<li>Open the <strong class="source-inline">05 Generative AI Prediction</strong> Page and locate the orange Block <span class="No-Break">named </span><span class="No-Break"><em class="italic">Predict</em></span><span class="No-Break">.</span></li>
+				<li>Delete the <span class="No-Break">placeholder </span><span class="No-Break"><em class="italic">Note</em></span><span class="No-Break">.</span></li>
+				<li>Create a <strong class="source-inline">Text</strong> Data Item named <span class="No-Break"><strong class="bold">GAI Email</strong></span><span class="No-Break">.</span></li>
+				<li>Create a Calculation Stage named <em class="italic">Set GAI Email</em>. Set the <em class="italic">Expression</em> to <strong class="bold">"Your refund request was processed automatically"</strong>. Set <em class="italic">Store Result in</em> to <span class="No-Break"><strong class="bold">GAI Email</strong></span><span class="No-Break">.</span></li>
+				<li>Open the <em class="italic">Set [Prediction] and [Confidence Score]</em> Multi Calc Stage. Change the Expression of the first row to <strong class="bold">[</strong><span class="No-Break"><strong class="bold">GAI Email]</strong></span><span class="No-Break">.</span></li>
+				<li>Link Calculation Stage <em class="italic">Log [Model Version]</em> to Calculation Stage <em class="italic">Set GAI Email</em> and to Multi Calc Stage <em class="italic">Set [Prediction] and [</em><span class="No-Break"><em class="italic">Confidence Score]</em></span><span class="No-Break">.</span></li>
+			</ol>
+			<h3>Remove the GAI model logging</h3>
+			<p>Recall that the <a id="_idIndexMarker900"/>GAI model results don’t need to be logged. The input prompt is static and the output email is logged in the CRM system. While the model version number is returned, we essentially don’t have any control over model rollbacks as it’s a third-party service. Turning off the logging will reduce the amount of data stored in <span class="No-Break">the database:</span></p>
+			<ol>
+				<li>Delete the <em class="italic">Log [Model Version]</em> Calculation Stage. Link the Stages that were before and after this deleted Stage to bridge the gap. Ensure that you link the <em class="italic">No</em> Path of the previous <span class="No-Break">Decision Stage.</span></li>
+				<li>Open the <em class="italic">Set [Prediction] and [Confidence Score]</em> Multi Calc Stage. Set <em class="italic">Stage logging</em> to <span class="No-Break"><em class="italic">Errors only</em></span><span class="No-Break">.</span></li>
+				<li>Delete <a id="_idIndexMarker901"/>the <strong class="bold">temp</strong> and <strong class="bold">Model Version</strong> <span class="No-Break">Data Items.</span></li>
+			</ol>
+			<h3>Create a unique kill switch for the GAI prediction</h3>
+			<p>The kill<a id="_idIndexMarker902"/> switch in the template is a placeholder. Let’s put a real one in place by creating a Credential and an Environment Variable and editing the kill <span class="No-Break">switch logic:</span></p>
+			<ol>
+				<li>Visit <em class="italic">System</em> | <em class="italic">Security</em> | <span class="No-Break"><em class="italic">Credentials</em></span><span class="No-Break">.</span></li>
+				<li>Click <em class="italic">New</em> and set the Name to <strong class="bold">Ch11 GAI </strong><span class="No-Break"><strong class="bold">Kill Switch</strong></span><span class="No-Break">.</span></li>
+				<li>Click on the <em class="italic">Access Rights</em> tab. Under <em class="italic">Security Roles</em>, choose <em class="italic">All Roles</em>. Under <em class="italic">Processes (legacy)</em>, choose <em class="italic">All Processes</em>. Under <em class="italic">Resources (legacy)</em>, choose <em class="italic">All Resources</em>. This is not best practice and is only being done for ease <span class="No-Break">of demonstration.</span></li>
+				<li>Visit <em class="italic">System</em> | <em class="italic">Processes</em> | <span class="No-Break"><em class="italic">Environment Variables</em></span><span class="No-Break">.</span></li>
+				<li>Click on <em class="italic">Add Variable</em>. Name it <strong class="bold">Ch11 Example 2 GAI Kill Switch Name</strong>. Set the Type to <strong class="source-inline">Text</strong> and the Value to <strong class="bold">Ch11 GAI </strong><span class="No-Break"><strong class="bold">Kill Switch</strong></span><span class="No-Break">.</span></li>
+				<li>Return to the Process Studio, to the <strong class="source-inline">05 Generative AI </strong><span class="No-Break"><strong class="source-inline">Prediction</strong></span><span class="No-Break"> Page.</span></li>
+				<li>Change the <strong class="bold">Kill Switch Credential Name</strong> Data Item Exposure to <em class="italic">Environment</em>. Set the Name to <strong class="bold">Ch11 Example 2 GAI Kill </strong><span class="No-Break"><strong class="bold">Switch Name</strong></span><span class="No-Break">.</span></li>
+				<li>Open the<a id="_idIndexMarker903"/> Properties of the <strong class="bold">Get Kill Switch Credential</strong> Action. Change the <em class="italic">Credential Name</em> Input to <strong class="bold">[Ch11 Example 2 GAI Kill </strong><span class="No-Break"><strong class="bold">Switch Name]</strong></span><span class="No-Break">.</span></li>
+			</ol>
+			<p>We’ve completed the second example. Here, we implemented some mock predictions for the EC and GAI models. We also fulfilled the auditing and random sampling requirements. While we could continue modifying the other Processes, the procedure is largely the same. Continuing with further development would require getting into the Objects and business <span class="No-Break">logic details.</span></p>
+			<h1 id="_idParaDest-191"><a id="_idTextAnchor195"/>Summary</h1>
+			<p>In this chapter, we went through the requirements of a real-life use case that uses three different ML models. We analyzed the requirements of each ML model individually, which informed us of their auditing and scaling needs. This helped us determine the appropriate number of Processes and Work Queues to use in our <span class="No-Break">IA solution.</span></p>
+			<p>We went through an example to implement the solution structure. We started with the three-Process and three-Work Queue templates, and used <strong class="bold">Save As</strong> to create new Processes. Then, we created the correct number of Work Queues from the System section of BP. Next, we edited the Data Items on the <strong class="source-inline">IA Data</strong> Page of each template to clearly define what Item Data Field names, Statuses, Tags, and Session Variables will be used in the solution. Finally, we edited the IA solution logic to make use of these new <span class="No-Break">Data Items.</span></p>
+			<p>This example will help structure your thinking around how to design a complex IA solution, how to think about the ML requirements, and how to choose the proper template to get you started. Keep in mind that you should be creating templates of your own if you come across situations that the templates in this book <span class="No-Break">haven’t covered.</span></p>
+			<p>Then, we looked at a second example, where we implemented simple mock predictions for two of the ML models. Creating mock predictions is important, as it allows you to save costs from calling commercial APIs, and it prevents you from waiting for the ML model to be built before continuing forward. ML models are almost always being built in parallel to IA, and mocking allows you to test the entire process flow, even if the model isn’t <span class="No-Break">ready yet.</span></p>
+			<p>In the next chapter, we’ll look at another real-life IA scenario, but we’ll shift away from development and design, and instead focus on the ongoing management and deployment aspects of an <span class="No-Break">IA solution.</span></p>
+		</div>
+	</div>
+</div>
+</body></html>
