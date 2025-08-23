@@ -1,0 +1,591 @@
+<html><head></head><body>
+  <div id="_idContainer219" class="Basic-Text-Frame">
+    <h1 class="chapterNumber">8</h1>
+    <h1 id="_idParaDest-213" class="chapterTitle">Interpreting NLP Transformers</h1>
+    <p class="normal">In the last chapter, we learned about applying explanation methods to a specific type of deep learning model architecture, convolutional neural networks. In this chapter, we will provide some tools to do the same with the transformer model architecture. Transformer models are becoming increasingly <a id="_idIndexMarker815"/>popular, and their most common use case is <strong class="keyWord">Natural Language Processing</strong> (<strong class="keyWord">NLP</strong>). We broached the subject of NLP in <em class="chapterRef">Chapter 5</em>,<em class="italic"> Local Model-Agnostic Interpretation Methods</em>. In this chapter, we will do so too but with transformer-specific methods and tools. First, we will discuss how to visualize attention mechanisms, followed by interpreting integrated gradient attributions, and lastly, exploring the Swiss Army knife<a id="_idIndexMarker816"/> that is the <strong class="keyWord">Learning Interpretability Tool</strong> (<strong class="keyWord">LIT</strong>).</p>
+    <p class="normal">These are the main topics we will cover:</p>
+    <ul>
+      <li class="bulletList">Visualizing attention with BertViz</li>
+      <li class="bulletList">Interpreting token attributions with integrated gradients</li>
+      <li class="bulletList">LIME, counterfactuals, and other possibilities with the LIT</li>
+    </ul>
+    <h1 id="_idParaDest-214" class="heading-1">Technical requirements</h1>
+    <p class="normal">This chapter’s example uses the <code class="inlineCode">mldatasets</code>, <code class="inlineCode">pandas</code>, <code class="inlineCode">numpy</code> , <code class="inlineCode">torch</code>, <code class="inlineCode">transformers</code> , <code class="inlineCode">bertviz</code>, <code class="inlineCode">captum</code>, and <code class="inlineCode">lit-nlp</code> libraries. Instructions on how to install all these libraries are in the <em class="italic">Preface</em>.</p>
+    <div class="note">
+      <p class="normal">The code for this chapter is located here: <a href="https://packt.link/Yzf2L"><span class="url">https://packt.link/Yzf2L</span></a></p>
+    </div>
+    <h1 id="_idParaDest-215" class="heading-1">The mission</h1>
+    <p class="normal">You are a data scientist working for a yet-to-launch startup in New York City. This startup aims to establish itself as the go-to place to find the best, newest, and most exciting culinary destinations in the city!</p>
+    <p class="normal">The aim is to move beyond the typical structured data about restaurants and delve deep into the vast array of textual data available online, from social media sites to directory websites. The startup believes that while ratings might provide a simplistic quantification of experiences, reviews contain richer details and can offer multidimensional insights into what makes a restaurant special.</p>
+    <p class="normal">Reviews express detailed sentiments that capture diverse user experiences, unlike ratings, which provide a singular, non-comparative perspective. By harnessing the granularity present in reviews, the startup can tailor its recommendations to cater to various audience segments with greater precision.</p>
+    <p class="normal">Your team has been discussing how to leverage sentiment analysis on reviews to determine how to best look for the feelings that exemplify the experience users look for in the recommender system. Binary sentiment analysis (positive/negative) does not offer the nuances required to distinguish between usual and unique experiences, or those catering to specific groups such as travelers, families, or couples. Also, the startup founders believe that the dining experience is multifaceted. An experience that might be seen as “positive” could range from “comforting and nostalgic” to “thrilling and adventurous.” Distinguishing these nuances will empower the recommender system to be more personalized and effective.</p>
+    <p class="normal">Your manager encountered a sentiment classification model that has 27 categories trained with a dataset called GoEmotions, published by Google. GoEmotions offers a more detailed classification of sentiments, capturing the richness of human emotions more effectively than binary classification models. However, the lead strategist decided there were too many classifications and decided to group them into a different emotion taxonomy called Ekman (see <em class="italic">Figure 8.1</em>):</p>
+    <figure class="mediaobject"><img src="../Images/B18406_08_01.png" alt="" role="presentation"/></figure>
+    <p class="packt_figref">Figure 8.1: The Taxonomy of Emotions</p>
+    <p class="normal">Ekman’s taxonomy of emotions is a classification system developed by psychologist Paul Ekman, which identifies six basic emotions that he believed to be universally experienced in all human cultures. These six emotions are joy, sadness, fear, anger, disgust, and surprise. Ekman suggested that these are fundamental emotions that are hard-wired into our brains and expressed in the same way by people all around the world, regardless of their culture. These emotions can be identified through specific facial expressions, and understanding them can help in fields like psychology, communication, and sociology. Ekman’s taxonomy offers a more concise set of emotion categories while still preserving the nuances. This makes the interpretation more manageable and actionable for the development team and other stakeholders. However, we’ve had to keep neutral, which cannot be classified into any Ekman category.</p>
+    <p class="normal">Now, the next step is to interpret the GoEmotions Ekman classifier model with the Tripadvisor review dataset to understand what the model learned and uncover patterns that could be useful to the development of the recommender system. It’s an open-ended task. The general goal is to understand the patterns the model has identified in the reviews and how these correlate with Ekman’s categories. However, this path could lead to many findings or a dead-end. Leadership stressed that data scientists, like yourself, would have to use their judgment to find opportunities in data exploration and model interpretation.</p>
+    <p class="normal">By uncovering these patterns, the startup can fine-tune its algorithm to look for reviews that resonate with these emotions. The insights can also guide restaurant partnerships, marketing strategies, and feature enhancements to the platform.</p>
+    <h1 id="_idParaDest-216" class="heading-1">The approach</h1>
+    <p class="normal">You have decided to take a three-prong approach:</p>
+    <ol class="numberedList" style="list-style-type: decimal;">
+      <li class="numberedList" value="1">You will look under the hood of the transformer model to visualize attention weights with BertViz to find relevant patterns in those mechanisms.</li>
+      <li class="numberedList">Then, you’ll produce saliency maps where attributions are color-coded for each token in reviews of interest, using the integrated gradients method.</li>
+      <li class="numberedList">Lastly, you’ll examine counterfactuals with the LIT.</li>
+    </ol>
+    <p class="normal">You hope that you can deliver some actionable insights to the leadership team with these steps.</p>
+    <h1 id="_idParaDest-217" class="heading-1">The preparations</h1>
+    <p class="normal">You will find<a id="_idIndexMarker817"/> the code for this example here: <a href="https://github.com/PacktPublishing/Interpretable-Machine-Learning-with-Python-2E/tree/master/08/ReviewSentiment.ipynb"><span class="url">https://github.com/PacktPublishing/Interpretable-Machine-Learning-with-Python-2E/tree/master/08/ReviewSentiment.ipynb</span></a></p>
+    <h2 id="_idParaDest-218" class="heading-2">Loading the libraries</h2>
+    <p class="normal">To<a id="_idIndexMarker818"/> run this example, you need to install the following libraries:</p>
+    <ul>
+      <li class="bulletList"><code class="inlineCode">mldatasets</code> to load the dataset</li>
+      <li class="bulletList"><code class="inlineCode">pandas</code> and <code class="inlineCode">numpy</code> to manipulate it</li>
+      <li class="bulletList"><code class="inlineCode">torch</code> (PyTorch) and <code class="inlineCode">transformers</code> to load and configure the model</li>
+      <li class="bulletList"><code class="inlineCode">bertviz</code>, <code class="inlineCode">captum</code>, and <code class="inlineCode">lit-nlp</code> to generate and visualize the model interpretations</li>
+    </ul>
+    <p class="normal">You should load all of them first:</p>
+    <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">import</span> math
+<span class="hljs-keyword">import</span> os, random, re, gc
+<span class="hljs-keyword">import</span> warnings
+warnings.filterwarnings("ignore")
+<span class="hljs-keyword">import</span> mldatasets
+<span class="hljs-keyword">import</span> numpy <span class="hljs-keyword">as</span> np
+<span class="hljs-keyword">import</span> pandas <span class="hljs-keyword">as</span> pd
+<span class="hljs-keyword">import</span> torch
+<span class="hljs-keyword">from</span> transformers <span class="hljs-keyword">import</span> AutoTokenizer,\
+                         AutoModelForSequenceClassification, pipeline
+<span class="hljs-keyword">from</span> bertviz <span class="hljs-keyword">import</span> head_view, model_view
+<span class="hljs-keyword">from</span> captum.attr <span class="hljs-keyword">import</span> LayerIntegratedGradients,\
+                        TokenReferenceBase, visualization
+<span class="hljs-keyword">from</span> lit_nlp <span class="hljs-keyword">import</span> notebook
+<span class="hljs-keyword">from</span> lit_nlp.api <span class="hljs-keyword">import</span> dataset <span class="hljs-keyword">as</span> lit_dataset
+<span class="hljs-keyword">from</span> lit_nlp.api <span class="hljs-keyword">import</span> model <span class="hljs-keyword">as</span> lit_model
+<span class="hljs-keyword">from</span> lit_nlp.api <span class="hljs-keyword">import</span> types <span class="hljs-keyword">as</span> lit_types
+</code></pre>
+    <p class="normal">Next, we work on data understanding and preparations.</p>
+    <h2 id="_idParaDest-219" class="heading-2">Understanding and preparing the data</h2>
+    <p class="normal">We load<a id="_idIndexMarker819"/> the data like this into a DataFrame we call <code class="inlineCode">reviews_df</code>:</p>
+    <pre class="programlisting code"><code class="hljs-code">reviews_df = mldatasets.load(<span class="hljs-string">"nyc-reviews"</span>, prepare=<span class="hljs-literal">True</span>)
+</code></pre>
+    <p class="normal">There should be over 380,000 records and 12 columns. We can verify this is the case with <code class="inlineCode">info()</code>:</p>
+    <pre class="programlisting code"><code class="hljs-code">reviews_df.info()
+</code></pre>
+    <p class="normal">The output checks out. There are no missing values. However, there are only three numeric <a id="_idIndexMarker820"/>features, one date, and all the rest are object data types because they are mostly text. Given that this chapter focuses on NLP, this shouldn’t come as a surprise. Let’s examine the data dictionary to understand what we will use from this DataFrame.</p>
+    <h3 id="_idParaDest-220" class="heading-3">The data dictionary</h3>
+    <p class="normal">These are <a id="_idIndexMarker821"/>the 12 columns in the DataFrame, most of which are there for reference:</p>
+    <ul>
+      <li class="bulletList"><code class="inlineCode">review_id</code>: ID – a unique identifier for the review (only for reference)</li>
+      <li class="bulletList"><code class="inlineCode">author_id</code>: ID – a unique identifier for the author (only for reference)</li>
+      <li class="bulletList"><code class="inlineCode">restaurant_name</code>: text – the name of the restaurant (only for reference)</li>
+      <li class="bulletList"><code class="inlineCode">url_restaurant</code>: <strong class="keyWord">URL</strong> – <strong class="keyWord">Uniform Resource Identifier</strong> to locate the web page where the restaurant review is located (only for reference)</li>
+      <li class="bulletList"><code class="inlineCode">review_date</code>: date – the date when the review was made (only for reference)</li>
+      <li class="bulletList"><code class="inlineCode">review_title</code>: text – the title the author wrote for the review</li>
+      <li class="bulletList"><code class="inlineCode">review_preview</code>: text – the preview generated for the review</li>
+      <li class="bulletList"><code class="inlineCode">review_full</code>: text – the full review written by the author</li>
+      <li class="bulletList"><code class="inlineCode">rating</code>: ordinal – a rating given by the author to the establishment (a 1–5 rating scale)</li>
+      <li class="bulletList"><code class="inlineCode">positive_sentiment</code>: binary – whether the review has a positive sentiment according to a binary sentiment model (positive/negative)</li>
+      <li class="bulletList"><code class="inlineCode">label</code>: categorical – the predicted emotion by the GoEmotions classifier (according to the Ekman seven-class classification: joy, neutral, sadness, disgust, fear, anger, and surprise)</li>
+      <li class="bulletList"><code class="inlineCode">score</code>: continuous – the predicted probability that the review belongs to the predicted class</li>
+    </ul>
+    <p class="normal">It’s a multi-class model, so it predicted scores for each class. However, we only stored the <code class="inlineCode">score</code> of the most probable class (<code class="inlineCode">label</code>). Therefore, the last two columns represent the output of the model. As for the input, let’s examine the first three rows to illustrate it:</p>
+    <pre class="programlisting code"><code class="hljs-code">reviews_df[[<span class="hljs-string">"review_title"</span>,<span class="hljs-string">"review_full"</span>,<span class="hljs-string">"label"</span>,<span class="hljs-string">"score"</span>]].head(<span class="hljs-number">3</span>)
+</code></pre>
+    <p class="normal">The <a id="_idIndexMarker822"/>preceding snippet will generate the output in <em class="italic">Figure 8.2</em>:</p>
+    <figure class="mediaobject"><img src="../Images/B18406_08_02.png" alt="" role="presentation"/></figure>
+    <p class="packt_figref">Figure 8.2: The first three reviews of the dataset</p>
+    <p class="normal">It’s the first two columns in <em class="italic">Figure 8.2</em>, <code class="inlineCode">review_title</code> and <code class="inlineCode">review_full</code>, that represent the input for the model. It does so as a single piece of text, so when we discuss <em class="italic">the review</em>, we are referring to a string that concatenates both with a colon and space, separating them like this: <em class="italic">Disappointing: Food was mediocre at best. The lamb chops are an image they feature on the websites opening page</em>.</p>
+    <p class="normal">But these are not the only columns that could matter in an analysis. We could, of course, analyze reviews by author, restaurant, date, and so on, and even connect restaurants to specific coordinates on a map to understand how sentiment varies geographically. This is all very interesting. However, we won’t go into any detail here because although it might be relevant to the general mission of sentiment analysis, it will divert from the technical topic of this chapter, which is interpreting transformer models.</p>
+    <p class="normal">Nonetheless, we will explore some features that are highly correlated with the model outcomes, which are the <code class="inlineCode">rating</code> provided by the author and the outcome of the binary sentiment analysis model (<code class="inlineCode">positive_sentiment</code>). You would definitely expect these to match because reviews are generally consistent with the ratings — that is, a positive review will <a id="_idIndexMarker823"/>have a higher rating than a negative one. Likewise, some emotions are more positive than negative.</p>
+    <p class="normal">To understand these correlations a bit better, let’s aggregate the reviews to get an average <code class="inlineCode">rating</code> and <code class="inlineCode">positive_sentiment</code> for each emotion like this:</p>
+    <pre class="programlisting code"><code class="hljs-code">sum_cols_l = [<span class="hljs-string">"</span><span class="hljs-string">score"</span>,<span class="hljs-string">"positive_sentiment"</span>,<span class="hljs-string">"rating"</span>]
+summary_df = reviews_df.groupby(<span class="hljs-string">"label"</span>)[sum_cols_l].agg(
+    {<span class="hljs-string">"score"</span>:[<span class="hljs-string">"count"</span>,<span class="hljs-string">"mean"</span>], <span class="hljs-string">"positive_sentiment"</span>:<span class="hljs-string">"mean"</span>, <span class="hljs-string">"rating"</span>:<span class="hljs-string">"</span><span class="hljs-string">mean"</span>}
+)
+summary_df.columns = [<span class="hljs-string">"count"</span>, <span class="hljs-string">"avg. score"</span>, <span class="hljs-string">"% positive"</span>, <span class="hljs-string">"avg. rating"</span>]
+summary_df.sort_values(by=<span class="hljs-string">"avg. rating"</span>, ascending=<span class="hljs-literal">False</span>).style.<span class="hljs-built_in">format</span>(
+    {
+        <span class="hljs-string">"count"</span>:<span class="hljs-string">"{:,}"</span>,
+        <span class="hljs-string">"</span><span class="hljs-string">avg. score"</span>:<span class="hljs-string">"{:.1%}"</span>,
+        <span class="hljs-string">"% positive"</span>:<span class="hljs-string">"{:.1%}"</span> ,
+        <span class="hljs-string">"avg. rating"</span>:<span class="hljs-string">"{:.2f}"</span>
+    }
+).bar(subset=[<span class="hljs-string">"avg. score"</span>, <span class="hljs-string">"% positive"</span>, <span class="hljs-string">"avg. rating"</span>],\
+              color=<span class="hljs-string">"#4EF"</span>, width=<span class="hljs-number">60</span>)
+</code></pre>
+    <p class="normal">The above code will produce the output in <em class="italic">Figure 8.3</em>:</p>
+    <figure class="mediaobject"><img src="../Images/B18406_08_03.png" alt="" role="presentation"/></figure>
+    <p class="packt_figref">Figure 8.3: A summary table of the emotions predicted for the review dataset</p>
+    <p class="normal">As you can<a id="_idIndexMarker824"/> appreciate in <em class="italic">Figure 8.3</em>, the majority of the 380,000 reviews are placed in the joy label or class. Joy is a positive emotion, so it makes sense that our binary sentiment classifier classified over 90% of them as positive and that the average rating for joyous reviews is nearly 4.5. The DataFrame is sorted by the average rating because it’s not a product of a model (which could be wrong), so it can perhaps give us the clearest indication of what predicted emotions the end users perceive to be the most positive. And as you go down in the list, you have positive emotions first, followed by neutral, and then the negative ones. Please note that the percentage of reviews that was deemed to be positive by the binary classifier is somewhat consistent with the same order provided by the average rating.</p>
+    <p class="normal">On the<a id="_idIndexMarker825"/> other hand, the average score for each label tells us how confident the predictions are on average that it belongs to said label. Joy, sadness, and surprise are the most confident. Since the multi-class predictions are seven numbers that add up to 1, an average score of 56.6% for anger is an indication that many predictions in which anger is the most probable emotion will have other emotions with a sizable probability – perhaps even emotions that may seem incompatible. We will put a pin on this because it would be interesting to explore this later.</p>
+    <p class="normal">Another fascinating interpretation you can make of <em class="italic">Figure 8.3</em> is that a large proportion of surprise is negative, despite it being supposedly perceived to be a positive emotion. Also, with an average rating lower than 4, there are probably quite a few negative ratings weighing them down. We won’t explore the data in this chapter, but indeed, there are plenty of negative reviews that embody a sentiment of surprise. In light of this finding and for the sake of adapting to the mission, let’s say you presented this to your bosses, and they decided it made sense to focus on surprise because market research shows that people love to find and be surprised by “hidden gems.” Therefore, it’s critical that a recommendation engine can help unearth any restaurants that are positively surprising, while suppressing any that are consistently negatively surprising.</p>
+    <h2 id="_idParaDest-221" class="heading-2">Loading the model</h2>
+    <p class="normal">Later on, we<a id="_idIndexMarker826"/> will be randomly selecting from our dataset, so in order to do that consistently, it’s best to set a random seed. It’s always good practice to initialize the seed in all the pertinent libraries, even though in this case it won’t make a difference for PyTorch inference operations:</p>
+    <pre class="programlisting code"><code class="hljs-code">rand = <span class="hljs-number">42</span>
+os.environ[<span class="hljs-string">"PYTHONHASHSEED"</span>]=<span class="hljs-built_in">str</span>(rand)
+random.seed(rand)
+np.random.seed(rand)
+torch.manual_seed(rand)
+</code></pre>
+    <p class="normal">Next, let’s define a <code class="inlineCode">device</code> variable because if you have a CUDA-enabled GPU, model inference will perform quicker. Then, we will load the tokenizer (<code class="inlineCode">goemotions_tok</code>) and model (<code class="inlineCode">goemotions_mdl</code>) from Hugging Face using the <code class="inlineCode">from_pretrained</code> function. Lastly, we will move all the weights and biases to your device with the <code class="inlineCode">model.to(device)</code> function and set the model to evaluation mode with <code class="inlineCode">model.eval()</code>:</p>
+    <pre class="programlisting code"><code class="hljs-code">device = torch.device(<span class="hljs-string">"cuda:0"</span> <span class="hljs-keyword">if</span> torch.cuda.is_available() <span class="hljs-keyword">else</span> <span class="hljs-string">"cpu"</span>)
+goemotions_mdl_path = <span class="hljs-string">"monologg/bert-base-cased-goemotions-ekman"</span>
+goemotions_tok = AutoTokenizer.from_pretrained(goemotions_mdl_path)
+goemotions_mdl = AutoModelForSequenceClassification.from_pretrained(
+    goemotions_mdl_path, output_attentions=<span class="hljs-literal">True</span>
+)
+goemotions_mdl.to(device)
+goemotions_mdl.<span class="hljs-built_in">eval</span>()
+</code></pre>
+    <p class="normal">Once<a id="_idIndexMarker827"/> the model is loaded, we always inspect its architecture with <code class="inlineCode">print(goemotions_mdl)</code>. However, architecturally, in broad terms, what may matter most when interpreting transformer models is how many layers and attention heads they have. We can inspect that easily with the following snippet:</p>
+    <pre class="programlisting code"><code class="hljs-code">num_layers = goemotions_mdl.config.num_hidden_layers
+num_attention_heads = goemotions_mdl.config.num_attention_heads
+<span class="hljs-built_in">print</span>(<span class="hljs-string">f"The model has </span><span class="hljs-subst">{num_layers}</span><span class="hljs-string"> layers."</span>)
+<span class="hljs-built_in">print</span>(<span class="hljs-string">f"Each layer has </span><span class="hljs-subst">{num_attention_heads}</span><span class="hljs-string"> attention heads."</span>)
+</code></pre>
+    <p class="normal">It should say that there are 12 layers and 12 attention heads. In the next section, we will dive into understanding how the attention mechanism works, and how to visualize the layers and heads with BertViz.</p>
+    <h1 id="_idParaDest-222" class="heading-1">Visualizing attention with BertViz</h1>
+    <p class="normal">What is <a id="_idIndexMarker828"/>attention? Let’s imagine you’re reading a book and come across a sentence<a id="_idIndexMarker829"/> that mentions a character you’ve read <a id="_idIndexMarker830"/>about earlier, but you’ve forgotten some details about them. Instead of going back and reading everything from the start, you’d likely skim through previous pages, focusing specifically on the parts that talk about this character. Your mind gives “attention” to the relevant information while filtering out the less relevant parts.</p>
+    <p class="normal">The attention mechanism in models like transformers works in a similar way. When processing information, it doesn’t treat all pieces of data equally. Instead, it “pays attention” to the most relevant parts, giving them more importance in the context of the current task. This ability to selectively focus on specific parts helps the model understand complex patterns and relationships in the data.</p>
+    <p class="normal">Transformers<a id="_idIndexMarker831"/> are made up of two main components: the <a id="_idIndexMarker832"/>encoder and the decoder. Each component leverages attention mechanisms, but they do so differently:</p>
+    <ul>
+      <li class="bulletList"><strong class="keyWord">Encoder</strong>: The<a id="_idIndexMarker833"/> encoder’s job is to understand the input data. It does this by using an attention mechanism to figure out how each part of the input (like a word in a sentence) relates to all other parts. This allows the encoder to create a rich representation of the input that captures the relationships and context within it. It’s like reading a sentence and understanding what each word means in the context of that sentence.</li>
+      <li class="bulletList"><strong class="keyWord">Decoder</strong>: Once<a id="_idIndexMarker834"/> the encoder has created this representation, the decoder uses it to produce the output. The decoder also uses an attention mechanism, but it uses it in two ways. First, it pays attention to the encoder’s representation to understand what the input was. Second, it pays attention to its own previous outputs to make sure the current output is consistent with what it has produced so far. It’s like writing a sentence that makes sense based on what you read and what you’ve already written.</li>
+    </ul>
+    <p class="normal">However, not all transformer models have both components. In essence, the use case determines which parts of the transformer are needed:</p>
+    <ul>
+      <li class="bulletList"><strong class="keyWord">Encoder models</strong> (like BERT): These<a id="_idIndexMarker835"/> models only use the encoder component of the transformer. They are typically used for tasks that involve understanding the input data, like sentiment analysis (determining whether a text is positive or negative), named entity recognition (identifying people, organizations, and locations in text), or other classification tasks. This is because the encoder’s job is to create a representation of the input data that captures the relationships and context within it.</li>
+      <li class="bulletList"><strong class="keyWord">Decoder models</strong> (like GPT, LLaMa, etc.): These are used for tasks that involve generating <a id="_idIndexMarker836"/>new data, like text generation. The decoder part of the transformer ensures the generated output is consistent with what has been produced so far.</li>
+      <li class="bulletList"><strong class="keyWord">Encoder-decoder models</strong> (like FLAN): These are used for tasks that involve transforming <a id="_idIndexMarker837"/>one piece of data into another, like translation. The encoder understands the input, and the decoder generates the output.</li>
+    </ul>
+    <p class="normal">Now that we have covered attention models, let’s dive into BERT.</p>
+    <p class="normal"><strong class="keyWord">BERT</strong>, which stands for <strong class="keyWord">Bidirectional Encoder Representations from Transformers</strong>, is a type of <a id="_idIndexMarker838"/>transformer model developed by Google. It’s used to understand and analyze text data in a wide variety of languages. BERT is a transformer model that reads text bidirectionally to <a id="_idIndexMarker839"/>understand the context of words better. It only uses the encoder part of the transformer because its job is to understand text, not generate it. This makes BERT very effective for a wide range of tasks that involve understanding text.</p>
+    <p class="normal">So, our <a id="_idIndexMarker840"/>BERT transformer model has 12 layers and 12 attention heads. But what do these do, and how do they work?</p>
+    <ul>
+      <li class="bulletList"><strong class="keyWord">BERT layers</strong>: The<a id="_idIndexMarker841"/> 12 hidden layers are BERT layers, and these are a stack of other layers that make up this encoder transformer. Much like with convolutional layers in a CNN, like the one we examined in <em class="chapterRef">Chapter 7</em>,<em class="italic"> Visualizing Convolutional Neural Networks</em>, BERT layers represent layers of abstraction. As the input data progresses through layers, the model learns increasingly abstract representations of the data. In the context of text, the lower layers might capture basic syntactic information, like the role of a word in a sentence. As you move up through the layers, they tend to capture higher-level semantics, such as overall sentence meaning or themes. The number of layers, called the depth of the model, often correlates with its ability to understand context and represent complex relationships. However, more layers also require more computational resources and might be more prone to overfitting if not enough data is available.</li>
+      <li class="bulletList"><strong class="keyWord">Attention head</strong>: The<a id="_idIndexMarker842"/> self-attention mechanism is the heart of any transformer model. The attention head has several <a id="_idIndexMarker843"/>self-attention mechanisms working in parallel. Inside the <strong class="keyWord">multi-head self-attention mechanism</strong>, there are multiple independent attention heads working in parallel. Each attention head learns to focus on different parts of the input data (like different relationships between tokens, which are usually the words). Having multiple attention heads allows the model to capture various types of relationships simultaneously. For example, one head might focus on the relationship between adjectives and <a id="_idIndexMarker844"/>nouns, while another might capture verb-subject relationships. After each head computes its own attention-weighted value representation, the outputs from all heads are concatenated and linearly transformed to produce the final value representation for the next layer.</li>
+    </ul>
+    <p class="normal">Let’s use some real reviews to examine the inner workings of the GoEmotions model. To that end, we will <a id="_idIndexMarker845"/>take four sample reviews and print out their details using the following code. While<a id="_idIndexMarker846"/> we are at it, we will save the sample reviews in a dictionary (<code class="inlineCode">sample_reviews_dict</code>) so we can reference them later:</p>
+    <pre class="programlisting code"><code class="hljs-code">surprise_sample_reviews_l = [<span class="hljs-number">174067</span>, <span class="hljs-number">284154</span>, <span class="hljs-number">480395</span>, <span class="hljs-number">47659</span>]
+line_pattern = <span class="hljs-string">r"(?&lt;=[.!?])\s+"</span>
+sample_reviews_dict = {}
+<span class="hljs-keyword">for</span> i, review_idx <span class="hljs-keyword">in</span> <span class="hljs-built_in">enumerate</span>(surprise_sample_reviews_l):
+    review_s = reviews_df.loc[review_idx, :]
+    sentiment = <span class="hljs-string">"Positive"</span> <span class="hljs-keyword">if</span> review_s[<span class="hljs-string">"positive_sentiment"</span>]\
+                            <span class="hljs-keyword">else</span> <span class="hljs-string">"Negative"</span>
+    review_lines_l = re.split(
+        line_pattern, review_s[<span class="hljs-string">"review_full"</span>], maxsplit=<span class="hljs-number">1</span>
+    )
+    review_txt = <span class="hljs-string">"\r\n\t\t"</span>.join(review_lines_l)
+    <span class="hljs-built_in">print</span>(<span class="hljs-string">f"</span><span class="hljs-subst">{review_s[</span><span class="hljs-string">"restaurant_name"</span><span class="hljs-subst">]}</span><span class="hljs-string">"</span>) 
+    <span class="hljs-built_in">print</span>(<span class="hljs-string">f"\tSentiment:\t\t</span><span class="hljs-subst">{sentiment}"</span>)
+    <span class="hljs-built_in">print</span>(<span class="hljs-string">f"\tRating:\t\t\t</span><span class="hljs-subst">{review_s[</span><span class="hljs-string">"rating"</span><span class="hljs-subst">]}</span><span class="hljs-string">"</span>)
+    <span class="hljs-built_in">print</span>(<span class="hljs-string">f"\tGoEmotions Label:\t</span><span class="hljs-subst">{review_s[</span><span class="hljs-string">"label"</span><span class="hljs-subst">]}</span><span class="hljs-string">"</span>)
+    <span class="hljs-built_in">print</span>(<span class="hljs-string">f"\tGoEmotions Score:\t</span><span class="hljs-subst">{review_s[</span><span class="hljs-string">"score"</span><span class="hljs-subst">]:</span><span class="hljs-number">.1</span><span class="hljs-subst">%}</span><span class="hljs-string">"</span>)
+    <span class="hljs-built_in">print</span>(<span class="hljs-string">f"\tTitle:\t</span><span class="hljs-subst">{review_s[</span><span class="hljs-string">"review_title"</span><span class="hljs-subst">]}</span><span class="hljs-string">"</span>)
+    <span class="hljs-built_in">print</span>(<span class="hljs-string">f"\tReview:\t </span><span class="hljs-subst">{review_txt}</span><span class="hljs-string">"</span>)
+    sample_reviews_dict[i] = review_lines_l
+</code></pre>
+    <p class="normal">The preceding snippet should output the text in <em class="italic">Figure 8.4</em>:</p>
+    <figure class="mediaobject"><img src="../Images/B18406_08_04.png" alt="" role="presentation"/></figure>
+    <p class="packt_figref">Figure 8.4: A few sample surprise reviews in the dataset</p>
+    <p class="normal">As you can see in <em class="italic">Figure 8.4</em>, the commonality between all the review samples is surprise, both negative and positive.</p>
+    <p class="normal">Next, we <a id="_idIndexMarker847"/>will leverage BertViz, which, despite the name, can <a id="_idIndexMarker848"/>visualize attention for encoder-only transformer models (like BERT and all variants), decoder-only transformers (like GPT and all variants), and encoder-decoder transformers (like T5). It’s very flexible, but it’s important to note that it’s an interactive tool, so the print screens represented by the figures in this section won’t do it justice.</p>
+    <p class="normal">Next, we will create a function that, with the tokenizer, model, and a tuple of sentences, can create two different kinds of BertViz visualizations:</p>
+    <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">def</span> <span class="hljs-title">view_attention</span>(<span class="hljs-params">tokenizer, model, sentences, view=</span><span class="hljs-string">"model"</span>):
+    sentence_a, sentence_b = sentences
+    <span class="hljs-comment"># Encode sentences with tokenizer</span>
+    inputs = tokenizer.encode_plus(
+        sentence_a, sentence_b, return_tensors=<span class="hljs-string">"pt"</span>
+    )
+    <span class="hljs-comment"># Extract components from inputs</span>
+    input_ids = inputs[<span class="hljs-string">"input_ids"</span>]
+    token_type_ids = inputs[<span class="hljs-string">"token_type_ids"</span>]
+    <span class="hljs-comment"># Get attention weights from model given the inputs</span>
+    attention = model(input_ids, token_type_ids=token_type_ids)[-<span class="hljs-number">1</span>]
+    <span class="hljs-comment"># Get 2nd sentence start and tokens</span>
+    sentence_b_start = token_type_ids[<span class="hljs-number">0</span>].tolist().index(<span class="hljs-number">1</span>)
+    input_id_list = input_ids[<span class="hljs-number">0</span>].tolist()
+    tokens = tokenizer.convert_ids_to_tokens(input_id_list)
+    <span class="hljs-comment"># BertViz visualizers</span>
+    <span class="hljs-keyword">if</span> view==<span class="hljs-string">"head"</span>:
+        head_view(attention, tokens, sentence_b_start)
+    <span class="hljs-keyword">elif</span> view==<span class="hljs-string">"model"</span>:
+        model_view(attention, tokens, sentence_b_start)
+</code></pre>
+    <p class="normal">To <a id="_idIndexMarker849"/>visualize attention, we will need to take a pair of input <code class="inlineCode">sentences</code> and encode them with our tokenizer (<code class="inlineCode">inputs</code>). Then, we extract the token IDs<a id="_idIndexMarker850"/> for these inputs (<code class="inlineCode">input_ids</code>) and values, which indicate what sentence each token belongs to (<code class="inlineCode">token_type_ids</code>) – in other words, <code class="inlineCode">0</code> for the first sentence and <code class="inlineCode">1</code> for the second sentence. We then pass the inputs (<code class="inlineCode">input_ids</code> and <code class="inlineCode">token_type_ids</code>) to the model and extract the <code class="inlineCode">attention</code> weights. Finally, there are two BertViz visualizers, <code class="inlineCode">head_view</code> and <code class="inlineCode">model_view</code>, and for them to work, all we need is the <code class="inlineCode">attention</code> weights produced by our inputs, the token IDs converted to <code class="inlineCode">tokens</code>, and the position for when the second sentence begins (<code class="inlineCode">sentence_b_start</code>).</p>
+    <p class="normal">Next, we will visualize attention throughout the model with the <em class="italic">model view</em>.</p>
+    <h2 id="_idParaDest-223" class="heading-2">Plotting all attention with the model view</h2>
+    <p class="normal">The<a id="_idIndexMarker851"/> following snippet will produce a model view for the<a id="_idIndexMarker852"/> sentences in the 1st sample review:</p>
+    <pre class="programlisting code"><code class="hljs-code">view_attention(
+    goemotions_tok, goemotions_mdl, sample_reviews_dict[<span class="hljs-number">0</span>], view=<span class="hljs-string">"model"</span>
+)
+</code></pre>
+    <p class="normal">The preceding lines of code create a large plot, like the one portrayed in <em class="italic">Figure 8.5</em>:</p>
+    <figure class="mediaobject"><img src="../Images/B18406_08_05.png" alt="" role="presentation"/></figure>
+    <p class="packt_figref">Figure 8.5: The model view for the 1st sample review for 2nd Avenue Deli</p>
+    <p class="normal"><em class="italic">Figure 8.5</em> is a 12 x 12 grid <a id="_idIndexMarker853"/>with every attention head in the BERT model. We can click on any attention <a id="_idIndexMarker854"/>head to see both sentences in the BERT input, with lines drawn between them to represent the attention weights from one token (left) to another (right). We can select “Sentence A -&gt; Sentence A”, “Sentence A -&gt; Sentence B,” and every combination in between to view only a subset of all the attention weights. Lines for weights closest to one appear as very opaque, while weights close to zero show as transparent to the point of not being visible at all.</p>
+    <p class="normal">At a glance, we can tell that some attention heads have more lines, thicker lines, or lines that seem to go more in one direction than another. We can click on individual attention heads to examine them individually – for instance:</p>
+    <ul>
+      <li class="bulletList"><strong class="keyWord">Layer 1 Head 11</strong> is<a id="_idIndexMarker855"/> mostly attention, moving forward from one token to the following token in the same sentence. This is a very common pattern and makes complete logical sense because we read English left to right and understand it mostly in that order, although there are, of course, other patterns that are undoubtedly in the attention heads. We also see evidence of another common pattern, which is one or several tokens with attention weights toward the <code class="inlineCode">[CLS]</code> token. The <code class="inlineCode">[CLS]</code> token is a special token that is prepended to every input sequence when using BERT-like models for classification tasks. It’s often used to get the aggregate representation of the entire sequence for classification. This means that for this particular attention head, the token serves a purpose in the classification decision. This can be especially insightful when trying to understand which words in a sequence the model deems critical for classification decisions. When attention goes from a separator token <code class="inlineCode">[SEP]</code> to the classification token <code class="inlineCode">[CLS]</code>, it could be seen as the model recognizing the end of a context or sentence and reflecting its semantic conclusion, to perhaps influence the classification decision.</li>
+      <li class="bulletList"><strong class="keyWord">Layer 9 Head</strong> seems <a id="_idIndexMarker856"/>to perform a more complicated task, which is to relate words to “great” and “surprised,” even across sentences. This is another common pattern where connecting words predict a word.</li>
+    </ul>
+    <p class="normal">Take note of patterns in the attention heads, and notice a few others, like attention moving backward in a sentence, or connecting synonyms. Then, change the zero in <code class="inlineCode">sample_reviews_dict[0]</code> to one, two, or three to see if the attention heads show the same pattern. The samples are quite different, but if the attention heads are not doing the same thing, chances <a id="_idIndexMarker857"/>are they are doing something remarkably similar. However, for the bigger picture, it’s probably best to squint your eyes and see what kind of patterns are evident across different layers.</p>
+    <p class="normal">Next, we will make this task easier with the head view.</p>
+    <h2 id="_idParaDest-224" class="heading-2">Diving into layer attention with the head view</h2>
+    <p class="normal">We<a id="_idIndexMarker858"/> can start by choosing the first sample with the following code:</p>
+    <pre class="programlisting code"><code class="hljs-code">view_attention(
+    goemotions_tok, goemotions_mdl, sample_reviews_dict[<span class="hljs-number">0</span>], view=<span class="hljs-string">"head"</span>
+)
+</code></pre>
+    <p class="normal">We can select any of the 12 layers (0–11). Line transparency means the same thing it did with the model view. However, the difference is we can isolate individual token attention weights by clicking on them, so when we select any token on the left, we’ll see lines connect with tokens on the right. Also, color-coded boxes will appear on the right, representing how much attention weight is in each of the 12 attention heads.</p>
+    <p class="normal">And if we happen to select any token on the right, we’ll get all the attention that is directed to it from the left tokens. In <em class="italic">Figure 8.6</em>, we can see examples of how several of the sample sentences would appear:</p>
+    <figure class="mediaobject"><img src="../Images/B18406_08_06.png" alt="" role="presentation"/></figure>
+    <p class="packt_figref">Figure 8.6: The head view for samples 1, 2, and 4</p>
+    <p class="normal">In <em class="italic">Figure 8.6</em>, see how we can drill down on patterns just as we did with model view. For instance, we can examine different patterns of attention, from related words that are next to each other (“great sandwich” and “albeit quite expensive”) to those that have a relationship only in the context of the sentence (“sandwich” and “expensive”), or even across sentences (“bad” and “ignored,” “chef,” and “menu”).</p>
+    <p class="normal">By <a id="_idIndexMarker859"/>doing this, we can realize that visualizing attention heads is not just for curiosity’s sake but can also help us understand how a model connects the dots between words, thus accomplishing a downstream task like classification. Perhaps this can help us understand what to do next, whether it’s to fine-tune the model further with underrepresented words and situations, or prepare the data differently to stop the model from getting confused by a particular word or set of words. However, given the complexity of attention heads finding model issues, this can be like looking for a needle in a haystack. We only started with layers and attention heads in this chapter because it provides an intuitive way of understanding how transformers encode relationships between tokens.</p>
+    <p class="normal">A better way to start would be with attributions. An attribution method is a method that will compute how much a part of an input contributed to a model’s prediction for that input. In the case of images in <em class="chapterRef">Chapter 7</em>,<em class="italic"> Visualizing Convolutional Neural Networks</em>, the part of the input we compute attributions for is pixels. For text, the equivalent would be tokens, which in this case are made up of (mostly) words, so next, we will generate token attributions.</p>
+    <h1 id="_idParaDest-225" class="heading-1">Interpreting token attributions with integrated gradients</h1>
+    <p class="normal">Integrated gradients<a id="_idIndexMarker860"/> is a popular method, and in <em class="chapterRef">Chapter 7</em>, we explained and leveraged it to produce<a id="_idIndexMarker861"/> attributions for each pixel in an image. The <a id="_idIndexMarker862"/>method has the same steps:</p>
+    <ol class="numberedList" style="list-style-type: decimal;">
+      <li class="numberedList" value="1"><strong class="keyWord">Choose a baseline input</strong>: The baseline represents no information. For images, it is usually a solid black image. For text, this could be a sentence with all words replaced by a placeholder like <code class="inlineCode">[PAD]</code> or just an empty sentence.</li>
+      <li class="numberedList"><strong class="keyWord">Gradually change this baseline input</strong> into your actual input sentence (e.g., the review), step by step. At each step, you change a little bit of the baseline toward the actual input.</li>
+      <li class="numberedList"><strong class="keyWord">Compute output changes</strong>: For each step, calculate how much the model’s prediction changes.</li>
+      <li class="numberedList"><strong class="keyWord">Sum up all these changes</strong> for each word in the sentence. This gives you a score for each word, indicating how much it contributed to the model’s final prediction.</li>
+    </ol>
+    <p class="normal">However, before <a id="_idIndexMarker863"/>we can use<a id="_idIndexMarker864"/> integrated gradients, it’s best that we define a transformer pipeline that tokenizes the input and performs inference on the model in one step:</p>
+    <pre class="programlisting code"><code class="hljs-code">goemotions = pipeline(
+    model=goemotions_mdl,
+    tokenizer=goemotions_tok,
+    task=<span class="hljs-string">"text-classification"</span>,
+    function_to_apply=<span class="hljs-string">"softmax"</span>,
+    device=device,
+    top_k=<span class="hljs-literal">None</span>
+)
+</code></pre>
+    <p class="normal">You can test the <code class="inlineCode">goemotions</code> pipeline like this:</p>
+    <pre class="programlisting code"><code class="hljs-code">goemotions([<span class="hljs-string">"</span><span class="hljs-string">this restaurant was unexpectedly disgusting!"</span>,
+            <span class="hljs-string">"this restaurant was shockingly amazing!"</span>])
+</code></pre>
+    <p class="normal">It should output the following list of lists of dictionaries:</p>
+    <pre class="programlisting con"><code class="hljs-con">[[{"label": "disgust", "score": 0.961812436580658},
+  {"label": "surprise", "score": 0.022211072966456413},
+  {"label": "sadness", "score": 0.004870257806032896},
+  {"label": "anger", "score": 0.0034139526542276144},
+  {"label": "joy", "score": 0.003016095608472824},
+  {"label": "fear", "score": 0.0027414397336542606},
+  {"label": "neutral", "score": 0.0019347501220181584}],
+ [{"label": "joy", "score": 0.6631762385368347},
+  {"label": "surprise", "score": 0.3326122760772705},
+  {"label": "neutral", "score": 0.001732577453367412},
+  {"label": "anger", "score": 0.0011324150254949927},
+  {"label": "sadness", "score": 0.0010195496724918485},
+  {"label": "fear", "score": 0.00021178492170292884},
+  {"label": "disgust", "score": 0.00011514205834828317}]]
+</code></pre>
+    <p class="normal">As you can see, in the first list, there are two predictions (one for each text), and each prediction<a id="_idIndexMarker865"/> has a list with seven dictionaries, with one that has the score for each class. Since the dictionaries are sorted from the highest score to the lowest, you can tell that the first restaurant review was mostly predicted as disgust and the second as joy at 66%, but there was also a sizable amount of surprise.</p>
+    <p class="normal">Next, we<a id="_idIndexMarker866"/> will create a function that can take any DataFrame row with our review and our transformer, and generate and output attributions for every prediction with over 10% probability:</p>
+    <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">def</span> <span class="hljs-title">visualize_ig_review</span>(<span class="hljs-params">interpret_s:pd.Series,</span>
+<span class="hljs-params">                          pline:pipeline,</span>
+<span class="hljs-params">                          max_prob_thresh:</span><span class="hljs-built_in">float</span><span class="hljs-params">=</span><span class="hljs-number">0.1</span><span class="hljs-params">,</span>
+<span class="hljs-params">                          max_classes=np.PINF,</span>
+<span class="hljs-params">                          concat_title=</span><span class="hljs-literal">True</span><span class="hljs-params">,</span>
+<span class="hljs-params">                          summary_df=</span><span class="hljs-literal">None</span>
+) -&gt; pd.DataFrame:
+    <span class="hljs-built_in">print</span>(<span class="hljs-string">f"</span><span class="hljs-subst">{interpret_s.name}</span><span class="hljs-string">: </span><span class="hljs-subst">{interpret_s[</span><span class="hljs-string">'restaurant_name'</span><span class="hljs-subst">]}</span><span class="hljs-string">"</span>)
+    <span class="hljs-comment"># Init some variables</span>
+    <span class="hljs-keyword">if</span> concat_title:
+        text = interpret_s[<span class="hljs-string">"review_title"</span>] + <span class="hljs-string">":"</span> + interpret_s[<span class="hljs-string">"</span><span class="hljs-string">review_full"</span>]
+    <span class="hljs-keyword">else</span>:
+        text = interpret_s[<span class="hljs-string">"review_full"</span>]
+    true_label = <span class="hljs-string">"Positive"</span> <span class="hljs-keyword">if</span> interpret_s[<span class="hljs-string">"positive_sentiment"</span>]\
+                            <span class="hljs-keyword">else</span> <span class="hljs-string">"Negative"</span>
+    rating = interpret_s[<span class="hljs-string">"rating"</span>]
+    <span class="hljs-comment"># Get predictions</span>
+    prediction = pline(text)[<span class="hljs-number">0</span>]
+    prediction_df = pd.DataFrame(prediction)
+    <span class="hljs-keyword">if</span> summary_df <span class="hljs-keyword">is</span> <span class="hljs-keyword">not</span> <span class="hljs-literal">None</span>:
+        prediction_df[<span class="hljs-string">"label_avg_rating"</span>] = prediction_df.label.\
+            replace(summary_df[<span class="hljs-string">"avg. rating"</span>].to_dict())
+        prediction_df = prediction_df.sort_values(<span class="hljs-string">"label_avg_rating"</span>,\
+           ascending=<span class="hljs-literal">False</span>).reset_index(drop=<span class="hljs-literal">True</span>)
+    <span class="hljs-comment"># Process predictions</span>
+    prediction_tuples = [(p[<span class="hljs-string">"label"</span>], p[<span class="hljs-string">"score"</span>]) <span class="hljs-keyword">for</span> p <span class="hljs-keyword">in</span> prediction]
+    sorted_prediction_tuples = <span class="hljs-built_in">sorted</span>(prediction_tuples,\
+        key=<span class="hljs-keyword">lambda</span> x: x[<span class="hljs-number">1</span>], reverse=<span class="hljs-literal">True</span>)
+    pred_class, pred_prob = sorted_prediction_tuples[<span class="hljs-number">0</span>]
+    <span class="hljs-comment"># Initialize Integrated Gradients</span>
+    forward_func = <span class="hljs-keyword">lambda</span> inputs, position=<span class="hljs-number">0</span>: pline.model(
+        inputs, attention_mask=torch.ones_like(inputs)
+    )[position]
+    layer = <span class="hljs-built_in">getattr</span>(pline.model, <span class="hljs-string">"bert"</span>).embeddings
+    lig = LayerIntegratedGradients(forward_func, layer)
+    <span class="hljs-comment"># Prepare tokens and baseline</span>
+    device = torch.device(<span class="hljs-string">"cuda:0"</span> <span class="hljs-keyword">if</span> torch.cuda.is_available()\
+                            <span class="hljs-keyword">else</span> <span class="hljs-string">"cpu"</span>)
+    inputs = torch.tensor(pline.tokenizer.encode(text,\
+        add_special_tokens=<span class="hljs-literal">False</span>), device = device).unsqueeze(<span class="hljs-number">0</span>)
+    tokens = pline.tokenizer.convert_ids_to_tokens(
+        inputs.detach().numpy()[<span class="hljs-number">0</span>]
+    )
+    sequence_len = inputs.shape[<span class="hljs-number">1</span>]
+    baseline = torch.tensor(
+        [pline.tokenizer.cls_token_id]\
+        + [pline.tokenizer.pad_token_id] * (sequence_len - <span class="hljs-number">2</span>)\
+        + [pline.tokenizer.sep_token_id],\
+        device=device
+    ).unsqueeze(<span class="hljs-number">0</span>)
+    <span class="hljs-comment"># Iterate over every prediction</span>
+    vis_record_l = []
+    <span class="hljs-keyword">for</span> i, (attr_class, attr_score) <span class="hljs-keyword">in</span>\ 
+        <span class="hljs-built_in">enumerate</span>(sorted_prediction_tuples):
+        <span class="hljs-keyword">if</span> (attr_score &gt; max_prob_thresh) <span class="hljs-keyword">and</span> (i &lt; max_classes):
+            <span class="hljs-comment"># Sets the target class</span>
+            target = pline.model.config.label2id[attr_class]
+            <span class="hljs-comment"># Get attributions</span>
+            <span class="hljs-keyword">with</span> torch.no_grad():
+                attributes, delta = lig.attribute(
+                    inputs=inputs,
+                    baselines=baseline,
+                    target=target,
+                    return_convergence_delta = <span class="hljs-literal">True</span>
+                )
+            <span class="hljs-comment"># Post-processing attributions</span>
+            attr = attributes.<span class="hljs-built_in">sum</span>(dim=<span class="hljs-number">2</span>).squeeze(<span class="hljs-number">0</span>)
+            attr = attr / torch.norm(attr)
+            attr = attr.cpu().detach().numpy()
+            <span class="hljs-comment"># Generate &amp; Append Visualization Data Record</span>
+            vis_record = visualization.VisualizationDataRecord(
+                    word_attributions=attr,
+                    pred_prob=pred_prob,
+                    pred_class=pred_class,
+                    true_class=<span class="hljs-string">f"</span><span class="hljs-subst">{true_label}</span><span class="hljs-string"> (</span><span class="hljs-subst">{rating}</span><span class="hljs-string">)"</span>,
+                    attr_class=attr_class,
+                    attr_score=attr_score,
+                    raw_input_ids=tokens,
+                    convergence_score=delta
+            )
+            vis_record_l.append(vis_record)
+    <span class="hljs-comment"># Display list of visualization data records</span>
+    _ = visualization.visualize_text(vis_record_l)
+    <span class="hljs-keyword">return</span> prediction_df
+</code></pre>
+    <p class="normal">It may <a id="_idIndexMarker867"/>seem complicated<a id="_idIndexMarker868"/> by the amount of code, but there are plenty of steps that are relatively straightforward when explained individually. We will start with model inference and work our way down:</p>
+    <ol class="numberedList" style="list-style-type: decimal;">
+      <li class="numberedList" value="1"><strong class="keyWord">Get predictions</strong>: This is a very straightforward step. It just feeds the <code class="inlineCode">text</code> into the pipeline (<code class="inlineCode">pline</code>). It takes only the first item returned (<code class="inlineCode">[0]</code>) because it only anticipates one prediction being inputted and, thus, returned by the pipeline. The next few lines show what the model does if the function <strong class="keyWord">receives</strong> a <code class="inlineCode">sample_df</code>, which it only really needs to sort the predictions in the order of the best rating on average.</li>
+      <li class="numberedList"><strong class="keyWord">Process predictions</strong>: Here, the code makes sure predictions are sorted and in tuples for easier iteration in the <code class="inlineCode">for</code> loop that follows later.</li>
+      <li class="numberedList"><strong class="keyWord">Initialize integrated gradients</strong>: A forward function is defined, which takes inputs and returns the model’s output for a given position, as well as a layer for which the attributions will be calculated, which in this case is the embedding layer. Then, an instance of <code class="inlineCode">LayerIntegratedGradients</code> (<code class="inlineCode">lig</code>) is initialized with the forward function and the specified layer.</li>
+      <li class="numberedList"><strong class="keyWord">Prepare tokens and baseline</strong>: First, the text is tokenized and converted into a tensor, which is then moved to the specified device. Then, the token IDs are converted back to <code class="inlineCode">tokens</code> for potential visualization or analysis. A <code class="inlineCode">baseline</code> is created for the integrated gradients method. It consists of <code class="inlineCode">[CLS][ token at the start, ]{custom-style="P - Code"}[SEP][ token at the end, and ]{custom-style="P - Code"}[PAD][ tokens in the middle matching the length of the input ]{custom-style="P - Code"}text</code>.</li>
+      <li class="numberedList"><strong class="keyWord">Iterate over every prediction</strong>: Here’s the <code class="inlineCode">for</code> loop that iterates over every prediction as <a id="_idIndexMarker869"/>long as<a id="_idIndexMarker870"/> the probability is over 10%, as defined by <code class="inlineCode">max_prob_threshold</code>. Within the <code class="inlineCode">for</code> loop, we:<ol class="alphabeticList" style="list-style-type: lower-alpha;">
+          <li class="alphabeticList" value="1"><strong class="keyWord">Set the target class</strong>: Integrated gradients is a directed attribution method, so we need to know what <code class="inlineCode">target</code> class to generate attributions for; therefore, we need the ID that was used internally by the model for the predicted class.</li>
+          <li class="alphabeticList"><strong class="keyWord">Get the attributions</strong>: Using the very same Captum <code class="inlineCode">attribute</code> method we used in <em class="chapterRef">Chapter 7</em>, we generate the IG attributions for the tokenized version of our text (<code class="inlineCode">inputs</code>), the <code class="inlineCode">baselines</code>, the <code class="inlineCode">target</code>, and decide whether to return a delta (a measure of approximation error) of the IG method (<code class="inlineCode">return_convergence_delta</code>).</li>
+          <li class="alphabeticList"><strong class="keyWord">Post-process the attributions</strong>: the attributions returned by the IG method are of the shape (<code class="inlineCode">num_inputs</code>, <code class="inlineCode">sequence_length</code>, <code class="inlineCode">embedding_dim</code>), where <code class="inlineCode">embedding_dim=768</code> for this model, <code class="inlineCode">sequence_length</code> corresponds to the number of tokens in the input, and <code class="inlineCode">num_inputs=1</code> because we only perform one attribution at a time. So each token’s embedding has an attribution score, but what we need is one attribution per token. Therefore, these scores are summed across the embedding dimension to get a single attribution value for each token in the sequence. Then, the attributions are normalized, ensuring that the attributions have a magnitude between 0 and 1 and are in a comparable scale. Finally, the attributions are detached from the computation graph, moved to the CPU, and converted to a <code class="inlineCode">numpy</code> array for further processing or visualization.</li>
+          <li class="alphabeticList"><strong class="keyWord">Generate and append the Visualization Data Record</strong>: Captum has a method called <code class="inlineCode">VisualizationDataRecord</code>, which creates a record of each attribution for visualization purposes, so what we do in this step is<a id="_idIndexMarker871"/> create these records with the attributions, deltas, tokens, and metadata related to the prediction. It then appends this data record to a list.</li>
+        </ol>
+      </li>
+      <li class="numberedList"><strong class="keyWord">Display the list of Visualization Data Records</strong>: leverage <code class="inlineCode">visualize_text</code> to display the list of records.</li>
+    </ol>
+    <p class="normal">Now, let’s create <a id="_idIndexMarker872"/>some samples to perform integrated gradient attributions on:</p>
+    <pre class="programlisting code"><code class="hljs-code">neg_surprise_df = reviews_df[
+    (reviews_df[<span class="hljs-string">"label"</span>]==<span class="hljs-string">"surprise"</span>)
+    &amp; (reviews_df[<span class="hljs-string">"score"</span>]&gt;<span class="hljs-number">0.9</span>)
+    &amp; (reviews_df[<span class="hljs-string">"positive_sentiment"</span>]==<span class="hljs-number">0</span>)
+    &amp; (reviews_df[<span class="hljs-string">"rating"</span>]&lt;<span class="hljs-number">3</span>)
+] <span class="hljs-comment">#43</span>
+neg_surprise_samp_df = neg_surprise_df.sample(
+    n=<span class="hljs-number">10</span>, random_state=rand
+)
+</code></pre>
+    <p class="normal">In the above snippet, we take all surprise reviews with a probability over 90%, but to ensure that they are negative, we will select a negative sentiment and a rating below three. Then, we will take a random sample of 10 reviews from these.</p>
+    <p class="normal">Next, we will iterate across every review in this list and generate some visualizations. A few others are shown in the screenshot in <em class="italic">Figure 8.7:</em></p>
+    <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">for</span> i <span class="hljs-keyword">in</span> <span class="hljs-built_in">range</span>(<span class="hljs-number">10</span>):
+    sample_to_interpret = neg_surprise_samp_df.iloc[i]
+    _ = visualize_ig_review(
+        sample_to_interpret, goemotions, concat_title=<span class="hljs-literal">True</span>, summary_df=summary_df
+)
+</code></pre>
+    <p class="normal">The preceding snippet of code will produce the visualizations in <em class="italic">Figure 8.7</em>:</p>
+    <figure class="mediaobject"><img src="../Images/B18406_08_07.png" alt="" role="presentation"/></figure>
+    <p class="packt_figref">Figure 8.7: IG visualizations for negative surprises</p>
+    <p class="normal">As we can see in <em class="italic">Figure 8.7</em>, the surprise prediction is attributed to words like “shocked,” “realized,” and “mystery” and phrases like “not sure how.” These all make sense because they indicate that something is unknown. Naturally, there are also a few cases where the <a id="_idIndexMarker873"/>word “surprise” or “surprised” is all it takes to get a surprise prediction. However, sometimes it’s not that<a id="_idIndexMarker874"/> simple. In the last one, it’s not one word that appears to indicate surprise but many words, saying to the effect that something doesn’t add up. More specifically, these visitors from London were very surprised that a deli in New York City was so expensive. Please note that the color coding for “Negative” and “Positive” doesn’t mean that a word is negative or positive but, rather, it’s weighting against (negatively) or in favor (positively) of the attribution label.</p>
+    <p class="normal">Next, we are going to repeat code similar to what we ran to generate IG explanations for a sample of surprise negative reviews, but this time for positive reviews. To ensure that they are positive, we will use ratings above 4. This time, we will make sure to remove any reviews with the word “surprise” from the samples just to make things interesting:</p>
+    <pre class="programlisting code"><code class="hljs-code">pos_surprise_df = reviews_df[
+    (reviews_df[<span class="hljs-string">"label"</span>]==<span class="hljs-string">"surprise"</span>)
+    &amp; (reviews_df[<span class="hljs-string">"score"</span>]&gt;<span class="hljs-number">0.97</span>)
+    &amp; (reviews_df[<span class="hljs-string">"positive_sentiment"</span>]==<span class="hljs-number">1</span>)
+    &amp; (reviews_df[<span class="hljs-string">"rating"</span>]&gt;<span class="hljs-number">4</span>)
+]
+pos_surprise_samp_df = pos_surprise_df[
+    ~pos_surprise_df[<span class="hljs-string">"review_full"</span>].<span class="hljs-built_in">str</span>.contains(<span class="hljs-string">"surprise"</span>)
+]
+<span class="hljs-keyword">for</span> i <span class="hljs-keyword">in</span> <span class="hljs-built_in">range</span>(<span class="hljs-number">10</span>):
+    sample_to_interpret = pos_surprise_samp_df.iloc[i]
+    _ = visualize_ig_review(
+        sample_to_interpret, goemotions,\
+        concat_title=<span class="hljs-literal">False</span>, summary_df=summary_df
+)
+</code></pre>
+    <p class="normal">The preceding code will produce the visualizations in <em class="italic">Figure 8.8</em>.</p>
+    <figure class="mediaobject"><img src="../Images/B18406_08_08.png" alt="" role="presentation"/></figure>
+    <p class="packt_figref">Figure 8.8. IG visualizations for positive surprises</p>
+    <p class="normal"><em class="italic">Figure 8.8</em> shows <a id="_idIndexMarker875"/>how the words “perplexed” and “unbelievable,” as well as the phrase “couldn’t believe how” indicate surprise. There are also a few cases of tokens weighing negatively against the surprise prediction. For<a id="_idIndexMarker876"/> instance, for the last restaurant, having “something for everyone” doesn’t make it very surprising. Also, you’ll note the Japanese restaurant in the middle is predicted to embody both surprise and joy emotions. It’s interesting how some words correlate with one emotion but not so much with another, and sometimes they indicate the opposite, like the “hard” in “it’s very hard to find a place” indicating surprise but not joy.</p>
+    <p class="normal">Finding reviews with mixed sentiments like the Japanese restaurant might hold some answers to why some reviews are hard to classify entirely with one sentiment. So, now, we will produce some positive and negative mixed review samples. We can easily do so by making sure that the score for the predicted label is never over 50%:</p>
+    <pre class="programlisting code"><code class="hljs-code">pos_mixed_samp_df = reviews_df[
+    (~reviews_df[<span class="hljs-string">"label"</span>].isin([<span class="hljs-string">"neutral"</span>,<span class="hljs-string">"joy"</span>]))
+    &amp; (reviews_df[<span class="hljs-string">"score"</span>] &lt; <span class="hljs-number">0.5</span>)
+    &amp; (reviews_df[<span class="hljs-string">"positive_sentiment"</span>]==<span class="hljs-number">1</span>)
+    &amp; (reviews_df[<span class="hljs-string">"rating"</span>]&lt; <span class="hljs-number">5</span>)
+].sample(n=<span class="hljs-number">10</span>, random_state=rand)
+neg_mixed_samp_df = reviews_df[
+    (~reviews_df[<span class="hljs-string">"label"</span>].isin([<span class="hljs-string">"neutral"</span>,<span class="hljs-string">"joy"</span>]))
+    &amp; (reviews_df[<span class="hljs-string">"score"</span>] &lt; <span class="hljs-number">0.5</span>)
+    &amp; (reviews_df[<span class="hljs-string">"positive_sentiment"</span>]==<span class="hljs-number">0</span>)
+    &amp; (reviews_df[<span class="hljs-string">"rating"</span>]&gt;<span class="hljs-number">2</span>)
+].sample(n=<span class="hljs-number">10</span>, random_state=rand)
+</code></pre>
+    <p class="normal">We can <a id="_idIndexMarker877"/>generate positive mixed <a id="_idIndexMarker878"/>sentiment reviews with the following snippet. Note that this time, we use a method called <code class="inlineCode">mldatasets.plot_polar</code>, which plots a polar line chart for the predictions with <code class="inlineCode">plotly</code>. You’ll need both <code class="inlineCode">plotly</code> and <code class="inlineCode">kaleido</code> to make this work:</p>
+    <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">for</span> i <span class="hljs-keyword">in</span> <span class="hljs-built_in">range</span>(<span class="hljs-number">10</span>):
+    sample_to_interpret = pos_mixed_samp_df.iloc[i]
+    prediction_df = visualize_ig_review(
+        sample_to_interpret,\
+        goemotions, concat_title=<span class="hljs-literal">False</span>,\
+        summary_df=summary_df
+    )
+    rest_name = sample_to_interpret[<span class="hljs-string">"restaurant_name"</span>]
+    mldatasets.plot_polar(
+    prediction_df, <span class="hljs-string">"score"</span>, <span class="hljs-string">"label"</span>, name=rest_name
+)
+</code></pre>
+    <p class="normal">The preceding code will produce the IG visualization and polar line plot in <em class="italic">Figure 8.9</em>:</p>
+    <figure class="mediaobject"><img src="../Images/B18406_08_09.png" alt="" role="presentation"/></figure>
+    <p class="packt_figref">Figure 8.9: IG visualizations for mixed sentiment reviews</p>
+    <p class="normal"><em class="italic">Figure 8.9</em> portrays how this review for a sandwich shop appears to have joy, fear, and neutral emotions. The words “terrific” and “friendly” connect with joy, but they don’t with neutral. However, strangely, the word “terrific” also correlates with fear. Perhaps it has to do with the WordPiece tokenization performed on the word. Note that “terrific” appears as <a id="_idIndexMarker879"/>three subword tokens, te, ##rri, and ##fic. This probably happened because the original corpus used to train <a id="_idIndexMarker880"/>the model (the Reddit comments) didn’t have enough frequency for “terrific” to include it as a standalone word, but these subwords did. The downside to this technique is that it’s possible that the “te” and “rri” tokens are used often for words like “terrifying,” and “fic” in other scary words like “horrific” and “mortific.” On the other hand, “fic” appears in “magnificent” and “beneficial.” So what happens is that despite the contextual embeddings, the subword tokens can cause some ambiguities.</p>
+    <p class="normal">We can now run the same code as before but for <code class="inlineCode">neg_mixed_samp_df</code>, to examine other examples and make our own conclusions. Next, we can expand our XAI NLP-specific toolset with the LIT.</p>
+    <h1 id="_idParaDest-226" class="heading-1">LIME, counterfactuals, and other possibilities with the LIT</h1>
+    <p class="normal">The LIT is an open-source platform <a id="_idIndexMarker881"/>developed by the <strong class="keyWord">People+AI Research</strong> (<strong class="keyWord">PAIR</strong>) initiative to visualize and understand NLP models. PAIR developed the What-If Tool featured in <em class="chapterRef">Chapter 6</em>, <em class="italic">Anchors and Counterfactual Explanations</em>.</p>
+    <p class="normal">LIT provides an<a id="_idIndexMarker882"/> interactive and visual interface to delve deep into NLP model behavior. With LIT, users can:</p>
+    <ul>
+      <li class="bulletList">Identify types of examples where a model underperforms.</li>
+      <li class="bulletList">Determine reasons behind specific model predictions.</li>
+      <li class="bulletList">Test the model’s consistency under textual variations, like style, verb tense, or pronoun gender.</li>
+    </ul>
+    <p class="normal">LIT offers various built-in capabilities, including salience maps, attention visualization, metrics calculations, and counterfactual generation. However, it also supports customization, allowing the addition of specialized interpretability techniques, visualizations, and more.</p>
+    <p class="normal">Although LIT’s primary focus is textual language data, it also supports models that operate on image and tabular data. It’s compatible with a range of machine learning frameworks, including TensorFlow and PyTorch. The tool can run both as a standalone server and within notebook environments like Colab, Jupyter, and Google Cloud Vertex AI notebooks.</p>
+    <p class="normal">In order to<a id="_idIndexMarker883"/> work with any custom dataset, LIT provides a <code class="inlineCode">Dataset</code> subclass to create a LIT-compatible dataset loader. You must include an <code class="inlineCode">__init__</code>, which loads the dataset, and a spec function, which specifies the data types returned in the dataset, while the <code class="inlineCode">lit_nlp.api.types</code> provide a way to ensure that LIT recognizes each feature in your dataset. In this case, we provide the review (<code class="inlineCode">TextSegment</code>), the label (<code class="inlineCode">CategoryLabel</code>) with the seven labels, and two additional categories, which can be used for slicing and binning:</p>
+    <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">class</span> <span class="hljs-title">GEDataset</span>(lit_dataset.Dataset):
+    GE_LABELS = [<span class="hljs-string">"anger"</span>, <span class="hljs-string">"disgust"</span>, <span class="hljs-string">"fear"</span>, <span class="hljs-string">"joy"</span>,\
+                 <span class="hljs-string">"neutral"</span>, <span class="hljs-string">"sadness"</span>, <span class="hljs-string">"surprise"</span>]
+    <span class="hljs-keyword">def</span> <span class="hljs-title">__init__</span>(<span class="hljs-params">self, df: pd.DataFrame</span>):
+        self._examples = [{
+            <span class="hljs-string">"review"</span>: row[<span class="hljs-string">"review_title"</span>] + <span class="hljs-string">":"</span> + row[<span class="hljs-string">"review_full"</span>],
+            <span class="hljs-string">"label"</span>: row[<span class="hljs-string">"label"</span>],
+            <span class="hljs-string">"rating"</span>: row[<span class="hljs-string">"rating"</span>],
+            <span class="hljs-string">"positive"</span>: row[<span class="hljs-string">"positive_sentiment"</span>]
+        } <span class="hljs-keyword">for</span> _, row <span class="hljs-keyword">in</span> df.iterrows()]
+    <span class="hljs-keyword">def</span> <span class="hljs-title">spec</span>(<span class="hljs-params">self</span>):
+        <span class="hljs-keyword">return</span> {
+            <span class="hljs-string">"review"</span>: lit_types.TextSegment(),
+            <span class="hljs-string">"label"</span>: lit_types.CategoryLabel(vocab=self.GE_LABELS),
+            <span class="hljs-string">"rating"</span>: lit_types.CategoryLabel(),
+            <span class="hljs-string">"positive"</span>: lit_types.CategoryLabel()
+        }
+</code></pre>
+    <p class="normal">To make LIT flexible to accommodate any model, there is a <code class="inlineCode">Model</code> subclass to make a LIT-compatible model loader. It also needs the <code class="inlineCode">__init__</code> function to initialize the model, as well as a <code class="inlineCode">predict_minibatch</code> function to predict with it. To this end, we also need to create specs for both the inputs (<code class="inlineCode">input_spec</code>) and outputs (<code class="inlineCode">output_spec</code>) of the <code class="inlineCode">predict</code> function. In this case, we enter a review (of type <code class="inlineCode">TextSegment</code>) and return probabilities of type <code class="inlineCode">MulticlassPreds</code>. Remember that the output of the model is not always consistent, since each prediction is arranged from the highest to the lowest score. Note that in order to make the output of <code class="inlineCode">predict_minibatch</code> comply with the <code class="inlineCode">MulticlassPreds</code>, we have to arrange the probabilities as a list corresponding to the labels (<code class="inlineCode">GE_LABELS</code>), in the same order provided to <code class="inlineCode">vocab</code>:</p>
+    <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">class</span> <span class="hljs-title">GEModel</span>(lit_model.Model):
+    GE_LABELS = [<span class="hljs-string">"anger"</span>, <span class="hljs-string">"disgust"</span>, <span class="hljs-string">"</span><span class="hljs-string">fear"</span>, <span class="hljs-string">"joy"</span>,\
+                 <span class="hljs-string">"neutral"</span>, <span class="hljs-string">"sadness"</span>, <span class="hljs-string">"surprise"</span>]
+    <span class="hljs-keyword">def</span> <span class="hljs-title">__init__</span>(<span class="hljs-params">self, model, tokenizer, **kw</span>):
+        self._model = pipeline(
+            model=model,
+            tokenizer=tokenizer,
+            task=<span class="hljs-string">"text-classification"</span>,
+            function_to_apply=<span class="hljs-string">"softmax"</span>,
+            device=device,
+            top_k=<span class="hljs-literal">None</span>
+        )
+    <span class="hljs-keyword">def</span> <span class="hljs-title">input_spec</span>(<span class="hljs-params">self</span>):
+        <span class="hljs-keyword">return</span> {
+            <span class="hljs-string">"review"</span>: lit_types.TextSegment()
+        }
+    <span class="hljs-keyword">def</span> <span class="hljs-title">output_spec</span>(<span class="hljs-params">self</span>):
+        <span class="hljs-keyword">return</span> {
+            <span class="hljs-string">"</span><span class="hljs-string">probas"</span>: lit_types.MulticlassPreds(vocab=self.GE_LABELS,\
+                                                parent=<span class="hljs-string">"label"</span>)
+        }
+    <span class="hljs-keyword">def</span> <span class="hljs-title">predict_minibatch</span>(<span class="hljs-params">self, inputs</span>):
+        examples = [d[<span class="hljs-string">"review"</span>] <span class="hljs-keyword">for</span> d <span class="hljs-keyword">in</span> inputs]
+        <span class="hljs-keyword">with</span> torch.no_grad():
+            preds = self._model(examples)
+        preds = [{p[<span class="hljs-string">"label"</span>]:p[<span class="hljs-string">"</span><span class="hljs-string">score"</span>] <span class="hljs-keyword">for</span> p <span class="hljs-keyword">in</span> pred_dicts}\
+                <span class="hljs-keyword">for</span> pred_dicts <span class="hljs-keyword">in</span> preds]
+        preds = [<span class="hljs-built_in">dict</span>(<span class="hljs-built_in">sorted</span>(pred_dict.items())) <span class="hljs-keyword">for</span> pred_dict <span class="hljs-keyword">in</span> preds]
+        preds = [{<span class="hljs-string">"probas"</span>: <span class="hljs-built_in">list</span>(pred_dict.values())} <span class="hljs-keyword">for</span> pred_dict <span class="hljs-keyword">in</span> preds]
+        <span class="hljs-keyword">return</span> preds
+</code></pre>
+    <p class="normal">OK, so <a id="_idIndexMarker884"/>now we have the two classes we need for LIT to function. The GoEmotions model initializer (<code class="inlineCode">GEModel</code>) takes the model (<code class="inlineCode">goemotions_mdl</code>) and tokenizer (<code class="inlineCode">goemotions_tok</code>). We put these in a dictionary because LIT can take more than one model and more than one dataset to compare them. For the dataset, to make it load quickly, we will use 100 samples (<code class="inlineCode">samples100_df</code>), made up of the four 10-sample DataFrames we have created so far, plus 60 additional random samples from the entire reviews dataset. Then, we just input our 100-sample DataFrame into the GoEmotions dataset initializer (<code class="inlineCode">GEDataset</code>) and place it into our datasets dictionary as <code class="inlineCode">NYCRestaurants</code>. Lastly, we create the widget (<code class="inlineCode">notebook.LitWidget</code>) by inputting our model and datasets dictionaries and <code class="inlineCode">render</code> it. Please note<a id="_idIndexMarker885"/> that if you want to run this outside of a notebook environment, you can use the <code class="inlineCode">Server</code> command to have it run on a LIT server:</p>
+    <pre class="programlisting code"><code class="hljs-code">models = {<span class="hljs-string">"GoEmotion"</span>:GEModel(goemotions_mdl, goemotions_tok)}
+samples100_df = pd.concat(
+    [
+        neg_surprise_samp_df,
+        pos_surprise_samp_df,
+        neg_mixed_samp_df,
+        pos_mixed_samp_df,
+        reviews_df.sample(n=<span class="hljs-number">60</span>, random_state=rand)
+    ]
+)
+datasets = {<span class="hljs-string">"NYCRestaurants"</span>:GEDataset(samples100_df)}
+widget = notebook.LitWidget(models, datasets)
+widget.render(height=<span class="hljs-number">600</span>)
+<span class="hljs-comment"># litserver = lit_nlp.dev_server.Server(models, datasets, port=4321)</span>
+<span class="hljs-comment"># litserver.serve()</span>
+</code></pre>
+    <p class="normal">The above snippet will produce the interface in <em class="italic">Figure 8.10</em>:</p>
+    <figure class="mediaobject"><img src="../Images/B18406_08_10.png" alt="" role="presentation"/></figure>
+    <p class="packt_figref">Figure 8.10: Notebook view with the Predictions tab open</p>
+    <p class="normal">As you can <a id="_idIndexMarker886"/>appreciate in <em class="italic">Figure 8.10</em>, LIT has:</p>
+    <ul>
+      <li class="bulletList">A top bar with a dropdown to select the model and dataset (but you can’t here because there’s only one of each) and three different views (<strong class="screenText">simple</strong>, <strong class="screenText">default</strong>, and <strong class="screenText">notebook</strong>). <strong class="screenText">notebook</strong> is selected by default.</li>
+      <li class="bulletList">A selection bar to select datapoints and see which ones are pinned.</li>
+      <li class="bulletList">A tab bar with three tabs (<strong class="screenText">Predictions</strong>, <strong class="screenText">Explanations</strong>, and <strong class="screenText">Analysis</strong>). By default, <strong class="screenText">Predictions</strong> is selected, and this tab has <strong class="screenText">Data Table</strong> to the left, where you can select and pin individual datapoints, and the <strong class="screenText">Classification Results</strong> pane to the right.</li>
+    </ul>
+    <p class="normal">Even <a id="_idIndexMarker887"/>though the <strong class="screenText">notebook</strong> view has much more going on than the <strong class="screenText">simple</strong> view, it lacks many features available in the <strong class="screenText">default</strong> view. From now on, we will examine the <strong class="screenText">default</strong> view depicted in <em class="italic">Figure 8.11</em>:</p>
+    <figure class="mediaobject"><img src="../Images/B18406_08_11.png" alt="" role="presentation"/></figure>
+    <p class="packt_figref">Figure 8.11: The default view with the Predictions tab open</p>
+    <p class="normal">As you can see in <em class="italic">Figure 8.11</em>, the default view has two permanent panes, with the <strong class="screenText">Data Table</strong> and <strong class="screenText">Datapoint Editor</strong> in the top pane and the tabs in the bottom pane. It’s not a great layout <a id="_idIndexMarker888"/>for a small notebook cell, but it can let you easily pin, select, and edit datapoints while also performing tasks on them in the tabs below. Note also that there are more than three tabs. We will briefly explain each one:</p>
+    <ul>
+      <li class="bulletList"><strong class="screenText">Predictions</strong>: This lets you see classification results for selected and pinned datapoints. Note that it denotes the predicted label with a “P” and the ground truth with a “T.” However, since we didn’t train the model with this dataset, the label provided is no different than the one predicted, but this can prove very useful for examining misclassifications. To the right of the <strong class="screenText">Classification Results</strong>, we have <strong class="screenText">Scalars</strong>, which allows us to compare scores for the pinned and selected datapoints with all others in the dataset.</li>
+      <li class="bulletList"><strong class="screenText">Explanations</strong>: Here, we can use a number of explanation/attribution methods on our datapoints, such as LIME and integrated gradients.</li>
+      <li class="bulletList"><strong class="screenText">Salience Clustering</strong>: We perform attributions on many datapoints and cluster the results to understand how tokens are clustered. We won’t go into details here, given that we only are using a dataset of 100.</li>
+      <li class="bulletList"><strong class="screenText">Metrics</strong>: Had we been using a training dataset with ground truth labels, this tab would be very useful because it can slice and bin performance metrics in many ways.</li>
+      <li class="bulletList"><strong class="screenText">Counterfactuals</strong>: Much like with <em class="chapterRef">Chapter 6</em>, the concept of counterfactuals is the same here, which is working out what feature (a token in this case) you can change in such a way that you modify the model outcome (the predicted label). There are several counterfactual finding methods provided.</li>
+    </ul>
+    <p class="normal">So, we will work our way down this list, excluding <strong class="screenText">Salience Clustering</strong> and <strong class="screenText">Predictions</strong> (which we already explained in <em class="italic">Figure 8.11</em>), so next, we will take a look at <strong class="screenText">Explanations</strong>, as shown in <em class="italic">Figure 8.12</em>:</p>
+    <figure class="mediaobject"><img src="../Images/B18406_08_12.png" alt="" role="presentation"/></figure>
+    <p class="packt_figref">Figure 8.12: LIME explanation compared between pinned and selected reviews in the Explanations tab</p>
+    <p class="normal"><em class="italic">Figure 8.12</em> shows how<a id="_idIndexMarker889"/> LIME explanations vary between the pinned and selected datapoint. LIME was previously covered in <em class="chapterRef">Chapter 5</em>, <em class="italic">Local Model-Agnostic Interpretation Methods</em>, and in the context of NLP no less. It’s the same here. Incidentally, although there are at least four methods available, including integrated gradients, only LIME will work with this model. The reason for this is that LIME is a model-agnostic permutation-based method that doesn’t need to access any of the intrinsic parameters of the model, but the rest of the methods aren’t model-agnostic. And if you recall, our <code class="inlineCode">GEModel</code> doesn’t expose any of the intrinsic parameters. If we wanted to leverage gradient-based methods like IG within LIT, we would need to not use the pipeline and then specify the input and output in such a way that token embeddings are exposed. There are some examples on the LIT website that can help you accomplish this.</p>
+    <p class="normal">Next, we will take a look at the <strong class="screenText">Metrics</strong> tab, as seen in <em class="italic">Figure 8.13</em>:</p>
+    <figure class="mediaobject"><img src="../Images/B18406_08_13.png" alt="" role="presentation"/></figure>
+    <p class="packt_figref">Figure 8.13: Confusion Matrix in the Metrics tab</p>
+    <p class="normal">In <em class="italic">Figure 8.13</em>, in the <strong class="screenText">Metrics</strong> panel, there usually would be informative metrics for the entire dataset, the selection you have made, and any additional facets you may define. However, if you expand the tab, you’ll always see 100% accuracy for this dataset because there’s no ground truth. Perhaps the <strong class="screenText">Confusion</strong> <strong class="screenText">Matrix</strong> panel to the right is more informative in this case because we can see a cross tab between labels and rating, or labels and positive, since we defined both rating and positive as <code class="inlineCode">CategoryLabel</code>s. Please note that, technically, it’s not a confusion matrix because it doesn’t compare a predicted sentiment label against the corresponding true label, but you can see how much agreement there is between the predicted label and the rating.</p>
+    <p class="normal">Finally, let’s examine<a id="_idIndexMarker890"/> the <strong class="screenText">Counterfactuals</strong> tab, depicted in <em class="italic">Figure 8.14</em>:</p>
+    <figure class="mediaobject"><img src="../Images/B18406_08_14.png" alt="" role="presentation"/></figure>
+    <p class="packt_figref">Figure 8.14: Generating ablation flip counterfactuals in the Counterfactuals tab</p>
+    <p class="normal">The<a id="_idIndexMarker891"/> <strong class="screenText">Counterfactuals</strong> tab in <em class="italic">Figure 8.14</em> provides several methods to change the input in such a way that the predicted label is modified. Not all methods will work with <code class="inlineCode">GEModel</code>, given how some counterfactual methods are model-agnostic and others require intrinsic parameters. Here, we use ablation flip, a model-agnostic method, to ablate (remove) tokens from the inputs. Ablation flip simply tries dropping tokens from the input to figure out which one changes the prediction. As you can see, the first one removed “Not” from “review,” and the second removed “impressed.”</p>
+    <p class="normal">With counterfactuals, you can test that the subword tokens in te ##rri ##fic (as depicted in <em class="italic">Figure 8.9</em>) indeed cause ambiguity when they are added and ablated in many different contexts. For instance, you can remove one token at a time from te ##rri ##fic from a review that is deemed to have a neutral or negative sentiment by the model, seeing if the prediction changes in a positive direction. You can also replace all three tokens with a synonym like “magnificent.” </p>
+    <h1 id="_idParaDest-227" class="heading-1">Mission accomplished</h1>
+    <p class="normal">It was pretty evident from the summary table (<em class="italic">Figure 8.3</em>), and confirmed with the integrated gradients and, to some degree, the attention visualization exercise, that many of the Ekman emotions are hard to discern from the reviews, with fear, disgust, anger, and sadness producing many mixed sentiment reviews. And these hard ones are all negative emotions.</p>
+    <p class="normal">Also, many emotions in both the GoEmotions and Ekman taxonomy don’t matter as much in the context of a recommendation engine, so it makes sense to consider consolidating some of the negative emotions and, given the ambiguity with the surprise category being sometimes positive and sometimes negative, splitting them to include curiosity and confusion.</p>
+    <p class="normal">Another important finding was that, given the many consistent patterns you found, surprise is not as hard to classify and yet a critical emotion to predict. However, there are good surprises and bad surprises. And given the right training data, a model can likely differentiate both with high precision. We can ensure that tokenization never separates words that convey emotions for the training corpus.</p>
+    <h1 id="_idParaDest-228" class="heading-1">Summary</h1>
+    <p class="normal">After reading this chapter, you should understand how to leverage BertViz to visualize transformer models, layers, and attention heads, and how to use Captum’s attribution methods, more specifically integrated gradients, and the Visualization Data Record to see what tokens are responsible for a predicted label. Finally, you should have a solid grasp of how to get started with the LIT. In the next chapter, we will look at interpreting multi-variate time-series models.</p>
+    <h1 id="_idParaDest-229" class="heading-1">Further reading</h1>
+    <ul>
+      <li class="bulletList">Vig, J., 2019, <em class="italic">A Multiscale Visualization of Attention in the Transformer Model</em>. ArXiv: <a href="https://arxiv.org/abs/1906.05714"><span class="url">https://arxiv.org/abs/1906.05714</span></a></li>
+      <li class="bulletList">Kokhlikyan, N., Miglani, V., Martin, M., Wang, E., Alsallakh, B., Reynolds, J., Melnikov, A., Kliushkina, N., Araya, C., Yan, S., &amp; Reblitz-Richardson, O., 2020, <em class="italic">Captum: A unified and generic model interpretability library for PyTorch</em>. ArXiv: <a href="https://arxiv.org/abs/2009.07896"><span class="url">https://arxiv.org/abs/2009.07896</span></a></li>
+      <li class="bulletList">Tenney, I., Wexler, J., Bastings, J., Bolukbasi, T., Coenen, A., Gehrmann, S., Jiang, E., Pushkarna, M., Radebaugh, C., Reif, E., &amp; Yuan, A., 2020, <em class="italic">The Language Interpretability Tool: Extensible, Interactive Visualizations and Analysis for NLP Models.</em> Conference on Empirical Methods in Natural Language Processing: <a href="https://arxiv.org/abs/2008.05122"><span class="url">https://arxiv.org/abs/2008.05122</span></a></li>
+    </ul>
+    <h1 class="heading-1">Learn more on Discord</h1>
+    <p class="normal">To join the Discord community for this book – where you can share feedback, ask the author questions, and learn about new releases – follow the QR code below:</p>
+    <p class="normal"><a href="Chapter_8.xhtml"><span class="url">https://packt.link/inml</span></a></p>
+    <p class="normal"><img src="../Images/QR_Code107161072033138125.png" alt="" role="presentation"/></p>
+  </div>
+</body></html>
