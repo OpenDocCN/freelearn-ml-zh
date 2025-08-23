@@ -1,0 +1,706 @@
+<html><head></head><body>
+<div id="sbo-rt-content"><div id="_idContainer230">
+<h1 class="chapter-number" id="_idParaDest-123"><a id="_idTextAnchor131"/><a id="_idTextAnchor132"/>6</h1>
+<h1 id="_idParaDest-124"><a id="_idTextAnchor133"/>SageMaker Training and Debugging Solutions</h1>
+<p>In <a href="B18638_02.xhtml#_idTextAnchor041"><em class="italic">Chapter 2</em></a>, <em class="italic">Deep Learning AMIs</em>, and <a href="B18638_03.xhtml#_idTextAnchor060"><em class="italic">Chapter 3</em></a>, <em class="italic">Deep Learning Containers</em>, we performed our initial ML training experiments inside EC2 instances. We took note of the cost per hour of running these EC2 instances as there are some cases where we would need to use the more expensive instance types (such as the <strong class="source-inline">p2.8xlarge</strong> instance at approximately <em class="italic">$7.20 per hour</em>) to run our ML training jobs and workloads. To manage and reduce the overall cost of running ML workloads using these EC2 instances, we discussed a few cost optimization strategies, including manually turning off these instances after the training job has finished. </p>
+<p>At this point, you might be wondering if it is possible to automate the following processes: </p>
+<ul>
+<li><em class="italic">Launching the EC2 instances that will run the ML training jobs</em> </li>
+<li><em class="italic">Uploading the model artifacts of the trained ML model to a storage location (such as an S3 bucket) after model training</em></li>
+<li><em class="italic">Deleting the EC2 instances once the training job has been completed</em> </li>
+</ul>
+<p>The good news is that this is possible using automated scripts! Once a major portion of this process has been automated, we can focus more on preparing the scripts used to train our ML model. We can write our own set of automation scripts; however, I would recommend that you do <em class="italic">NOT</em> reinvent the wheel since AWS has already automated this process for us in <strong class="bold">Amazon SageMaker</strong>! </p>
+<p>SageMaker has a lot of capabilities and features that help data scientists and ML practitioners perform ML experiments and deployments in the AWS cloud with ease. In the previous chapters, we were able to take a quick look at some of these capabilities, including <strong class="bold">SageMaker Canvas</strong>, <strong class="bold">SageMaker Autopilot</strong>, and <strong class="bold">SageMaker Data Wrangler</strong>. In this chapter, we will dive deeper into its capabilities and features that focus on training ML models inside the managed infrastructure resources in AWS. You would be surprised that it only takes a few additional configuration parameters to enable certain training techniques and solutions such as <strong class="bold">Network Isolation</strong>, <strong class="bold">Distributed Training</strong>, <strong class="bold">Managed Spot Training</strong>, <strong class="bold">Checkpointing</strong>, and <strong class="bold">Incremental Training</strong>. If this is your first time encountering these concepts and techniques, do not worry as we will discuss these in more detail in this chapter.</p>
+<p>In this chapter, we will cover the following topics:</p>
+<ul>
+<li>Getting started with the SageMaker Python SDK</li>
+<li>Preparing the essential prerequisites</li>
+<li>Training an image classification model with the SageMaker Python SDK</li>
+<li>Using the Debugger Insights Dashboard</li>
+<li>Utilizing Managed Spot Training and checkpoints</li>
+<li>Cleaning up</li>
+</ul>
+<p>Before we proceed with the hands-on solutions in this chapter, we’ll start by having a quick discussion on how we will use the <strong class="bold">SageMaker Python SDK</strong> to help us utilize and work with the different capabilities and features of the SageMaker service.</p>
+<h1 id="_idParaDest-125"><a id="_idTextAnchor134"/>Technical requirements</h1>
+<p>Before we start, we must have the following ready:</p>
+<ul>
+<li>A web browser (preferably Chrome or Firefox)</li>
+<li>Access to the AWS account that was used in the first few chapters of this book</li>
+</ul>
+<p>The Jupyter notebooks, source code, and other files used for each chapter are available in this book’s GitHub repository: https://github.com/PacktPublishing/Machine-Learning-Engineering-on-AWS.</p>
+<p class="callout-heading">Important Note</p>
+<p class="callout">It is recommended to use an IAM user with limited permissions instead of the root account when running the examples in this book. We will discuss this, along with other security best practices, in detail in <a href="B18638_09.xhtml#_idTextAnchor187"><em class="italic">Chapter 9</em></a>, <em class="italic">Security, Governance, and Compliance Strategies</em>. If you are just starting to use AWS, you may proceed with using the root account in the meantime.</p>
+<h1 id="_idParaDest-126"><a id="_idTextAnchor135"/>Getting started with the SageMaker Python SDK</h1>
+<p>The <strong class="bold">SageMaker Python SDK</strong> is a library that allows ML practitioners to train and deploy ML models <a id="_idIndexMarker566"/>using the different features and capabilities of SageMaker. It provides several high-level abstractions such as <strong class="bold">Estimators</strong>, <strong class="bold">Models</strong>, <strong class="bold">Predictors</strong>, <strong class="bold">Sessions</strong>, <strong class="bold">Transformers</strong>, and <strong class="bold">Processors</strong>, all of which <a id="_idIndexMarker567"/>encapsulate <a id="_idIndexMarker568"/>and map to specific ML processes <a id="_idIndexMarker569"/>and entities. These <a id="_idIndexMarker570"/>abstractions allow data scientists and <a id="_idIndexMarker571"/>ML engineers to manage ML experiments and deployments with just a few lines of code. At the <a id="_idIndexMarker572"/>same time, infrastructure management is handled by SageMaker already, so all we need to do is configure these high-level abstractions with the correct set of parameters. </p>
+<p>Note that it is also possible to use the different capabilities and features <a id="_idIndexMarker573"/>of SageMaker using the <strong class="bold">boto3</strong> library. Compared to using the SageMaker Python SDK, we would be working with significantly more lines of code with boto3 since we would have to take care of the little details when using the low-level clients and functions available in this library. It is recommended to use the SageMaker Python SDK whenever possible and just use the boto3 library for the more advanced scenarios not directly supported by the SageMaker Python SDK.</p>
+<p class="callout-heading">Note</p>
+<p class="callout">If you are interested in learning more about how to use both libraries together when handling more advanced use cases, check out <a href="B18638_08.xhtml#_idTextAnchor172"><em class="italic">Chapter 8</em></a>, <em class="italic">Model Monitoring and Management Solutions</em>.</p>
+<p>The following diagram shows that training and deploying an ML model using the SageMaker Python SDK involves only a few lines of code: </p>
+<div>
+<div class="IMG---Figure" id="_idContainer196">
+<img alt="Figure 6.1 – SageMaker Python SDK " height="695" src="image/B18638_06_001.jpg" width="1132"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.1 – SageMaker Python SDK</p>
+<p>Here, we use the <strong class="bold">SageMaker Python SDK</strong> to do the following:</p>
+<ol>
+<li>We start <a id="_idIndexMarker574"/>by initializing an <strong class="source-inline">Estimator</strong> object and then using its <strong class="source-inline">set_hyperparameters()</strong> method to specify the desired combination of hyperparameter values. Here, we can specify whether to use a built-in algorithm or a custom one (using scripts and custom Docker container images) by providing the corresponding configuration parameter values while initializing the <strong class="source-inline">Estimator</strong> object.</li>
+<li>Next, we call the <strong class="source-inline">fit()</strong> method, which runs a training job with the desired set of properties, as defined in the <strong class="source-inline">Estimator</strong> object configuration. This training job would run inside dedicated instances and once the training job completes, these instances would be terminated automatically. </li>
+<li>Finally, we use the <strong class="source-inline">deploy()</strong> method to deploy the trained model to a dedicated real-time inference endpoint prepared for us automatically by SageMaker. Then, we use the <strong class="source-inline">predict()</strong> method to perform sample predictions on the inference endpoint. </li>
+</ol>
+<p>This is just one of the ways to use the <strong class="bold">SageMaker Python SDK</strong> when training and deploying our ML models in the AWS cloud. If we already have a pre-trained model available for use (for example, after downloading a prebuilt ML model from a repository of models), we may skip the training step altogether and deploy the model right away using the following block of code:</p>
+<pre class="source-code">from sagemaker.model import Model 
+model = Model(model_data=<strong class="bold">model_data</strong>, ...)
+model.deploy(<strong class="bold">&lt;insert configuration parameters&gt;</strong>)</pre>
+<p>Of course, the <a id="_idIndexMarker575"/>preceding block of code assumes that the model artifacts have been uploaded into an S3 bucket already and that the <strong class="source-inline">model_data</strong> variable points to where these model artifacts or files are stored.</p>
+<p class="callout-heading">Note</p>
+<p class="callout">If you are interested in learning more about how to perform deployments directly in SageMaker using pre-trained models, check out <a href="B18638_07.xhtml#_idTextAnchor151"><em class="italic">Chapter 7</em></a>, <em class="italic">SageMaker Deployment Solutions</em>. </p>
+<p>If we want to utilize the <strong class="bold">Automatic Model Tuning</strong> capability of SageMaker and run multiple training jobs <a id="_idIndexMarker576"/>using different combinations of hyperparameters automatically when looking for the “best model,” then we just need to run a couple of lines of code, similar to what we have in the following code block:</p>
+<pre class="source-code"><strong class="bold">estimator</strong> = Estimator(...)
+estimator.set_hyperparameters(...)
+<strong class="bold">hyperparameter_ranges</strong> = {...}
+<strong class="bold">objective_metric_name</strong> = "&lt;insert target metric&gt;"
+hyperparameter_tuner = <strong class="bold">HyperparameterTuner</strong>(
+    <strong class="bold">estimator</strong>, 
+    <strong class="bold">objective_metric_name</strong>, 
+    <strong class="bold">hyperparameter_ranges</strong>, 
+    max_jobs=20, 
+    max_parallel_jobs=3
+)
+hyperparameter_tuner.<strong class="bold">fit</strong>(...)</pre>
+<p>Here, SageMaker does all the heavy lifting for us and all we need to worry about are the configuration parameters <a id="_idIndexMarker577"/>needed to run the hyperparameter tuning job. It would have taken us a few weeks (or maybe even a few months!) if we were to build this ourselves using custom automation scripts.</p>
+<p class="callout-heading">Note</p>
+<p class="callout">If you are interested in <a id="_idIndexMarker578"/>learning more about how to utilize the Automatic Model Tuning capability of SageMaker using the <strong class="bold">SageMaker Python SDK</strong>, then check out <a href="B18638_06.xhtml#_idTextAnchor132"><em class="italic">Chapter 6</em></a>, <em class="italic">SageMaker Training and Debugging Solutions,</em> of the book <em class="italic">Machine Learning with Amazon SageMaker Cookbook</em>.</p>
+<p>There are several options and features available when training models using Amazon SageMaker. These include network isolation, distributed training, managed spot training, checkpointing, incremental training, and more. Similar to the automatic model tuning capability discussed earlier, utilizing and enabling these would simply involve just a few additional lines of code. If you are wondering what these are, do not worry –we will discuss each of these in detail as we work on the hands-on solutions in this chapter. </p>
+<p>Now that we have a better understanding of how the <strong class="bold">SageMaker Python SDK</strong> helps us train and deploy ML models in the cloud, let’s proceed with creating a service limit request!</p>
+<h1 id="_idParaDest-127"><a id="_idTextAnchor136"/>Preparing the essential prerequisites</h1>
+<p>In this section, we will ensure that the following prerequisites are ready before proceeding with the hands-on solutions of this chapter:</p>
+<ul>
+<li>We have a service limit increase to run SageMaker training jobs using the <strong class="source-inline">ml.p2.xlarge</strong> instance (SageMaker Training)</li>
+<li>We have a service limit increase to run SageMaker training jobs using the <strong class="source-inline">ml.p2.xlarge</strong> instance (SageMaker Managed Spot Training)</li>
+</ul>
+<p>If you are wondering why we are using <strong class="source-inline">ml.p2.xlarge</strong> instances in this chapter, that’s because we <a id="_idIndexMarker579"/>are required to use one of the supported instance types for the <strong class="bold">Image Classification Algorithm</strong>, as shown in the following screenshot:</p>
+<div>
+<div class="IMG---Figure" id="_idContainer197">
+<img alt="Figure 6.2 – EC2 Instance Recommendation for the image classification algorithm " height="519" src="image/B18638_06_002.jpg" width="977"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.2 – EC2 Instance Recommendation for the image classification algorithm</p>
+<p>As we can see, we can use <strong class="source-inline">ml.p2.xlarge</strong>, <strong class="source-inline">ml.p2.8xlarge</strong>, <strong class="source-inline">ml.p2.16xlarge</strong>, <strong class="source-inline">ml.p3.2xlarge</strong>, <strong class="source-inline">ml.p3.8xlarge</strong>, and <strong class="source-inline">ml.p3.16xlarge</strong> (at the time of writing) when running training jobs using the Image Classification Algorithm. </p>
+<p class="callout-heading">Note</p>
+<p class="callout">Check <a id="_idIndexMarker580"/>out <a href="https://docs.aws.amazon.com/sagemaker/latest/dg/image-classification.xhtml">https://docs.aws.amazon.com/sagemaker/latest/dg/image-classification.xhtml</a> for more information about this topic.</p>
+<h2 id="_idParaDest-128"><a id="_idTextAnchor137"/>Creating a service limit increase request</h2>
+<p>In this chapter, we will <a id="_idIndexMarker581"/>train an Image Classification model using multiple <strong class="source-inline">ml.p2.xlarge</strong> instances. Before we can use this type of instance to <a id="_idIndexMarker582"/>train ML models, we will need to request for the service quota (or service limit) to be increased through the <strong class="bold">AWS Support console</strong>. In most cases, the limit for this type of instance is set to <strong class="source-inline">0</strong>; we would encounter a <strong class="source-inline">ResourceLimitExceeded</strong> error if we were to run training jobs using <strong class="source-inline">ml.p2.xlarge</strong> instances. </p>
+<p class="callout-heading">Important Note</p>
+<p class="callout">This chapter assumes that we are using the <strong class="bold">Oregon</strong> (<strong class="source-inline">us-west-2</strong>) region when using services to manage and create different types of resources. You may use a different region but make sure to make any adjustments needed in case certain resources need to be transferred to the region of choice.</p>
+<p>Follow these steps to create a support case and request for the SageMaker training instance count limits to be increased:</p>
+<ol>
+<li value="1">Navigate to the <strong class="bold">Support</strong> console by doing the following:<ol><li>Typing <strong class="source-inline">support</strong> in the search bar of the AWS Management Console.</li>
+<li>Selecting <strong class="bold">Support</strong> from the list of results under <strong class="bold">Services</strong>.</li>
+</ol></li>
+<li>Locate and click the <strong class="bold">Create case</strong> button.</li>
+<li>On the <strong class="bold">Create case</strong> page, select <strong class="bold">Service limit increase</strong> from the list of options.</li>
+<li>Specify the following configuration under <strong class="bold">Case details</strong>:<ul><li><strong class="bold">Limit type</strong>: <strong class="source-inline">SageMaker Training Jobs</strong></li>
+</ul></li>
+<li>Under <strong class="bold">Requests</strong>, specify the following configuration values for <strong class="bold">Request 1</strong>:<ul><li><strong class="bold">Region</strong>: <strong class="source-inline">US West (Oregon)</strong></li>
+<li><strong class="bold">Resource Type</strong>: <strong class="source-inline">SageMaker Training</strong></li>
+<li><strong class="bold">Limit</strong>: <strong class="source-inline">ml.p2.xlarge</strong></li>
+<li><strong class="bold">New limit value</strong>: <strong class="source-inline">2</strong></li>
+</ul></li>
+</ol>
+<p class="callout-heading">Note</p>
+<p class="callout">Note that increasing the service limit for the SageMaker training resource type does not automatically increase the service limit for the SageMaker Managed Spot Training resource type.</p>
+<ol>
+<li value="6">Click <strong class="bold">Add another request</strong>.</li>
+<li>Under <strong class="bold">Requests</strong>, specify <a id="_idIndexMarker583"/>the following configuration values for <strong class="bold">Request 2</strong>:<ul><li><strong class="bold">Region</strong>: <strong class="source-inline">US West (Oregon)</strong></li>
+<li><strong class="bold">Resource Type</strong>: <strong class="source-inline">SageMaker Managed Spot Training</strong></li>
+<li><strong class="bold">Limit</strong>: <strong class="source-inline">ml.p2.xlarge</strong></li>
+<li><strong class="bold">New limit value</strong>: <strong class="source-inline">2</strong></li>
+</ul></li>
+<li>Under <strong class="bold">Case description</strong>, specify the following use case description in the text area provided:<pre class="source-code">Good day, </pre><pre class="source-code">I am planning to run a SageMaker training job using 2 x ml.p2.xlarge instances to train an Image Classification model. After this I am planning to use Managed Spot Training to run a similar example and will need 2 x ml.p2.xlarge (spot) instances. Hope these 2 limit increase requests can be processed as soon as possible in the <strong class="bold">Oregon (us-west-2)</strong> region.</pre><pre class="source-code">You can find the relevant notebooks here: https://github.com/PacktPublishing/Machine-Learning-Engineering-on-AWS</pre></li>
+</ol>
+<p class="list-inset">Make sure that you replace <strong class="source-inline">Oregon (us-west-2)</strong> with the appropriate region if you are planning to run your ML experiments in another region.  </p>
+<ol>
+<li value="9">Scroll down to <strong class="bold">Contact options</strong> and select <strong class="bold">Web</strong> (or <strong class="bold">Chat</strong> if available) from the list of <a id="_idIndexMarker584"/>options under <strong class="bold">Contact methods</strong>.</li>
+<li>Finally, click the <strong class="bold">Submit</strong> button.</li>
+</ol>
+<p>Note that it may take around 24 to 48 hours for the limit increase request to get approved by the <strong class="bold">AWS Support team</strong>. While waiting, you may browse through the contents and concepts explained in this chapter. This will help you have a better idea of the capabilities of SageMaker before you work on the hands-on solutions. You may also skip this chapter and proceed with <a href="B18638_07.xhtml#_idTextAnchor151"><em class="italic">Chapter 7</em></a>, <em class="italic">SageMaker Deployment Solutions</em>, while waiting for the limit increase to be approved.</p>
+<h1 id="_idParaDest-129"><a id="_idTextAnchor138"/>Training an image classification model with the SageMaker Python SDK</h1>
+<p>As mentioned in the <em class="italic">Getting started with the SageMaker Python SDK</em> section, we can use <a id="_idIndexMarker585"/>built-in <a id="_idIndexMarker586"/>algorithms or custom algorithms (using scripts and custom Docker container images) when performing training experiments in SageMaker. </p>
+<p>Data scientists and ML practitioners can get started with training and deploying models in SageMaker quickly using one or more of the built-in algorithms prepared by the AWS team. There are a variety of built-in algorithms to choose from and each of these algorithms has been provided to help ML practitioners solve specific business and ML problems. Here are some of the built-in algorithms available, along with some of the use cases and problems these can solve:</p>
+<ul>
+<li><strong class="bold">DeepAR Forecasting</strong>: Time-series forecasting</li>
+<li><strong class="bold">Principal Component Analysis</strong>: Dimensionality reduction</li>
+<li><strong class="bold">IP Insights</strong>: IP anomaly detection</li>
+<li><strong class="bold">Latent Dirichlet Allocation (LDA)</strong>: Topic modeling</li>
+<li><strong class="bold">Sequence-to-Sequence</strong>: Text summarization</li>
+<li><strong class="bold">Semantic Segmentation</strong>: Computer vision</li>
+</ul>
+<p>The second option involves using SageMaker <strong class="bold">script mode</strong>, where we import a custom training script, which makes use of a deep learning framework (such as <strong class="bold">TensorFlow</strong>, <strong class="bold">PyTorch</strong>, or <strong class="bold">MXNet</strong>) to <a id="_idIndexMarker587"/>train a model. Here, the <a id="_idIndexMarker588"/>custom training script <a id="_idIndexMarker589"/>will run inside one of the pre-built containers, which includes <strong class="bold">AWS Deep Learning Containers</strong>, as discussed in <a href="B18638_03.xhtml#_idTextAnchor060"><em class="italic">Chapter 3</em></a>, <em class="italic">Deep Learning Containers</em>. That <a id="_idIndexMarker590"/>said, all we need to worry about when choosing this option is preparing the training script since most of the dependencies are already installed inside the container environment where these scripts will run. </p>
+<p>The third option involves building and using a custom container image for training ML models in SageMaker. This option gives us the highest level of flexibility as we have full control over the environment where our custom training scripts will run.</p>
+<p class="callout-heading">Note</p>
+<p class="callout"><em class="italic">Which option is best for us?</em> If we want to proceed with training an ML model without having to prepare a custom script along with a custom container image, the best option would be to use SageMaker’s built-in algorithms. If we are trying to port our custom script to SageMaker, which makes use of open source ML libraries and frameworks (such as scikit-learn, PyTorch, and TensorFlow) to train a model, then the best option would be to use SageMaker’s script mode. If we need a bit more flexibility, then we may choose the option where we use our own custom container image instead.</p>
+<p>Now that we have a better idea of what options are available when training ML models in SageMaker, let’s proceed with discussing what we will do in the hands-on portion of this <a id="_idIndexMarker591"/>section. In this <a id="_idIndexMarker592"/>section, we will use the built-in <strong class="bold">Image Classification Algorithm</strong> to train a model that can recognize the labels from a given set of images. Training and deploying an ML model in SageMaker is straightforward. We start with a labeled training dataset and use it as input to train an ML model. We perform the training step by running a training job using two <strong class="source-inline">ml.p2.xlarge</strong> instances. To test the model we trained, we will deploy the model and <a id="_idIndexMarker593"/>launch an <a id="_idIndexMarker594"/>inference endpoint inside an <strong class="source-inline">ml.m5.xlarge</strong> instance. This inference endpoint is then used to perform sample predictions using several test images.</p>
+<p>As shown in <a id="_idIndexMarker595"/>the following diagram, we can utilize <strong class="bold">distributed training</strong> when performing the training steps:</p>
+<div>
+<div class="IMG---Figure" id="_idContainer198">
+<img alt="Figure 6.3 – Training and deploying an image classification model " height="628" src="image/B18638_06_003.jpg" width="1124"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.3 – Training and deploying an image classification model</p>
+<p>Distributed Training can help reduce the training time through the use of multiple instances instead of <a id="_idIndexMarker596"/>one. Since we are using a built-in algorithm, all we need to do is configure the training job to use two or more instances to enable distributed training. </p>
+<p>With these aspects in mind, let’s proceed with creating a new notebook in <strong class="bold">SageMaker Studio</strong>. We will use this to run the blocks of code to train our Image Classification model.</p>
+<h2 id="_idParaDest-130"><a id="_idTextAnchor139"/>Creating a new Notebook in SageMaker Studio</h2>
+<p>Start by <a id="_idIndexMarker597"/>opening SageMaker Studio and <a id="_idIndexMarker598"/>creating a new directory named <strong class="source-inline">CH06</strong>. Then, create a new <strong class="bold">Jupyter notebook</strong> and save it inside this directory.</p>
+<p class="callout-heading">Note</p>
+<p class="callout">Make sure that you have completed the hands-on solutions in the <em class="italic">Getting started with SageMaker and SageMaker Studio</em> section of <a href="B18638_01.xhtml#_idTextAnchor017"><em class="italic">Chapter 1</em></a>, <em class="italic">Introduction to ML Engineering on AWS</em>, before proceeding.</p>
+<p>Follow these <a id="_idIndexMarker599"/>steps to launch SageMaker Studio <a id="_idIndexMarker600"/>and create the new notebook that will be used to run the Python scripts in this chapter:</p>
+<ol>
+<li value="1">Navigate to SageMaker Studio by doing the following:<ol><li>Typing <strong class="source-inline">sagemaker studio</strong> in the search bar of the AWS Management Console.</li>
+<li>Selecting <strong class="bold">SageMaker Studio</strong> from the list of results under <strong class="bold">Features</strong>.</li>
+</ol></li>
+</ol>
+<p class="callout-heading">Important Note</p>
+<p class="callout">This chapter assumes that we are using the <strong class="bold">Oregon</strong> (<strong class="source-inline">us-west-2</strong>) region when using services to manage and create different types of resources. You may use a different region but make sure to make any adjustments needed if certain resources need to be transferred to the region of choice.</p>
+<ol>
+<li value="2">Next, click <strong class="bold">Studio</strong> under <strong class="bold">SageMaker Domain</strong> in the sidebar.</li>
+<li>Click <strong class="bold">Launch app</strong>, as highlighted in the following screenshot. Select <strong class="bold">Studio</strong> from the list of dropdown options:</li>
+</ol>
+<div>
+<div class="IMG---Figure" id="_idContainer199">
+<img alt="Figure 6.4 – Opening SageMaker Studio " height="447" src="image/B18638_06_004.jpg" width="1018"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.4 – Opening SageMaker Studio</p>
+<p class="list-inset">This will redirect you to SageMaker Studio. Wait a few seconds for the interface to load.</p>
+<ol>
+<li value="4">Right-click <a id="_idIndexMarker601"/>on the empty space in <a id="_idIndexMarker602"/>the <strong class="bold">File Browser</strong> sidebar pane to open a context menu similar to the following: </li>
+</ol>
+<div>
+<div class="IMG---Figure" id="_idContainer200">
+<img alt="Figure 6.5 – Creating a new folder " height="366" src="image/B18638_06_005.jpg" width="859"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.5 – Creating a new folder</p>
+<p class="list-inset">Select <strong class="bold">New Folder</strong> to create a new folder inside the current directory. Name it <strong class="source-inline">CH06</strong>.</p>
+<ol>
+<li value="5">Navigate to the <strong class="source-inline">CH06</strong> directory by double-clicking the corresponding folder name in the sidebar.</li>
+<li>Create a <a id="_idIndexMarker603"/>new notebook by <a id="_idIndexMarker604"/>clicking the <strong class="bold">File</strong> menu and choosing <strong class="bold">notebook</strong> from the list of options under the <strong class="bold">New</strong> submenu:</li>
+</ol>
+<div>
+<div class="IMG---Figure" id="_idContainer201">
+<img alt="Figure 6.6 – Creating a new Notebook " height="283" src="image/B18638_06_006.jpg" width="843"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.6 – Creating a new Notebook</p>
+<p class="list-inset">Here, we can see other options as well, including creating a new <strong class="bold">Console</strong>, <strong class="bold">Data Wrangler Flow</strong>, <strong class="bold">Terminal</strong>, <strong class="bold">Text File</strong>, and more. </p>
+<ol>
+<li value="7">In the <strong class="bold">Set up notebook environment</strong> window, specify the following configuration values:<ul><li><strong class="bold">Image</strong>: <strong class="source-inline">Data Science</strong> (option found under the Sagemaker image)</li>
+<li><strong class="bold">Kernel</strong>: <strong class="source-inline">Python 3</strong></li>
+<li><strong class="bold">Start-up script</strong>: <strong class="source-inline">No script</strong></li>
+</ul></li>
+<li>Click the <strong class="bold">Select</strong> button. </li>
+</ol>
+<p class="callout-heading">Note</p>
+<p class="callout">Wait for the kernel to start. This step may take around 3 to 5 minutes while an ML instance is being provisioned to run the Jupyter notebook cells.</p>
+<ol>
+<li value="9">Right-click on the tab’s name, as highlighted in the following screenshot: </li>
+</ol>
+<div>
+<div class="IMG---Figure" id="_idContainer202">
+<img alt="Figure 6.7 – Renaming a notebook " height="278" src="image/B18638_06_007.jpg" width="909"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.7 – Renaming a notebook</p>
+<p class="list-inset">Select <strong class="bold">Rename Notebook…</strong> from the list of options in the context menu.</p>
+<ol>
+<li value="10">In the <strong class="bold">Rename File</strong> popup, specify <strong class="source-inline">PART01.ipynb</strong> under <strong class="bold">New Name</strong>. Then, click the <strong class="bold">Rename</strong> button.</li>
+<li>Type the <a id="_idIndexMarker605"/>following in the first <a id="_idIndexMarker606"/>cell of the Notebook:<pre class="source-code">print('Hello')</pre></li>
+<li>Click the <strong class="bold">Run the selected cell and advance</strong> button, as highlighted in the following screenshot. Alternatively, you can hold <strong class="bold">SHIFT</strong> and press <strong class="bold">ENTER</strong> to run the selected cell and create a new cell automatically:</li>
+</ol>
+<div>
+<div class="IMG---Figure" id="_idContainer203">
+<img alt="Figure 6.8 – Running a selected cell " height="310" src="image/B18638_06_008.jpg" width="1045"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.8 – Running a selected cell</p>
+<p class="list-inset">This should <a id="_idIndexMarker607"/>yield an output <a id="_idIndexMarker608"/>of <strong class="source-inline">Hello</strong>, which should show up under the cell.</p>
+<p class="callout-heading">Note</p>
+<p class="callout">If no output is displayed, this means that either no kernel is running, or the kernel is still starting. Once the kernel is ready, you can run the cells again.</p>
+<p>Now that our notebook is ready, we will create a new cell for each block of code in the succeeding sections.</p>
+<h2 id="_idParaDest-131"><a id="_idTextAnchor140"/>Downloading the training, validation, and test datasets</h2>
+<p>At this <a id="_idIndexMarker609"/>point, you might be wondering what dataset we will use to train <a id="_idIndexMarker610"/>our ML model. To answer your question, we will use the <strong class="bold">MNIST dataset</strong>, which <a id="_idIndexMarker611"/>is a large collection of images of handwritten digits. An <a id="_idIndexMarker612"/>example of this can be seen in the following diagram:</p>
+<div>
+<div class="IMG---Figure" id="_idContainer204">
+<img alt="Figure 6.9 – MNIST dataset " height="474" src="image/B18638_06_009.jpg" width="1425"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.9 – MNIST dataset</p>
+<p>Here, we can see that each image in the MNIST dataset has a class that corresponds to a number between <strong class="source-inline">0</strong> and <strong class="source-inline">9</strong>. That said, there are a total of 10 classes and each image in this dataset falls under exactly one class. </p>
+<p class="callout-heading">Note</p>
+<p class="callout">The MNIST dataset contains thousands of images of handwritten numbers. The usual challenge involves <a id="_idIndexMarker613"/>correctly identifying which number from 0 to 9 maps to the handwritten number displayed (in the image). It might be trivial for us humans to classify these handwritten numbers correctly. However, it’s not straightforward for machines since they would have to process the pixel data of the images and establish patterns of how the numbers are represented in the images. To get machines to properly classify these images, we’ll use deep learning (using the image classification algorithm of SageMaker)! </p>
+<p>To make <a id="_idIndexMarker614"/>our lives easier, we have already prepared the training, validation, and <a id="_idIndexMarker615"/>test sets and stored these inside a ZIP file. Follow <a id="_idIndexMarker616"/>these steps to download this ZIP file and extract the files inside a specified directory:</p>
+<ol>
+<li value="1">Run the following statement to ensure that you have an empty <strong class="source-inline">tmp</strong> directory ready:<pre class="source-code">!rm -rf <strong class="bold">tmp</strong> &amp;&amp; mkdir -p <strong class="bold">tmp</strong></pre></li>
+</ol>
+<p class="list-inset">Here, we use an exclamation point (<strong class="source-inline">!</strong>) before the command so that we can run Terminal commands inside the Jupyter notebook.</p>
+<ol>
+<li value="2">Download the <strong class="source-inline">batch1.zip</strong> file using the <strong class="source-inline">wget</strong> command:<pre class="source-code">!<strong class="bold">wget</strong> -O tmp/<strong class="bold">batch1.zip</strong> https://bit.ly/37zmQeb</pre></li>
+<li>Next, run the following block of code to extract the contents of the <strong class="source-inline">batch1.zip</strong> file inside the <strong class="source-inline">tmp</strong> directory:<pre class="source-code">%%time</pre><pre class="source-code">!cd tmp &amp;&amp; <strong class="bold">unzip batch1.zip</strong> &amp;&amp; rm batch1.zip</pre></li>
+</ol>
+<p class="list-inset">This should yield a set of logs showing the files extracted from the ZIP file:</p>
+<div>
+<div class="IMG---Figure" id="_idContainer205">
+<img alt="Figure 6.10 – Enabling scrolling for the output logs " height="600" src="image/B18638_06_010.jpg" width="1025"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.10 – Enabling scrolling for the output logs</p>
+<p class="list-inset">Right-click <a id="_idIndexMarker617"/>on the empty space near the generated log <a id="_idIndexMarker618"/>messages. This should open a context menu similar to what’s <a id="_idIndexMarker619"/>shown in the preceding screenshot. Select <strong class="bold">Enable Scrolling for Outputs</strong> from the list of options available in the context popup. </p>
+<ol>
+<li value="4">Use the <strong class="source-inline">ls</strong> command to check the extracted files in the current directory: <pre class="source-code">!ls -RF</pre></li>
+</ol>
+<p class="list-inset">We set two flags when using the <strong class="source-inline">ls</strong> command. The first one is the <strong class="source-inline">-R</strong> flag, which lists the directory tree recursively. The second flag is the <strong class="source-inline">-F</strong> flag, which adds a specific character, depending on the type of file: <strong class="source-inline">/</strong> for directories, <strong class="source-inline">*</strong> for executables, <strong class="source-inline">@</strong> for symbolic links, and <strong class="source-inline">|</strong> for FIFO special files.</p>
+<p class="list-inset">Running the <strong class="source-inline">ls</strong> command should give us a set of logs similar to the following:</p>
+<div>
+<div class="IMG---Figure" id="_idContainer206">
+<img alt="Figure 6.11 – Listing the extracted files and folders " height="779" src="image/B18638_06_011.jpg" width="1564"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.11 – Listing the extracted files and folders</p>
+<p class="list-inset">You <a id="_idIndexMarker620"/>should find <a id="_idIndexMarker621"/>five directories <a id="_idIndexMarker622"/>inside the <strong class="source-inline">tmp</strong> directory – <strong class="source-inline">test</strong>, <strong class="source-inline">train</strong>, <strong class="source-inline">train_lst</strong>, <strong class="source-inline">validation</strong>, and <strong class="source-inline">validation_lst</strong>:</p>
+<div>
+<div class="IMG---Figure" id="_idContainer207">
+<img alt="Figure 6.12 – Files and directories extracted from the batch1.zip file " height="590" src="image/B18638_06_012.jpg" width="1024"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.12 – Files and directories extracted from the batch1.zip file</p>
+<p class="list-inset">As shown in the preceding diagram, we should find 10 directories inside the <strong class="source-inline">train</strong> directory. Each of these directories contains several <em class="italic">PNG</em> files with a label <a id="_idIndexMarker623"/>corresponding to the name of the directory <a id="_idIndexMarker624"/>where these files are stored. For example, the PNG files <a id="_idIndexMarker625"/>stored inside the <strong class="source-inline">0</strong> directory have a label of <strong class="source-inline">0</strong>. Inside the <strong class="source-inline">train_lst</strong> directory is the <strong class="source-inline">train.lst</strong> file, which contains a mapping of the labels and the images from the <strong class="source-inline">train</strong> directory (given the specified paths and filenames). We should find a similar set of directories and files inside <strong class="source-inline">validation</strong> and <strong class="source-inline">validation_lst</strong>.</p>
+<ol>
+<li value="5">Next, let’s install <strong class="source-inline">IPyPlot</strong>, which we will use to inspect the images we have extracted from the ZIP file: <pre class="source-code">!pip3 install <strong class="bold">ipyplot</strong></pre></li>
+<li>With <strong class="source-inline">IPyPlot</strong> installed, let’s have a quick look at what our labeled set of images looks like: <pre class="source-code">import ipyplot</pre><pre class="source-code">import glob</pre><pre class="source-code">for i in range(0,10):    </pre><pre class="source-code">    image_files = glob.glob(f"tmp/train/{i}/*.png")</pre><pre class="source-code">    print(f'---{i}---')</pre><pre class="source-code">    ipyplot.<strong class="bold">plot_images</strong>(image_files, </pre><pre class="source-code">                        <strong class="bold">max_images=5</strong>, </pre><pre class="source-code">                        img_width=128)</pre></li>
+</ol>
+<p class="list-inset">This should plot a series of images, similar to the following:</p>
+<div>
+<div class="IMG---Figure" id="_idContainer208">
+<img alt="Figure 6.13 – Using IPyPlot to display a selected number of images " height="713" src="image/B18638_06_013.jpg" width="1650"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.13 – Using IPyPlot to display a selected number of images</p>
+<p class="list-inset">Here, we <a id="_idIndexMarker626"/>can see the differences and variations in the <a id="_idIndexMarker627"/>images of the same group. For one thing, the zeros do not <a id="_idIndexMarker628"/>look alike!</p>
+<p>Feel free to tweak and change the parameter value for <strong class="source-inline">max_images</strong> when calling the <strong class="source-inline">plot_images()</strong> function before proceeding to the next section.</p>
+<p>Now that we have the training, validation, and test datasets ready, let’s proceed with uploading these to an <strong class="bold">Amazon S3</strong> bucket.</p>
+<h2 id="_idParaDest-132"><a id="_idTextAnchor141"/>Uploading the data to S3</h2>
+<p>Note <a id="_idIndexMarker629"/>that we will be working with two different S3 buckets in this <a id="_idIndexMarker630"/>chapter, as shown in the following diagram:</p>
+<div>
+<div class="IMG---Figure" id="_idContainer209">
+<img alt="Figure 6.14 – S3 buckets " height="569" src="image/B18638_06_014.jpg" width="1046"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.14 – S3 buckets</p>
+<p>As we can see, the first S3 bucket will contain the input and output files for the training job in this section. Similarly, the second S3 bucket will contain the input and output files for the training job we’ll run later in the <em class="italic">Utilizing Managed Spot Training and Checkpoints</em> section toward the end of this chapter. In addition to this, we will use a technique called incremental training, where we will use the model generated in this section as a <a id="_idIndexMarker631"/>starting point to train a more accurate model. For now, let’s focus on the first S3 bucket and upload the data that will be used to train our ML model.</p>
+<p>Follow these steps to create an S3 bucket and then upload all the files and folders from the <strong class="source-inline">tmp</strong> directory to the new S3 bucket:</p>
+<ol>
+<li value="1">Specify a unique S3 bucket name and prefix. Make sure that you replace the value of <strong class="source-inline">&lt;INSERT S3 BUCKET NAME HERE&gt;</strong> with a unique S3 bucket name before running the following block of code:<pre class="source-code">s3_bucket = "<strong class="bold">&lt;INSERT S3 BUCKET NAME HERE&gt;</strong>"</pre><pre class="source-code">prefix = "ch06"</pre></li>
+</ol>
+<p class="list-inset">It is recommended not to use any of the S3 buckets created in the previous chapters. So, the S3 bucket name here should be for a bucket that doesn’t exist yet.</p>
+<ol>
+<li value="2">Let’s use the <strong class="source-inline">glob()</strong> function to prepare a list containing all the images inside the <strong class="source-inline">tmp/train</strong> directory. Then, use the <strong class="source-inline">len()</strong> function to count the number of items in the list generated:<pre class="source-code">training_samples = glob.glob(f"tmp/train/*/*.png")</pre><pre class="source-code">len(training_samples)</pre></li>
+</ol>
+<p class="list-inset">This should <a id="_idIndexMarker632"/>give us a value of <strong class="source-inline">4000</strong>, which <a id="_idIndexMarker633"/>is the total number of <strong class="source-inline">.png</strong> files inside the <strong class="source-inline">tmp/train</strong> directory.</p>
+<ol>
+<li value="3">Use the <strong class="source-inline">aws s3 mb</strong> command to create a new Amazon S3 bucket. Here, <strong class="source-inline">{s3_bucket}</strong> automatically gets replaced with the value of <strong class="source-inline">s3_bucket</strong> from the previous code cells written in Python:<pre class="source-code">!<strong class="bold">aws s3 mb</strong> s3://{s3_bucket}</pre></li>
+</ol>
+<p class="list-inset">You should see a success log message similar to <strong class="source-inline">make_bucket: &lt;S3 bucket name&gt;</strong> if the S3 bucket creation step is successful. Note that this step may fail if the bucket already exists before using this command.</p>
+<ol>
+<li value="4">Next, use the AWS CLI to upload the contents of the <strong class="source-inline">tmp</strong> directory to the target S3 path:<pre class="source-code">%%time</pre><pre class="source-code">!<strong class="bold">aws s3 cp</strong> tmp/.  s3://{s3_bucket}/{prefix}/ --recursive</pre></li>
+</ol>
+<p class="list-inset">The first parameter of the <strong class="source-inline">aws s3 cp</strong> command is the source (<strong class="source-inline">tmp/.</strong>), while the second parameter is the target destination (S3 path). Here, we use the <strong class="source-inline">--recursive</strong> flag to copy all the files from the source to the destination recursively:</p>
+<div>
+<div class="IMG---Figure" id="_idContainer210">
+<img alt="Figure 6.15 – Copying the files and directories from the tmp directory to the S3 bucket " height="467" src="image/B18638_06_015.jpg" width="1037"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.15 – Copying the files and directories from the tmp directory to the S3 bucket</p>
+<p class="list-inset">As shown in the preceding diagram, the <strong class="source-inline">aws s3 cp</strong> command will copy all the contents <a id="_idIndexMarker634"/>from the <strong class="source-inline">tmp</strong> directory of the <a id="_idIndexMarker635"/>SageMaker Studio notebook to the new S3 bucket. This includes all the files and directories inside the <strong class="source-inline">train</strong>, <strong class="source-inline">train_lst</strong>, <strong class="source-inline">validation</strong>, <strong class="source-inline">validation_lst</strong>, and <strong class="source-inline">test</strong> directories.</p>
+<p class="callout-heading">Note</p>
+<p class="callout">This step should take about 1 to 2 minutes to complete. Feel free to grab a cup of coffee or tea while waiting!</p>
+<p>Once the upload operation has been completed, we can start training an ML model! </p>
+<h2 id="_idParaDest-133"><a id="_idTextAnchor142"/>Using the SageMaker Python SDK to train an ML model</h2>
+<p>In the previous <a id="_idIndexMarker636"/>section, we uploaded the <a id="_idIndexMarker637"/>training and validation datasets to an Amazon S3 bucket. These datasets will be used as input when running the training job in this section. Of course, there are a few more input parameters we need to prepare before we can configure and run a SageMaker training job: </p>
+<div>
+<div class="IMG---Figure" id="_idContainer211">
+<img alt="Figure 6.16 – Requirements when initializing an Estimator object " height="586" src="image/B18638_06_016.jpg" width="1001"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.16 – Requirements when initializing an Estimator object</p>
+<p>As shown in the preceding diagram, we need to have a few configuration parameter values, along with the hyperparameter configuration values, ready when initializing and configuring an <strong class="source-inline">Estimator</strong> object. When the <strong class="source-inline">Estimator</strong> object’s <strong class="source-inline">fit()</strong> method is called, SageMaker uses the parameter values used to configure the <strong class="source-inline">Estimator</strong> object when running the training job. For example, the instance type used to train the ML model depends on the parameter value for <strong class="source-inline">instance_type</strong> when initializing the estimator.</p>
+<p>Follow these steps to use the <strong class="bold">SageMaker Python SDK</strong> to train an image classification model:</p>
+<ol>
+<li value="1">Import the SageMaker Python <a id="_idIndexMarker638"/>SDK and the <strong class="bold">Boto AWS Python SDK</strong>: <pre class="source-code">import <strong class="bold">sagemaker</strong></pre><pre class="source-code">import <strong class="bold">boto3</strong></pre></li>
+<li>Initialize a few prerequisites, such as <strong class="source-inline">session</strong>, <strong class="source-inline">role</strong>, and <strong class="source-inline">region_name</strong>:<pre class="source-code"><strong class="bold">session</strong> = sagemaker.Session()</pre><pre class="source-code"><strong class="bold">role</strong> = sagemaker.get_execution_role()</pre><pre class="source-code"><strong class="bold">region_name</strong> = boto3.Session().region_name</pre></li>
+<li>Use the <strong class="source-inline">retrieve()</strong> function to prepare the image URI for the image classification <a id="_idIndexMarker639"/>algorithm. Note that <a id="_idIndexMarker640"/>the <strong class="source-inline">retrieve()</strong> function returns the Amazon ECR URI of the built-in algorithm:<pre class="source-code">image = sagemaker.image_uris.<strong class="bold">retrieve</strong>(</pre><pre class="source-code">    "image-classification", </pre><pre class="source-code">    region_name, </pre><pre class="source-code">    "1"</pre><pre class="source-code">)</pre><pre class="source-code">image</pre></li>
+</ol>
+<p class="list-inset">This should give us a value similar to <strong class="source-inline">'433757028032.dkr.ecr.us-west-2.amazonaws.com/image-classification:1'</strong>.</p>
+<ol>
+<li value="4">Define the <strong class="source-inline">map_path()</strong> and <strong class="source-inline">map_input()</strong> functions: <pre class="source-code">def <strong class="bold">map_path</strong>(source):</pre><pre class="source-code">    return 's3://{}/{}/{}'.format(</pre><pre class="source-code">        s3_bucket, </pre><pre class="source-code">        prefix, </pre><pre class="source-code">        source</pre><pre class="source-code">    )</pre><pre class="source-code"> </pre><pre class="source-code">def <strong class="bold">map_input</strong>(source):</pre><pre class="source-code">    path = map_path(source)</pre><pre class="source-code">    </pre><pre class="source-code">    return sagemaker.inputs.TrainingInput(</pre><pre class="source-code">        path, </pre><pre class="source-code">        distribution='FullyReplicated', </pre><pre class="source-code">        content_type='application/x-image', </pre><pre class="source-code">        s3_data_type='S3Prefix'</pre><pre class="source-code">    )</pre></li>
+<li>Prepare the <strong class="source-inline">data_channels</strong> dictionary by running the following block of code:<pre class="source-code">data_channels = {}</pre><pre class="source-code">channels = ["<strong class="bold">train</strong>", </pre><pre class="source-code">            "<strong class="bold">validation</strong>",</pre><pre class="source-code">            "<strong class="bold">train_lst</strong>",</pre><pre class="source-code">            "<strong class="bold">validation_lst</strong>"]</pre><pre class="source-code">for channel in channels:</pre><pre class="source-code">    data_channels[channel] = map_input(channel)</pre></li>
+</ol>
+<p class="list-inset">These <a id="_idIndexMarker641"/>data channels correspond <a id="_idIndexMarker642"/>to each of the directories we have uploaded to the Amazon S3 bucket (except for the <strong class="source-inline">test</strong> directory).</p>
+<ol>
+<li value="6">Generate the S3 URL for the output path using the <strong class="source-inline">map_path()</strong> function we defined previously:<pre class="source-code">output_path = <strong class="bold">map_path</strong>("output")</pre><pre class="source-code">output_path</pre></li>
+</ol>
+<p class="list-inset">This should give us an S3 path similar to <strong class="source-inline">'s3://&lt;S3 BUCKET NAME&gt;/ch06/output'</strong>.</p>
+<p class="list-inset">Before we initialize the <strong class="source-inline">Estimator</strong> object, let’s quickly review what we have so far:</p>
+<div>
+<div class="IMG---Figure" id="_idContainer212">
+<img alt="Figure 6.17 – Data channels and the output path " height="526" src="image/B18638_06_017.jpg" width="899"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.17 – Data channels and the output path</p>
+<p class="list-inset">Here, we <a id="_idIndexMarker643"/>can see that the data <a id="_idIndexMarker644"/>channels we have prepared in the previous steps will be used as input later when we run the training job. Once the training job has been completed, the output file(s) will be stored in the S3 location specified in <strong class="source-inline">output_path</strong>.</p>
+<ol>
+<li value="7">With everything ready, let’s initialize the <strong class="source-inline">Estimator</strong> object. When initializing an <strong class="source-inline">Estimator</strong> object, we pass several arguments, such as the container image URI, the IAM role ARN, and the SageMaker <strong class="source-inline">session</strong> object. We also specify the number and type of ML instances used when performing the training job, along with the parameter values for <strong class="source-inline">output_path</strong> and <strong class="source-inline">enable_network_isolation</strong>:<pre class="source-code">estimator = sagemaker.estimator.Estimator(</pre><pre class="source-code">    image,</pre><pre class="source-code">    role, </pre><pre class="source-code">    <strong class="bold">instance_count=2</strong>, </pre><pre class="source-code">    <strong class="bold">instance_type='ml.p2.xlarge'</strong>,</pre><pre class="source-code">    output_path=output_path,</pre><pre class="source-code">    sagemaker_session=session,</pre><pre class="source-code">    enable_network_isolation=True</pre><pre class="source-code">)</pre></li>
+</ol>
+<p class="list-inset">Note that initializing the <strong class="source-inline">Estimator</strong> object does not run the training job yet. When we run the training job using the <strong class="source-inline">fit()</strong> method in a later step, SageMaker will launch and provision two <strong class="source-inline">ml.p2.xlarge</strong> instances to run the image <a id="_idIndexMarker645"/>classification algorithm to <a id="_idIndexMarker646"/>train a model. Then, the results get uploaded to the S3 location in <strong class="source-inline">output_path</strong>. Since we set <strong class="source-inline">enable_network_isolation</strong> to <strong class="source-inline">True</strong>, we have configured the containers inside the SageMaker ML instances so that they don’t have external network access while the training jobs are running. This helps secure the setup since this configuration prevents the running container from downloading malicious code or accessing external services. </p>
+<p class="callout-heading">Note</p>
+<p class="callout">We should be fine since we are using a container image prepared by AWS. If we were to use a custom container image instead, we can set <strong class="source-inline">enable_network_isolation</strong> to <strong class="source-inline">True</strong>, especially if we are not expecting the container to access external services or download resources. This will help safeguard our ML environments and resources against attacks requiring network connectivity. For more information about this topic, check out <a href="B18638_09.xhtml#_idTextAnchor187"><em class="italic">Chapter 9</em></a>, <em class="italic">Security, Governance, and Compliance Strategies</em>. </p>
+<ol>
+<li value="8">Initialize the hyperparameter configuration values with the following block of code:<pre class="source-code"><strong class="bold">hyperparameters</strong> = {</pre><pre class="source-code">    'num_training_samples': len(training_samples),</pre><pre class="source-code">    'num_layers': 18,</pre><pre class="source-code">    'image_shape': "1,28,28",</pre><pre class="source-code">    'num_classes': 10,</pre><pre class="source-code">    'mini_batch_size': 100,</pre><pre class="source-code">    'epochs': 3,</pre><pre class="source-code">    'learning_rate': 0.01,</pre><pre class="source-code">    'top_k': 5,</pre><pre class="source-code">    'precision_dtype': 'float32'    </pre><pre class="source-code">}</pre></li>
+</ol>
+<p class="list-inset">The <a id="_idIndexMarker647"/>configurable hyperparameter <a id="_idIndexMarker648"/>values depend on the algorithm used. These are just some of the hyperparameters we can configure with the image classification algorithm.</p>
+<ol>
+<li value="9">Use the <strong class="source-inline">set_hyperparameters()</strong> method to configure the <strong class="source-inline">Estimator</strong> object with the hyperparameters prepared in the previous step:<pre class="source-code">estimator.<strong class="bold">set_hyperparameters</strong>(**hyperparameters)</pre></li>
+</ol>
+<p class="list-inset">Here, we can see that we used <strong class="source-inline">**</strong> to pass multiple arguments to a function or method directly using a dictionary. Note that this is equivalent to calling the <strong class="source-inline">set_hyperparameters()</strong> method, similar to what we have in the following block of code:</p>
+<pre class="list-inset1 source-code">estimator.set_hyperparameters(
+    num_training_samples=len(training_samples),
+    num_layers=18,
+    image_shape="1,28,28",
+    ...
+)</pre>
+<p class="callout-heading">Note</p>
+<p class="callout">Optionally, we may inspect the properties of the <strong class="source-inline">Estimator</strong> object using the <strong class="source-inline">__dict__</strong> attribute. Feel free to run <strong class="source-inline">estimator.__dict__</strong> in a separate cell before proceeding with the next step.</p>
+<ol>
+<li value="10">Use the <strong class="source-inline">fit()</strong> method to start the training job:<pre class="source-code">%%time</pre><pre class="source-code">estimator.<strong class="bold">fit</strong>(inputs=data_channels, logs=True)</pre></li>
+</ol>
+<p class="list-inset">Once <a id="_idIndexMarker649"/>the training job has finished, we <a id="_idIndexMarker650"/>should see a set of logs similar to the following:</p>
+<div>
+<div class="IMG---Figure" id="_idContainer213">
+<img alt="Figure 6.18 – Logs generated after the training job has been completed " height="531" src="image/B18638_06_018.jpg" width="1207"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.18 – Logs generated after the training job has been completed</p>
+<ol>
+<li value="11">Several operations and steps are performed behind the scenes when the <strong class="source-inline">fit()</strong> method is called. After SageMaker provisions the desired number of ML instances, the input data and the training container image are downloaded to each of the instances. A container is run from the downloaded container image, and an ML model is trained using the input data. The resulting model files are stored inside a <strong class="source-inline">model.tar.gz</strong> file. This <strong class="source-inline">model.tar.gz</strong> file is then uploaded to the configured output S3 location. Finally, SageMaker terminates the instances after the training job has finished:</li>
+</ol>
+<div>
+<div class="IMG---Figure" id="_idContainer214">
+<img alt="Figure 6.19 – What happens after calling the fit() method " height="634" src="image/B18638_06_019.jpg" width="1340"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.19 – What happens after calling the fit() method</p>
+<p class="list-inset">As shown <a id="_idIndexMarker651"/>in the preceding <a id="_idIndexMarker652"/>diagram, each of the relevant steps performed inside the ML instance generates logs that automatically get stored in <strong class="bold">CloudWatch Logs</strong>. This includes the metric values, along with different types of log messages that were generated while the training job was running.</p>
+<p class="callout-heading">Important Note</p>
+<p class="callout">This step may take around 5 to 10 minutes to complete. If you encounter a <strong class="bold">ResourceLimitExceeded</strong> error, it means that you have exceeded the quota when using a certain type of ML instance when running a training job. Make sure that you have completed the steps specified in the <em class="italic">Preparing the essential prerequisites</em> section of this chapter. For more information on this topic, check out <a href="https://aws.amazon.com/premiumsupport/knowledge-center/resourcelimitexceeded-sagemaker/">https://aws.amazon.com/premiumsupport/knowledge-center/resourcelimitexceeded-sagemaker/</a>.</p>
+<p>There’s a lot of <a id="_idIndexMarker653"/>information we can get from the <a id="_idIndexMarker654"/>logs stored in CloudWatch Logs. If you encounter an error when running a training job, you can check the logs stored in CloudWatch Logs (for example, <strong class="source-inline">/aws/sagemaker/TrainingJob</strong>) to troubleshoot the issue. </p>
+<h2 id="_idParaDest-134"><a id="_idTextAnchor143"/>Using the %store magic to store data</h2>
+<p>Before we <a id="_idIndexMarker655"/>deploy and test our model, let’s quickly store a backup copy of the values of some variables used in our first notebook (for example, <strong class="source-inline">PART01.ipynb</strong>): </p>
+<div>
+<div class="IMG---Figure" id="_idContainer215">
+<img alt="Figure 6.20 – %store magic " height="423" src="image/B18638_06_020.jpg" width="1036"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.20 – %store magic</p>
+<p>We will do this using the <strong class="source-inline">%store</strong> magic from IPython and make these variable values available in other notebooks as well. We will load these variable values later in the <em class="italic">Utilizing Managed Spot Training and Checkpoints</em> section, where we will create a new notebook named <strong class="source-inline">PART02.ipynb</strong>.</p>
+<p>Follow these steps to use the <strong class="source-inline">%store</strong> magic to save a copy of some of the variable values used in <strong class="source-inline">PART01.ipynb</strong>:</p>
+<ol>
+<li value="1">Inspect the value of <strong class="source-inline">model_data</strong>:<pre class="source-code">estimator.<strong class="bold">model_data</strong></pre></li>
+</ol>
+<p class="list-inset">This should return the S3 path where the training job output file (<strong class="source-inline">model.tar.gz</strong>) is stored.</p>
+<ol>
+<li value="2">Copy the value of <strong class="source-inline">estimator.model_data</strong> to a new variable named <strong class="source-inline">model_data</strong>. Similarly, copy the value of the name of the latest training job to a variable named <strong class="source-inline">job_name</strong>:<pre class="source-code"><strong class="bold">model_data</strong> = estimator.model_data</pre><pre class="source-code"><strong class="bold">job_name</strong> = estimator.latest_training_job.name</pre></li>
+<li>Use the <strong class="source-inline">%store</strong> magic to store data in memory:<pre class="source-code">%store <strong class="bold">model_data</strong></pre><pre class="source-code">%store <strong class="bold">job_name</strong></pre><pre class="source-code">%store <strong class="bold">role</strong></pre><pre class="source-code">%store <strong class="bold">region_name</strong></pre><pre class="source-code">%store <strong class="bold">image</strong></pre></li>
+</ol>
+<p>As you can <a id="_idIndexMarker656"/>see, the <strong class="source-inline">%store</strong> magic helps us divide a long Jupyter notebook into several smaller notebooks. Later, in the <em class="italic">Utilizing Managed Spot Training and Checkpoints</em> section, we will use <strong class="source-inline">%store -r &lt;variable name&gt;</strong> to load the variable values stored in this section. </p>
+<h2 id="_idParaDest-135"><a id="_idTextAnchor144"/>Using the SageMaker Python SDK to deploy an ML model</h2>
+<p>It’s time we <a id="_idIndexMarker657"/>deploy the model to an inference <a id="_idIndexMarker658"/>endpoint. Deploying an ML model using the SageMaker Python SDK is straightforward. All we need to do is call the <strong class="source-inline">deploy()</strong> method; an inference endpoint will automatically be provisioned and configured for us in just a few minutes. </p>
+<p>Follow these steps to deploy our ML model using the SageMaker Python SDK and then perform some test predictions afterward:</p>
+<ol>
+<li value="1">Use the <strong class="source-inline">deploy()</strong> method to deploy the trained Image Classification model to a real-time inference endpoint. Model deployment should take around 5 to 10 minutes to complete:<pre class="source-code">endpoint = estimator.<strong class="bold">deploy</strong>(</pre><pre class="source-code">    initial_instance_count = 1,</pre><pre class="source-code">    instance_type = 'ml.m5.xlarge'</pre><pre class="source-code">)</pre></li>
+</ol>
+<p class="list-inset">Here, we specify that we are using an <strong class="source-inline">ml.m5.xlarge</strong> instance to host the trained ML model. At this point, you might be wondering why several different instance <a id="_idIndexMarker659"/>types are involved <a id="_idIndexMarker660"/>when training or deploying a model. The first thing you need to know is that the SageMaker Studio notebook instance where the Jupyter notebook scripts are running is different and completely separate from the instances that are used when training or deploying a model:</p>
+<div>
+<div class="IMG---Figure" id="_idContainer216">
+<img alt="Figure 6.21 – Different instances used to train and deploy a model " height="531" src="image/B18638_06_021.jpg" width="1107"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.21 – Different instances used to train and deploy a model</p>
+<p class="list-inset">Here, we can see that the instance(s) used to train the model are different from the instances used during deployment as well. In most cases, the ML instances used to train a model are more powerful (and more expensive per hour) compared to the instances used when deploying the trained model. In our case, we used two <strong class="source-inline">ml.p2.xlarge</strong> instances (<em class="italic">GPU-powered | 4 vCPU | 61 GiB | $1.125 per hour per instance</em>) during training and a single <strong class="source-inline">ml.m5.xlarge</strong> instance (<em class="italic">4 vCPU | 16 GiB | $0.23 per hour per instance</em>) to host our real-time inference endpoint. </p>
+<p class="callout-heading">Important Note</p>
+<p class="callout">Looking at these numbers alone, we may incorrectly assume that the overall cost of running the <strong class="source-inline">ml.p2.xlarge</strong> training instances is higher than the overall cost of running the <strong class="source-inline">ml.m5.xlarge</strong> instance used to host the deployed model. In reality, the overall cost of running the <strong class="source-inline">ml.m5.xlarge</strong> inference instance will exceed the overall cost of running the <strong class="source-inline">ml.p2.xlarge</strong> training instances if we do not delete the inference instances right away. ML instances used during training are automatically terminated after the training job has been completed. Since we only pay for what we use, we would pay approximately <strong class="source-inline">$1.125 x 2 x 0.1 = $0.225</strong> if we were to run two <strong class="source-inline">ml.p2.xlarge</strong> training instances for 6 minutes each. On the other hand, an <strong class="source-inline">ml.m5.xlarge</strong> inference instance would cost around <strong class="source-inline">$0.23 x 24 = $5.52</strong> if we kept it running for 24 hours. To manage costs, make sure to delete instances used for real-time inference during periods of inactivity. If the expected traffic to be received by the inference endpoint is unpredictable or intermittent, you may want to check the <strong class="bold">SageMaker Serverless Inference</strong> option. For more <a id="_idIndexMarker661"/>information, check out <a href="https://aws.amazon.com/about-aws/whats-new/2021/12/amazon-sagemaker-serverless-inference/">https://aws.amazon.com/about-aws/whats-new/2021/12/amazon-sagemaker-serverless-inference/</a>.</p>
+<ol>
+<li value="2">Before <a id="_idIndexMarker662"/>we use the inference <a id="_idIndexMarker663"/>endpoint to perform test predictions, let’s quickly update the <strong class="source-inline">serializer</strong> property of the endpoint to accept the specified content type:<pre class="source-code">from sagemaker.serializers import IdentitySerializer</pre><pre class="source-code">endpoint.serializer = IdentitySerializer(</pre><pre class="source-code">    content_type="<strong class="bold">application/x-image</strong>"</pre><pre class="source-code">)</pre></li>
+<li>Let’s define the <strong class="source-inline">get_class_from_results()</strong> function, which accepts the raw <a id="_idIndexMarker664"/>output data from the SageMaker real-time <a id="_idIndexMarker665"/>inference endpoint and returns the corresponding class as a string (for example, <strong class="source-inline">"ONE",</strong> <strong class="source-inline">"TWO",</strong> <strong class="source-inline">"THREE"</strong>):<pre class="source-code">import json</pre><pre class="source-code">def <strong class="bold">get_class_from_results</strong>(results):</pre><pre class="source-code">    results_prob_list = json.loads(results)</pre><pre class="source-code">    best_index = results_prob_list.index(</pre><pre class="source-code">        max(results_prob_list)</pre><pre class="source-code">    )</pre><pre class="source-code">    </pre><pre class="source-code">    return {</pre><pre class="source-code">        0: "ZERO",</pre><pre class="source-code">        1: "ONE",</pre><pre class="source-code">        2: "TWO",</pre><pre class="source-code">        3: "THREE",</pre><pre class="source-code">        4: "FOUR",</pre><pre class="source-code">        5: "FIVE",</pre><pre class="source-code">        6: "SIX",</pre><pre class="source-code">        7: "SEVEN",</pre><pre class="source-code">        8: "EIGHT",</pre><pre class="source-code">        9: "NINE"</pre><pre class="source-code">    }[best_index]</pre></li>
+<li>Let’s define a custom <strong class="source-inline">predict()</strong> function:<pre class="source-code">from IPython.display import Image, display</pre><pre class="source-code">def <strong class="bold">predict</strong>(filename, endpoint=endpoint):</pre><pre class="source-code">    byte_array_input = None</pre><pre class="source-code">    </pre><pre class="source-code">    with open(filename, 'rb') as image:</pre><pre class="source-code">        f = image.read()</pre><pre class="source-code">        byte_array_input = bytearray(f)</pre><pre class="source-code">        </pre><pre class="source-code">    display(Image(filename))</pre><pre class="source-code">        </pre><pre class="source-code">    results = <strong class="bold">endpoint.predict</strong>(byte_array_input)</pre><pre class="source-code">    return <strong class="bold">get_class_from_results</strong>(results)</pre></li>
+</ol>
+<p class="list-inset">This <a id="_idIndexMarker666"/>custom <strong class="source-inline">predict()</strong> function <a id="_idIndexMarker667"/>does the following: </p>
+<ol>
+<li>Opens the test image, given a filename.</li>
+<li>Displays the test image in the Jupyter notebook. </li>
+<li>Uses the <strong class="source-inline">predict()</strong> method of the endpoint object to get the predicted class value.</li>
+<li>Prints the predicted class value right after the rendered image:</li>
+</ol>
+<div>
+<div class="IMG---Figure" id="_idContainer217">
+<img alt="Figure 6.22 – Performing test predictions " height="598" src="image/B18638_06_022.jpg" width="1118"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.22 – Performing test predictions</p>
+<p class="list-inset">Note that there’s an extra processing step after the <strong class="source-inline">endpoint.predict()</strong> method is <a id="_idIndexMarker668"/>called. As shown in the <a id="_idIndexMarker669"/>preceding diagram, the custom <strong class="source-inline">predict()</strong> function uses the <strong class="source-inline">get_class_from_results()</strong> function to convert the raw output data from the inference endpoint into a human-friendly string representation of the predicted class.</p>
+<ol>
+<li value="5">Now, let’s use the custom <strong class="source-inline">predict()</strong> function we defined in the previous step:<pre class="source-code">results = <strong class="bold">!ls -1 tmp/test</strong></pre><pre class="source-code">for filename in results:</pre><pre class="source-code">    print(<strong class="bold">predict</strong>(f"tmp/test/{filename}"))</pre></li>
+</ol>
+<p class="list-inset">This should yield a set of results similar to the following:</p>
+<div>
+<div class="IMG---Figure" id="_idContainer218">
+<img alt="Figure 6.23 – Performing test predictions " height="187" src="image/B18638_06_023.jpg" width="761"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.23 – Performing test predictions</p>
+<p class="list-inset">Here, we <a id="_idIndexMarker670"/>can see three sample <a id="_idIndexMarker671"/>images, along with their corresponding predicted class values. Our ML model seems to be doing just fine!</p>
+<ol>
+<li value="6">Finally, let’s delete the inference endpoint using the <strong class="source-inline">delete_endpoint()</strong> method:<pre class="source-code">endpoint.<strong class="bold">delete_endpoint()</strong></pre></li>
+</ol>
+<p><em class="italic">Wasn’t that easy?</em> The deployment we performed in this section is just one of the many possible scenarios when performing model deployments on AWS. We will look at other deployment strategies and techniques in <a href="B18638_07.xhtml#_idTextAnchor151"><em class="italic">Chapter 7</em></a>, <em class="italic">SageMaker Deployment Solutions</em>.</p>
+<p>In the next section, we’ll take a closer look at how we can use the <strong class="bold">Debugger Insights Dashboard</strong> to check the utilization of the resources that were used to train our Image Classification model. </p>
+<h1 id="_idParaDest-136"><a id="_idTextAnchor145"/>Using the Debugger Insights Dashboard</h1>
+<p>When working <a id="_idIndexMarker672"/>on ML requirements, ML practitioners may encounter a variety of issues before coming up with a high-performing ML model. Like software development and programming, building ML models requires a bit of trial and error. Developers generally make use of a variety of debugging tools to help them troubleshoot issues and implementation errors when writing software applications. Similarly, ML practitioners need a way to monitor and debug training jobs <a id="_idIndexMarker673"/>when building ML models. Luckily for us, Amazon SageMaker has a capability called <strong class="bold">SageMaker Debugger</strong> that allows us to troubleshoot different issues and bottlenecks when training ML models:</p>
+<div>
+<div class="IMG---Figure" id="_idContainer219">
+<img alt="Figure 6.24 – SageMaker Debugger features " height="532" src="image/B18638_06_024.jpg" width="1012"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.24 – SageMaker Debugger features</p>
+<p>The preceding <a id="_idIndexMarker674"/>diagram shows the features that are available when we use SageMaker Debugger to monitor, debug, and troubleshoot a variety of issues that affect an ML model’s performance. This includes the <strong class="bold">data capture</strong> capability across a variety of ML frameworks, <strong class="bold">Debugger Interactive Reports</strong>, the <strong class="bold">SMDebug client library</strong>, automated error detection with <strong class="bold">Debugger built-in rules</strong> and <strong class="bold">custom rules</strong>, and the <strong class="bold">Debugger Insights Dashboard</strong>. </p>
+<p>In this chapter, we will focus on using the <strong class="bold">Debugger Insights Dashboard</strong> to review and monitor the hardware system resource utilization rate of the instances used to train our ML model. </p>
+<p class="callout-heading">Important Note</p>
+<p class="callout">Note that an <strong class="source-inline">ml.m5.4xlarge</strong> instance is provisioned whenever we use the Debugger Insights Dashboard. This <strong class="source-inline">ml.m5.4xlarge</strong> instance needs to be turned off manually since it is not automatically turned off during periods of inactivity. We will make sure to turn off this instance toward the end of this section.</p>
+<p>That said, let’s use the Debugger Insights Dashboard to monitor the hardware system resource <a id="_idIndexMarker675"/>utilization rate of the instances we used in the previous sections:</p>
+<ol>
+<li value="1">Navigate to <strong class="bold">SageMaker resources</strong> by clicking the left sidebar icon shown in the following screenshot:</li>
+</ol>
+<div>
+<div class="IMG---Figure" id="_idContainer220">
+<img alt="Figure 6.25 – Navigating to SageMaker resources " height="467" src="image/B18638_06_025.jpg" width="884"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.25 – Navigating to SageMaker resources</p>
+<p class="list-inset">Select <strong class="bold">Experiments and trials</strong> from the list of options available in the first dropdown. Double-click on <strong class="bold">Unassigned trial components</strong>.</p>
+<ol>
+<li value="2">Right-click on the first result in the list. It should have a name that starts with <strong class="source-inline">image-classification</strong>, followed by a timestamp. This should open a context menu, similar to the following. Select <strong class="bold">Open Debugger for insights</strong> from the list of options:</li>
+</ol>
+<div>
+<div class="IMG---Figure" id="_idContainer221">
+<img alt="Figure 6.26 – Open Debugger for insights " height="192" src="image/B18638_06_026.jpg" width="712"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.26 – Open Debugger for insights</p>
+<p class="list-inset">Here, we can see another option called <strong class="bold">Open in trial details</strong>. If you selected this option instead, you will see several charts, which help you analyze the metrics and results of the training job. </p>
+<p class="callout-heading">Important Note</p>
+<p class="callout">Make sure to turn off the <strong class="source-inline">ml.m5.4xlarge</strong> instance after using the Debugger Insights Dashboard.</p>
+<ol>
+<li value="3">On <a id="_idIndexMarker676"/>the <strong class="bold">Overview</strong> tab, scroll down and locate the <strong class="bold">Resource utilization summary</strong> report, as shown here:</li>
+</ol>
+<div>
+<div class="IMG---Figure" id="_idContainer222">
+<img alt="Figure 6.27 – Resource utilization summary " height="387" src="image/B18638_06_027.jpg" width="1037"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.27 – Resource utilization summary</p>
+<p class="list-inset">Here, we can see the hardware system resource utilization statistics such as the total CPU and GPU utilization, total CPU and GPU memory utilization, and more.</p>
+<ol>
+<li value="4">Navigate to the <strong class="bold">Nodes</strong> tab.</li>
+<li>Scroll down and locate the different reports and charts, as shown here:</li>
+</ol>
+<div>
+<div class="IMG---Figure" id="_idContainer223">
+<img alt="Figure 6.28 – Debugger insights – nodes " height="804" src="image/B18638_06_028.jpg" width="1047"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.28 – Debugger insights – nodes</p>
+<p class="list-inset">Here, we can see graphs that help us review and analyze the different utilization metrics <a id="_idIndexMarker677"/>over time. This includes reports such as <strong class="bold">CPU utilization over time</strong>, <strong class="bold">Network utilization over time</strong>, <strong class="bold">GPU utilization over time</strong>, and more.</p>
+<p class="callout-heading">Note</p>
+<p class="callout">These reports can help ML engineers determine whether the resources used to train the model are “right-sized.” This can help optimize costs and identify performance bottlenecks during the training steps.</p>
+<ol>
+<li value="6">Click the <strong class="bold">Running Instances and Kernels</strong> icon in the sidebar, as highlighted in the following screenshot:</li>
+</ol>
+<div>
+<div class="IMG---Figure" id="_idContainer224">
+<img alt="Figure 6.29 – Turning off the running instances " height="285" src="image/B18638_06_029.jpg" width="637"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.29 – Turning off the running instances</p>
+<p class="list-inset">Clicking the <strong class="bold">Running Instances and Kernels</strong> icon should open and show the <a id="_idIndexMarker678"/>running instances, apps, and terminals in SageMaker Studio.</p>
+<ol>
+<li value="7">Turn off the <strong class="source-inline">ml.m5.4xlarge</strong> running instance under <strong class="bold">RUNNING INSTANCES</strong> by clicking the <strong class="bold">Shutdown</strong> button, as highlighted in the preceding screenshot. Clicking the <strong class="bold">Shutdown</strong> button will open a pop-up window verifying the instance shutdown operation. Click the <strong class="bold">Shut down all</strong> button to proceed.</li>
+</ol>
+<p>At this point, we should have a better overall understanding of how to train and deploy ML models in Amazon SageMaker. Note that we’re just scratching the surface as there are a lot more features and capabilities available for us to use to manage, analyze, and troubleshoot ML experiments.</p>
+<p class="callout-heading">Note</p>
+<p class="callout">If you are interested in learning more about the other features of <strong class="bold">SageMaker Debugger</strong>, then feel free to check out <a href="B18638_05.xhtml#_idTextAnchor105"><em class="italic">Chapter 5</em></a>, <em class="italic">Pragmatic Data Processing and Analysis,</em> of the book <em class="italic">Machine Learning with Amazon SageMaker Cookbook</em>.</p>
+<p>In the next section, we will discuss a few more capabilities and features available in SageMaker when training ML models.</p>
+<h1 id="_idParaDest-137"><a id="_idTextAnchor146"/>Utilizing Managed Spot Training and Checkpoints</h1>
+<p>Now that we <a id="_idIndexMarker679"/>have a better understanding of how to use the SageMaker Python SDK to train and deploy ML models, let’s proceed <a id="_idIndexMarker680"/>with using a few additional options that allow us to reduce costs significantly when running training jobs. In this section, we will utilize the following SageMaker features and capabilities when training a second Image Classification model:</p>
+<ul>
+<li>Managed Spot Training</li>
+<li>Checkpointing</li>
+<li>Incremental Training</li>
+</ul>
+<p>In <a href="B18638_02.xhtml#_idTextAnchor041"><em class="italic">Chapter 2</em></a>, <em class="italic">Deep Learning AMIs</em>, we mentioned that spot instances can be used to reduce the cost of running training jobs. Using spot instances instead of on-demand instances can help reduce the overall cost by up to 70% to 90%. So, why are spot instances cheaper? The downside of using spot instances is that these instances can be interrupted, which will restart the training job from the start. If we were to train our models outside of SageMaker, we would have to prepare our own set of custom automation scripts that will utilize and manage spot instances to train our model. Again, there’s no need for us to prepare a custom solution as SageMaker already supports the ability to automatically manage spot instances for us through its <strong class="bold">Managed Spot Training</strong> capability! In addition to this, if we configure our SageMaker training jobs to use <strong class="bold">checkpoints</strong>, we will be able to resume training from the last saved checkpoint even if there has been an interruption while we are using spot instances. </p>
+<p>In this section, we will also use a technique called <strong class="bold">Incremental Training</strong>, where we will use the <a id="_idIndexMarker681"/>model that was generated in the <em class="italic">Training an Image Classification model with the SageMaker Python SDK</em> section as a starting point to train a more accurate model. Here, we will be using a pre-trained model we have provided instead of training a new model from scratch.</p>
+<p class="callout-heading">Note</p>
+<p class="callout">Note that <a id="_idIndexMarker682"/>Incremental Training can only be used when <a id="_idIndexMarker683"/>using <a id="_idIndexMarker684"/>the <strong class="bold">Image Classification Algorithm</strong>, <strong class="bold">Object Detection Algorithm</strong>, and <strong class="bold">Semantic Segmentation Algorithm</strong> built-in algorithms.</p>
+<p>Follow <a id="_idIndexMarker685"/>these steps to use the <strong class="bold">SageMaker Python SDK</strong> to <a id="_idIndexMarker686"/>run a training job <a id="_idIndexMarker687"/>that utilizes checkpointing, Managed Spot Training, and Incremental Training: </p>
+<ol>
+<li value="1">Create a new notebook by clicking the <strong class="bold">File</strong> menu and choosing <strong class="bold">notebook</strong> from the list of options under the <strong class="bold">New</strong> submenu.</li>
+<li>In the <strong class="bold">Set up notebook environment</strong> window, specify the following configuration values:<ul><li><strong class="bold">Image</strong>: <strong class="source-inline">Data Science</strong> (option found under the Sagemaker image)</li>
+<li><strong class="bold">Kernel</strong>: <strong class="source-inline">Python 3</strong></li>
+<li><strong class="bold">Start-up script</strong>: <strong class="source-inline">No script</strong></li>
+</ul></li>
+<li>Click the <strong class="bold">Select</strong> button.</li>
+<li>Rename the notebook <strong class="source-inline">PART02.ipynb</strong>. Now that we have our new Jupyter notebook ready, let’s run the blocks of code in the succeeding set of steps inside this Jupyter notebook.</li>
+<li>Specify the S3 bucket name and prefix. Make sure that you replace the value of <strong class="source-inline">&lt;INSERT S3 BUCKET NAME HERE&gt;</strong> with a unique S3 bucket name before running the following block of code:<pre class="source-code">s3_bucket = "<strong class="bold">&lt;INSERT S3 BUCKET NAME HERE&gt;</strong>"</pre><pre class="source-code">prefix = "ch06"</pre></li>
+</ol>
+<p class="list-inset">Note that this should be different from the name of the S3 bucket you created in the <em class="italic">Training an Image Classification model with the SageMaker Python SDK</em> section. In this chapter, we will work with two different S3 buckets, similar to what’s shown in the following diagram: </p>
+<div>
+<div class="IMG---Figure" id="_idContainer225">
+<img alt="Figure 6.30 – Working with two S3 buckets " height="522" src="image/B18638_06_030.jpg" width="943"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.30 – Working with two S3 buckets</p>
+<p class="list-inset">The first <a id="_idIndexMarker688"/>bucket should <a id="_idIndexMarker689"/>contain the model output files stored <a id="_idIndexMarker690"/>in a <strong class="source-inline">model.tar.gz</strong> file after running the first training job. Later in this section, we will use this <strong class="source-inline">model.tar.gz</strong> file as an input parameter for a new training job that utilizes Incremental Training when building a new model. The output of this training job will be stored in an output folder inside the second S3 bucket. </p>
+<ol>
+<li value="6">Use the <strong class="source-inline">%store</strong> magic from IPython to load the values of the stored variables from the <em class="italic">Training an Image Classification model with the SageMaker Python SDK</em> section:<pre class="source-code">%store -r <strong class="bold">role</strong></pre><pre class="source-code">%store -r <strong class="bold">region_name</strong></pre><pre class="source-code">%store -r <strong class="bold">job_name</strong></pre><pre class="source-code">%store -r <strong class="bold">image</strong></pre></li>
+<li>Check the value of the loaded <strong class="source-inline">job_name</strong> variable:<pre class="source-code">job_name</pre></li>
+</ol>
+<p class="list-inset">This should return a value similar to <strong class="source-inline">'image-classification-2022-04-11-16-22-24-589'</strong>.</p>
+<ol>
+<li value="8">Initialize and import some of the training prerequisites:<pre class="source-code">import sagemaker</pre><pre class="source-code">from sagemaker.estimator import Estimator</pre><pre class="source-code">session = sagemaker.Session()</pre></li>
+<li>Next, load an <strong class="source-inline">Estimator</strong> object using the name of the previous training job using <strong class="source-inline">Estimator.attach()</strong>:<pre class="source-code">previous = Estimator.<strong class="bold">attach</strong>(job_name)</pre></li>
+<li>Use <a id="_idIndexMarker691"/>the <strong class="source-inline">logs()</strong> method <a id="_idIndexMarker692"/>to inspect the logs of the training <a id="_idIndexMarker693"/>job we loaded in the previous step: <pre class="source-code">previous.<strong class="bold">logs()</strong></pre></li>
+</ol>
+<p class="list-inset">Note that this should yield a set of logs similar to the logs that were generated when we ran the training job in the <em class="italic">Training an Image Classification model with the SageMaker Python SDK</em> section.</p>
+<ol>
+<li value="11">Get the location where the ML model ZIP file of the previous training job is stored. Store this value inside the <strong class="source-inline">model_data</strong> variable:<pre class="source-code">model_data = previous.<strong class="bold">model_data</strong></pre><pre class="source-code">model_data</pre></li>
+</ol>
+<p class="list-inset">The <strong class="source-inline">model_data</strong> variable should have a value with a format similar to <strong class="source-inline">'s3://&lt;S3 BUCKET NAME&gt;/ch06/output/image-classification-&lt;DATETIME&gt;/output/model.tar.gz'</strong>. We will use this value later when initializing and configuring a new <strong class="source-inline">Estimator</strong> object.</p>
+<ol>
+<li value="12">Define <a id="_idIndexMarker694"/>the <strong class="source-inline">generate_random_string()</strong> function, which will be used to generate a unique <a id="_idIndexMarker695"/>base job name for the training <a id="_idIndexMarker696"/>job:<pre class="source-code">import string </pre><pre class="source-code">import random</pre><pre class="source-code">def <strong class="bold">generate_random_string</strong>():</pre><pre class="source-code">    return ''.join(</pre><pre class="source-code">        random.sample(</pre><pre class="source-code">        string.ascii_uppercase,12)</pre><pre class="source-code">    )</pre></li>
+<li>Generate a unique base job name using <strong class="source-inline">generate_random_string()</strong> and store it in the <strong class="source-inline">base_job_name</strong> variable:<pre class="source-code"><strong class="bold">base_job_name</strong> = generate_random_string()</pre><pre class="source-code">base_job_name</pre></li>
+</ol>
+<p class="list-inset">You should get a 12-character string similar to <strong class="source-inline">'FTMHLGKYVOAC'</strong> after using the <strong class="source-inline">generate_random_string()</strong> function. </p>
+<p class="callout-heading">Note</p>
+<p class="callout">Where will we use this? In a later step, we will specify a base job name of our choice when initializing a new <strong class="source-inline">Estimator</strong> object. If a base job name is not specified when initializing an <strong class="source-inline">Estimator</strong> object, SageMaker generally uses the algorithm image name (for example, <strong class="source-inline">image-classification</strong>) as the default base job name when running a training job. The base job name is then appended with a string representation of the current timestamp to produce the complete training job name.</p>
+<ol>
+<li value="14">Prepare the different configuration parameters when enabling checkpointing support:<pre class="source-code"><strong class="bold">checkpoint_folder</strong>="checkpoints"</pre><pre class="source-code"><strong class="bold">checkpoint_s3_bucket</strong>="s3://{}/{}/{}".format(s3_bucket, base_job_name, checkpoint_folder)</pre><pre class="source-code"><strong class="bold">checkpoint_local_path</strong>="/opt/ml/checkpoints"</pre></li>
+<li>Run the following block of code to ensure that an empty <strong class="source-inline">tmp2</strong> directory exists:<pre class="source-code">!rm -rf <strong class="bold">tmp2</strong> &amp;&amp; mkdir -p <strong class="bold">tmp2</strong></pre></li>
+<li>Download <strong class="source-inline">batch2.zip</strong> using the <strong class="source-inline">wget</strong> command:<pre class="source-code">%%time</pre><pre class="source-code">!wget -O tmp2/<strong class="bold">batch2.zip</strong> https://bit.ly/3KyonQE</pre></li>
+<li>Next, run <a id="_idIndexMarker697"/>the following <a id="_idIndexMarker698"/>block of code to extract <a id="_idIndexMarker699"/>the contents of the <strong class="source-inline">batch1.zip</strong> file inside the <strong class="source-inline">tmp</strong> directory:<pre class="source-code">%%time</pre><pre class="source-code">!cd tmp2 &amp;&amp; <strong class="bold">unzip batch2.zip</strong> &amp;&amp; rm batch2.zip</pre></li>
+<li>Let’s use the <strong class="source-inline">glob()</strong> function to get a list containing all the images inside the <strong class="source-inline">tmp2/train</strong> directory. After that, we will use the <strong class="source-inline">len()</strong> function to count the number of items in the list that was generated:<pre class="source-code">import glob</pre><pre class="source-code">training_samples = glob.glob(f"tmp2/train/*/*.png")</pre><pre class="source-code">len(training_samples)</pre></li>
+</ol>
+<p class="list-inset">This should give us a value of <strong class="source-inline">7200</strong>, which is the total number of <strong class="source-inline">.png</strong> files inside the <strong class="source-inline">tmp2/train</strong> directory.</p>
+<ol>
+<li value="19">Create a new S3 bucket using the <strong class="source-inline">aws s3 mb</strong> command:<pre class="source-code">!aws s3 mb s3://{s3_bucket}</pre></li>
+<li>Use <a id="_idIndexMarker700"/>the <strong class="source-inline">aws s3 cp</strong> command <a id="_idIndexMarker701"/>to copy the contents of <a id="_idIndexMarker702"/>the <strong class="source-inline">tmp2</strong> directory to the S3 bucket:<pre class="source-code">%%time</pre><pre class="source-code">!<strong class="bold">aws s3 cp</strong> tmp2/.  s3://{s3_bucket}/{prefix}/ --recursive</pre></li>
+<li>Define the <strong class="source-inline">map_path()</strong> and <strong class="source-inline">map_input()</strong> functions:<pre class="source-code">def <strong class="bold">map_path</strong>(source):</pre><pre class="source-code">    return 's3://{}/{}/{}'.format(</pre><pre class="source-code">        s3_bucket, </pre><pre class="source-code">        prefix, </pre><pre class="source-code">        source</pre><pre class="source-code">    )</pre><pre class="source-code">def <strong class="bold">map_input</strong>(source):</pre><pre class="source-code">    path = map_path(source)</pre><pre class="source-code">    </pre><pre class="source-code">    return sagemaker.inputs.TrainingInput(</pre><pre class="source-code">        path, </pre><pre class="source-code">        distribution='FullyReplicated', </pre><pre class="source-code">        content_type='application/x-image', </pre><pre class="source-code">        s3_data_type='S3Prefix'</pre><pre class="source-code">    )</pre></li>
+<li>Prepare the <strong class="source-inline">data_channels</strong> dictionary by running the following block of code:<pre class="source-code"><strong class="bold">data_channels</strong> = {}</pre><pre class="source-code">channels = ["<strong class="bold">train</strong>", </pre><pre class="source-code">            "<strong class="bold">validation</strong>",</pre><pre class="source-code">            "<strong class="bold">train_lst</strong>",</pre><pre class="source-code">            "<strong class="bold">validation_lst</strong>"]</pre><pre class="source-code">for channel in channels:</pre><pre class="source-code">    data_channels[channel] = map_input(channel)</pre></li>
+<li>Set <a id="_idIndexMarker703"/>the S3 output path <a id="_idIndexMarker704"/>using <a id="_idIndexMarker705"/>the <strong class="source-inline">map_path()</strong> function:<pre class="source-code">output_path = <strong class="bold">map_path</strong>("output")</pre></li>
+<li>Initialize the <strong class="source-inline">Estimator</strong> object:<pre class="source-code">estimator = sagemaker.estimator.Estimator(</pre><pre class="source-code">    image,</pre><pre class="source-code">    role, </pre><pre class="source-code">    instance_count=2, </pre><pre class="source-code">    instance_type='ml.p2.xlarge',</pre><pre class="source-code">    output_path=output_path,</pre><pre class="source-code">    sagemaker_session=session,</pre><pre class="source-code">    enable_network_isolation=True,</pre><pre class="source-code">    <strong class="bold">model_uri=model_data</strong>,</pre><pre class="source-code">    <strong class="bold">use_spot_instances=True</strong>,</pre><pre class="source-code">    <strong class="bold">max_run=1800</strong>,</pre><pre class="source-code">    <strong class="bold">max_wait=3600</strong>,</pre><pre class="source-code">    base_job_name=base_job_name,</pre><pre class="source-code">    <strong class="bold">checkpoint_s3_uri=checkpoint_s3_bucket</strong>,</pre><pre class="source-code">    <strong class="bold">checkpoint_local_path=checkpoint_local_path</strong></pre><pre class="source-code">)</pre></li>
+</ol>
+<p class="list-inset">This <a id="_idIndexMarker706"/>initialization step should <a id="_idIndexMarker707"/>be similar to what we did in the <em class="italic">Training an Image Classification model with the SageMaker Python SDK</em> section. In <a id="_idIndexMarker708"/>addition to the original set of parameter values we set when initializing the <strong class="source-inline">Estimator</strong> object, we have also set a few additional arguments, including <strong class="source-inline">model_uri</strong>, <strong class="source-inline">use_spot_instances</strong>, <strong class="source-inline">max_run</strong>, <strong class="source-inline">max_wait</strong>, <strong class="source-inline">checkpoint_s3_uri</strong>, and <strong class="source-inline">checkpoint_local_path</strong>.</p>
+<div>
+<div class="IMG---Figure" id="_idContainer226">
+<img alt="Figure 6.31 – Initializing the Estimator object with Checkpointing and Managed Spot Training " height="578" src="image/B18638_06_031.jpg" width="1003"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.31 – Initializing the Estimator object with Checkpointing and Managed Spot Training</p>
+<p class="list-inset">As shown in the preceding diagram, enabling checkpointing and Managed Spot Training is straightforward and easy. These are disabled by default when running SageMaker training jobs, so all we need to do is update the parameter values for <strong class="source-inline">use_spot_instances</strong>, <strong class="source-inline">max_run</strong>, <strong class="source-inline">max_wait</strong>, <strong class="source-inline">checkpoint_s3_uri</strong>, and <strong class="source-inline">checkpoint_local_path</strong> with the appropriate values.</p>
+<p class="callout-heading">Note</p>
+<p class="callout">When using built-in algorithms, the <strong class="bold">SageMaker Python SDK</strong> has algorithm-specific <strong class="source-inline">Estimator</strong> classes such as <strong class="source-inline">RandomCutForest</strong>, <strong class="source-inline">FactorizationMachines</strong>, and <strong class="source-inline">PCA</strong> that can be used instead of the “generic” <strong class="source-inline">Estimator</strong> class. Using these has its own set of benefits and a lot of the configuration parameters already have good default starting values during initialization (which makes the code much shorter as well). In this chapter, we will use the “generic” <strong class="source-inline">Estimator</strong> class when performing the training experiments, but if you’re interested in learning more about the other classes available in <a id="_idIndexMarker709"/>the SageMaker Python SDK, then feel free to check out <a href="https://sagemaker.readthedocs.io/en/stable/algorithms/index.xhtml">https://sagemaker.readthedocs.io/en/stable/algorithms/index.xhtml</a>.</p>
+<ol>
+<li value="25">Prepare <a id="_idIndexMarker710"/>the hyperparameter <a id="_idIndexMarker711"/>configuration and <a id="_idIndexMarker712"/>store it inside the <strong class="source-inline">hyperparameters</strong> variable:<pre class="source-code"><strong class="bold">hyperparameters</strong> = {</pre><pre class="source-code">    'num_training_samples': len(training_samples),</pre><pre class="source-code">    'num_layers': 18,</pre><pre class="source-code">    'image_shape': "1,28,28",</pre><pre class="source-code">    'num_classes': 10,</pre><pre class="source-code">    'mini_batch_size': 100,</pre><pre class="source-code">    'epochs': 3,</pre><pre class="source-code">    'learning_rate': 0.01,</pre><pre class="source-code">    'top_k': 5,</pre><pre class="source-code">    'precision_dtype': 'float32'    </pre><pre class="source-code">}</pre></li>
+</ol>
+<p class="list-inset">This should be similar to the hyperparameter configuration we did in the <em class="italic">Training an Image Classification model with the SageMaker Python SDK</em> section, except for the value of <strong class="source-inline">num_training_samples</strong>.</p>
+<p class="callout-heading">Note</p>
+<p class="callout">Nothing is stopping us from changing the values of some of the configuration parameters here, such as <strong class="source-inline">mini_batch_size</strong>, <strong class="source-inline">epochs</strong>, and <strong class="source-inline">learning_rate</strong>. Once you are comfortable testing different combinations of hyperparameter values, you may also try configuring and using other hyperparameters, such as <strong class="source-inline">optimizer</strong>, <strong class="source-inline">num_layers</strong>, and <strong class="source-inline">momentum</strong>. For <a id="_idIndexMarker713"/>more details on this topic, check out <a href="https://docs.aws.amazon.com/sagemaker/latest/dg/IC-Hyperparameter.xhtml">https://docs.aws.amazon.com/sagemaker/latest/dg/IC-Hyperparameter.xhtml</a>.</p>
+<ol>
+<li value="26">Use <a id="_idIndexMarker714"/>the <strong class="source-inline">set_hyperparameters()</strong> method to specify the hyperparameter configuration <a id="_idIndexMarker715"/>values for the training <a id="_idIndexMarker716"/>job:<pre class="source-code">estimator.<strong class="bold">set_hyperparameters</strong>(**hyperparameters)</pre></li>
+<li>Start the Incremental Training job using the <strong class="source-inline">fit()</strong> method:<pre class="source-code">%%time</pre><pre class="source-code">estimator.<strong class="bold">fit</strong>(inputs=data_channels, logs=True)</pre></li>
+</ol>
+<p class="list-inset">This should yield a set of logs similar to the following:</p>
+<div>
+<div class="IMG---Figure" id="_idContainer227">
+<img alt="Figure 6.32 – A portion of the logs after running the training job " height="406" src="image/B18638_06_032.jpg" width="1161"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.32 – A portion of the logs after running the training job</p>
+<p class="list-inset">Here, we can see the savings we get when using Managed Spot Training – approximately <strong class="source-inline">70%</strong> savings! Note that all we did was make some additional tweaks in the configuration of the <strong class="source-inline">Estimator</strong> object. By doing so, we were able to significantly reduce the cost of running the training job.</p>
+<p class="callout-heading">Important Note</p>
+<p class="callout">If you encounter an <strong class="bold">insufficient capacity error</strong> while running the <strong class="source-inline">fit()</strong> method, you may stop the current training job and try again in an hour or so. Alternatively, you may run the experiment in another region. If you encounter a <strong class="bold">ResourceLimitExceeded</strong> error, this means that you have exceeded the quota when using a certain type of ML spot training instance when running a training job. Make sure that you have completed the steps specified in the <em class="italic">Preparing the essential prerequisites</em> section of this chapter. For more information on this topic, check out <a href="https://aws.amazon.com/premiumsupport/knowledge-center/resourcelimitexceeded-sagemaker/">https://aws.amazon.com/premiumsupport/knowledge-center/resourcelimitexceeded-sagemaker/</a>.</p>
+<ol>
+<li value="28">Inspect <a id="_idIndexMarker717"/>the output location <a id="_idIndexMarker718"/>of the trained model using <a id="_idIndexMarker719"/>the <strong class="source-inline">model_data</strong> attribute:<pre class="source-code">estimator.<strong class="bold">model_data</strong></pre></li>
+</ol>
+<p class="list-inset">We should get a value similar to <strong class="source-inline">'s3://&lt;S3 BUCKET NAME&gt;/ch06/output/&lt;BASE JOB NAME&gt;-&lt;DATE AND TIME&gt;/output/model.tar.gz'.</strong></p>
+<p class="callout-heading">Note</p>
+<p class="callout">If we decide <a id="_idIndexMarker720"/>to deploy the model outside of SageMaker (for example, in <strong class="bold">Amazon Elastic Container Service</strong> or <strong class="bold">AWS Lambda</strong>), then we can <a id="_idIndexMarker721"/>simply download the model artifacts stored in the S3 bucket where <strong class="source-inline">estimator.model_data</strong> points to.</p>
+<ol>
+<li value="29">Check <a id="_idIndexMarker722"/>the generated checkpoint <a id="_idIndexMarker723"/>files using the <strong class="source-inline">aws s3 ls</strong> command: <pre class="source-code">!<strong class="bold">aws s3 ls</strong> {estimator.checkpoint_s3_uri} --recursive</pre></li>
+</ol>
+<p class="list-inset">This should <a id="_idIndexMarker724"/>yield a set of results similar to the following:</p>
+<div>
+<div class="IMG---Figure" id="_idContainer228">
+<img alt="Figure 6.33 – Generated checkpoint files " height="260" src="image/B18638_06_033.jpg" width="821"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.33 – Generated checkpoint files</p>
+<p class="list-inset">These saved checkpoint files can be used to restart and continue a training job from the last saved checkpoint.</p>
+<p class="callout-heading">Note</p>
+<p class="callout">If you want to use the last saved checkpoint and continue a previous training job, you simply need to specify the same <strong class="source-inline">checkpoint_s3_uri</strong> when initializing the <strong class="source-inline">Estimator</strong> object. This will automatically download the checkpoint files from S3 to the training instance(s) and continue the training job from there.</p>
+<p>Checkpointing works well with the <strong class="bold">Managed Spot Training</strong> capability of SageMaker since we <a id="_idIndexMarker725"/>can easily resume model <a id="_idIndexMarker726"/>training, even if there’s an unexpected <a id="_idIndexMarker727"/>interruption to the training instance or training job. In addition to this, we can use checkpoints to analyze our model at different stages of the training step (since we have multiple <em class="italic">snapshots</em> of the model at various intermediate stages).</p>
+<p class="callout-heading">Important Note</p>
+<p class="callout">Let’s discuss a few other strategies we can use when training and tuning ML models in SageMaker. The first one, <strong class="bold">early stopping</strong>, involves configuring a hyperparameter tuning job to stop <a id="_idIndexMarker728"/>training jobs earlier if the objective metric value is not improving significantly over a specified amount of time. This helps reduce costs (since the training job ends earlier), as well as prevent the model from overfitting. The second one, <strong class="bold">local mode</strong>, involves running and testing custom scripts inside SageMaker notebook instances <a id="_idIndexMarker729"/>before running them in dedicated ML instances. This helps speed up the development and debugging of custom training (and deployment) scripts since the feedback loop when using local mode is much faster. The third one, <strong class="bold">heterogeneous cluster training</strong>, involves running a training job over several different <a id="_idIndexMarker730"/>instance groups. This helps improve the scaling and utilization of resources by using a combination of GPU and CPU instances when processing ML workloads. The fourth one, <strong class="bold">Fast File Mode</strong>, helps significantly speed up training <a id="_idIndexMarker731"/>jobs by enabling high-performance data access from Amazon S3 (when downloading the training data). There are more best practices and strategies outside of this list, but these should do for now!</p>
+<p>Now that we have finished working on the hands-on solutions of this chapter, it is time we clean up and turn off any resources we will no longer use.</p>
+<h1 id="_idParaDest-138"><a id="_idTextAnchor147"/>Cleaning up</h1>
+<p>Follow these <a id="_idIndexMarker732"/>steps to locate and turn off any remaining running instances in SageMaker Studio:</p>
+<ol>
+<li value="1">Click the <strong class="bold">Running Instances and Kernels</strong> icon in the sidebar of <strong class="bold">Amazon SageMaker Studio</strong>, as highlighted in the following screenshot:</li>
+</ol>
+<div>
+<div class="IMG---Figure" id="_idContainer229">
+<img alt="Figure 6.34 – Turning off any remaining running instances " height="202" src="image/B18638_06_034.jpg" width="611"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 6.34 – Turning off any remaining running instances</p>
+<p class="list-inset">Clicking the <strong class="bold">Running Instances and Kernels</strong> icon should open and show the running instances, apps, and terminals in SageMaker Studio.</p>
+<ol>
+<li value="2">Turn off any remaining running instances under <strong class="bold">RUNNING INSTANCES</strong> by clicking the <strong class="bold">Shutdown</strong> button for each of the instances as highlighted in the preceding screenshot. Clicking the <strong class="bold">Shutdown</strong> button will open a pop-up window verifying the instance shutdown operation. Click the <strong class="bold">Shut down all </strong>button to proceed.</li>
+</ol>
+<p>Note that this cleanup operation needs to be performed after using SageMaker Studio. These resources are not turned off automatically by SageMaker, even during periods of inactivity. Turning off unused resources and performing regular cleanup operations will help reduce and manage costs.</p>
+<p>At this point, we should be comfortable using the <strong class="bold">SageMaker Python SDK</strong> when performing ML experiments in the AWS cloud. We are just scratching the surface here as SageMaker has a lot more capabilities and features, all of which we will discuss over the next few chapters.</p>
+<h1 id="_idParaDest-139"><a id="_idTextAnchor148"/>Summary</h1>
+<p>In this chapter, we trained and deployed ML models using the <strong class="bold">SageMaker Python SDK</strong>. We started by using the MNIST dataset (training dataset) and SageMaker’s built-in <strong class="bold">Image Classification Algorithm</strong> to train an image classifier model. After that, we took a closer look at the resources used during the training step by using the <strong class="bold">Debugger Insights Dashboard</strong> available in SageMaker Studio. Finally, we performed a second training experiment that made use of several features and options available in SageMaker, such as <strong class="bold">managed spot training</strong>, <strong class="bold">checkpointing</strong>, and <strong class="bold">incremental training</strong>.</p>
+<p>In the next chapter, we will dive deeper into the different deployment options and strategies when performing model deployments using SageMaker. We will be deploying a pre-trained model into a variety of inference endpoint types, including the <strong class="bold">real-time</strong>, <strong class="bold">serverless</strong>, and <strong class="bold">asynchronous</strong> inference endpoints.</p>
+<h1 id="_idParaDest-140"><a id="_idTextAnchor149"/>Further reading</h1>
+<p>For more information on the topics that were covered in this chapter, feel free to check out the following resources:</p>
+<ul>
+<li><em class="italic">Amazon SageMaker Debugger</em> (<a href="https://docs.aws.amazon.com/sagemaker/latest/dg/train-debugger.xhtml">https://docs.aws.amazon.com/sagemaker/latest/dg/train-debugger.xhtml</a>)</li>
+<li><em class="italic">Use Checkpoints in Amazon SageMaker</em> (<a href="https://docs.aws.amazon.com/sagemaker/latest/dg/model-checkpoints.xhtml">https://docs.aws.amazon.com/sagemaker/latest/dg/model-checkpoints.xhtml</a>)</li>
+<li><em class="italic">Incremental Training in Amazon SageMaker</em> (<a href="https://docs.aws.amazon.com/sagemaker/latest/dg/incremental-training.xhtml">https://docs.aws.amazon.com/sagemaker/latest/dg/incremental-training.xhtml</a>)</li>
+<li><em class="italic">Managed Spot Training in Amazon SageMaker</em> (<a href="https://docs.aws.amazon.com/sagemaker/latest/dg/model-managed-spot-training.xhtml">https://docs.aws.amazon.com/sagemaker/latest/dg/model-managed-spot-training.xhtml</a>)</li>
+</ul>
+</div>
+<div>
+<div id="_idContainer231">
+</div>
+</div>
+</div>
+</body></html>
