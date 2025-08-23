@@ -1,0 +1,287 @@
+<html><head></head><body>
+<div id="sbo-rt-content"><div id="_idContainer051">
+<h1 class="chapter-number" id="_idParaDest-81"><a id="_idTextAnchor083"/>5</h1>
+<h1 id="_idParaDest-82"><a id="_idTextAnchor084"/>LightGBM Parameter Optimization with Optuna</h1>
+<p>Previous chapters have discussed the LightGBM hyperparameters and their effect on building models. A fundamental problem when building a new model is finding the optimal hyperparameters to achieve the <span class="No-Break">best performance.</span></p>
+<p>This <a id="_idIndexMarker283"/>chapter focuses on the parameter optimization process using a framework called Optuna. Different optimization algorithms are discussed alongside the pruning of the hyperparameter space. A practical example shows how to apply Optuna to find optimal parameters for LightGBM. Advanced use cases for Optuna are <span class="No-Break">also shown.</span></p>
+<p>The chapter’s main topics are <span class="No-Break">as follows:</span></p>
+<ul>
+<li>Optuna and <span class="No-Break">optimization algorithms</span></li>
+<li>Optimizing LightGBM <span class="No-Break">with Optuna</span></li>
+</ul>
+<h1 id="_idParaDest-83"><a id="_idTextAnchor085"/>Technical requirements</h1>
+<p>The chapter includes examples and code excerpts illustrating how to perform parameter optimization studies for LightGBM using Optuna. Complete examples and instructions for setting up a suitable environment for this chapter are available <span class="No-Break">at </span><a href="https://github.com/PacktPublishing/Practical-Machine-Learning-with-LightGBM-and-Python/tree/main/chapter-5"><span class="No-Break">https://github.com/PacktPublishing/Practical-Machine-Learning-with-LightGBM-and-Python/tree/main/chapter-5</span></a><span class="No-Break">.</span></p>
+<h1 id="_idParaDest-84"><a id="_idTextAnchor086"/>Optuna and optimization algorithms</h1>
+<p>Examples from previous chapters have shown that choosing the best hyperparameters for a problem is critical in solving a machine learning problem. The<a id="_idIndexMarker284"/> hyperparameters significantly impact the algorithm’s performance and generalization capability. The optimal parameters are also specific to the model used and the learning problem <span class="No-Break">being solved.</span></p>
+<p>Other issues complicating hyperparameter optimization<a id="_idIndexMarker285"/> are <span class="No-Break">as follows:</span></p>
+<ul>
+<li><strong class="bold">Cost</strong>: For each unique set of hyperparameters (of which there can be many), an entire training run, often with cross-validation, must be performed. This is highly time-consuming and <span class="No-Break">computationally expensive.</span></li>
+<li><strong class="bold">High-dimensional search spaces</strong>: Each parameter can have a vast range of potential values, making testing each <span class="No-Break">value impossible.</span></li>
+<li><strong class="bold">Parameter interaction</strong>: Optimizing each parameter in isolation is often impossible, as some parameters’ values interact with others’ values. A good example is the learning rate and the number of estimators in LightGBM: fewer estimators necessitate a larger<a id="_idIndexMarker286"/> learning rate, and vice versa. This phenomenon is shown in <span class="No-Break"><em class="italic">Figure 5</em></span><span class="No-Break"><em class="italic">.1</em></span><span class="No-Break">.</span></li>
+</ul>
+<div>
+<div class="IMG---Figure" id="_idContainer046">
+<img alt="Figure 5.1 – A parallel coordinate plot showing a parameter interaction between the learning rate and the number of estimators: having more estimators requires a lower learning rate, and vice versa" height="734" src="image/B16690_05_01.jpg" width="1134"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.1 – A parallel coordinate plot showing a parameter interaction between the learning rate and the number of estimators: having more estimators requires a lower learning rate, and vice versa</p>
+<p><span class="No-Break"><em class="italic">Figure 5</em></span><em class="italic">.1</em> visualizes parameter interactions using a technique called a <strong class="bold">parallel coordinate plot</strong>. Parallel coordinate plots <a id="_idIndexMarker287"/>are a visualization tool designed to represent high-dimensional data, making them especially useful for visualizing the results of hyperparameter optimization. Each dimension (in this context, a hyperparameter) is portrayed as a vertical axis arranged in parallel. The range of each axis mirrors the range of values that the hyperparameter can assume. Every individual configuration of hyperparameters is depicted as a line crossing all these axes, with the intersection point on each axis indicating the value of that hyperparameter for the given configuration. Lines can also be color-coded based on performance metrics, such as validation accuracy, to discern which hyperparameter combinations yield <span class="No-Break">superior outcomes.</span></p>
+<p>The beauty of parallel coordinate plots lies in their ability to illustrate relationships between multiple hyperparameters and their cumulative impact on performance, such as the parameter interaction shown in <span class="No-Break"><em class="italic">Figure 5</em></span><em class="italic">.1</em>. Observing the lines’ clustering or similarities in their color allows us to glean trends and intricate interdependencies between hyperparameters. This ability to visualize multidimensional patterns helps data scientists pinpoint which<a id="_idIndexMarker288"/> hyperparameter values or combinations are most conducive to optimal <span class="No-Break">model performance.</span></p>
+<p>Given the challenges and complications of hyperparameter optimization, a naive approach to finding the optimal parameters is manual optimization. With manual optimization, a human practitioner selects parameters based on intuitive understanding and experience. A model is trained with these parameters, and the process is repeated until satisfactory parameters are found. Manual optimization is simple to implement but is very time-consuming due to the human-in-the-loop nature of the process. Human intuition is also fallible, and good parameter combinations can easily <span class="No-Break">be missed.</span></p>
+<p class="callout-heading">Note</p>
+<p class="callout">The process of finding optimal parameters is <a id="_idIndexMarker289"/>often called a parameter <strong class="bold">study</strong>. Each<a id="_idIndexMarker290"/> configuration (combination of parameters) tested in the study is referred to as <span class="No-Break">a </span><span class="No-Break"><strong class="bold">trial</strong></span><span class="No-Break">.</span></p>
+<p>In the previous chapters’ examples, the approach we used thus far <a id="_idIndexMarker291"/>was <strong class="bold">grid search</strong>. With grid search, we set up a parameter grid consisting of each parameter and a range of potential values and exhaustively tested each possible combination to find the <span class="No-Break">optimal values.</span></p>
+<p>Grid search solves the parameter interaction problem well: since each possible combination is tested, each interaction is <span class="No-Break">accounted for.</span></p>
+<p>However, the downside of using grid search is the cost. Since we exhaustively test each parameter combination, the number of trials quickly becomes prohibitive, especially if more parameters are added. For example, consider the <span class="No-Break">following grid:</span></p>
+<pre class="source-code">
+params = {"learning_rate": [0.001, 0.01, 0.1],
+          "num_leaves": [10, 20, 50, 100],
+          "num_estimators": [100, 200, 500]}</pre>
+<p>An optimization study for this grid would require 36 trials. Adding just one additional parameter with two possible values doubles the cost of <span class="No-Break">the study.</span></p>
+<p>What’s needed is an algorithm and framework that can intelligently optimize the parameters within a limited number of trials that we control. Several frameworks exist for this purpose, including SHERPA, a<a id="_idIndexMarker292"/> Python library for tuning machine learning models; Hyperopt, another <a id="_idIndexMarker293"/>Python library for parameter optimization over complex search spaces; and Talos, a tool <a id="_idIndexMarker294"/>specifically tailored for Keras. However, in the next section, and for the rest of the chapter, we look <a id="_idIndexMarker295"/>at <strong class="bold">Optuna</strong>, a framework designed to automate tuning machine <span class="No-Break">learning models.</span></p>
+<h2 id="_idParaDest-85"><a id="_idTextAnchor087"/>Introducing Optuna</h2>
+<p>Optuna <a id="_idIndexMarker296"/>is an open source <strong class="bold">hyperparameter optimization</strong> (<strong class="bold">HPO</strong>) framework <a id="_idIndexMarker297"/>designed to automate finding the best hyperparameters for machine<a id="_idIndexMarker298"/> learning models (<a href="https://optuna.org/">https://optuna.org/</a>). It is written in Python and can be easily integrated with various machine learning libraries, <span class="No-Break">including LightGBM.</span></p>
+<p>Optuna provides efficient optimization algorithms to search hyperparameter spaces more effectively. In addition to the optimization algorithms, Optuna also provides pruning strategies to save computational resources and time by pruning poorly <span class="No-Break">performing trials.</span></p>
+<p>Besides optimization and pruning algorithms, Optuna also provides an easy-to-use API for defining parameter types (integer, float, or categorical), creating and automating resumable optimization studies, and visualizing<a id="_idIndexMarker299"/> the results of optimization runs. Later in the chapter, we see how to use the <span class="No-Break">API practically.</span></p>
+<h2 id="_idParaDest-86"><a id="_idTextAnchor088"/>Optimization algorithms</h2>
+<p>Optuna provides several<a id="_idIndexMarker300"/> efficient optimization algorithms. In this section, we focus on <a id="_idIndexMarker301"/>two of the available <a id="_idIndexMarker302"/>algorithms: a <strong class="bold">Tree-Structured Parzen Estimator</strong> (<strong class="bold">TPE</strong>) and a <strong class="bold">Covariance Matrix Adaptation Evolution Strategy</strong> (<span class="No-Break"><strong class="bold">CMA-ES</strong></span><span class="No-Break">) algorithm.</span></p>
+<h3>TPE</h3>
+<p>To <a id="_idIndexMarker303"/>understand <a id="_idIndexMarker304"/>TPE, we must first know what a Parzen <span class="No-Break">estimator is.</span></p>
+<p>A Parzen estimator, or <strong class="bold">Kernel Density Estimator </strong>(<strong class="bold">KDE</strong>), is a<a id="_idIndexMarker305"/> technique <a id="_idIndexMarker306"/>used to estimate the probability distribution of a set of data points. It’s a non-parametric method, meaning it doesn’t assume any specific underlying distribution for the data. Instead, it tries to “learn” the distribution based on the observed <span class="No-Break">data points.</span></p>
+<p>Imagine you have data points and want to know how the data is distributed. One way to do this is by placing small “hills” (kernel functions) over each data point. These “hills” can have different shapes, such as Gaussian (bell-shaped) or uniform (box-shaped). The height of the “hill” at any point represents the likelihood that a new data point would fall at that location. The Parzen estimator works by adding up all these “hills” to create a smooth landscape representing the estimated probability distribution of <span class="No-Break">the data.</span></p>
+<p>In the case of TPE, the data points we care about are the parameter combinations, and the probability distribution is the likelihood of a set of parameters being <strong class="source-inline">good</strong> or <strong class="source-inline">bad</strong> [<span class="No-Break">1], [2].</span></p>
+<p>TPE starts by sampling a few random combinations of hyperparameters and evaluating the model’s performance for each. Based on these initial results, TPE divides the hyperparameter combinations into two groups: <strong class="source-inline">good</strong> (those that lead to better performance) and <strong class="source-inline">bad</strong> (those that lead to <span class="No-Break">worse performance):</span></p>
+<ul>
+<li><span class="_-----MathTools-_Math_Variable">l</span><span class="_-----MathTools-_Math_Base">(</span><span class="_-----MathTools-_Math_Variable">x</span><span class="_-----MathTools-_Math_Variable">)</span><span class="_-----MathTools-_Math_Operator">:</span> The probability density function of <span class="No-Break"><strong class="source-inline">good</strong></span><span class="No-Break"> configurations</span></li>
+<li><span class="_-----MathTools-_Math_Variable">g</span><span class="_-----MathTools-_Math_Base">(</span><span class="_-----MathTools-_Math_Variable">x</span><span class="_-----MathTools-_Math_Variable">)</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Operator">:</span> The probability density function of <span class="No-Break"><strong class="source-inline">bad</strong></span><span class="No-Break"> configurations</span></li>
+</ul>
+<p>TPE then estimates the probability distributions of hyperparameter combinations for both <strong class="source-inline">good</strong> and <strong class="source-inline">bad</strong> groups using the Parzen <span class="No-Break">estimator technique.</span></p>
+<p>With estimations of the probability distributions available, TPE calculates the <strong class="bold">Expected Improvement</strong> (<strong class="bold">EI</strong>) of<a id="_idIndexMarker307"/> hyperparameter configurations. EI can be calculated as the ratio between the two densities: <span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Variable">l</span><span class="_-----MathTools-_Math_Base">(</span><span class="_-----MathTools-_Math_Variable">x</span><span class="_-----MathTools-_Math_Variable">)</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Base">_</span><span class="_-----MathTools-_Math_Base"> </span><span class="No-Break"><span class="_-----MathTools-_Math_Variable">g</span></span><span class="No-Break"><span class="_-----MathTools-_Math_Base">(</span></span><span class="No-Break"><span class="_-----MathTools-_Math_Variable">x</span></span><span class="No-Break"><span class="_-----MathTools-_Math_Base">)</span></span><span class="No-Break"> .</span> With each trail, the algorithm samples new hyperparameter configurations that maximize <span class="No-Break">the EI.</span></p>
+<p>The tree structure in TPE comes from the algorithm’s ability to handle parameter interaction within the hyperparameter search space, where specific hyperparameters’ relevance depends on others’ values. To handle this, TPE builds a hierarchical structure that captures the relationships between different hyperparameters and adapts the sampling <span class="No-Break">process accordingly.</span></p>
+<p>In summary, TPE<a id="_idIndexMarker308"/> estimates the distributions of <strong class="source-inline">good</strong> and <strong class="source-inline">bad</strong> parameters and uses them to find optimal parameters by maximizing new trials’ <a id="_idIndexMarker309"/>expected improvement. TPE is cost-effective since it approximates the distributions and can search for better parameters optimally (in a non-exhaustive way). TPE also handles <span class="No-Break">parameter interactions.</span></p>
+<p>An alternative algorithm provided by Optuna is the CMA-ES algorithm, which we <span class="No-Break">discuss next.</span></p>
+<h3>CMA-ES</h3>
+<p>CMA-ES <a id="_idIndexMarker310"/>is another optimization<a id="_idIndexMarker311"/> algorithm that can be used to find optimal hyperparameters [3]. Compared to TPE, CMA-ES is well suited to cases that involve continuous variables and when the search space is non-linear <span class="No-Break">and non-convex.</span></p>
+<p>CMA-ES is an example of<a id="_idIndexMarker312"/> an <strong class="bold">evolutionary algorithm</strong> (<strong class="bold">EA</strong>). An EA is a type of optimization algorithm inspired by the process of natural evolution. It aims to find the best solution to a problem by mimicking how nature evolves species through selection, reproduction, mutation, and inheritance. Evolutionary algorithms start with a population of candidate solutions and modify the candidates with each subsequent <em class="italic">generation</em> to adapt more closely to the best solution. This generational process is illustrated in <span class="No-Break"><em class="italic">Figure 5</em></span><span class="No-Break"><em class="italic">.2</em></span><span class="No-Break">.</span></p>
+<p class="IMG---Figure"><img alt="Figure 5.2 – A two-dimensional illustration of candidate solutions (red x marks) evolving with each subsequent generation to approximate the global optimum (located at the top and center of each landscape). In the context of CMA-ES, each candidate solution represents a combination of hyperparameter values, and the algorithm’s performance determines the optimum" height="1203" src="image/B16690_05_02.png" width="1189"/></p>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.2 – A two-dimensional illustration of candidate solutions (red x marks) evolving with each subsequent generation to approximate the global optimum (located at the top and center of each landscape). In the context of CMA-ES, each candidate solution represents a combination of hyperparameter values, and the algorithm’s performance determines the optimum</p>
+<p>Central to <a id="_idIndexMarker313"/>the evolutionary<a id="_idIndexMarker314"/> process of CMA-ES is the covariance matrix. A covariance matrix is a square, symmetric matrix representing the covariance between pairs of variables (in the case of <a id="_idIndexMarker315"/>CMA-ES, the hyperparameters), providing<a id="_idIndexMarker316"/> insight into their relationships. The diagonal elements of the matrix represent the variances of individual variables, while the off-diagonal elements represent the covariances between pairs of variables. When there’s a positive covariance, it signals that the variables usually move in the same direction, either increasing or decreasing. Conversely, a negative covariance points to a relationship where, as one variable rises, the other tends to fall, and vice versa. A covariance of zero suggests no linear relationship between <span class="No-Break">the variables.</span></p>
+<p>CMA-ES applies the evolutionary principles as follows when <span class="No-Break">optimizing hyperparameters:</span></p>
+<ol>
+<li>Within the hyperparameter search space, initialize the mean and the <span class="No-Break">covariance matrix.</span></li>
+<li>Repeat the <span class="No-Break">evolutionary process:</span><ol><li class="upper-roman">Generate a population of candidates from the search space using the mean and the covariance matrix. Each candidate represents a combination of <span class="No-Break">hyperparameter values.</span></li><li class="upper-roman">Evaluate the fitness of the candidates. <strong class="bold">Fitness</strong> refers to the quality of a candidate or how well it solves the<a id="_idIndexMarker317"/> optimization problem. With CMA-ES, this means training the model on the dataset using the candidate hyperparameters and evaluating the performance on the <span class="No-Break">validation set.</span></li><li class="upper-roman">Select the best candidates from <span class="No-Break">the population.</span></li><li class="upper-roman">Update the mean and the covariance matrix from the <span class="No-Break">best candidates.</span></li><li class="upper-roman">Repeat for a maximum number of trials or until no improvement is seen in the <span class="No-Break">population’s fitness.</span></li></ol></li>
+</ol>
+<p>CMA-ES performs well in complex search spaces and intelligently samples the search space, guided by the covariance matrix. It is beneficial when the hyperparameter search space is complex and non-linear or when the evaluation of the validation data is noisy (for instance, when a metric is an inconsistent <span class="No-Break">performance indicator).</span></p>
+<p>Both TPE and CMA-ES address the issues associated with hyperparameter optimization: both algorithms effectively search a high-dimensional search space. Both algorithms capture parameter interaction. Both algorithms give us control of the cost: we can decide our optimization budget and limit our search <span class="No-Break">to that.</span></p>
+<p>The main <a id="_idIndexMarker318"/>differences between TPE<a id="_idIndexMarker319"/> and CMA-ES lie in their overall approach. TPE is a probabilistic model with a sequential search strategy, compared to CMA-ES, which is population-based and evaluates solutions in parallel. This often means TPE is more exploitative in its search, while CMA-ES balances exploration and exploitation using population control mechanisms. However, TPE is typically more efficient than CMA-ES, especially for a small number <span class="No-Break">of parameters.</span></p>
+<p>Optuna provides further optimization to the search process in pruning ineffective trials. We’ll discuss some pruning <span class="No-Break">strategies next.</span></p>
+<h2 id="_idParaDest-87"><a id="_idTextAnchor089"/>Pruning strategies</h2>
+<p>Pruning strategies refer to<a id="_idIndexMarker320"/> methods that avoid spending optimization time on unpromising trials by pruning these trials from the study. Pruning occurs synchronously with the model training process: the validation error is checked during training, and the training is stopped if the algorithm is underperforming. In this way, pruning is similar to <span class="No-Break"><em class="italic">early stopping</em></span><span class="No-Break">.</span></p>
+<h3>Median pruning</h3>
+<p>Optuna provides several pruning strategies, one of the simplest being <strong class="bold">median pruning</strong>. With<a id="_idIndexMarker321"/> median pruning, each trial reports an intermediate result <a id="_idIndexMarker322"/>after <em class="italic">n</em> steps. The median of the intermediate results is then taken, and any trials below the median of previous trials at the same step <span class="No-Break">are stopped.</span></p>
+<h3>Successive halving and Hyperband</h3>
+<p>A more sophisticated<a id="_idIndexMarker323"/> strategy is <a id="_idIndexMarker324"/>called <strong class="bold">successive halving</strong> [4]. This takes a more global approach and assigns a small, equal budget of training steps to all trials. Successive halving then proceeds iteratively: at each iteration, the performance of each trial is evaluated, and the top half of the candidates are selected for the next round, with the bottom half pruned away. The training budget is doubled for the next iteration, and the process is repeated. This way, the optimization budget is spent on the most promising candidates. As a result, a small optimization budget is spent on eliminating the underperforming candidates, and more resources are spent on finding the <span class="No-Break">best parameters.</span></p>
+<p><strong class="bold">Hyperband</strong> is <a id="_idIndexMarker325"/>another pruning technique that extends successive halving by incorporating random search and a multi-bracket resource allocation strategy [5]. While successive<a id="_idIndexMarker326"/> halving efficiently narrows down a set of candidate configurations by iteratively pruning underperforming ones and allocating more resources to the remaining promising ones, it relies on a fixed initial set of configurations and a single resource <span class="No-Break">allocation scheme.</span></p>
+<p>Hyperband instead uses a multi-bracket resource allocation strategy, which divides the total computational budget into several brackets, each representing a different level of resource allocation. Within each bracket, successive halving is applied to iteratively eliminate underperforming configurations and allocate more resources to the remaining promising ones. At the beginning of each bracket, a new set of hyperparameter configurations is sampled using random search, which allows Hyperband to explore the hyperparameter space more broadly and reduce the risk of missing good configurations. This concurrent process enables Hyperband to adaptively balance exploration and exploitation in the search process, ultimately leading to more efficient and effective <span class="No-Break">hyperparameter tuning.</span></p>
+<p>Optuna has performed empirical studies of optimization algor<a href="https://github.com/optuna/optuna/wiki/Benchmarks-with-Kurobako">ithms and corresponding pruning strategies (https://github.com</a>/optuna/optuna/wiki/Benchmarks-with-Kurobako). <em class="italic">Empirically, they found that Hyperband is the best TPE or CMA-ES </em><span class="No-Break"><em class="italic">optimization strategy</em></span><span class="No-Break">.</span></p>
+<p>This section gave an overview of the theory and algorithms powering Optuna, focusing on TPE, CMA-ES, and advanced pruning strategies. In the next section, we’ll practically apply Optuna to a machine learning problem <span class="No-Break">with LightGBM.</span></p>
+<h1 id="_idParaDest-88"><a id="_idTextAnchor090"/>Optimizing LightGBM with Optuna</h1>
+<p>We’ll walk<a id="_idIndexMarker327"/> through applying Optuna using a classification<a id="_idIndexMarker328"/> example. The problem we’ll be modeling is to predict customer churn (<em class="italic">Yes</em>/<em class="italic">No</em>) for a telecommunications provider. The dataset is available <span class="No-Break">from </span><a href="https://github.com/IBM/telco-customer-churn-on-icp4d/tree/master/data"><span class="No-Break">https://github.com/IBM/telco-customer-churn-on-icp4d/tree/master/data</span></a><span class="No-Break">.</span> The data describes each customer using data available to the provider – for example, gender, whether the customer is paying for internet service, has paperless billing, pays for tech support, and their monthly charges. The data consists of both numeric and categorical features. The data has already been cleaned and is balanced, allowing us to focus on the parameter <span class="No-Break">optimization study.</span></p>
+<p>We start by<a id="_idIndexMarker329"/> defining the objective of our parameter <a id="_idIndexMarker330"/>study. The <strong class="source-inline">objective</strong> function is called once for each trial. In this case, we want to train a LightGBM model on the data and calculate the F1 score. Optuna passes a <strong class="source-inline">trial</strong> object to the <strong class="source-inline">objective</strong> function, which we can use to set up the parameters for the specific trial. The following is an example code snippet that shows how to define an <strong class="source-inline">objective</strong> function <span class="No-Break">with parameters:</span></p>
+<pre class="source-code">
+def objective(trial):
+        boosting_type = trial.suggest_categorical(
+            "boosting_type", ["dart", "gbdt"])
+        lambda_l1= trial.suggest_float(
+            'lambda_l1', 1e-8, 10.0, log=True),
+...
+        min_child_samples= trial.suggest_int(
+            'min_child_samples', 5, 100),
+        learning_rate = trial.suggest_float(
+            "learning_rate", 0.0001, 0.5, log=True),
+        max_bin = trial.suggest_int(
+            "max_bin", 128, 512, 32)
+        n_estimators =  trial.suggest_int(
+            "n_estimators", 40, 400, 20)</pre>
+<p>Here, we can see how we use the methods provided by <strong class="source-inline">trial</strong> to set up the hyperparameters. For each parameter, a value is suggested by the optimization algorithm within the range specified. We can suggest categorical variables using <strong class="source-inline">trial.suggest_categorical</strong> (as can be seen for the <strong class="source-inline">boosting</strong> type), and <strong class="source-inline">int</strong> and <strong class="source-inline">float</strong> parameters using <strong class="source-inline">suggest_int</strong> and <strong class="source-inline">suggest_float</strong>, respectively. When suggesting floats or integers, a range and, optionally, a step size <span class="No-Break">are specified:</span></p>
+<pre class="source-code">
+n_estimators =  trial.suggest_int(
+            name="n_estimators", low=40, high=400, step=20)</pre>
+<p>Setting a step size means the optimization algorithm does not suggest any arbitrary value in the range but limits suggestions to the steps between the lower and upper bound (40, 60, 80, 100, …, <span class="No-Break">400).</span></p>
+<p>We also have the<a id="_idIndexMarker331"/> option to log scale the range of possible <a id="_idIndexMarker332"/>values by passing <strong class="source-inline">log=True</strong> for numeric parameters. Log scaling the parameter range has the effect that more values are tested close to the range’s lower bound and (logarithmically) fewer values towards the upper bound. Log scaling is particularly well suited to the learning rate where we want to focus on smaller values and exponentially increase tested values until the <span class="No-Break">upper bound.</span></p>
+<p>To apply pruning when training LightGBM models, Optuna provides a purpose-built callback that integrates with the <span class="No-Break">optimization process:</span></p>
+<pre class="source-code">
+pruning_callback = optuna.integration.LightGBMPruningCallback(trial, "binary")</pre>
+<p>We must specify an error metric when creating the callback, and, in our case, we specify <strong class="source-inline">"binary"</strong> for the <span class="No-Break">binary error.</span></p>
+<p>With the hyperparameters set up, we can fit as we usually do, passing the parameters and the callback as we <span class="No-Break">would normally:</span></p>
+<pre class="source-code">
+model = lgb.LGBMClassifier(
+    force_row_wise=True,
+    boosting_type=boosting_type,
+    n_estimators=n_estimators,
+    lambda_l1=lambda_l1,
+    lambda_l2=lambda_l2,
+    num_leaves=num_leaves,
+    feature_fraction=feature_fraction,
+    bagging_fraction=bagging_fraction,
+    bagging_freq=bagging_freq,
+    min_child_samples=min_child_samples,
+    learning_rate=learning_rate,
+    max_bin=max_bin,
+    callbacks=[pruning_callback],
+    verbose=-1)
+scores = cross_val_score(model, X, y, scoring="f1_macro")
+return scores.mean()</pre>
+<p>We train the<a id="_idIndexMarker333"/> model using five-fold cross-validation with <a id="_idIndexMarker334"/>the F1 macro score for scoring. Finally, the <strong class="source-inline">objective</strong> function returns the mean of the F1 scores as the <span class="No-Break">trial evaluation.</span></p>
+<p>We are ready to start an optimization study with the defined <strong class="source-inline">objective</strong> function. We create a sampler, pruner, and the study itself and then call <strong class="source-inline">optimize</strong> with our <span class="No-Break"><strong class="source-inline">objective</strong></span><span class="No-Break"> function:</span></p>
+<pre class="source-code">
+sampler = optuna.samplers.TPESampler()
+pruner = optuna.pruners.HyperbandPruner(
+    min_resource=10, max_resource=400, reduction_factor=3)
+study = optuna.create_study(
+    direction='maximize', sampler=sampler,
+    pruner=pruner
+)
+study.optimize(objective(), n_trials=100, gc_after_trial=True, n_jobs=-1)</pre>
+<p>We use the TPE optimization algorithm as a sampler alongside Hyperband pruning. The minimum and maximum resources specified for the Hyperband pruner control the minimum and the maximum number of iterations (or estimators) trained per trial. When applying pruning, the reduction factor controls how many trials are promoted in each <span class="No-Break">halving round.</span></p>
+<p>The study is created by specifying the optimization direction (<strong class="source-inline">maximize</strong> or <strong class="source-inline">minimize</strong>). Here, we are optimizing the F1 score, so we want to maximize <span class="No-Break">the value.</span></p>
+<p>We then call <strong class="source-inline">study.optimize</strong> and set our optimization budget: <strong class="source-inline">n_trials=100</strong>. We also perform a memory optimization setting, <strong class="source-inline">gc_after_trial=True</strong>. Performing <strong class="bold">garbage collection</strong> (<strong class="bold">GC</strong>) helps<a id="_idIndexMarker335"/> ensure the memory is cleaned up after each trial, avoiding out-of-memory or memory leak errors. Optuna studies can run trials in parallel. Setting <strong class="source-inline">n_jobs=-1</strong> runs as many trials as there are CPU cores <span class="No-Break">in parallel.</span></p>
+<p>After<a id="_idIndexMarker336"/> running the optimization, we can get the best trial<a id="_idIndexMarker337"/> and parameters by calling <span class="No-Break">the following:</span></p>
+<pre class="source-code">
+print(study.best_trial)</pre>
+<p>The preceding example shows how to apply Optuna to find LightGBM hyperparameters effectively. Next, we look at some advanced features of the <span class="No-Break">Optuna framework.</span></p>
+<h2 id="_idParaDest-89"><a id="_idTextAnchor091"/>Advanced Optuna features</h2>
+<p>When optimizing hyperparameters<a id="_idIndexMarker338"/> for large machine learning problems, the optimization process may run for days or weeks. In these cases, saving an optimization study and resuming it later is helpful to guard against data loss or migrating the study between <span class="No-Break">different machines.</span></p>
+<h3>Saving and resuming an optimization study</h3>
+<p>Optuna supports saving and<a id="_idIndexMarker339"/> resuming an optimization study in two ways: <strong class="bold">in memory</strong> and using a <strong class="bold">remote </strong><span class="No-Break"><strong class="bold">database</strong></span><span class="No-Break"> (</span><span class="No-Break"><strong class="bold">RDB</strong></span><span class="No-Break">).</span></p>
+<p>When<a id="_idIndexMarker340"/> a study is run in memory, the standard Python methods for serializing an object can be applied. For example, either <strong class="source-inline">joblib</strong> or <strong class="source-inline">pickle</strong> may be used. We use <strong class="source-inline">joblib</strong> to save <span class="No-Break">a study:</span></p>
+<pre class="source-code">
+joblib.dump(study, "lgbm-optuna-study.pkl")</pre>
+<p>To restore and resume the study, we deserialize the <strong class="source-inline">study</strong> object and continue <span class="No-Break">with optimization:</span></p>
+<pre class="source-code">
+study = joblib.load("lgbm-optuna-study.pkl")
+study.optimize(objective(), n_trials=20, gc_after_trial=True, n_jobs=-1)</pre>
+<p>The alternative to running the study in memory is to use an RDB. When using an RDB, the study’s intermediate (trial) and final results are persisted in a SQL database backend. The RDB can be hosted on a separate machine. Any of the SQL databases supported by SQL Alchemy may be <span class="No-Break">used (</span><span class="No-Break">https://docs.sqlalchemy.org/en/20/core/engines.xhtml#database-urls</span><span class="No-Break">).</span></p>
+<p>In our example, we use a SQLite database as <span class="No-Break">an RDB:</span></p>
+<pre class="source-code">
+study_name = "lgbm-tpe-rdb-study"
+storage_name = f"sqlite:///{study_name}.db"
+study = optuna.create_study(
+    study_name=study_name,
+    storage=storage_name,
+    load_if_exists=False,
+    sampler=sampler,
+    pruner=pruner)</pre>
+<p>Optuna manages the connection to the RDB and the persistence of the results. After setting up the connection, optimization can proceed <span class="No-Break">as usual.</span></p>
+<p>Restoring the<a id="_idIndexMarker341"/> study from an RDB backend is straightforward; we specify the same <strong class="source-inline">storage</strong> and set <strong class="source-inline">load_if_exists</strong> <span class="No-Break">to </span><span class="No-Break"><strong class="source-inline">True</strong></span><span class="No-Break">:</span></p>
+<pre class="source-code">
+study = optuna.create_study(study_name=study_name, storage=storage_name, load_if_exists=True)</pre>
+<h3>Understanding parameter effects</h3>
+<p>In many cases, it’s also valuable<a id="_idIndexMarker342"/> to better understand the effects of hyperparameters when solving a specific problem. For example, the <strong class="source-inline">n_estimators</strong> parameter directly affects the computational complexity of a model. If we know the parameter to be less important, we can choose smaller values to improve our model’s runtime performance. Optuna provides several visualizations to dive deeper into the results of a study and gain insight <span class="No-Break">into hyperparameters.</span></p>
+<p>A straightforward visualization plots the <em class="italic">importance of each parameter</em>: how much each affected the training outcome. We can create an importance plot <span class="No-Break">as follows:</span></p>
+<pre class="source-code">
+fig = optuna.visualization.plot_param_importances(study)
+fig.show()</pre>
+<p>The importance plot for our study is <span class="No-Break">shown here:</span></p>
+<div>
+<div class="IMG---Figure" id="_idContainer048">
+<img alt="Figure 5.3 – A parameter importance plot showing the importance of each hyperparameter to the object values (F1 score)" height="743" src="image/B16690_05_03.jpg" width="1062"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.3 – A parameter importance plot showing the importance of each hyperparameter to the object values (F1 score)</p>
+<p>In <span class="No-Break"><em class="italic">Figure 5</em></span><em class="italic">.3</em>, we can <a id="_idIndexMarker343"/>see that the learning rate is by far the most critical parameter affecting the success of a trial. The number of leaves and estimators follows this. Using this information, we may decide to focus more heavily on finding an optimal learning rate in <span class="No-Break">future studies.</span></p>
+<p>We create a parallel coordinate plot as follows, specifying the parameters it should contain. The plot helps us visualize the interaction <span class="No-Break">between hyperparameters:</span></p>
+<pre class="source-code">
+fig = optuna.visualization.plot_parallel_coordinate(study, params=["boosting_type", "feature_fraction", "learning_rate", "n_estimators"])
+fig.show()</pre>
+<p>Here is the <span class="No-Break">resulting plot:</span></p>
+<div>
+<div class="IMG---Figure" id="_idContainer049">
+<img alt="Figure 5.4 – A parallel coordinate plot for our study. Each horizontal line is the configuration for a single trial. Darker lines indicate more successful trials (higher F1 scores)" height="844" src="image/B16690_05_04.jpg" width="1182"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.4 – A parallel coordinate plot for our study. Each horizontal line is the configuration for a single trial. Darker lines indicate more successful trials (higher F1 scores)</p>
+<p>The parallel<a id="_idIndexMarker344"/> coordinate plot shows that the best trials all used DART as the boosting type and have a learning rate of just below 0.1 and more than 200 estimators. We can also visually see some parameter interactions: GBDT models correlate with slightly higher learning rates. Far fewer leaf nodes are required when there is a large number of estimators because having many estimators and large numbers of leaf nodes leads <span class="No-Break">to overfitting.</span></p>
+<h3>Multi-objective optimization</h3>
+<p>In the optimization studies <a id="_idIndexMarker345"/>shown previously, we focused on a single optimization objective: maximizing our F1 score. However, in some instances, we would like to optimize two potentially competing <a id="_idIndexMarker346"/>objectives. For example, say we want to create the smallest GBDTs possible (fewest leaves) while obtaining a good F1 score. Reducing the number of leaves can potentially negatively impact our performance, so a <span class="No-Break">trade-off exists.</span></p>
+<p>Optuna supports solving this<a id="_idIndexMarker347"/> type of problem by using <strong class="bold">multi-objective optimization</strong> (<strong class="bold">MOO</strong>). When optimizing multiple objectives, we return two evaluations from our <strong class="source-inline">objective</strong> function and specify the <span class="No-Break">optimization directions.</span></p>
+<p>As an example, consider the trade-off between the learning rate and performance. We want to train our model as fast as possible, which requires a high learning rate. However, we know the best performance is achieved using a small learning rate and <span class="No-Break">many iterations.</span></p>
+<p>We can use Optuna to <a id="_idIndexMarker348"/>optimize this trade-off. We define a new <strong class="source-inline">objective</strong> function, fixing all other parameters to the optimal values found earlier. We return two evaluations: the learning and the cross-validated F1-score. We want to maximize <span class="No-Break">both values:</span></p>
+<pre class="source-code">
+def moo_objective(trial):
+    learning_rate = trial.suggest_float("learning_rate", 0.0001, 0.5, log=True),
+    model = lgb.LGBMClassifier(
+        force_row_wise=True,
+        boosting_type='gbdt',
+        n_estimators=200,
+        num_leaves=6,
+        bagging_freq=7,
+        learning_rate=learning_rate,
+        max_bin=320,
+    )
+    scores = cross_val_score(model, X, y, scoring="f1_macro")
+    return learning_rate[0], scores.mean()</pre>
+<p>When calling <strong class="source-inline">optimize</strong>, we then set the direction for the optimization of <span class="No-Break">both evaluations:</span></p>
+<pre class="source-code">
+study = optuna.create_study(directions=["maximize", "maximize"])
+study.optimize(moo_objective, n_trials=100)</pre>
+<p>When performing <a id="_idIndexMarker349"/>MOO, there isn’t always a single best result: a trade-off often exists between the objectives. Therefore, we want to visualize the study results to explore the trade-off and select parameter values that <a id="_idIndexMarker350"/>perform well with both objectives. This type of visualization is<a id="_idIndexMarker351"/> called a <strong class="bold">Pareto front</strong> and can be created <span class="No-Break">as follows:</span></p>
+<p class="IMG---Figure"><img alt="Figure 5.5 – A scatter plot showing the Pareto front for a MOO study" height="725" src="image/B16690_05_05.png" width="1089"/></p>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 5.5 – A scatter plot showing the Pareto front for a MOO study</p>
+<p>As shown in <span class="No-Break"><em class="italic">Figure 5</em></span><em class="italic">.5</em>, the F1 score is poor if the learning rate is too low and picks up quickly as the learning rate gets to 0.01. The F1 score peaks at 0.12 and slowly trails off as the learning rate increases. We <a id="_idIndexMarker352"/>now have the necessary information to decide on our trade-off: we can choose a higher learning rate for faster training, sacrificing the minimum amount of <span class="No-Break">classification performance.</span></p>
+<h1 id="_idParaDest-90"><a id="_idTextAnchor092"/>Summary</h1>
+<p>This chapter introduced Optuna as a framework for HPO. We discussed the problems of finding optimal hyperparameters and how HPO algorithms may be used to find suitable <span class="No-Break">parameters efficiently.</span></p>
+<p>We discussed two optimization algorithms available in Optuna: TPE and CMA-ES. Both algorithms allow a user to set a specific budget for optimization (the number of trials to perform) and proceed to find suitable parameters within the constraints. Further, we discussed the pruning of unpromising optimization trials to save additional resources and time. Median pruning and the more complex but effective pruning techniques of successive halving and Hyperband <span class="No-Break">were discussed.</span></p>
+<p>We then proceeded to show how to perform HPO studies for LightGBM in a practical example. We also showed advanced features of Optuna that can be used to save and resume studies, understand the effects of parameters, and <span class="No-Break">perform MOO.</span></p>
+<p>The next chapter focuses on two case studies using LightGBM, where the data science process is discussed and applied <span class="No-Break">in detail.</span></p>
+<h1 id="_idParaDest-91"><a id="_idTextAnchor093"/>References</h1>
+<table class="No-Table-Style" id="table001-5">
+<colgroup>
+<col/>
+<col/>
+</colgroup>
+<tbody>
+<tr class="No-Table-Style">
+<td class="No-Table-Style">
+<p><em class="italic">[</em><span class="No-Break"><em class="italic">1]</em></span></p>
+</td>
+<td class="No-Table-Style">
+<p><em class="italic">J. Bergstra, R. Bardenet, Y. Bengio, and B. Kégl, “Algorithms for Hyper-Parameter Optimization,” in Advances in Neural Information Processing </em><span class="No-Break"><em class="italic">Systems, 2011.</em></span></p>
+</td>
+</tr>
+<tr class="No-Table-Style">
+<td class="No-Table-Style">
+<p><em class="italic">[</em><span class="No-Break"><em class="italic">2]</em></span></p>
+</td>
+<td class="No-Table-Style">
+<p><em class="italic">J. Bergstra, D. Yamins, and D. Cox, “Making a Science of Model Search: Hyperparameter Optimization in Hundreds of Dimensions for Vision Architectures,” in Proceedings of the 30th International Conference on Machine Learning, </em><span class="No-Break"><em class="italic">Atlanta, 2013.</em></span></p>
+</td>
+</tr>
+<tr class="No-Table-Style">
+<td class="No-Table-Style">
+<p><em class="italic">[</em><span class="No-Break"><em class="italic">3]</em></span></p>
+</td>
+<td class="No-Table-Style">
+<p><em class="italic">N. Hansen and A. Ostermeier, “Adapting arbitrary normal mutation distributions in evolution strategies: the covariance matrix adaptation,” in Proceedings of IEEE International Conference on Evolutionary </em><span class="No-Break"><em class="italic">Computation, 1996.</em></span></p>
+</td>
+</tr>
+<tr class="No-Table-Style">
+<td class="No-Table-Style">
+<p><em class="italic">[</em><span class="No-Break"><em class="italic">4]</em></span></p>
+</td>
+<td class="No-Table-Style">
+<p><em class="italic">K. Jamieson and A. Talwalkar, Non-stochastic Best Arm Identification and Hyperparameter </em><span class="No-Break"><em class="italic">Optimization, 2015.</em></span></p>
+</td>
+</tr>
+<tr class="No-Table-Style">
+<td class="No-Table-Style">
+<p><em class="italic">[</em><span class="No-Break"><em class="italic">5]</em></span></p>
+</td>
+<td class="No-Table-Style">
+<p><em class="italic">L. Li, K. Jamieson, G. DeSalvo, A. Rostamizadeh, and A. Talwalkar, Hyperband: A Novel Bandit-Based Approach to Hyperparameter </em><span class="No-Break"><em class="italic">Optimization, 2018.</em></span></p>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div></body></html>

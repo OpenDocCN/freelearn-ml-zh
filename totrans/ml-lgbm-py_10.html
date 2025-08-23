@@ -1,0 +1,309 @@
+<html><head></head><body>
+<div id="sbo-rt-content"><div id="_idContainer089">
+<h1 class="chapter-number" id="_idParaDest-160"><a id="_idTextAnchor162"/>10</h1>
+<h1 id="_idParaDest-161"><a id="_idTextAnchor163"/>LightGBM Models with PostgresML</h1>
+<p>In this chapter, we’ll look at a unique MLOps platform called <strong class="bold">PostgresML</strong>. PostgresML is a Postgres database extension that allows you to train and deploy ML models <span class="No-Break">using SQL.</span></p>
+<p>PostgresML and SQL are a significant departure from the scikit-learn style of programming we’ve used throughout this book. However, as we’ll see in this chapter, performing ML model development and deployment at the database level has significant advantages regarding data movement requirements and <span class="No-Break">inferencing latency.</span></p>
+<p>The main topics in this chapter are <span class="No-Break">as follows:</span></p>
+<ul>
+<li>An overview <span class="No-Break">of PostgresML</span></li>
+<li>Getting started <span class="No-Break">with PostgresML</span></li>
+<li>A customer churn case study with PostgresML <span class="No-Break">and LightGBM</span></li>
+</ul>
+<h1 id="_idParaDest-162"><a id="_idTextAnchor164"/>Technical requirements</h1>
+<p>This chapter includes practical examples of working with PostgresML. Docker will be used to set up a PostgresML environment and is recommended to run the examples. The code for this chapter is available <span class="No-Break">at </span><a href="https://github.com/PacktPublishing/Practical-Machine-Learning-with-LightGBM-and-Python/tree/main/chapter-10"><span class="No-Break">https://github.com/PacktPublishing/Practical-Machine-Learning-with-LightGBM-and-Python/tree/main/chapter-10</span></a><span class="No-Break">.</span></p>
+<h1 id="_idParaDest-163"><a id="_idTextAnchor165"/>Introducing PostgresML</h1>
+<p>PostgresML (<a href="https://postgresml.org/">https://postgresml.org/</a>) is an <a id="_idIndexMarker677"/>extension for Postgres that allows <a id="_idIndexMarker678"/>practitioners to implement the entire ML life cycle on top of a Postgres database for text and <span class="No-Break">tabular data.</span></p>
+<p>PostgresML utilizes SQL as the interface to train models, create deployments, and make predictions. The use of SQL means model and data operations can be combined seamlessly and fit naturally into Postgres DB data <span class="No-Break">engineering environments.</span></p>
+<p>There are many advantages to having a shared data and ML platform. As we saw in the previous chapter, with SageMaker, significant effort is spent on moving data around. This is a common problem in ML environments where data, especially transactional data, lives in production databases, and complex data engineering workflows need to be created to extract <a id="_idIndexMarker679"/>data from production sources, transform the data for ML use, and load the data into a store that’s accessible to the ML platform (such as S3 <span class="No-Break">for SageMaker).</span></p>
+<p>By combining the data store with the ML platform, PostgresML does away with moving data from one platform to another, saving significant time, effort, storage, and potentially <span class="No-Break">egress costs.</span></p>
+<p>Further, modeling from live transactional data means that training data is always up to date (read directly from the system of record) instead of gated behind a refresh. This eliminates errors that stem from working with outdated data or data being transformed or loaded incorrectly by <span class="No-Break">ETL jobs.</span></p>
+<h2 id="_idParaDest-164"><a id="_idTextAnchor166"/>Latency and round trips</h2>
+<p>A typical pattern for model deployment, which we’ve illustrated in earlier chapters, is deploying models <a id="_idIndexMarker680"/>behind a web API. In microservice terms, the model deployment is just another service that can be composed of other services to realize the overall <span class="No-Break">system goal.</span></p>
+<p>Deployment as <a id="_idIndexMarker681"/>a web service has several advantages. First, interoperability with other systems is straightforward via network calls when using web standards such as REST. Second, it allows you to independently deploy the model code, isolated from the rest of the system, affording resilience and <span class="No-Break">independent scaling.</span></p>
+<p>However, deploying models as separate services also has a significant downside: latency and network <span class="No-Break">round trips.</span></p>
+<p>Let’s consider an e-commerce example. A common ML problem in e-commerce settings is fraud detection. Here is a system architecture diagram of a simple <span class="No-Break">e-commerce system:</span></p>
+<div>
+<div class="IMG---Figure" id="_idContainer085">
+<img alt="Figure 10.1 – Simplified e-commerce system architecture illustrating the interaction between functional services (transaction) and an ML-driven service (fraud detection)" height="517" src="image/B16690_10_01.jpg" width="1065"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 10.1 – Simplified e-commerce system architecture illustrating the interaction between functional services (transaction) and an ML-driven service (fraud detection)</p>
+<p>Considering the <a id="_idIndexMarker682"/>architecture in <span class="No-Break"><em class="italic">Figure 10</em></span><em class="italic">.1</em>, the flow for a new transaction <a id="_idIndexMarker683"/>proceeds <span class="No-Break">as follows:</span></p>
+<ol>
+<li>The transaction is sent to the <span class="No-Break">transaction service.</span></li>
+<li>The transaction service calls the fraud detection service with the details of the <span class="No-Break">new transaction.</span></li>
+<li>The fraud detection service receives the new transaction, loads the relevant model from model storage (if needed), loads historical data from the transaction storage, and responds to the transaction service with <span class="No-Break">the prediction.</span></li>
+<li>The transaction service receives the fraud prediction and stores the transaction with the <span class="No-Break">relevant classification.</span></li>
+</ol>
+<p>A few variations on this workflow might exist. However, due to the separation of the transaction and fraud detection services, many network round trips have to be made to process a new transaction. Making the fraud prediction also requires fetching historical data from the transaction storage to feed to <span class="No-Break">the model.</span></p>
+<p>The networking call latency and round trips add significant overhead to the transaction. If the goal is to achieve a low-latency or real-time system, significantly more complex architectural components are required – for example, caching for the model and transactional data and higher throughput <span class="No-Break">web services.</span></p>
+<p>With PostgresML, the architecture may be simplified <span class="No-Break">as follows:</span></p>
+<div>
+<div class="IMG---Figure" id="_idContainer086">
+<img alt="Figure 10.2 – Combining the ML services with data storage using PostgresML allows for a more straightforward system design" height="427" src="image/B16690_10_02.jpg" width="1065"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 10.2 – Combining the ML services with data storage using PostgresML allows for a more straightforward system design</p>
+<p>Although this example is an oversimplification, the point is that significant overhead is added to the <a id="_idIndexMarker684"/>overall process of leveraging ML models in a service-oriented <a id="_idIndexMarker685"/>architecture with separate <span class="No-Break">model services.</span></p>
+<p>Through PostgresML, we can eliminate the need for separate model storage and overheads of loading models and, importantly, combine data storage calls and predictions into a single call on the data storage layer with no network overhead in between. PostgresML’s benchmarks found that the simplified architecture improved performance by a factor of 40 within a cloud <span class="No-Break">environment [1].</span></p>
+<p>However, there are also downsides to this architecture. First, the database is now a single point of failure. If the database is unavailable, all models and predictive capabilities are also unavailable. Second, the architecture mixes the concerns of data storage and ML modeling and inference. Depending on the use case, training and deploying ML models has different server infrastructure needs compared to serving SQL queries and storing data. The mixture of concerns might force you to compromise on one or the other responsibilities or significantly increase database infrastructure costs to support all <span class="No-Break">use cases.</span></p>
+<p>In this section, we introduced PostgresML and explained, at a conceptual level, the advantages of combining our data store and ML service. Now, we’ll look at practically setting up and getting started with PostgresML, alongside some <span class="No-Break">basic functionality.</span></p>
+<h1 id="_idParaDest-165"><a id="_idTextAnchor167"/>Getting started with PostgresML</h1>
+<p>PostgresML, of course, relies on PostgreSQL being installed. PostgresML requires PostgreSQL 11, with newer <a id="_idIndexMarker686"/>versions also supported. PostgresML also requires Python 3.7+ to be installed on your system. Both ARM and Intel/AMD architectures <span class="No-Break">are supported.</span></p>
+<p class="callout-heading">Note</p>
+<p class="callout">This section provides an overview of the steps and dependencies required to start working with PostgresML and the features at the time of writing. For up-to-date information, check out the official<a href="https://postgresml.org/"> website: https://postg</a>resml.org/. The simplest way to run PostgresML is to use Docker. For more information, check out the <em class="italic">Quick Start with Docker</em> <span class="No-Break">documentation: </span><a href="https://postgresml.org/docs/guides/setup/quick_start_with_docker"><span class="No-Break">https://postgresml.org/docs/guides/setup/quick_start_with_docker</span></a><span class="No-Break">.</span></p>
+<p>The extension can be installed with official package tools (such as APT) or compiled from sources. Once all the dependencies and the extension have been installed, <strong class="source-inline">postgresql.conf</strong> must be updated to load the PostgresML library, and the database server must <span class="No-Break">be restarted:</span></p>
+<pre class="source-code">
+shared_preload_libraries = 'pgml,pg_stat_statements'
+sudo service postgresql restart</pre>
+<p>With PostgresML installed, the extension must be created within the database you plan to use. This can be done in the regular PostgreSQL way from a <span class="No-Break">SQL console:</span></p>
+<pre class="source-code">
+CREATE EXTENSION pgml;</pre>
+<p>Verify the installation, <span class="No-Break">like so:</span></p>
+<pre class="source-code">
+SELECT pgml.version();</pre>
+<h2 id="_idParaDest-166"><a id="_idTextAnchor168"/>Training models</h2>
+<p>Now, let’s look <a id="_idIndexMarker687"/>at the features provided by PostgresML. As stated in the introduction, PostgresML has a SQL API. The following code examples should be run in a <span class="No-Break">SQL console.</span></p>
+<p>The extension function for training a model is <span class="No-Break">as follows:</span></p>
+<pre class="source-code">
+pgml.train(
+    project_name TEXT,
+    task TEXT DEFAULT NULL,
+    relation_name TEXT DEFAULT NULL,
+    y_column_name TEXT DEFAULT NULL,
+    algorithm TEXT DEFAULT 'linear',
+    hyperparams JSONB DEFAULT '{}'::JSONB,
+    search TEXT DEFAULT NULL,
+    search_params JSONB DEFAULT '{}'::JSONB,
+    search_args JSONB DEFAULT '{}'::JSONB,
+    preprocess JSONB DEFAULT '{}'::JSONB,
+    test_size REAL DEFAULT 0.25,
+    test_sampling TEXT DEFAULT 'random'
+)</pre>
+<p>We need to supply <strong class="source-inline">project_name</strong> as the first parameter. PostgresML organizes models and <a id="_idIndexMarker688"/>deployments into projects, and projects are uniquely identified by <span class="No-Break">their names.</span></p>
+<p>Next, we specify the model’s <strong class="source-inline">task</strong>: either classification or regression. <strong class="source-inline">relation_name</strong> and <strong class="source-inline">y_column_name</strong> set up the data for the training run. The relation is the table or view where the data is defined, and the Y column’s name specifies the target column within <span class="No-Break">the relation.</span></p>
+<p>These are the only required parameters for training. Training a linear model (the default) can be done <span class="No-Break">as follows:</span></p>
+<pre class="source-code">
+SELECT * FROM pgml.train(
+    project_name =&gt; 'Regression Project',
+    task =&gt; 'regression',
+    relation_name =&gt; pgml.diabetes',
+    y_column_name =&gt; 'target'
+);</pre>
+<p>When <strong class="source-inline">pgml.train</strong> is called, PostgresML copies the data into the <strong class="source-inline">pgml</strong> schema: this ensures all training runs are reproducible and enables training to be rerun using different algorithms or parameters but the same data. <strong class="source-inline">relation_name</strong> and <strong class="source-inline">task</strong> are also only <a id="_idIndexMarker689"/>required the very first time training is done for a project. To train a second model for a project, we can simplify the training call <span class="No-Break">like so:</span></p>
+<pre class="source-code">
+SELECT * FROM pgml.train(
+    'Regression Project ',
+    algorithm =&gt; 'lightgbm'
+);</pre>
+<p>When calling this code, a LightGBM regression model is trained on the <span class="No-Break">same data.</span></p>
+<p>The algorithm parameter sets the learning algorithm to use. PostgresML supports various <a id="_idIndexMarker690"/>algorithms, including LightGBM, XGBoost, scikit-learn’s random forests and extra trees, <strong class="bold">support vector machines</strong> (<strong class="bold">SVMs</strong>), linear models, and unsupervised algorithms such as <span class="No-Break">K-means clustering.</span></p>
+<p>By default, 25% of the data is used as a test set, and the test data is selected at random. This can be controlled with the <strong class="source-inline">test_size</strong> and <strong class="source-inline">test_sampling</strong> parameters. Alternative test sampling methods select data from the first or <span class="No-Break">last rows.</span></p>
+<h3>Hyperparameter optimization</h3>
+<p>PostgresML supports <a id="_idIndexMarker691"/>performing <strong class="bold">hyperparameter optimization</strong> (<strong class="bold">HPO</strong>) during the training run. The search parameters control the <a id="_idIndexMarker692"/>HPO process. Two search strategies are supported via <strong class="source-inline">search</strong>: grid search and random search. To set the hyperparameter ranges for the HPO, a JSON object is used with the <strong class="source-inline">search_params</strong> parameter. HPO parameters are specified using <strong class="source-inline">search_args</strong>. Here’s <span class="No-Break">an example:</span></p>
+<pre class="source-code">
+SELECT * FROM pgml.train('Regression Project',
+                algorithm =&gt; 'lightgbm',
+                search =&gt; 'random',
+                search_args =&gt; '{"n_iter": 100 }',
+                search_params =&gt; '{
+                        "learning_rate": [0.001, 0.1, 0.5],
+                        "n_estimators": [20, 100, 200]
+                }'
+);</pre>
+<h3>Preprocessing</h3>
+<p>PostgresML also <a id="_idIndexMarker693"/>supports performing certain types of preprocessing when training a model. As with the training data and configuration, the preprocessing is also stored with the project, so the same preprocessing can be applied when using a model <span class="No-Break">for predictions.</span></p>
+<p>Regarding pre-processing, PostgresML supports encoding categorical variables, imputing missing values, and scaling numerical values. Preprocessing rules are set using a JSON object via the <strong class="source-inline">preprocess</strong> parameter, <span class="No-Break">as follows:</span></p>
+<pre class="source-code">
+SELECT pgml.train(
+…
+preprocess =&gt; '{
+        "model": {"encode": {"ordinal": ["Ford", "Kia",
+            "Volkswagen"]}}
+        "price": {"impute": "mean", scale: "standard"}
+        "fuel_economy": {"scale": "standard"}
+    }'
+);</pre>
+<p>Here, we applied ordinal encoding for the model feature. Alternatively, PostgresML also supports one-hot encoding and target encoding. We also imported missing values (as indicated by <strong class="source-inline">NULL</strong> in the column) using the mean of the price and applied standard (normal) scaling to the price and the fuel <span class="No-Break">economy features.</span></p>
+<h2 id="_idParaDest-167"><a id="_idTextAnchor169"/>Deploying and prediction</h2>
+<p>PostgresML automatically calculates appropriate metrics on the test set after training, including <span class="_-----MathTools-_Math_Variable">R</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Number">2</span>, the F1 score, precision, recall, <strong class="source-inline">ROC_AUC</strong>, accuracy and log loss. PostgresML will then <a id="_idIndexMarker694"/>automatically deploy the model after training <a id="_idIndexMarker695"/>if the key metric for the model (<span class="_-----MathTools-_Math_Variable">R</span><span class="_-----MathTools-_Math_Base"> </span><span class="_-----MathTools-_Math_Number">2</span> for regression and F1 for classification) improves over the currently <span class="No-Break">deployed model.</span></p>
+<p>However, deployments can also be managed manually for a project with the <span class="No-Break"><strong class="source-inline">pgml.deploy</strong></span><span class="No-Break"> function:</span></p>
+<pre class="source-code">
+pgml.deploy(
+    project_name TEXT,
+    strategy TEXT DEFAULT 'best_score',
+    algorithm TEXT DEFAULT NULL
+)</pre>
+<p>The deployment strategies supported by PostgresML are <strong class="source-inline">best_score</strong>, which immediately deploys the model with the best key metrics; <strong class="source-inline">most_recent</strong>, which deploys the most recently trained model; and <strong class="source-inline">rollback</strong>, which rolls back the current deployment to the previously <span class="No-Break">deployed model.</span></p>
+<p>With a model deployed, predictions can be made with the <span class="No-Break"><strong class="source-inline">pgml.predict</strong></span><span class="No-Break"> function:</span></p>
+<pre class="source-code">
+pgml.predict (
+    project_name TEXT,
+    features REAL[]
+)</pre>
+<p>The <strong class="source-inline">pgml.predict</strong> function accepts the project name and the features for prediction. Features may be either arrays or <span class="No-Break">composite types.</span></p>
+<h2 id="_idParaDest-168"><a id="_idTextAnchor170"/>PostgresML dashboard</h2>
+<p>PostgresML provides a web-based dashboard for a more accessible interface to PostgresML features. The dashboard is deployed separately from PostgreSQL and is not required for <a id="_idIndexMarker696"/>administration or fully utilizing PostgresML features as all functionality is also accessible via <span class="No-Break">SQL queries.</span></p>
+<p>The dashboard provides access to a list of projects, models, deployments, and data snapshots. More details can also be found on trained models via the dashboard, including hyperparameter settings and <span class="No-Break">training metrics:</span></p>
+<div>
+<div class="IMG---Figure" id="_idContainer087">
+<img alt="Figure 10.3 – PostgresML dashboard showing a list of trained models" height="428" src="image/B16690_10_03.jpg" width="1330"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 10.3 – PostgresML dashboard showing a list of trained models</p>
+<p>Besides offering a view of projects, models, and deployments, the dashboard also allows the creation of SQL notebooks, similar to Jupyter Notebooks. These SQL notebooks provide a simple interface to interact with PostgresML if another SQL console is not <span class="No-Break">readily available.</span></p>
+<p>This concludes our section on getting started with PostgresML. Next, we’ll look at an end-to-end case study of training and deploying a <span class="No-Break">PostgresML model.</span></p>
+<h1 id="_idParaDest-169"><a id="_idTextAnchor171"/>Case study – customer churn with PostgresML</h1>
+<p>Let’s revisit the <a id="_idIndexMarker697"/>customer churn problem for a telecommunications provider. As a reminder, the dataset consists of customers and their account and cost information associated with the <span class="No-Break">telecommunication provider.</span></p>
+<h2 id="_idParaDest-170"><a id="_idTextAnchor172"/>Data loading and preprocessing</h2>
+<p>Our data will typically already be available within the PostgreSQL database in a real-world <a id="_idIndexMarker698"/>setting. However, for our example, we will start <a id="_idIndexMarker699"/>by loading the data. First, we must create the table the data is <span class="No-Break">loaded into:</span></p>
+<pre class="source-code">
+CREATE TABLE pgml.telco_churn
+(
+    customerid       VARCHAR(100),
+    gender           VARCHAR(100),
+    seniorcitizen    BOOLEAN,
+    partner          VARCHAR(10),
+    dependents       VARCHAR(10),
+    tenure           REAL,
+...
+    monthlycharges   VARCHAR(50),
+    totalcharges     VARCHAR(50),
+    churn            VARCHAR(10)
+);</pre>
+<p>Note that in our table structure, for a few of our columns, the types do not match what we may expect: for example, monthly and total charges should be real values. We’ll address this during <span class="No-Break">our preprocessing.</span></p>
+<p>Next, we can load our CSV data into the table. PostgreSQL provides a <strong class="source-inline">COPY</strong> statement for <span class="No-Break">this purpose:</span></p>
+<pre class="source-code">
+COPY pgml.telco_churn (customerid,
+                       gender,
+                       seniorcitizen,
+                       partner,
+...
+                       streamingtv,
+                       streamingmovies,
+                       contract,
+                       paperlessbilling,
+                       paymentmethod,
+                       monthlycharges,
+                       totalcharges,
+                       churn
+    ) FROM '/tmp/telco-churn.csv'
+    DELIMITER ','
+    CSV HEADER;</pre>
+<p>Running <a id="_idIndexMarker700"/>this statement reads the CSV file and adds <a id="_idIndexMarker701"/>the data to <span class="No-Break">our table.</span></p>
+<p class="callout-heading">Note</p>
+<p class="callout">If you run PostgresML in a Docker container (which is recommended to get started), the CSV file must first be copied to the container runtime. This can be done with the following command (substituting your own <span class="No-Break">container name):</span></p>
+<p class="callout"><strong class="source-inline">docker cp </strong><span class="No-Break"><strong class="source-inline">telco/telco-churn.csv postgresml-postgres-1:/tmp/telco-churn.csv</strong></span><span class="No-Break">.</span></p>
+<p>With the data loaded, we can perform our preprocessing. We perform this in three steps: cleaning data directly in the table, creating a table view that coerces the data to appropriate types, and using PostgresML’s <span class="No-Break">preprocessing functionality:</span></p>
+<pre class="source-code">
+UPDATE pgml.telco_churn
+SET totalcharges = NULL
+WHERE totalcharges = ' ';</pre>
+<p>We must <a id="_idIndexMarker702"/>replace the empty text values in total <a id="_idIndexMarker703"/>charges with <strong class="source-inline">NULL</strong>, allowing PostgresML to impute the <span class="No-Break">values later:</span></p>
+<pre class="source-code">
+CREATE VIEW pgml.telco_churn_data AS
+SELECT gender,
+       seniorcitizen,
+       CAST(CASE partner
+                WHEN 'Yes' THEN true
+                WHEN 'No' THEN false
+           END AS BOOLEAN) AS partner,
+...
+       CAST(monthlycharges AS REAL),
+       CAST(totalcharges AS REAL),
+       CAST(CASE churn
+                WHEN 'Yes' THEN true
+                WHEN 'No' THEN false
+           END AS BOOLEAN) AS churn
+FROM pgml.telco_churn;</pre>
+<p>We then create a view to prepare the data for training. Notably, two type transformations are performed: features with <strong class="source-inline">Yes</strong>/<strong class="source-inline">No</strong> values are mapped to booleans, and we cast our monthly and total charges to <strong class="source-inline">REAL</strong> values (after mapping the text values to <strong class="source-inline">NULL</strong>). We also exclude <strong class="source-inline">CustomerId</strong> from the view as this can’t be used <span class="No-Break">for training.</span></p>
+<h2 id="_idParaDest-171"><a id="_idTextAnchor173"/>Training and hyperparameter optimization</h2>
+<p>We can <a id="_idIndexMarker704"/>train <a id="_idIndexMarker705"/>our LightGBM model <span class="No-Break">as follows:</span></p>
+<pre class="source-code">
+SELECT *
+FROM pgml.train('Telco Churn',
+                task =&gt; 'classification',
+                relation_name =&gt; 'pgml.telco_churn_data',
+                y_column_name =&gt; 'churn',
+                algorithm =&gt; 'lightgbm',
+                preprocess =&gt; '{"totalcharges": {"impute": "mean"} }',
+                search =&gt; 'random',
+                search_args =&gt; '{"n_iter": 500 }',
+                search_params =&gt; '{
+                        "num_leaves": [2, 4, 8, 16, 32, 64]
+                }'
+    );</pre>
+<p>We set the <a id="_idIndexMarker706"/>view as our relation, with the churn column <a id="_idIndexMarker707"/>being our target feature. For preprocessing, we use the mean to ask PostgresML to impute missing values for the <span class="No-Break"><strong class="source-inline">totalcharges</strong></span><span class="No-Break"> feature.</span></p>
+<p>We also set up hyperparameter optimization using 500 iterations of a random search with the specified search <span class="No-Break">parameter ranges.</span></p>
+<p>After completing training, we will be able to see our trained and deployed model in <span class="No-Break">the dashboard:</span></p>
+<div>
+<div class="IMG---Figure" id="_idContainer088">
+<img alt="Figure 10.4 – Trained LightGBM model, as seen in the PostgresML dashboard" height="469" src="image/B16690_10_04.jpg" width="1202"/>
+</div>
+</div>
+<p class="IMG---Caption" lang="en-US" xml:lang="en-US">Figure 10.4 – Trained LightGBM model, as seen in the PostgresML dashboard</p>
+<p>The dashboard shows the metrics for our model and the best-performing hyperparameters. Our model achieved an F1 score of 0.6367 and an accuracy <span class="No-Break">of 0.8239.</span></p>
+<p>The same <a id="_idIndexMarker708"/>information can also be retrieved with the following <a id="_idIndexMarker709"/>SQL query should the dashboard <span class="No-Break">be unavailable:</span></p>
+<pre class="source-code">
+SELECT metrics, hyperparams
+FROM pgml.models m
+LEFT OUTER JOIN pgml.projects p on p.id = m.project_id
+WHERE p.name = 'Telco Churn';</pre>
+<p>Our model is automatically deployed when trained and is ready to <span class="No-Break">make predictions.</span></p>
+<h2 id="_idParaDest-172"><a id="_idTextAnchor174"/>Predictions</h2>
+<p>We can make <a id="_idIndexMarker710"/>predictions manually using a composite type as the feature data. This can be done <span class="No-Break">as follows:</span></p>
+<pre class="source-code">
+SELECT pgml.predict(
+               'Telco Churn',
+               ROW (
+                   CAST('Male' AS VARCHAR(30)),
+                   1,
+...
+                   CAST('Electronic check' AS VARCHAR(30)),
+                   CAST(20.25 AS REAL),
+                   CAST(4107.25 AS REAL)
+                   )
+           ) AS prediction;</pre>
+<p>We use the PostgreSQL <strong class="source-inline">ROW</strong> expression to set up the data, casting literals to the correct types for <span class="No-Break">our model.</span></p>
+<p>However, the more common way to leverage a PostgresML model is to incorporate predictions into <a id="_idIndexMarker711"/>regular business queries. For example, here, we’ve selected all the data from the original customer data table and added the prediction for each row using the <span class="No-Break"><strong class="source-inline">pgml.predict</strong></span><span class="No-Break"> function:</span></p>
+<pre class="source-code">
+SELECT *,
+       pgml.predict(
+               'Telco Churn',
+               ROW (
+                   gender,
+                   seniorcitizen,
+…
+                   paymentmethod,
+                   CAST(monthlycharges AS REAL),
+                   CAST(totalcharges AS REAL)
+                   )
+           ) AS prediction
+FROM pgml.telco_churn;</pre>
+<p>Similar to calling the predict function manually, we use the <strong class="source-inline">ROW</strong> expression to pass data to the <strong class="source-inline">pgml.predict</strong> function but select the data from <span class="No-Break">the table.</span></p>
+<p>This also clearly <a id="_idIndexMarker712"/>illustrates the advantage of using PostgresML: a consumer of the ML model could query new customer data alongside the predictions with minimal overhead and in the same business transaction with a single <span class="No-Break">network call.</span></p>
+<h1 id="_idParaDest-173"><a id="_idTextAnchor175"/>Summary</h1>
+<p>This chapter provided an overview of PostgresML, a unique MLOps platform that allows training and calling models from SQL queries on top of an existing <span class="No-Break">PostgreSQL database.</span></p>
+<p>We discussed the platform’s advantages in simplifying an ML-enabled landscape and reducing overhead and network latency in a service-oriented architecture. An overview of the core features and the API <span class="No-Break">was provided.</span></p>
+<p>This chapter concluded with a practical example of leveraging PostgresML for a classification problem, illustrating how to train a LightGBM model, perform hyperparameter optimization, deploy it, and leverage it for predictions in a handful of <span class="No-Break">SQL queries.</span></p>
+<p>In the next chapter, we will look at distributed and GPU-based learning <span class="No-Break">with LightGBM.</span></p>
+<h1 id="_idParaDest-174"><a id="_idTextAnchor176"/>References</h1>
+<table class="No-Table-Style" id="table001-9">
+<colgroup>
+<col/>
+<col/>
+</colgroup>
+<tbody>
+<tr class="No-Table-Style">
+<td class="No-Table-Style">
+<p class="Bibliography"><em class="italic">[</em><span class="No-Break"><em class="italic">1]</em></span></p>
+</td>
+<td class="No-Table-Style">
+<p class="Bibliography"><em class="italic">PostgresML is 8-40x faster than Python HTTP microservices, [Online]. Available </em><span class="No-Break"><em class="italic">at </em></span><a href="https://postgresml.org/blog/postgresml-is-8x-faster-than-python-http-microservices"><span class="No-Break"><em class="italic">https://postgresml.org/blog/postgresml-is-8x-faster-than-python-http-microservices</em></span></a><span class="No-Break"><em class="italic">.</em></span></p>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div></body></html>
