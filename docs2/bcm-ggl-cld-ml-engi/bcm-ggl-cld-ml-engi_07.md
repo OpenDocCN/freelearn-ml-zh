@@ -1,4 +1,4 @@
-# 7
+
 
 # 探索 Google Cloud Vertex AI
 

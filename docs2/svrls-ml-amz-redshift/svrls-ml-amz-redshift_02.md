@@ -1,4 +1,4 @@
-# 2
+
 
 # 在 Redshift Serverless 上加载数据和分析
 

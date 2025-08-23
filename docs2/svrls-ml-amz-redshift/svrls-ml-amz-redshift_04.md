@@ -1,4 +1,4 @@
-# 4
+
 
 # 利用 Amazon Redshift ML
 

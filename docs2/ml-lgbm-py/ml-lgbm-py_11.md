@@ -1,4 +1,4 @@
-# 11
+
 
 # 基于 LightGBM 的分布式和 GPU 学习
 
@@ -63,7 +63,7 @@ df.shape
 
 ```py
 df.shape[0].compute()
-# 581012
+
 ```
 
 在 DataFrame 中有了可用数据后，我们可以为训练准备它。我们使用 `dask_ml` 中的 `train_test_split` 函数将我们的数据分割成训练集和测试集：
