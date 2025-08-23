@@ -1,0 +1,494 @@
+<html><head></head><body>
+<div id="book-content">
+<div id="sbo-rt-content"><div id="_idContainer108">
+			<h1 id="_idParaDest-72"><em class="italic"><a id="_idTextAnchor071"/>Chapter 4</em>: Ingesting Data and Managing Datasets</h1>
+			<p>In the previous chapter, we set up and explored the Azure Machine Learning workspace, performed data experimentation, and scheduled scripts to run on remote compute targets in Azure Machine Learning. In this chapter, we will learn how to connect datastores and create, explore, access, and track data in Azure Machine Learning.</p>
+			<p>First, we will take a look at how data is managed in Azure Machine Learning by understanding the concepts of <strong class="bold">datastores and datasets</strong>. We will see different types of datastores and learn best practices for organizing and storing data for <strong class="bold">machine learning</strong> (<strong class="bold">ML</strong>) in Azure.</p>
+			<p>Next, we will create an <strong class="bold">Azure Blob storage</strong> account and connect it as a datastore to Azure Machine Learning. We will cover best practices for ingesting data into Azure using popular CLI tools as well as <strong class="bold">Azure Data Factory</strong> and <strong class="bold">Azure Synapse Spark</strong> services.</p>
+			<p>In the following section, we will learn how to create datasets from data in Azure, access and explore these datasets, and pass data efficiently to compute environments in your Azure Machine Learning workspace. Finally, we will discuss how to access Azure Open Datasets to improve your model's performance through third-party data sources.</p>
+			<p>The following are the topics that will be covered in this chapter:</p>
+			<ul>
+				<li>Choosing data storage solutions for Azure Machine Learning</li>
+				<li>Creating a datastore and ingesting data</li>
+				<li>Using datasets in Azure Machine Learning</li>
+			</ul>
+			<h1 id="_idParaDest-73"><a id="_idTextAnchor072"/>Technical requirements</h1>
+			<p>In this chapter, we will use the following Python libraries and versions to create and manage datastores and datasets:</p>
+			<ul>
+				<li><strong class="source-inline">azureml-core 1.34.0</strong></li>
+				<li><strong class="source-inline">azureml-sdk 1.34.0</strong></li>
+			</ul>
+			<p>Similar to previous chapters, you can run this code using either a local Python interpreter or a notebook environment hosted in Azure Machine Learning. </p>
+			<p>All code examples in this chapter can be found in the GitHub repository for this book: <a href="https://github.com/PacktPublishing/Mastering-Azure-Machine-Learning-Second-Edition/tree/main/chapter04">https://github.com/PacktPublishing/Mastering-Azure-Machine-Learning-Second-Edition/tree/main/chapter04</a>.</p>
+			<h1 id="_idParaDest-74"><a id="_idTextAnchor073"/>Choosing data storage solutions for Azure Machine Learning</h1>
+			<p>When running ML experiments <a id="_idIndexMarker508"/>or training scripts on your local development machine, you often don't think about managing your<a id="_idIndexMarker509"/> datasets. You probably store your training data on your local hard drive, external storage device, or file share. In such a case, accessing the data for experimentation or training is not a problem, and you don't have to worry about the data location, access permissions, maximal throughput, parallel access, storage and egress cost, data versioning, and such.</p>
+			<p>However, as soon as you start training an ML model on remote compute targets, such as a VM in the cloud or within Azure Machine Learning, you must make sure that all your executables can access the training data efficiently. This is even more relevant if you collaborate with other people who also need to access the data in parallel for experimentation, labeling, and training from multiple environments and multiple machines. And if you deploy a model that requires access to this data as well – for example, looking up labels for categorical results, scoring recommendations based on a user's history of ratings, and the like – then this environment needs to access the data as well.</p>
+			<p>In this section, we will learn how to manage data for different use cases in Azure. We will first see the abstractions Azure Machine Learning provides to facilitate data access for ML experimentation, training, and deployment.</p>
+			<h2 id="_idParaDest-75"><a id="_idTextAnchor074"/>Organizing data in Azure Machine Learning</h2>
+			<p>In Azure Machine Learning, data is <a id="_idIndexMarker510"/>managed as <strong class="bold">datasets</strong> and data storage as <strong class="bold">datastores</strong>. This abstraction hides the details of location, data<a id="_idIndexMarker511"/> format, data transport protocol, and access permissions behind the dataset and datastore objects and hence lets Azure Machine Learning users focus on exploring, transforming, and managing data without worrying about the underlying storage system.</p>
+			<p>A <strong class="bold">datastore</strong> is an<a id="_idIndexMarker512"/> abstraction of a physical data storage system that is used to link the existing storage system to an Azure Machine Learning workspace. In order to connect the existing storage to the workspace – by creating a datastore – you need to provide the connection and authentication details of the storage system. Once created, the data storage can be accessed by users through the datastore object, which will automatically use the provided credentials of the datastore definition. This makes it easy to provide access to data storage to your developers, data engineers, and scientists who are collaborating in an<a id="_idIndexMarker513"/> Azure Machine Learning workspace. Currently, the following services can be connected as datastores to a workspace:</p>
+			<ul>
+				<li>Azure Blob containers</li>
+				<li>Azure file share</li>
+				<li>Azure Data Lake</li>
+				<li>Azure Data Lake Gen2</li>
+				<li>Azure SQL Database</li>
+				<li>Azure Database for PostgreSQL</li>
+				<li>Databricks File System</li>
+				<li>Azure Database for MySQL</li>
+			</ul>
+			<p>While datastores are abstractions of data storage systems, a <strong class="bold">dataset</strong> is an abstraction of data in general – for example, data in the form of a file on a remote server accessible through a public URL or files and tables within a datastore. Azure Machine Learning supports<a id="_idIndexMarker514"/> two types of abstraction on data formats, namely <strong class="bold">tabular datasets</strong> and <strong class="bold">file datasets</strong>. The<a id="_idIndexMarker515"/> former is used to define <em class="italic">tabular</em> data – for example, from comma- or delimiter-separated files, from Parquet and JSON files, or from SQL queries – whereas the latter is used to specify <em class="italic">any binary</em> data from files and folders, such as images, audio, and video data.</p>
+			<p>Tabular datasets can also be defined and <a id="_idIndexMarker516"/>used directly from their <a id="_idIndexMarker517"/>publicly available URL, which is called a <strong class="bold">direct dataset</strong>. This is similar to fetching data through URLs like with other popular libraries such as <strong class="source-inline">pandas</strong> and <strong class="source-inline">requests</strong>. Both tabular and file datasets can be registered in your workspace. We <a id="_idIndexMarker518"/>will refer to these datasets as <strong class="bold">registered datasets</strong>. Registered datasets will show up in your Azure Machine Learning Studio under <strong class="bold">Datasets</strong>.</p>
+			<h2 id="_idParaDest-76"><a id="_idTextAnchor075"/>Understanding the default storage accounts of Azure Machine Learning</h2>
+			<p>There exists one <a id="_idIndexMarker519"/>special datastore in Azure Machine Learning that is used internally to store all snapshots, logs, figures, models, and more<a id="_idIndexMarker520"/> when executing experiment runs. This is called the <strong class="bold">default datastore</strong>, is an Azure Blob storage account, and is created automatically with Azure Machine Learning when you set up the initial workspace. You can select your own Blob storage as the default datastore during the workspace creation or connect your storage account and mark it as default in Azure Machine Learning Studio.</p>
+			<p><em class="italic">Figure 4.1</em> shows you the list of datastores in Azure Machine Learning Studio. The default datastore is marked as <strong class="bold">Default</strong> and generated automatically when setting up an Azure Machine Learning workspace. To go to this view, simply click on <strong class="bold">Datastores</strong> under the <strong class="bold">Manage</strong> category in the left menu in Azure Machine Learning Studio. To view existing datasets, click on <strong class="bold">Datasets</strong> in the <strong class="bold">Assets</strong> category:</p>
+			<div>
+				<div id="_idContainer096" class="IMG---Figure">
+					<img src="image/B17928_04_01.jpg" alt="Figure 4.1 – Default datastore in Azure Machine Learning " width="1650" height="1013"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 4.1 – Default datastore in Azure Machine Learning</p>
+			<p>The default datastore is <a id="_idIndexMarker521"/>used by Azure Machine Learning internally to store all assets and artifacts when no other datastore is defined. You can access and use the default datastore in your workspace identically to your custom datastores by creating a datastore reference. The following code snippet shows how to get a reference to the default datastore:</p>
+			<p class="source-code">from azureml.core import Datastore</p>
+			<p class="source-code">default_datastore = <strong class="bold">Datastore.get_default</strong>(ws)</p>
+			<p>The default datastore is used internally by Azure Machine Learning to store all assets and artifacts during the ML life cycle. Using the previous code snippet, you can access the default datastore to store custom datasets and files.</p>
+			<p>Once we have accessed the default datastore and connected custom datastores, we need to think about a strategy for efficiently storing data for different ML use cases. Let's tackle this in the next section.</p>
+			<h2 id="_idParaDest-77"><a id="_idTextAnchor076"/>Exploring options for storing training data in Azure</h2>
+			<p>Azure supports a myriad of different <a id="_idIndexMarker522"/>data storage solutions and technologies to store data in the cloud – and as we saw in the previous section, many of these are supported datastores in Azure Machine Learning. In this section, we will explore some of these services and technologies to understand which ones can be used for machine learning use cases.</p>
+			<p>Database systems <a id="_idIndexMarker523"/>can be broadly categorized by the type of <em class="italic">data</em> and <em class="italic">data access</em> into the following two <a id="_idIndexMarker524"/>categories:</p>
+			<ul>
+				<li><strong class="bold">Relational database management systems</strong> (<strong class="bold">RDBMSs</strong>) are often used to store normalized<a id="_idIndexMarker525"/> transactional data using B-tree-based ordered indices. Typical queries filter, group, and aggregate results by joining multiple rows from multiple tables. Azure supports different RDBMSs, such as Azure SQL Database, as well as Azure Database for PostgreSQL and MySQL.</li>
+				<li><strong class="bold">NoSQL</strong>: Key-value-based storage<a id="_idIndexMarker526"/> systems are often used to store de-normalized data with hash-based or ordered indices. Typical queries access a single record from a collection distributed based on a partition key. Azure supports different NoSQL-based services such as Azure Cosmos DB and Azure Table storage.</li>
+			</ul>
+			<p>As you can see, depending on your use cases, you can use both database technologies to store data for machine learning. While RDBMSs are great technologies to store training data for machine learning, NoSQL systems are great to store lookup data – such as training labels – or ML results such as recommendations, predictions, or feature vectors.</p>
+			<p>Instead of choosing a database service, another <a id="_idIndexMarker527"/>popular choice for machine learning is to use data storage systems. On disk, most database services persist as data pages on <strong class="bold">file</strong> or <strong class="bold">blob storage systems</strong>. Blob<a id="_idIndexMarker528"/> storage systems are a very popular choice for storing all kinds of data and assets for machine learning due to their scalability, performance, throughput, and cost. Azure Machine Learning makes extensive use of blob storage systems, especially for storing all operational assets and logs.</p>
+			<p>Popular Azure blob storage services are Azure Blob storage and Azure Data Lake Storage, which provide great flexibility to implement efficient data storage and access solutions through different choices of data formats. While <a id="_idIndexMarker529"/>Azure Blob storage supports most common blob-based filesystem operations, Azure Data Lake Storage implements efficient directory services, which makes it a popular general-purpose storage solution for horizontally scalable filesystems. It is a popular choice for storing large machine learning training datasets.</p>
+			<p>While tabular data can be stored efficiently in RDBMS systems, similar properties can be achieved by choosing the correct data formats and embedded clustered indices while storing data on blob storage systems. Choosing the right data format will allow your filesystem to efficiently store, read, parse, and aggregate information.</p>
+			<p>Common data format <a id="_idIndexMarker530"/>choices can be categorized into textual (CSV, JSON, and more) as well as binary formats (images, audio, video, and more). Binary formats for storing tabular data are broadly categorized into row-compressed (Protobuf, Avro, SequenceFiles, and more) or column-compressed (Parquet, ORC, and more) formats. A popular choice is also to compress the whole file using Gzip, Snappy, or other compression algorithms.</p>
+			<p>One structure that most data storage systems have in common is a hierarchical path or directory structure to organize data blobs. A popular choice for storing training data for machine learning is to implement a partitioning strategy for your data. This means that data is organized in multiple directories where<a id="_idIndexMarker531"/> each directory contains all the data for a specific key, also called the partitioning key.</p>
+			<p>Cloud providers offer a variety of different storage solutions, which can be customized further by choosing different indexing, partitioning, format, and compression techniques. A common choice for storing tabular training data for machine learning is a column-compressed binary format such as Parquet, partitioned by ingestion date, stored on Azure Data Lake Storage, for efficient management operations and scalable access.</p>
+			<h1 id="_idParaDest-78"><a id="_idTextAnchor077"/>Creating a datastore and ingesting data</h1>
+			<p>After having a look through the <a id="_idIndexMarker532"/>options for storing data in Azure for ML processing, we will<a id="_idIndexMarker533"/> now create a storage account, which we will use throughout the book for our raw data and ML datasets. In addition, we will have a look at how to transfer some data into our storage account manually and how to perform this task automatically by utilizing integration engines available in Azure.</p>
+			<h2 id="_idParaDest-79"><a id="_idTextAnchor078"/>Creating Blob Storage and connecting it with the Azure Machine Learning workspace</h2>
+			<p>Let's start by creating a<a id="_idIndexMarker534"/> storage account. Any storage account will come with a file share, a queue, and table storage for you to utilize in other scenarios. In addition to those three, you can either end up with Blob Storage or a Data Lake, depending on<a id="_idIndexMarker535"/> the settings you provide at creation time. By default, a Blob storage account will be created. If we instead want a Data Lake account, we must set the <strong class="source-inline">enable-hierarchical-namespace</strong> setting to <strong class="source-inline">True</strong>, as Data Lake offers an actual hierarchical folder structure and not a flat namespace.</p>
+			<h3>Creating Blob Storage</h3>
+			<p>Keeping that in mind, let's <a id="_idIndexMarker536"/>create a Blob Storage account:</p>
+			<ol>
+				<li>Navigate to a terminal of your choosing, log in to Azure, and check that you are working in the correct subscription as we learned in <a href="B17928_03_ePub.xhtml#_idTextAnchor054"><em class="italic">Chapter 3</em></a>, <em class="italic">Preparing the Azure Machine Learning Workspace</em>.</li>
+				<li>As we want to create a storage account, let's have a look at the options and required settings for doing so by running the following command:<p class="source-code"><strong class="bold">$ az storage account create -h</strong></p></li>
+			</ol>
+			<p>Looking through the result, you will see a very long list of possible arguments, but the only required ones are <strong class="source-inline">name</strong> and <strong class="source-inline">resource-group</strong>. Still, we should look further through this, as a lot of the other settings are still set to certain default values, which might be incorrect for our case. </p>
+			<p>Going through the list, you will find a lot of options concerning network or security settings. The default for most of them is to at least allow access from everywhere. At this moment, we are not too concerned about virtual network integration or handling our own managed keys in Azure Key Vault.</p>
+			<p>Besides all these options, there are a few that define the type of storage account we set, namely <strong class="source-inline">enable-hierarchical-namespace</strong>, <strong class="source-inline">kind</strong>, <strong class="source-inline">location</strong>, and <strong class="source-inline">sku</strong>.</p>
+			<p>We already discussed the first option and as the default is <strong class="source-inline">False</strong>, we can ignore it. </p>
+			<p>Looking at <strong class="source-inline">kind</strong>, you see a list of storage types. You might think we need to choose <strong class="source-inline">BlobStorage</strong>, but unfortunately, that is a legacy setting left there for any storage account still running on the first version, V1. The default (<strong class="source-inline">StorageV2</strong>) is the best option for our scenario. </p>
+			<p>Looking at <strong class="source-inline">location</strong>, we see that we apparently can set a default location for all deployments, therefore it is<a id="_idIndexMarker537"/> not flagged as required. As we did not do that so far, we will just provide it when deploying the storage account.</p>
+			<p>Finally, looking at <strong class="source-inline">sku</strong>, we see a combined setting of an option concerning the type of disk technology used (<strong class="source-inline">Standard</strong>/<strong class="source-inline">Premium</strong>), where <strong class="source-inline">Standard</strong> denotes HDD storage and <strong class="source-inline">Premium</strong> denotes SSD storage, and an option defining the data redundancy scheme (LRS/ZRS/GRS/RAGRS/GZRS). If you want to learn more about the redundancy options, follow this link: <a href="https://docs.microsoft.com/en-us/azure/storage/common/storage-redundancy">https://docs.microsoft.com/en-us/azure/storage/common/storage-redundancy</a>. As both increase costs, feel free to either stick with the default (<strong class="source-inline">Standard_RAGRS</strong>) or go with local redundancy (<strong class="source-inline">Standard_LRS</strong>).</p>
+			<ol>
+				<li value="3">Let's create our storage account. Please be aware that the name you choose must be globally unique, therefore you cannot choose the one you will read in the following command:<p class="source-code"><strong class="bold">az storage account create \</strong></p><p class="source-code"><strong class="bold">     --name mldemoblob8765 \</strong></p><p class="source-code"><strong class="bold">     --resource-group mldemo \</strong></p><p class="source-code"><strong class="bold">     --location westus \</strong></p><p class="source-code"><strong class="bold">     --sku Standard_LRS \</strong></p><p class="source-code"><strong class="bold">     --kind StorageV2</strong></p></li>
+			</ol>
+			<p>The output this creates will show you the detailed settings for the created storage account. </p>
+			<ol>
+				<li value="4">As a final step, let's create a <a id="_idIndexMarker538"/>container in our new blob storage. For that, run the following command with the appropriate account name:<p class="source-code"><strong class="bold">az storage container create \</strong></p><p class="source-code"><strong class="bold">    --name mlfiles \</strong></p><p class="source-code"><strong class="bold">    --account-name mldemoblob8765</strong></p></li>
+			</ol>
+			<p>The result will show <strong class="source-inline">True</strong> at the end, but will give you some warnings beforehand, something like this:</p>
+			<p class="source-code"><strong class="bold">There are no credentials provided in your command and environment, we will query for account key for your storage account. It is recommended to provide --connection-string, --account-key or --sas-token in your command as credentials.</strong></p>
+			<p>The command worked because it automatically pulled the account key of the storage account through our session. Normally, to access a storage account, we either need an AD identity, a key to access the whole account (<strong class="source-inline">account-key</strong>), or a shared-access key (<strong class="source-inline">sas-token</strong>) to access only a specific subset of folders or containers. We will come back to this when connecting from the ML workspace.</p>
+			<p>To check the result, run this command:</p>
+			<p class="source-code"><strong class="bold">az storage container list \</strong></p>
+			<p class="source-code"><strong class="bold">    --account-name mldemoblob8765 \</strong></p>
+			<p class="source-code"><strong class="bold">    --auth-mode login</strong></p>
+			<p>Now that we have our storage, let's connect it to our Azure Machine Learning workspace.</p>
+			<h3>Creating a datastore in Azure Machine Learning</h3>
+			<p>In order to not bother with the <a id="_idIndexMarker539"/>storage account itself anymore when working with our ML scripts, we will now create a permanent connection to a <a id="_idIndexMarker540"/>container in a storage account and define it as one of our datastores in the Azure Machine Learning workspace.</p>
+			<p>The following steps will guide you through this process:</p>
+			<ol>
+				<li value="1">First, let's understand what is required to create a datastore by running the following command:<p class="source-code"><strong class="bold">az ml datastore create -h</strong></p></li>
+			</ol>
+			<p>Looking through the output,, we understand that the name of the resource group, the name of the ML workspace, and a YAML file is needed. We have two of those three things. Therefore, let's understand what the YAML file has to look like.</p>
+			<ol>
+				<li value="2">Navigate to <a href="https://docs.microsoft.com/en-us/azure/machine-learning/reference-yaml-datastore-blob">https://docs.microsoft.com/en-us/azure/machine-learning/reference-yaml-datastore-blob</a>, where you will find the required schema of our file and some examples. Going through the examples, you will see that they mainly differ concerning the way to authenticate to the storage account. The most secure of them is limited access via a SAS token and therefore we will pick that route.</li>
+				<li>Please either download the <strong class="source-inline">blobdatastore.yml</strong> file from the files for <a href="B17928_04_ePub.xhtml#_idTextAnchor071"><em class="italic">Chapter 4</em></a>, <em class="italic">Ingesting Data and Managing Datasets,</em> from the GitHub repository or create a file with the same name and the following content:<p class="source-code">$schema: https://azuremlschemas.azureedge.net/latest/azureBlob.schema.json</p><p class="source-code">name: mldemoblob</p><p class="source-code">type: azure_blob</p><p class="source-code">description: main ML blob storage</p><p class="source-code">account_name: mldemoblob8765</p><p class="source-code">container_name: mlfiles</p><p class="source-code">credentials:</p><p class="source-code">  sas_token: &lt;your_token&gt;</p></li>
+			</ol>
+			<p>Please enter the<a id="_idIndexMarker541"/> appropriate account name for your case. The only thing missing now is the SAS token, which we need to create<a id="_idIndexMarker542"/> for our <strong class="source-inline">mlfiles</strong> container.</p>
+			<ol>
+				<li value="4">Run the following command to create a SAS token for our container:<p class="source-code"><strong class="bold">az storage container generate-sas \</strong></p><p class="source-code"><strong class="bold">    --account-name mldemoblob8765 \</strong></p><p class="source-code"><strong class="bold">    --name mlfiles \</strong></p><p class="source-code"><strong class="bold">    --expiry 2023-01-01 \</strong></p><p class="source-code"><strong class="bold">    --permissions acdlrw</strong></p></li>
+			</ol>
+			<p>This command generates a SAS token with an expiration date of 01/01/2023 and permissions to <strong class="bold">add</strong>, <strong class="bold">create</strong>, <strong class="bold">delete</strong>, <strong class="bold">list</strong>,<strong class="bold"> read</strong> and <strong class="bold">write</strong> (<strong class="bold">acdlrw</strong>) to the <strong class="source-inline">mlfiles</strong> container. Choose an expiration date that is far enough in the future for you to work with this book. In normal circumstances, you would choose a much shorter expiration date and rotate this key accordingly. </p>
+			<p>The result should be in this kind of format:</p>
+			<p class="source-code"><strong class="bold">xx=XXXX-XX-XX&amp;xx=xxxx&amp;xxx=xxx&amp;xx=xxxxxxxxxxx&amp;xx=XXXX-XX-XXXXX:XX:XXX&amp;xx=XXXX-XX-XXXXX:XX:XXX&amp;xxx=xxxxx&amp;xxx=XXxXXXxxxxxXXXXXXXxXxxxXXXXXxxXXXXXxXXXXxXXXxXXxXX</strong></p>
+			<p>Take this result (without quotations) and enter it in the <strong class="source-inline">sas_token</strong> field in the YAML file. </p>
+			<ol>
+				<li value="5">Navigate to the directory the YAML file is in so that we can finally create the datastore in the Azure <a id="_idIndexMarker543"/>Machine Learning workspace by running the following command:<p class="source-code"><strong class="bold">az ml datastore create \</strong></p><p class="source-code"><strong class="bold">    --workspace-name mldemows \</strong></p><p class="source-code"><strong class="bold">    --resource-group mldemo \</strong></p><p class="source-code"><strong class="bold">    --file ./blobdatastore.yml</strong></p></li>
+			</ol>
+			<p>The result should look like the following:</p>
+			<p class="source-code"><strong class="bold">"account_name": "mldemoblob8765",</strong></p>
+			<p class="source-code"><strong class="bold">"container_name": "mlfiles",</strong></p>
+			<p class="source-code"><strong class="bold">"credentials": {},</strong></p>
+			<p class="source-code"><strong class="bold">"description": "main ML blob storage",</strong></p>
+			<p class="source-code"><strong class="bold">"endpoint": "core.windows.net",</strong></p>
+			<p class="source-code"><strong class="bold">"id": &lt;yourid&gt;,</strong></p>
+			<p class="source-code"><strong class="bold">"name": "mldemoblob",</strong></p>
+			<p class="source-code"><strong class="bold">"protocol": "https",</strong></p>
+			<p class="source-code"><strong class="bold">"resourceGroup": "mldemo",</strong></p>
+			<p class="source-code"><strong class="bold">"tags": {},</strong></p>
+			<p class="source-code"><strong class="bold">"type": "azure_blob"</strong></p>
+			<p>With these steps, we have<a id="_idIndexMarker544"/> registered a datastore connected to our blob storage using a SAS token.</p>
+			<p class="callout-heading">Important Note</p>
+			<p class="callout">You can follow the same steps when connecting to a Data Lake Storage, but be aware that to access a data lake, you will <a id="_idIndexMarker545"/>need to create a <strong class="bold">service p</strong><strong class="bold">rincipal</strong>. A detailed description of this can be found here: <a href="https://docs.microsoft.com/en-us/azure/active-directory/develop/howto-create-service-principal-portal">https://docs.microsoft.com/en-us/azure/active-directory/develop/howto-create-service-principal-portal</a>.</p>
+			<p>As discussed before, we could have created a blob storage by navigating to the wizard in the Azure portal, creating a SAS token for the container there, and entering it in the datastore creation wizard in Azure Machine Learning Studio. We used the Azure CLI so that you can get comfortable<a id="_idIndexMarker546"/> with this, as this is required to <a id="_idIndexMarker547"/>automate such steps in the future, especially when we talk about infrastructure-as-code and DevOps environments.</p>
+			<p>In any case, feel free to navigate to the <strong class="bold">Datastores</strong> tab in Azure Machine Learning Studio. <em class="italic">Figure 4.2</em> shows our newly created workspace:</p>
+			<div>
+				<div id="_idContainer097" class="IMG---Figure">
+					<img src="image/B17928_04_02.jpg" alt="Figure 4.2 – Created datastore " width="706" height="702"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 4.2 – Created datastore</p>
+			<p>Keep this tab open, so we can verify later via the <strong class="bold">Browse</strong> tab that we copied files to the <strong class="source-inline">mlfiles</strong> container, which we will start doing in the following section.</p>
+			<h2 id="_idParaDest-80"><a id="_idTextAnchor079"/>Ingesting data into Azure</h2>
+			<p>We created an Azure Blob storage <a id="_idIndexMarker548"/>account and learned how to organize and format files and tabular data for common ML use cases. However, one often-neglected step is how to efficiently ingest data into these datastores, or into Azure in general. There are different solutions for different datasets and use cases, from ad hoc, automated, parallelized solutions, and more. In this section, we will have a look at methods to upload and transform data either in a manual or an automated fashion to a relational database (SQL, MySQL, or PostgreSQL) or a storage account in Azure. Finally, we will upload a dataset file to the previously created blob storage.</p>
+			<h3>Understanding tooling for the manual ingestion of data</h3>
+			<p>If you work with a small number of datasets and files and you do not need to transfer data from other existing sources, a manual upload of data is the go-to option.</p>
+			<p>The following list <a id="_idIndexMarker549"/>shows possible options to bring data into your datastores or directly into your ML pipelines:</p>
+			<ul>
+				<li><strong class="bold">Azure Storage Explorer</strong>: Storage Explorer is an interactive application that allows you to upload data to and control <a id="_idIndexMarker550"/>datastores, such as storage accounts and managed disks. This is the easiest tool to use for managing storage accounts and can be found here: <a href="https://azure.microsoft.com/en-us/features/storage-explorer/#overview">https://azure.microsoft.com/en-us/features/storage-explorer/#overview</a>. </li>
+				<li><strong class="bold">Azure CLI</strong>: As we saw before, we <a id="_idIndexMarker551"/>basically can do anything with the CLI, including creating and uploading blobs to a storage account. You can find the appropriate commands to upload blobs in the storage extension described here: <a href="https://docs.microsoft.com/en-us/cli/azure/storage/blob">https://docs.microsoft.com/en-us/cli/azure/storage/blob</a>.</li>
+				<li><strong class="bold">AzCopy</strong>: This is another<a id="_idIndexMarker552"/> command-line tool specifically designed to copy blobs or files to a storage account. Whether you use Azure CLI packages or AzCopy comes down to personal preference, as there are no clear performance differences between these two options. You can find the download link and the description here: <a href="https://docs.microsoft.com/en-us/azure/storage/common/storage-use-azcopy-v10">https://docs.microsoft.com/en-us/azure/storage/common/storage-use-azcopy-v10</a>. </li>
+				<li><strong class="bold">The Azure portal</strong>: For any service, you<a id="_idIndexMarker553"/> will always find a web interface directly in the Azure portal to upload or change data. If you navigate to a storage account, you can use the inbuilt storage browser to upload blobs and files directly through the web interface. The same is true for any of the database technologies.</li>
+				<li><strong class="bold">RDBMS management tooling</strong>: You can <a id="_idIndexMarker554"/>use any typical management tool to configure, create, and change<a id="_idIndexMarker555"/> tables and schemas in a relational database. For a SQL database and Synapse, this would be <strong class="bold">SQL Server Management Studio</strong> (<a href="https://docs.microsoft.com/en-us/sql/ssms/download-sql-server-management-studio-ssms?view=sql-server-ver15">https://docs.microsoft.com/en-us/sql/ssms/download-sql-server-management-studio-ssms?view=sql-server-ver15</a>); for PostgreSQL, this would be <strong class="bold">pgAdmin</strong> (<a href="https://www.pgadmin.org/">https://www.pgadmin.org/</a>); and for MySQL, this would be <strong class="bold">MySQL Workbench</strong> (<a href="https://docs.microsoft.com/en-us/azure/mysql/connect-workbench">https://docs.microsoft.com/en-us/azure/mysql/connect-workbench</a>). </li>
+				<li><strong class="bold">Azure Data Studio</strong>: Data Studio allows <a id="_idIndexMarker556"/>you to connect to any Microsoft SQL database, to Synapse, to a PostgreSQL database in Azure, and to Azure Data Explorer. It is a multiplatform tool very similar to the typical management tooling mentioned in the last point but in one platform. You can download this tool here: <a href="https://docs.microsoft.com/en-us/sql/azure-data-studio/download-azure-data-studio?view=sql-server-ver15">https://docs.microsoft.com/en-us/sql/azure-data-studio/download-azure-data-studio?view=sql-server-ver15</a>. </li>
+				<li><strong class="bold">Azure Machine Learning designer (Import Data)</strong>: If you do not want to use an Azure Machine Learning datastore, you can use the <strong class="bold">Import Data</strong> component in the Machine Learning designer to add data ad hoc to your pipelines. This is not the cleanest way to operate, but an option nonetheless. You can find all information about this method here: <a href="https://docs.microsoft.com/en-us/azure/machine-learning/component-reference/import-data">https://docs.microsoft.com/en-us/azure/machine-learning/component-reference/import-data</a>. </li>
+			</ul>
+			<p>Before we test out some of these options, let's have a look at the options to create automated data flows and transform data in Azure.</p>
+			<h3>Understanding tooling for automated ingestion and transformation of data</h3>
+			<p>Copying data manually is <a id="_idIndexMarker557"/>completely fine for small tests and probably even for most of the tasks we will perform in this book, but in a real-world scenario, we <a id="_idIndexMarker558"/>will need to not only integrate with a lot of different sources but will also need a process that does not include a person manually moving data from A to B.</p>
+			<p>Therefore, we will now have a look at services that allow us to transform and move data in an automated fashion and that integrate very well with pipelines and MLOps in Azure Machine Learning.</p>
+			<h4>Azure Data Factory</h4>
+			<p>Azure Data Factory is the<a id="_idIndexMarker559"/> enterprise-ready solution for moving and transforming data in Azure. It offers the ability to connect to hundreds of different sources and to create pipelines to transform the integrated data, calling multiple other services in Azure.</p>
+			<p>Run the following command to create a data factory:</p>
+			<p class="source-code"><strong class="bold">az datafactory create \</strong></p>
+			<p class="source-code"><strong class="bold">    --location "West US 2" \</strong></p>
+			<p class="source-code"><strong class="bold">    --name "mldemoDF8765" \</strong></p>
+			<p class="source-code"><strong class="bold">    --resource-group "mldemo"</strong></p>
+			<p>Please be aware that the name, once again, has to be globally unique. In addition, before deployment, the CLI will ask you to install the <strong class="source-inline">datafactory</strong> extension.</p>
+			<p>Once you are done, navigate to the resource in the Azure portal, and on the <strong class="bold">Overview</strong> tab, click on <strong class="bold">Open Azure Data Factory Studio</strong>, which will lead you to the workbench for your data factory instance. You should see a view as shown in <em class="italic">Figure 4.3</em>:</p>
+			<div>
+				<div id="_idContainer098" class="IMG---Figure">
+					<img src="image/B17928_04_03.jpg" alt="Figure 4.3 – Data Factory resource view " width="634" height="321"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 4.3 – Data Factory resource view</p>
+			<p>From this view, you can create<a id="_idIndexMarker560"/> pipelines, datasets, data flows, and power queries. Let's briefly discuss what they are:</p>
+			<ul>
+				<li><strong class="bold">Pipelines</strong>: Pipelines are the<a id="_idIndexMarker561"/> main star of Azure Data Factory. You can create complex pipelines calling multiple services to pull data from a source, transform it, and store it in a sink.</li>
+				<li><strong class="bold">Datasets</strong>: Datasets are used in a<a id="_idIndexMarker562"/> pipeline as a source or a sink. Therefore, before building a pipeline, you can define a connection to specific data in a datastore that you want to read from or write to in the end.</li>
+				<li><strong class="bold">Data flows</strong>: Data flows<a id="_idIndexMarker563"/> allows you to do the actual processing or transformation of data within Data Factory itself, instead of calling a different service to do the heavy lifting.</li>
+				<li><strong class="bold">Power Query</strong>: Power Query allows you to do <a id="_idIndexMarker564"/>data exploration with DAX inside Data Factory, which is typically only possible with Power BI or Excel otherwise.</li>
+			</ul>
+			<p>If you click on the three dots next to <strong class="bold">Pipeline</strong>, you can create a new one, which will result in the following view shown in <em class="italic">Figure 4.4</em>:</p>
+			<div>
+				<div id="_idContainer099" class="IMG---Figure">
+					<img src="image/B17928_04_04.jpg" alt="Figure 4.4 – Creating a Data Factory pipeline " width="832" height="620"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 4.4 – Creating a Data Factory pipeline</p>
+			<p>Having a look through the<a id="_idIndexMarker565"/> possible activities, you will find a way to copy data (<strong class="bold">Copy Data</strong>) from A to B, to execute a script in Azure Functions (<strong class="bold">Azure Function</strong>), to call a stored procedure in a SQL database (<strong class="bold">Stored Procedure</strong>), to execute a notebook in Databricks (<strong class="bold">Notebook</strong>), and to execute an ML pipeline (<strong class="bold">Machine Learning Execute Pipeline</strong>), among other things. With these activities and the control tools you will find in <strong class="bold">General</strong> and <strong class="bold">Iteration &amp; conditionals</strong>, you can build very complex data pipelines to move and transform your data.</p>
+			<p>As you might have noticed, Azure Synapse is missing from the list of activities. The reason for that is that Synapse has its own version of Data Factory integrated into the platform. Therefore, if you are using a SQL pool or a Spark pool in Synapse, you can use the integration tool of Synapse instead, which will give you access to running a notebook in the Synapse Spark pool or a stored procedure on the SQL pool.</p>
+			<p>If you are looking for an in-depth overview of Azure Data Factory, have a look at Catherine Wilhelmsen's <em class="italic">Beginners Guide to Azure Data Factory</em>: <a href="https://www.cathrinewilhelmsen.net/series/beginners-guide-azure-data-factory/">https://www.cathrinewilhelmsen.net/series/beginners-guide-azure-data-factory/</a>. </p>
+			<p>Now, what we need to<a id="_idIndexMarker566"/> understand is that there are two ways to integrate this Data Factory pipeline into Azure Machine Learning:</p>
+			<ul>
+				<li><strong class="bold">Read results from a storage account</strong>: We can just run the transformation pipeline in Data Factory, transforming our data, and then store the result in a storage account. We then access the data as we learned via an ML datastore. In this scenario, any pipeline we have in Azure Machine Learning is disconnected from the transformation pipelines in Data Factory, which might not be the optimal way for MLOps.</li>
+				<li><strong class="bold">Invoke Azure Machine Learning from Data Factory</strong>: We can create a transformation pipeline and invoke the actual Azure Machine Learning pipeline as part of the Data Factory pipeline. This is the preferred way if we are starting to build an end-to-end MLOps workflow.</li>
+			</ul>
+			<p>For further information on this, have a read through the following article: <a href="https://docs.microsoft.com/en-us/azure/machine-learning/how-to-data-ingest-adf">https://docs.microsoft.com/en-us/azure/machine-learning/how-to-data-ingest-adf</a>.</p>
+			<h4>Azure Synapse Spark pools</h4>
+			<p>As we discussed in <a href="B17928_02_ePub.xhtml#_idTextAnchor034"><em class="italic">Chapter 2</em></a>, <em class="italic">Choosing the Right Machine Learning Service in Azure</em>, Azure Databricks and <a id="_idIndexMarker567"/>Azure Synapse give you the option to run Spark jobs in a Spark pool. Apache Spark can help you transform and preprocess extremely large datasets by utilizing the distributive nature of the node pool underneath. Therefore, this tool can be helpful to take apart and filter out datasets before starting the actual machine learning process.</p>
+			<p>We have seen that we can run notebooks from either Azure Data Factory or from the integration engine in Azure Synapse and therefore already have access to these services. On top of that, we have the option to add a Synapse Spark pool as a so-called <strong class="bold">linked service</strong> in the Azure Machine Learning <a id="_idIndexMarker568"/>workspace (see the <strong class="bold">Linked Services</strong> tab in Azure Machine Learning Studio). Doing this step gives us the opportunity to access not only the ML compute targets but also the Spark pool as a target for computations via the Azure Machine Learning SDK.</p>
+			<p>You can create this link either via Azure Machine Learning Studio or via the Azure Machine Learning Python SDK, both of which are described in the following article: <a href="https://docs.microsoft.com/en-us/azure/machine-learning/how-to-link-synapse-ml-workspaces">https://docs.microsoft.com/en-us/azure/machine-learning/how-to-link-synapse-ml-workspaces</a>. </p>
+			<p>Through this direct integration, we<a id="_idIndexMarker569"/> can run transformation steps in our ML pipelines through a Spark cluster and therefore get another good option for building a clean end-to-end MLOps workflow. </p>
+			<h3>Copying data to Blob storage</h3>
+			<p>Now, that we have a <a id="_idIndexMarker570"/>good understanding of most of the options to <a id="_idIndexMarker571"/>move and transform data, let's upload a dataset to our storage account.</p>
+			<p>In <a href="B17928_05_ePub.xhtml#_idTextAnchor085"><em class="italic">Chapter 5</em></a>, <em class="italic">Performing Data Analysis and Visualization</em>, we will start analyzing and preprocessing data. To prepare for this, let's upload the dataset we will work with in that chapter.</p>
+			<p>We will <a id="_idIndexMarker572"/>work with the <strong class="bold">Melbourne Housing dataset</strong>, created by Anthony Pino, which you can find here: <a href="https://www.kaggle.com/anthonypino/melbourne-housing-market">https://www.kaggle.com/anthonypino/melbourne-housing-market</a>. The reason to work with this dataset is the domain it covers, as everyone understands housing, and the reasonable cleanliness of the data. If you continue your journey through working with data, you will find out that there are a lot of datasets out there, but only a few that are clean and educational.</p>
+			<p>In addition, to make our lives a bit easier when analyzing the dataset in the next chapter, we will actually work with a subset of this dataset. </p>
+			<p>Follow the next steps so that we can make this file available in our <strong class="source-inline">mldemoblob</strong> datastore:</p>
+			<ol>
+				<li value="1">Download the <strong class="source-inline">melb_data.csv</strong> file from <a href="https://www.kaggle.com/dansbecker/melbourne-housing-snapshot">https://www.kaggle.com/dansbecker/melbourne-housing-snapshot</a> and store it in a suitable folder on your device.</li>
+				<li>Navigate to that folder and run the following command in the CLI, replacing the storage account name with your own:<p class="source-code"><strong class="bold">az storage blob upload \</strong></p><p class="source-code"><strong class="bold">    --account-name mldemoblob8765 \</strong></p><p class="source-code"><strong class="bold">    --file ./melb_data.csv \</strong></p><p class="source-code"><strong class="bold">    --container-name mlfiles \</strong></p><p class="source-code"><strong class="bold">    --name melb_data.csv </strong></p></li>
+				<li>To verify this, let's <a id="_idIndexMarker573"/>have a look at another option to move this file. Install Azure Storage Explorer and log in to your Azure account in that <a id="_idIndexMarker574"/>application. Navigate to your storage account and open the <strong class="source-inline">mlfiles</strong> container. It should show you a view as seen in <em class="italic">Figure 4.5</em>:</li>
+			</ol>
+			<div>
+				<div id="_idContainer100" class="IMG---Figure">
+					<img src="image/B17928_04_05.jpg" alt="Figure 4.5 – Azure Storage Explorer " width="834" height="294"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 4.5 – Azure Storage Explorer</p>
+			<p>As you can see, our file<a id="_idIndexMarker575"/> is where it is supposed to be. We could have also just dragged and dropped the file directly here, creating a blob file automatically. From here on out, feel free to use what feels more comfortable to you. </p>
+			<ol>
+				<li value="4">To finish this up, have a look at the application itself. For example, if you right-click on the container, you can choose an option called <strong class="bold">Get Shared Access Signature</strong>, which opens a wizard allowing you to create a SAS token directly here, instead of as we did via the command line.</li>
+			</ol>
+			<p>With the previous steps, we made our raw dataset file available in our storage account and therefore in our ML datastore. In the next section, we will have a look at how to create an Azure Machine<a id="_idIndexMarker576"/> Learning dataset from these raw files and what features they offer to support us in our <a id="_idIndexMarker577"/>ongoing ML journey.</p>
+			<h1 id="_idParaDest-81"><a id="_idTextAnchor080"/>Using datasets in Azure Machine Learning</h1>
+			<p>In the previous sections <a id="_idIndexMarker578"/>of this chapter, we discussed how to get data into the cloud, store the data in a datastore, and connect the data via a <strong class="bold">datastore and d</strong><strong class="bold">ataset</strong> to an Azure Machine Learning workspace. We did all this effort of managing the<a id="_idIndexMarker579"/> data and data access centrally in order to use the data across all compute environments, either for experimentation, training, or inferencing. In this section, we will focus on how to create, explore, and access these datasets during training.</p>
+			<p>Once the data is managed as datasets, we can track the data that was used for each experimentation or training run in Azure Machine Learning. This will give us visibility of the data used for a specific training run and for the trained model – an essential step in creating reproducible end-to-end machine learning workflows.</p>
+			<p>Another benefit of organizing your data into datasets is that you can easily pass a managed dataset to your experimentation or training scripts via <strong class="bold">direct access</strong>, <strong class="bold">download</strong>, or <strong class="bold">mount</strong>.  The direct access method is <a id="_idIndexMarker580"/>useful for <a id="_idIndexMarker581"/>publicly available data sources, <a id="_idIndexMarker582"/>the <em class="italic">download</em> method is convenient for small datasets, and the <em class="italic">mount</em> method is useful for large datasets. In Azure Machine Learning training clusters, this is completely transparent, and the data will be provided automatically. However, we can use the same technique to access the data in any other Python environment, by simply having access to the dataset object.</p>
+			<p>In the last part of this section, we will explore Azure Open Datasets – a collection of curated Azure Machine Learning <a id="_idIndexMarker583"/>datasets you can consume directly from within your Azure Machine Learning workspace.</p>
+			<h3>Creating new datasets</h3>
+			<p>There are multiple ways to create new datasets, but most of them differentiate between tabular and file <a id="_idIndexMarker584"/>datasets. You need to use different constructors based on the type of dataset you want to create:</p>
+			<ul>
+				<li><strong class="source-inline">Dataset.Tabular.from_*</strong> for tabular datasets</li>
+				<li><strong class="source-inline">Dataset.File.from_*</strong> for file-based datasets (for example, image, audio, and more)</li>
+			</ul>
+			<p>For tabular datasets, we also differentiate between the data being accessed from the original location through a public URL – called<a id="_idIndexMarker585"/> a <em class="italic">direct dataset</em> – or stored on either the default or a custom <em class="italic">datastore</em>.</p>
+			<p>A <strong class="source-inline">Dataset</strong> object can be accessed or passed around in the current environment through its object reference. However, a dataset can also be registered (and versioned), and hence accessed through the dataset <a id="_idIndexMarker586"/>name (and version) – this is called a <em class="italic">registered dataset</em>.</p>
+			<p>Let's see a simple example of a direct dataset, which is defined as a tabular dataset, and a publicly available URL containing a delimiter-separated file with the data:</p>
+			<p class="source-code">from azureml.core import Dataset</p>
+			<p class="source-code">path = 'https://...windows.net/demo/Titanic.csv'</p>
+			<p class="source-code">ds = <strong class="bold">Dataset.Tabular.from_delimited_files</strong>(path)</p>
+			<p>As you can see in the code, we can create a <em class="italic">direct dataset</em> by passing the URL to a publicly accessible delimiter-separated file. When passing this dataset internally, every consumer will attempt to fetch the dataset from its URL.</p>
+			<div>
+				<div id="_idContainer101" class="IMG---Figure">
+					<img src="image/B17928_04_06.jpg" alt="Figure 4.6 – Direct dataset " width="1645" height="1200"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 4.6 – Direct dataset</p>
+			<p>Once we have a reference to a datastore, we can access data within it. In the following example, we create a file <a id="_idIndexMarker587"/>dataset from files stored in a directory of the <strong class="source-inline">mldata</strong> datastore:</p>
+			<p class="source-code">from azureml.core import Dataset, Datastore</p>
+			<p class="source-code">datastore_name = "mldata"</p>
+			<p class="source-code">datastore = Datastore.get(ws, datastore_name)</p>
+			<p class="source-code">ds = <strong class="bold">Dataset.File.from_files</strong>((datastore, "cifar10/"))</p>
+			<p>As you can see in the example, we can register data from within the datastore as datasets. In this example, we defined all files in a folder as a file dataset, but we could also define a delimiter-separated file in Blob storage as a tabular dataset.</p>
+			<div>
+				<div id="_idContainer102" class="IMG---Figure">
+					<img src="image/B17928_04_07.jpg" alt="Figure 4.7 – File dataset " width="1520" height="1324"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 4.7 – File dataset</p>
+			<p>In the next step, we register this dataset in the workspace using the following code snippet to create a <em class="italic">registered dataset</em>:</p>
+			<p class="source-code">ds = ds.<strong class="bold">register</strong>(ws, name="titanic",</p>
+			<p class="source-code">                 create_new_version=True)</p>
+			<p>The previous code will register the<a id="_idIndexMarker588"/> direct dataset in your workspace and return a registered dataset. Registered datasets are listed in Azure Machine Learning Studio, and can be accessed via the dataset name instead of the <strong class="source-inline">Dataset</strong> Python object.</p>
+			<p>The <strong class="source-inline">create_new_version</strong> argument controls whether we want to create a new version of an existing dataset. Once a new dataset version is created, the dataset can be accessed through the dataset name – which will implicitly access the latest version – or through its name and a specific version. Dataset versions are useful to manage different iterations of the dataset within your workspace.</p>
+			<h3>Exploring data in datasets</h3>
+			<p>There are multiple options to explore registered datasets in Azure Machine Learning. For tabular datasets, the most convenient way is to load and analyze a dataset programmatically in an <a id="_idIndexMarker589"/>Azure Machine Learning workspace. To do so, you can simply reference a dataset by its name and version as shown in the following snippet:</p>
+			<p class="source-code">from azureml.core import Dataset</p>
+			<p class="source-code">ds = Dataset.get_by_name(ws, name="titanic", version=1)</p>
+			<p>Once you have a<a id="_idIndexMarker590"/> reference to the dataset, you can convert a dataset reference to an actual in-memory <strong class="bold">pandas</strong> DataFrame or <a id="_idIndexMarker591"/>a lazy-loaded <strong class="bold">Spark</strong> or <strong class="bold">Dask</strong> <a id="_idIndexMarker592"/>DataFrame. To do so, you can call one of the following methods:</p>
+			<ul>
+				<li><strong class="source-inline">to_pandas_dataframe()</strong> to create an in-memory pandas DataFrame</li>
+				<li><strong class="source-inline">to_spark_dataframe()</strong> to create a lazily loaded Spark DataFrame</li>
+				<li><strong class="source-inline">to_dask_dataframe()</strong> to create a lazily loaded Dask DataFrame</li>
+			</ul>
+			<p>Let's see the three commands in action, starting with the in-memory pandas DataFrame. The following code snippet will load all the data into a pandas DataFrame and then return the first five rows of the DataFrame:</p>
+			<p class="source-code">panads_df = ds.to_pandas_dataframe()</p>
+			<p class="source-code">pandas_df.head()</p>
+			<p>After loading the DataFrame, you can run your favorite pandas methods to explore the datasets. For example, good commands to get started are <strong class="source-inline">info()</strong> to see columns and datatypes and <strong class="source-inline">describe()</strong> to see statistics of the numerical values of the DataFrame.</p>
+			<p>Lazy datasets are datasets that only load some data to memory when explicitly needed, for example, when a result of a computation is required. Non-lazy datasets load all the data into memory and hence are limited by the available memory.</p>
+			<p>If you are more familiar with PySpark, you can also transform a dataset into a Spark DataFrame with the following code snippet. In contrast to the previous example, this code won't actually load all data into memory but only fetches the data required for executing the <strong class="source-inline">show()</strong> command – this makes it a great choice for analyzing large datasets:</p>
+			<p class="source-code">spark_df = ds.to_spark_dataframe()</p>
+			<p class="source-code">spark_df.show()</p>
+			<p>Another alternative is to return a Dask DataFrame of the dataset. Dask is a Python library for parallel computing that <a id="_idIndexMarker593"/>supports lazy datasets with a pandas- and NumPy-like API. Hence you can run the following code to return the first five rows of the DataFrame lazily:</p>
+			<p class="source-code">dask_df = ds.to_dask_dataframe()</p>
+			<p class="source-code">dask_df.head()</p>
+			<p>Once you have programmatic access to the data in your favorite numeric or statistical libraries, you can slice and dice your dataset as much as needed. While programmatic access is great for reproducibility and customization, users often just want to understand how the data is structured and see a few example records. Azure Machine Learning also offers the possibility to explore the dataset in the Data Studio UI.</p>
+			<p>To get to this view, go to <strong class="bold">Datasets</strong>, select a dataset, and click on the <strong class="bold">Explore</strong> tab. The first page shows you a preview of your data, including the first <em class="italic">n</em> rows as well as some basic information about the data – such as the number of rows and columns. The following screenshot shows an example:</p>
+			<div>
+				<div id="_idContainer103" class="IMG---Figure">
+					<img src="image/B17928_04_08.jpg" alt="Figure 4.8 – Dataset with data preview " width="905" height="594"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 4.8 – Dataset with data preview</p>
+			<p>If you click on the second tab, you can generate and view a data profile. This profile is similar to calling <strong class="source-inline">describe()</strong> on the pandas DataFrame – a statistical analysis of each column in the dataset, but with support for categorical data and some more useful information. As you can see in <em class="italic">Figure 4.9</em>, it also shows a figure with the data distribution for each column:</p>
+			<div>
+				<div id="_idContainer104" class="IMG---Figure">
+					<img src="image/B17928_04_09.jpg" alt="Figure 4.9 – Dataset with data profile " width="1264" height="704"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 4.9 – Dataset with data profile</p>
+			<p>As you can see in the previous<a id="_idIndexMarker594"/> figure, this is a very useful summary of the dataset. The insights from this view are important for everyone working with this dataset.</p>
+			<p>In this section, we saw multiple ways to access and analyze data stored in Azure Machine Learning datasets – programmatically via Python and your favorite numerical libraries or via the UI.</p>
+			<h2 id="_idParaDest-82"><a id="_idTextAnchor081"/>Tracking datasets in Azure Machine Learning</h2>
+			<p>End-to-end tracking of all <a id="_idIndexMarker595"/>assets that go into your final production model is essential for reproducibility and interpretability but also auditing and tracking. A machine learning model is a function that minimizes a loss function by iterating and sampling experiments from your training data. Therefore, the training data itself should be treated as being a part of the model itself, and hence should be managed, versioned, and tracked through the end-to-end machine learning process.</p>
+			<p>We want to take advantage of datasets to add data tracking to our experiments. A good way to understand the differences between data tracking capabilities is to look at two examples: first, loading a CSV dataset from a URL, and then loading the same data from the same URL but through a dataset abstraction in Azure Machine Learning. However, we don't only want to load the data, but also pass it from the authoring script to the training script as an argument.</p>
+			<p>We will first use <strong class="source-inline">pandas</strong> to load a <a id="_idIndexMarker596"/>CSV file directly from the URL and pass it to the training script as a URL. In the next step, we will enhance this method by using a direct dataset instead, allowing us to conveniently pass the dataset configuration to the training script and track the dataset for the experiment run in Azure Machine Learning.</p>
+			<h3>Passing external data as a URL</h3>
+			<p>We start our example using <a id="_idIndexMarker597"/>data that is available as a CSV file from a remote URL, a common way to distribute public datasets. In the first example without Azure Machine Learning dataset tracking, we will use the <strong class="source-inline">pandas</strong> library to fetch and parse the CSV file:</p>
+			<ol>
+				<li value="1">Let's get started with the first code snippet using pandas' <strong class="source-inline">read_csv()</strong> method as an example to fetch data via a public URL from a remote server. However, this is just an example – you could replace it with any other method to fetch data from a remote location:<p class="source-code">import pandas as pd</p><p class="source-code">path ='https://...windows.net/demo/Titanic.csv'</p><p class="source-code"><strong class="bold">df = pd.read_csv(path)</strong></p><p class="source-code">print(df.head())</p></li>
+			</ol>
+			<p>Our goal is to pass the data from the authoring script to the training script, so it can be tracked and updated easily in the future. To achieve this, we can't send the DataFrame directly, but have to pass the URL to the CSV file and use the same method to fetch the data in the training script. Let's write a small training script whose only job is to parse the command-line arguments and fetch the data from the URL:</p>
+			<p><strong class="bold">code/access_data_from_path.py</strong></p>
+			<p class="source-code">import argparse</p>
+			<p class="source-code">import pandas as pd</p>
+			<p class="source-code">parser = argparse.ArgumentParser()</p>
+			<p class="source-code">parser.add_argument("--input", type=str)</p>
+			<p class="source-code">args = parser.parse_args()</p>
+			<p class="source-code"><strong class="bold">df = pd.read_csv(args.input)</strong></p>
+			<p class="source-code">print(df.head())</p>
+			<p>As we see in the preceding code, we pass the data path from the command-line <strong class="source-inline">--input</strong> argument and then<a id="_idIndexMarker598"/> load the data from the location using pandas' <strong class="source-inline">read_csv()</strong>.</p>
+			<ol>
+				<li value="2">Next, we create a <strong class="source-inline">ScriptRunConfig</strong> constructor to submit an experiment run to Azure Machine Learning that executes the training script from <em class="italic">step 1</em>. For now, we are not performing any training but only want to understand what data is passed between the authoring and execution runtime:</li>
+			</ol>
+			<p><strong class="bold">Access_data_from_path.ipynb </strong></p>
+			<p class="source-code">src = ScriptRunConfig(</p>
+			<p class="source-code">  source_directory="code",</p>
+			<p class="source-code">  script='access_data_from_path.py',</p>
+			<p class="source-code">  arguments=['--input', <strong class="bold">path</strong>],</p>
+			<p class="source-code">  environment=get_current_env())</p>
+			<ol>
+				<li value="3">Let's execute the run configuration to run the experiment and track the run details in Azure Machine Learning. Once the experiment run has finished, we navigate to Azure Machine<a id="_idIndexMarker599"/> Learning and check the details of this run. As we can see in <em class="italic">Figure 4.10</em>, Azure Machine Learning will track the <strong class="source-inline">script</strong> argument as expected but cannot associate the argument to a dataset:</li>
+			</ol>
+			<div>
+				<div id="_idContainer105" class="IMG---Figure">
+					<img src="image/B17928_04_10.jpg" alt="Figure 4.10 – Run details of the experiment " width="1187" height="488"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 4.10 – Run details of the experiment</p>
+			<p>Let's summarize the downsides of this approach:</p>
+			<ul>
+				<li>We can't pass the pandas DataFrame or a DataFrame identifier to the training script; we have to pass the data through the URL to its location. If the file path changes, we have to update the argument for the training script.</li>
+				<li>The training script doesn't know that the input path refers to the input data for the training script, it's simply a string argument to the training script. While we can track the argument in Azure Machine Learning, we can't automatically track the data.</li>
+			</ul>
+			<h3>Passing external data as a direct dataset</h3>
+			<p>As promised, we will now enhance the previous example using a dataset in Azure Machine Learning. This will allow us to pass the dataset as a named configuration – abstracting the URL and access to <a id="_idIndexMarker600"/>the physical location of the data. It also automatically enables dataset tracking for the experiment:</p>
+			<ol>
+				<li value="1">We start in the authoring script, and load the data from the path – only this time, using Azure Machine Learning's <strong class="source-inline">TabularDataset</strong>, created through the <strong class="source-inline">from_delimited_files()</strong> factory method:<p class="source-code">from azureml.core import Dataset</p><p class="source-code">path ='https://...windows.net/demo/Titanic.csv'</p><p class="source-code"><strong class="bold">ds = Dataset.Tabular.from_delimited_files(path)</strong></p><p class="source-code">print(ds.to_pandas_dataframe().head())</p></li>
+			</ol>
+			<p>This will output the same set of rows as the previous example in pandas – so there is almost no difference other than using a different method to create the DataFrame. However, now that we have created a <em class="italic">direct dataset</em>, we can easily pass the dataset to the training script as a named dataset configuration – which will use the dataset ID under the hood.</p>
+			<ol>
+				<li value="2">Like the pandas example, we write a simplified training script that will access the dataset and print the first few records by parsing the input dataset from the command-line arguments. In the training script, we can use the <strong class="source-inline">Dataset.get_by_id()</strong> method to fetch the dataset by its ID from a workspace:</li>
+			</ol>
+			<p><strong class="bold">code/access_data_from_dataset.py</strong></p>
+			<p class="source-code">import argparse</p>
+			<p class="source-code">from azureml.core import Dataset, Run</p>
+			<p class="source-code">parser = argparse.ArgumentParser()</p>
+			<p class="source-code">parser.add_argument("--input", type=str)</p>
+			<p class="source-code">args = parser.parse_args()</p>
+			<p class="source-code">run = Run.get_context()</p>
+			<p class="source-code">ws = run.experiment.workspace</p>
+			<p class="source-code"><strong class="bold">ds = Dataset.get_by_id(ws, id=args.input)</strong></p>
+			<p class="source-code">print(ds.to_pandas_dataframe().head())</p>
+			<p>As you can see in the <a id="_idIndexMarker601"/>preceding code, we modified the previous code slightly and added code to retrieve the current run context, experiment, and the workspace. This lets us access the direct dataset from the workspace by passing the dataset ID to the <strong class="source-inline">Dataset.get_by_id()</strong> method.</p>
+			<ol>
+				<li value="3">Next, we write a run configuration to submit the preceding code as an experiment to Azure Machine Learning. First, we need to convert the dataset into a command-line argument and pass it to the training script so it can be automatically retrieved in the execution runtime. We can achieve this by using the <strong class="source-inline">as_named_input(name)</strong> method on the dataset instance, which will convert the dataset into a named <strong class="source-inline">DatasetConsumptionConfig</strong> argument that allows the dataset to be passed to other environments.</li>
+			</ol>
+			<p>In this case, the dataset will be passed in direct mode and provided as the <strong class="source-inline">name</strong> environment variable in the runtime environment or as the dataset ID in the command-line arguments. The dataset will also get tracked in Azure Machine Learning as an input argument to the training script.</p>
+			<p>However, as we saw in the previous code snippet, we use the <strong class="source-inline">Dataset.get_by_id()</strong> method to retrieve the dataset in the training script from the dataset ID. We don't need to manually create or access the dataset ID, because the <strong class="source-inline">DatasetConsumptionConfig</strong> argument will be automatically expanded into the dataset ID when the training script is called by Azure Machine Learning with a direct dataset:</p>
+			<p><strong class="bold">Access_data_from_dataset.ipynb</strong></p>
+			<p class="source-code">src = ScriptRunConfig(</p>
+			<p class="source-code">  source_directory="code",</p>
+			<p class="source-code">  script='access_data_from_dataset.py',</p>
+			<p class="source-code">  arguments=['--input', <strong class="bold">ds.as_named_input('titanic')</strong>],</p>
+			<p class="source-code">  environment=get_current_env())</p>
+			<p>As we can see in the preceding code, the dataset is converted to a configuration that can simply be passed to the<a id="_idIndexMarker602"/> training script through the <strong class="source-inline">as_named_input(name)</strong> method. If we submit the experiment and check the logs of the run, we can see that Azure Machine Learning passed the dataset ID to the training script:</p>
+			<p class="SC---Heading" lang="en-US" xml:lang="en-US">70_driver_log.txt</p>
+			<p class="source-code">...</p>
+			<p class="source-code">After variable expansion, calling script [access_data_from_dataset.py] with arguments:['--input', '04f8ad60-5a51-4319-92fe-cdfa7f6c9adc']</p>
+			<p>The run details for this experiment are shown in <em class="italic">Figure 4.11</em>. If you look at the input arguments, you can see that we passed the <strong class="source-inline">DatasetConsumptionConfig</strong> object to the script, which was then converted automatically to the dataset ID. Not only is the input argument passed without any information about the location of the underlying data, but the input dataset is also recognized as an input to the training data:</p>
+			<div>
+				<div id="_idContainer106" class="IMG---Figure">
+					<img src="image/B17928_04_11.jpg" alt="Figure 4.11 – Run details of the experiment " width="1049" height="487"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 4.11 – Run details of the experiment</p>
+			<p>By passing a dataset to a training script, Azure Machine Learning automatically tracks the dataset with the experiment run. As you can see in <em class="italic">Figure 4.11</em>, the dataset ID is a link to the tracked dataset. When clicking on the dataset ID in Azure Machine Learning, it will open a page showing details about the tracked dataset, such as description, URL, size, and type of dataset, as shown in <em class="italic">Figure 4.12</em>. Like registered datasets, you can also explore the raw data and look at dataset column statistics – called the profile – or see any registered models derived from this data. Tracked datasets can easily be registered – and hence versioned and <a id="_idIndexMarker603"/>managed – by clicking on the <strong class="bold">Register</strong> action or from code:</p>
+			<div>
+				<div id="_idContainer107" class="IMG---Figure">
+					<img src="image/B17928_04_12.jpg" alt="Figure 4.12 – Direct dataset tracked in Azure Machine Learning " width="1029" height="563"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 4.12 – Direct dataset tracked in Azure Machine Learning</p>
+			<p>As we saw in this section, there are important benefits to passing the input data to your training script as a dataset argument. This will automatically track the dataset in your workspace and connect the dataset with the experimentation run.</p>
+			<p>In the code snippets <a id="_idIndexMarker604"/>of this section, we passed the data as a <em class="italic">direct dataset</em>, which means that the training script has to fetch the data again from the external URL. This is not always optimal, especially when dealing with large amounts of data or when data should be managed in Azure Machine Learning. In the next section, we will explore different ways to pass data to the training script.</p>
+			<h2 id="_idParaDest-83"><a id="_idTextAnchor082"/>Accessing data during training</h2>
+			<p>In the previous section, we<a id="_idIndexMarker605"/> implicitly passed the URL of the original dataset to the training script. While this is a practical and fast solution for small public datasets, it's often not the preferred approach for private or larger datasets. Imagine your data is stored on a SQL server, Blob storage, or file share instead, and password protected. Imagine your dataset contains many gigabytes of files. In this section, we will see techniques that work well for both cases.</p>
+			<p>While external public data reachable through a URL is created and passed as a <em class="italic">direct dataset</em>, all other datasets can be accessed either as a <strong class="bold">download</strong> or as a <strong class="bold">mount</strong>. For big data datasets, Azure Machine<a id="_idIndexMarker606"/> Learning also provides an option to mount a dataset as a <strong class="bold">Hadoop Distributed File System</strong> (<strong class="bold">HDFS</strong>).</p>
+			<p>In this section, we will see authoring scripts that will pass datasets both as a download and as a mount. Let's first create a reference in the authoring script to the <strong class="source-inline">cifar10</strong> dataset, which we registered in the previous section. The following snippet retrieves a dataset by name from the Azure Machine Learning workspace:</p>
+			<p class="source-code">from azureml.core import Dataset</p>
+			<p class="source-code">dataset = Dataset.get_by_name(ws, "cifar10")</p>
+			<p>Next, we want to pass the dataset to the training script so that we can access the training data from the script. The benefit of using datasets is not only tracking but the fact that we can simply choose the appropriate data consumption configuration that is appropriate for each dataset. It will also help us to separate the training script from the training data, making it easy to pass new, updated, or enriched data to the same training script without needing to update the training script.</p>
+			<p>Independently of the consumption method, the training script can always load the data from a directory path where it will be either downloaded or mounted. Under the hood, Azure Machine Learning inspects the command-line arguments of <strong class="source-inline">ScriptRunConfig</strong>, detects the dataset reference, delivers the data to the compute environment, and replaces the argument with the path of the dataset in the local filesystem.</p>
+			<p>Azure Machine Learning uses parameter expansion to replace the dataset reference with the path to the actual data on disk. To make this more obvious, we will write a single training file that will <a id="_idIndexMarker607"/>simply list all training files that were passed to it. The following code snippet implements this training script:</p>
+			<p class="SC---Heading" lang="en-US" xml:lang="en-US">code/access_dataset.py</p>
+			<p class="source-code">import os</p>
+			<p class="source-code">import argparse</p>
+			<p class="source-code">parser = argparse.ArgumentParser()</p>
+			<p class="source-code">parser.add_argument("--input", type=str)</p>
+			<p class="source-code">args = parser.parse_args()</p>
+			<p class="source-code">print("Dataset path: {}".format(args.input))</p>
+			<p class="source-code">print(os.listdir(args.input))</p>
+			<p>In the previous script, we define a single <strong class="source-inline">--input</strong> argument that we will use to pass the training data. Then we will output this argument and list all files from the directory. We will use this script to pass data with different mounting techniques and will see that the data will always be available in the folder.</p>
+			<p>Having the dataset reference and a simple training script, we can now look at a different <strong class="source-inline">ScriptRunConfig</strong> to pass the <strong class="source-inline">cifar10</strong> dataset using the different data consumption configurations. While the code is downloaded or mounted by Azure Machine Learning before the training script is invoked, we will also explore what happens under the hood – so we<a id="_idIndexMarker608"/> can apply the same technique to load the training data outside of Azure Machine Learning-managed compute environments.</p>
+			<h3>Accessing data as a download</h3>
+			<p>We will first look at downloading the data to<a id="_idIndexMarker609"/> the training instance. To do so, we will first create a <strong class="source-inline">ScriptRunConfig </strong>constructor in the authoring environment where we pass the data to <strong class="source-inline">as_download()</strong>. We will schedule a code snippet that will access and output the files passed to the script:</p>
+			<p class="SC---Heading" lang="en-US" xml:lang="en-US">Access_dataset_as_download.ipynb</p>
+			<p class="source-code">from azureml.core import ScriptRunConfig</p>
+			<p class="source-code">src = ScriptRunConfig(</p>
+			<p class="source-code">  source_directory="code",</p>
+			<p class="source-code">  script='access_dataset.py',</p>
+			<p class="source-code">  arguments=['--input',</p>
+			<p class="source-code">    dataset.as_named_input('cifar10')<strong class="bold">.as_download()</strong>],</p>
+			<p class="source-code">  environment=get_current_env())</p>
+			<p>Azure will interpolate the dataset passed by the <strong class="source-inline">input</strong> parameter and replace it with the location of the dataset on disk. The data will be automatically downloaded to the training environment if the dataset is passed with the <strong class="source-inline">Dataset.as_download()</strong> method.</p>
+			<p>If you run this script configuration, the <strong class="source-inline">access_dataset.py</strong> script will output the temporary location of the dataset, which was automatically downloaded to disk. You can replicate the exact same process in your authoring environment that Azure Machine Learning does under the hood. To do so, you can simply call the following:</p>
+			<p class="source-code">folder = '/tmp/cifar10-data'</p>
+			<p class="source-code">paths = <strong class="bold">dataset.download(folder)</strong></p>
+			<p>Passing data as a download is convenient for small datasets or when using a large number of consumers that require a high throughput on the data. However, if you are dealing with large datasets, you <a id="_idIndexMarker610"/>can also pass them as a <em class="italic">mount</em> instead.</p>
+			<h3>Accessing data as a mount</h3>
+			<p>In this example, we will mount the data<a id="_idIndexMarker611"/> on the training environment. To do so, we will again create a <strong class="source-inline">ScriptRunConfig</strong> constructor in the authoring environment and this time we invoke the <strong class="source-inline">as_mount()</strong>. We will schedule a code snippet that will access and output the files passed to the script:</p>
+			<p class="SC---Heading" lang="en-US" xml:lang="en-US">Access_dataset_as_mount.ipynb</p>
+			<p class="source-code">from azureml.core import ScriptRunConfig</p>
+			<p class="source-code">src = ScriptRunConfig(</p>
+			<p class="source-code">  source_directory="code",</p>
+			<p class="source-code">  script='access_dataset.py',</p>
+			<p class="source-code">  arguments=['--input',</p>
+			<p class="source-code">    dataset.as_named_input('cifar10')<strong class="bold">.as_mount()</strong>],</p>
+			<p class="source-code">  environment=get_current_env())</p>
+			<p>As you can see, the preceding example is very similar to the previous example where data was downloaded to disk. In fact, we are reusing the exact same scheduled script, <strong class="source-inline">access_dataset.py</strong>, which will output the location of the data on disk. However, in this example, the data is not downloaded to this location but mounted to the file path.</p>
+			<p>Azure Machine Learning will interpolate the dataset passed through the input argument with the mounted path on disk. Similar to the previous example, you can replicate what happens under the hood in Azure Machine Learning and mount the data from within your authoring environment:</p>
+			<p class="source-code">import os</p>
+			<p class="source-code">folder = '/tmp/cifar10-data'</p>
+			<p class="source-code"># Or you can also use the start and stop methods</p>
+			<p class="source-code">mount_context = <strong class="bold">dataset.mount(folder)</strong></p>
+			<p class="source-code">try:</p>
+			<p class="source-code">  mount_context.start() </p>
+			<p class="source-code">  print(os.listdir(folder))</p>
+			<p class="source-code">finally:</p>
+			<p class="source-code">  mount_context.stop()</p>
+			<p>As you can see in the previous snippet, the dataset is mounted and released using the mount context's <strong class="source-inline">start</strong> and <strong class="source-inline">stop</strong> methods. You can also simplify the code snippet using Python's <strong class="source-inline">with</strong> statement to automatically mount and unmount the data as shown in the following snippet:</p>
+			<p class="source-code"><strong class="bold">with dataset.mount() as mount_context</strong>:</p>
+			<p class="source-code">  print(os.listdir(mount_context.mount_point))</p>
+			<p>Hence, depending on the <a id="_idIndexMarker612"/>use case, we have different options to pass a dataset reference to a scheduled script. Independent of the data transport, Azure Machine Learning will implement the correct method under the hood and interpolate the input arguments so that the training script doesn't need to know how a dataset was configured. For the executed script, the data is simply made available through a path in the filesystem.</p>
+			<h2 id="_idParaDest-84"><a id="_idTextAnchor083"/>Using external datasets with open datasets</h2>
+			<p>One of the most effective <a id="_idIndexMarker613"/>methods to improve the prediction performance of any ML model is to add additional information to your training data. A common way to achieve this is by joining external datasets to the training data. A good indication to join external data is the availability of popular joining keys in your dataset, such as dates, locations, countries, and more.</p>
+			<p>When you work with transactional data that contains dates, you can easily join external data to create additional features for the training dataset and hence improve prediction performance. Common derived features for dates are weekdays, weekends, time to or since weekends, holidays, time to or since holidays, sports events, concerts, and more. When dealing with country information, you can often join additional country-specific data, such as population data, economic data, sociological data, health data, labor data, and more. When dealing<a id="_idIndexMarker614"/> with geolocation, you can join distance to points of interest, weather data, traffic data, and more. Each of these additional datasets gives you additional insights and hence can boost your model's performance significantly.</p>
+			<p>Open Datasets is a service that provides access to curated datasets for the transportation, health and genomics, labor and economics, population, and safety, categories and common datasets that you can use to boost your model's performance. Let's look into three examples.</p>
+			<p class="callout-heading">Important Note</p>
+			<p class="callout">Before using a specific dataset for a commercial service, please make sure that your application is covered by the license. If in doubt, reach out to Microsoft via <a href="mailto:aod@microsoft.com">aod@microsoft.com</a>.</p>
+			<p>In the first example, we will investigate the dataset for <em class="italic">worldwide public holidays</em>. The data covers holidays in almost 40 countries or regions from 1970 to 2099. It is curated from Wikipedia and the <strong class="source-inline">holidays</strong> Python package. You can import them into your environment and access these holidays using the <strong class="source-inline">opendatasets</strong> library as shown in the following example:</p>
+			<p class="source-code">from azureml.opendatasets import PublicHolidays</p>
+			<p class="source-code">from dateutil import parser</p>
+			<p class="source-code">end_date = parser.parse("Jan 10 2000 12:00AM")</p>
+			<p class="source-code">start_date = parser.parse("Jan 10 2010 12:00AM")</p>
+			<p class="source-code">ds = PublicHolidays(start_date=start_date, </p>
+			<p class="source-code">                    end_date=end_date)</p>
+			<p class="source-code">df = ds.to_pandas_dataframe()</p>
+			<p>As we see in the code, we can access the dataset from the <strong class="source-inline">azureml-opendatasets</strong> package and use it as an Azure Machine Learning dataset. This means we can return the pandas or Spark DataFrame for further processing.</p>
+			<p>Another popular dataset is the <em class="italic">US population</em> by county for the years 2000 and 2010. It is broken down by gender and race and sourced from the United States Census Bureau:</p>
+			<p class="source-code">from azureml.opendatasets import UsPopulationZip</p>
+			<p class="source-code">population = UsPopulationZip()</p>
+			<p class="source-code">population_df = population.to_pandas_dataframe()</p>
+			<p>Another example <a id="_idIndexMarker615"/>open dataset is the <em class="italic">Current Employment Statistics</em> of the United States, published by the US <strong class="bold">Bureau of Labor Statistics</strong> (<strong class="bold">BLS</strong>). It contains estimates of employment, hours, and earnings of workers on payrolls in the US:</p>
+			<p class="source-code">from azureml.opendatasets import UsLaborEHENational</p>
+			<p class="source-code">ds = UsLaborEHENational()</p>
+			<p class="source-code">df = ds.to_pandas_dataframe()</p>
+			<p>As you saw in this section, Azure <a id="_idIndexMarker616"/>Open Datasets gives you a convenient option to access curated datasets in the form of Azure Machine Learning datasets right from within your Azure Machine Learning workspace. While the number of available datasets is still manageable, you can expect the number of available datasets to grow over time.</p>
+			<h1 id="_idParaDest-85"><a id="_idTextAnchor084"/>Summary</h1>
+			<p>In this chapter, we learned how to manage data in Azure Machine Learning using datastores and datasets. We saw how to configure the default datastore that is responsible for storing all assets, logs, models, and more in Azure Machine Learning, as well as other services that can be used as datastores for different types of data.</p>
+			<p>After creating an Azure Blob storage account and configuring it as a datastore in Azure Machine Learning, we saw different tools to ingest data into Azure, such as Azure Storage Explorer, Azure CLI, and AzCopy, as well as services optimized for data ingestion and transformation, Azure Data Factory and Azure Synapse Spark.</p>
+			<p>In the subsequent section, we got our hands on datasets. We created file and tabular datasets and learned about direct and registered datasets. Datasets can be passed as a download or a mount to executed scripts, which will automatically track datasets in Azure Machine Learning.</p>
+			<p>Finally, we learned how to improve predication performance by joining third-party datasets from Azure Open Datasets to our machine learning process. In the next chapter, we will learn how to explore data by performing data analysis and visualization.</p>
+		</div>
+	</div>
+</div>
+</body></html>
