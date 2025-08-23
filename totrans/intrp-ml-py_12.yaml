@@ -1,0 +1,1946 @@
+- en: '12'
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Monotonic Constraints and Model Tuning for Interpretability
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Most model classes have hyperparameters that can be tuned for faster execution
+    speed, increasing predictive performance, and reducing overfitting. One way of
+    reducing overfitting is by introducing regularization into the model training.
+    In *Chapter 3*, *Interpretation Challenges*, we called regularization a remedial
+    interpretability property, which reduces complexity with a penalty or limitation
+    that forces the model to learn sparser representations of the inputs. Regularized
+    models generalize better, which is why it is highly recommended to tune models
+    with regularization to avoid overfitting to the training data. As a side effect,
+    regularized models tend to have fewer features and interactions, making the model
+    easier to interpret—*less noise means a clearer signal*!
+  prefs: []
+  type: TYPE_NORMAL
+- en: And even though there are many hyperparameters, we will only focus on those
+    that improve interpretability by controlling overfitting. Also, to a certain extent,
+    we will revisit bias mitigation through the class imbalance-related hyperparameters
+    explored in previous chapters.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '*Chapter 2*, *Key Concepts of Interpretability*, explained three model properties
+    that impact interpretability: non-linearity, interactivity, and non-monotonicity.
+    Left to its own devices, a model can learn some spurious and counterintuitive
+    non-linearities and interactivities. As discussed in *Chapter 10*, *Feature Selection
+    and Engineering for Interpretability*, guardrails can be placed to prevent this
+    through careful feature engineering. However, what can we do to place guardrails
+    for monotonicity? In this chapter, we will learn how to do just this with monotonic
+    constraints. And just as monotonic constraints can be the model counterpart to
+    feature engineering, regularization can be the model counterpart to the feature
+    selection methods we covered in *Chapter 10*!'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'These are the main topics we are going to cover in this chapter:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Placing guardrails with feature engineering
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Tuning models for interpretability
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Implementing model constraints
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Technical requirements
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: This chapter’s example uses the `mldatasets`, `pandas`, `numpy`, `sklearn`,
+    `xgboost`, `lightgbm`, `catboost`, `tensorflow`, `bayes_opt`, `tensorflow_lattice`,
+    `matplotlib`, `seaborn`, `scipy`, `xai`, and `shap` libraries. Instructions on
+    how to install these libraries are in the preface.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The code for this chapter is located here: [https://packt.link/pKeAh](https://packt.link/pKeAh)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The mission
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: The issue of algorithmic fairness is one with massive social implications, from
+    the allocation of welfare resources to the prioritization of life-saving surgeries
+    to screening job applications. These machine learning algorithms can determine
+    a person’s livelihood or life, and it’s often the most marginalized and vulnerable
+    populations that get the worst treatment from these algorithms because they perpetuate
+    systemic biases learned from the data. Therefore, it’s poorer families that get
+    misclassified for child abuse; it’s racial-minority people who get underprioritized
+    for medical treatment; and it’s women who get screened out of high-paying tech
+    jobs. Even in cases involving less immediate and individualized risks such as
+    online searches, Twitter/X bots, and social media profiles, societal prejudices
+    such as elitism, racism, sexism, and ageism are reinforced.
+  prefs: []
+  type: TYPE_NORMAL
+- en: This chapter will continue on the mission from *Chapter 6*, *Anchors and Counterfactual
+    Explanations*. If you aren’t familiar with these techniques, please go back and
+    read *Chapter 6* to get a solid understanding of the problem. The recidivism case
+    from *Chapter 6* is one of algorithmic bias. The co-founder of the company that
+    developed the **COMPAS algorithm** (where **COMPAS** stands for **Correctional
+    Offender Management Profiling Alternative Sanctions**) admitted that it’s tough
+    to make a score without questions that are correlated with race. This correlation
+    is one of the main reasons that scores are biased against African Americans. The
+    other reason is the likely overrepresentation of black defendants in the training
+    data. We don’t know for sure because we don’t have the original training data,
+    but we know that non-white minorities are overrepresented in the population of
+    incarcerated individuals. We also know that black people are typically overrepresented
+    in arrests because of codified discrimination in terms of minor drug-related offenses
+    and over-policing in black communities.
+  prefs: []
+  type: TYPE_NORMAL
+- en: So, what can we do to fix it?
+  prefs: []
+  type: TYPE_NORMAL
+- en: In *Chapter 6*, *Anchors and Counterfactual Explanations*, we managed to demonstrate
+    via a *proxy model* that the COMPAS algorithm was biased. For this chapter, let’s
+    say that the journalist published your findings, and an algorithmic justice advocacy
+    group read the article and reached out. Companies that make criminal assessment
+    tools are not taking responsibility for bias and claim that their tools simply
+    reflect *reality*. The advocacy group has hired you to demonstrate that a machine
+    learning model can be trained to be significantly less biased toward black defendants
+    while ensuring that the model reflects only proven criminal justice *realities*.
+  prefs: []
+  type: TYPE_NORMAL
+- en: These proven realities include the monotone decrease of recidivism risk with
+    age, and a strong correlation with priors, which increases strongly with age.
+    Another fact supported by the academic literature is how females are significantly
+    less prone to recidivism and criminality in general.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Before we move on, we must recognize that supervised learning models face several
+    impediments in capturing domain knowledge from data. For instance, consider the
+    following:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**Sample**, **exclusion**, **or** **prejudice bias**: What if your data doesn’t
+    truly represent the environment your model intends to generalize? If that’s the
+    case, the domain knowledge won’t align with what you observe in the data. What
+    if the environment that produced the data has a built-in systemic or institutional
+    bias? Then, the data will reflect these biases.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Class imbalance**: As seen in *Chapter 11*, *Bias Mitigation and Causal Inference
+    Methods*, class imbalance could favor some groups over others. While taking the
+    most effective route toward high accuracy, a model will learn from this imbalance,
+    contradicting domain knowledge.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Non-monotonicity**: Sparse areas in a features histogram or high-leverage
+    outliers could cause a model to learn non-monotonicity when domain knowledge calls
+    for otherwise, and any of the previously mentioned problems could contribute to
+    this as well.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Uninfluential features**: An unregularized model will, by default, try to
+    learn from all features as long as they carry some information, but this stands
+    in the way of learning from relevant features or overfitting to noise in the training
+    data. A more parsimonious model is more likely to prop up features supported by
+    domain knowledge.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Counterintuitive interactions**: As mentioned in *Chapter 10*, *Feature Selection
+    and Engineering for Interpretability*, there could be counterintuitive interactions
+    that a model favors over domain knowledge-supported interactions. As a side effect,
+    these could end up favoring some groups that correlate with them. And in *Chapter
+    6**, Anchors and Counterfactual Explanations*, we saw proof of this through an
+    understanding of double standards.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Exceptions**: Our domain knowledge facts are based on an aggregate understanding,
+    but when looking for patterns on a more granular scale, models will find exceptions
+    such as pockets where female recidivism is of higher risk than that of males.
+    Known phenomena might not support these models but they could be valid nonetheless,
+    so we must be careful not to erase them with our tuning efforts.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The advocacy group has validated the data as adequately representative of only
+    one county in Florida, and they have provided you with a balanced dataset. The
+    first impediment is a tough one to ascertain and control. The second one has been
+    taken care of. It’s now up to you to deal with the remaining four!
+  prefs: []
+  type: TYPE_NORMAL
+- en: The approach
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'You have decided to take a three-fold approach, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**Placing guardrails with feature engineering**: Leveraging lessons learned
+    in *Chapter 6*, *Anchors and Counterfactual Explanations*, as well as the domain
+    knowledge we already have about priors and age, in particular, we will engineer
+    some features.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Tuning models for interpretability**: Once the data is ready, we will tune
+    many models with different class weighting and overfitting prevention techniques.
+    These methods will ensure that the models not only generalize better but are also
+    easier to interpret.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Implementing model constraints**: Last but not least, we will implement monotonic
+    and interaction constraints on the best models to make sure that they don’t stray
+    from trusted and fair interactions.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: In the last two sections, we will make sure the models perform accurately and
+    fairly. We will also compare recidivism risk distributions between the data and
+    the model to ensure that they align.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The preparations
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'You will find the code for this example here: [https://github.com/PacktPublishing/Interpretable-Machine-Learning-with-Python-2E/blob/main/12/Recidivism_part2.ipynb](https://github.com/PacktPublishing/Interpretable-Machine-Learning-with-Python-2E/blob/main/12/Recidivism_part2.ipynb)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Loading the libraries
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'To run this example, you need to install the following libraries:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '`mldatasets` to load the dataset'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`pandas` and `numpy` to manipulate it'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`sklearn` (scikit-learn), `xgboost`, `lightgbm`, `catboost`, `tensorflow`,
+    `bayes_opt`, and `tensorflow_lattice` to split the data and fit the models'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`matplotlib`, `seaborn`, `scipy`, `xai`, and `shap` to visualize the interpretations'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'You should load all of them first, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE0]'
+  prefs: []
+  type: TYPE_PRE
+- en: Let’s check that `tensorflow` has loaded the right version with `print(tf.__version__)`.
+    This should be 2.8 and above.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Understanding and preparing the data
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'We load the data like this into a DataFrame we call `recidivism_df`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE1]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'There should be over 11,000 records and 11 columns. We can verify this was
+    the case with `info()`, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE2]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The preceding code outputs the following:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE3]'
+  prefs: []
+  type: TYPE_PRE
+- en: The output checks out. There are no missing values, and all but three features
+    are numeric (`sex`, `race`, and `charge_degree`). This is the same data we used
+    in *Chapter 6*, *Anchors and Counterfactual Explanations*, so the data dictionary
+    is exactly the same. However, the dataset has been balanced with sampling methods,
+    and, this time, it hasn’t been prepared for us so we will need to do this, but
+    before this, let’s gain an understanding of what the balancing did.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Verifying the sampling balance
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'We can check how `race` and `is_recid` are distributed with XAI’s `imbalance_plot`.
+    In other words, it will tally how many records exist for each `race`-`is_recid`
+    combination. This plot will allow us to observe if there are imbalances in the
+    number of defendants that recidivate for each `race`. The code can be seen in
+    the following snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE4]'
+  prefs: []
+  type: TYPE_PRE
+- en: The preceding code outputs *Figure 12.1*, which depicts how all races have equal
+    amounts of `is_recid=0` and `is_recid=1`. However, **Other** is not at parity
+    in numbers with the other races. Incidentally, this version of the dataset has
+    bucketed all other races as **Other**, and the choice to not `upsample` **Other**
+    or `downsample` the other two races to achieve total parity is made because they
+    are less represented in the defendant population. This balancing choice is one
+    of many that can be done in a situation such as this. Demographically, it all
+    depends on what your data is supposed to represent. Defendants? Inmates? Civilians
+    in the general population? And at what level? Of the county? The state? The country?
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The output can be seen here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/B18406_12_01.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 12.1: Distribution of 2-year recidivism (is_recid) by ethnicity'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Next, let’s compute how well each of our features monotonically correlates to
+    the target. Spearman’s rank-order correlation will be instrumental in this chapter
+    because it measures the monotonicity between two features. After all, one of the
+    technical topics of this chapter is monotonic constraints, and the primary mission
+    is to produce a significantly less biased model.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We first create a new DataFrame without `compas_score` (`recidivism_corr_df`).
+    Using this DataFrame, we output a color-coded DataFrame with a `feature` column
+    with the first 10 features’ names and another one with the Spearman coefficient
+    (`correlation_to_target`) for all 10 features toward the 11th—the target variable.
+    The code can be seen in the following snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE5]'
+  prefs: []
+  type: TYPE_PRE
+- en: The preceding code outputs the DataFrame shown in *Figure 12.2*. The most correlated
+    features are `priors_count` followed by `age`, the three juvenile counts, and
+    `sex`. The coefficients for `c_charge_degree`, `days_b_screening_arrest`, `length_of_stay`,
+    and `race` are negligible.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The output can be seen here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Table  Description automatically generated](img/B18406_12_02.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 12.2: Spearman coefficients of all features toward the target, prior
+    to feature engineering'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Next, we will learn how to use feature engineering to “bake in” some domain
+    knowledge into the features.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Placing guardrails with feature engineering
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In *Chapter 6*, *Anchors and Counterfactual Explanations*, we learned that besides
+    `race`, the features most prominent in our explanations were `age`, `priors_count`,
+    and `c_charge_degree`. Thankfully, the data is now balanced, so the racial bias
+    attributed to this imbalance is now gone. However, through anchors and counterfactual
+    explanations, we found some troubling inconsistencies. In the case of `age` and
+    `priors_count`, these inconsistencies were due to how those features were distributed.
+    We can correct issues with distribution through feature engineering, and, that
+    way, ensure that a model doesn’t learn from uneven distributions. In `c_charge_degree`'s
+    case, being categorical, it lacked a discernible order, and this lack of order
+    created unintuitive explanations.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In this section, we will study **ordinalization**, **discretization**, and **interaction
+    terms**, three ways in which you can place guardrails through feature engineering.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Ordinalization
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: '[PRE6]'
+  prefs: []
+  type: TYPE_PRE
+- en: '[PRE7]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The preceding code produced the following output:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE8]'
+  prefs: []
+  type: TYPE_PRE
+- en: Each of the charge degrees corresponds to the charge’s gravity. There’s an order
+    to these gravities, which is lost by using a categorical feature. We can easily
+    fix this by replacing each category with a corresponding order.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We can put a lot of thought into what this order should be. For instance, we
+    could look at sentencing laws or guidelines—there are minimum or maximum years
+    of prison enforced for different degrees. We could also look at statistics on
+    how violent these people are on average and assign this information to the charge
+    degree. There’s potential for bias in every decision such as this, and if we don’t
+    have substantial evidence to support it, it’s best to use a sequence of integers.
+    So, that’s what we are going to do now. We will create a dictionary (`charge_degree_code_rank`)
+    that maps the degrees to a number corresponding to a rank of gravity, from low
+    to high. Then, we can use the `pandas` `replace` function to use the dictionary
+    to perform the replacements. The code can be seen in the following snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE9]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'One way to assess how this order corresponds to recidivism probability is through
+    a line plot that shows how it changes as the charge degree increases. We can use
+    a function called `plot_prob_progression` for this, which takes a continuous feature
+    in the first argument (`c_charge_degree`) to measure against probability for a
+    binary feature in the second (`is_recid`). It can split the continuous feature
+    by intervals (`x_intervals`), and even use quantiles (`use_quantiles`). Lastly,
+    you can define axis labels and titles. The code can be seen in the following snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE10]'
+  prefs: []
+  type: TYPE_PRE
+- en: The preceding code generates the plot in *Figure 12.3*. As the now-ranked charge
+    degree increases, the tendency is that the probability of 2-year recidivism decreases,
+    except for rank 1\. Below the probability, there are bar charts that show the
+    distribution of the observations over every rank. Because it is so unevenly distributed,
+    you should take the tendency with a grain of salt. You’ll notice that some ranks,
+    such as 0, 8, and 13–15, aren’t in the plot because the charge-degree categories
+    existed in the criminal justice system but weren’t in the data.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The output can be seen here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Chart, line chart  Description automatically generated](img/B18406_12_03.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 12.3: Probability progression plot by charge degree'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Feature engineering-wise, we can’t do much more to improve `c_charge_degree`
+    because it already represents discrete categories now enhanced with an order.
+    Any further transformations could produce a significant loss of information unless
+    we have evidence to suggest otherwise. On the other hand, continuous features
+    inherently have an order; however, a problem may arise from the level of precision
+    they carry because small differences may not be meaningful but the data may tell
+    the model otherwise. Uneven distributions and counterintuitive interactions only
+    exacerbate this problem.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Discretization
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: To understand how to discretize our `age` continuous feature best, let’s try
+    two different approaches. We can use equal-sized discretization, also known as
+    fixed-width bins or intervals, which means the size of the bin is determined by
+    ![](img/B18406_12_001.png), where *N* is the number of bins. Another way to do
+    this is with equal-frequency discretization, also known as quantiles, which ensures
+    that each bin has approximately the same number of observations. Although, sometimes,
+    given the histogram’s skewed nature, it may be impossible to split them *N* ways,
+    so you may end up with *N-1* or *N-2* quantiles.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'It is easy to compare both approaches with `plot_prob_progression`, but this
+    time, we produce two plots, one with fixed-width bins (`use_quantiles=False`)
+    and another with quantiles (`use_quantiles=True`). The code can be seen in the
+    following snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE11]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The output can be seen here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/B18406_12_04.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 12.4: Comparing two discretization approaches for age'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'It is easy to observe why using quantiles to bin the feature is a better approach.
+    We can take `age` and engineer a new feature called `age_group`. The `qcut` `pandas`
+    function can perform quantile-based discretization. The code can be seen in the
+    following snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE12]'
+  prefs: []
+  type: TYPE_PRE
+- en: So, we now have discretized `age` into `age_group`. However, it must be noted
+    that many model classes discretize automatically, so why bother? Because it allows
+    you to control its effects. Otherwise, the model might decide on bins that don’t
+    ensure monotonicity. For instance, maybe the model might always use 10 quantiles
+    whenever possible. Still, if you attempt this level of granularity on `age` (`x_intervals=10`),
+    you’ll end up with spikes in the probability progression. Our goal was to make
+    sure that the models would learn that `age` and the incidence of `is_recid` have
+    a monotonic relationship, and we cannot ascertain this if we allow the model to
+    choose bins that may or may not achieve the same goal.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We will remove `age` because `age_group` has everything we need. But wait—you
+    ask—won’t we lose some important information by removing this variable? Yes, but
+    only because of its interaction with `priors_count`. So, before we drop any features,
+    let’s examine this relationship and realize how, through creating an interaction
+    term, we can retain some of the information lost through the removal of `age`,
+    while keeping the interaction.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Interaction terms and non-linear transformations
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'We already know from *Chapter 6*, *Anchors and Counterfactual Explanations*,
+    that `age` and `priors_count` are two of the most important predictors, and we
+    can observe how, together, they impact the incidence of recidivism (`is_recid`)
+    with `plot_prob_contour_map`. This function produces contour lines with color-coded
+    contour regions, signifying different magnitudes. They are useful in topography,
+    where they show elevation heights. In machine learning, they can show a two-dimensional
+    plane representing feature interaction with a metric. In this case, the dimensions
+    are `age` and `priors_count`, and the metric is the incidence of recidivism. The
+    arguments received by this function are the same as `plot_prob_progression` except
+    that it takes two features corresponding to the *x* axis and *y* axis. The code
+    can be seen in the following snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE13]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The output can be seen here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/B18406_12_05.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 12.5: Recidivism probability contour map for age and priors_count'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We can now engineer an interaction term that includes both features. Even though
+    the contour map discretized the features to observe a smoother progression, we
+    do not need to discretize this relationship. What makes sense is to make it a
+    ratio of `priors_count` per year. But years since when? Years since the defendants
+    were an adult, of course. But to obtain the years, we cannot use `age - 18` because
+    this would lead to zero division, so we will use `17` instead. There are, of course,
+    many ways to do this. The best way would be if we hypothetically had ages with
+    decimals, and by deducting 18, we could compute a very precise `priors_per_year`
+    ratio. Still, unfortunately, we don’t have that. You can see the code in the following
+    snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE14]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Black-box models typically find interaction terms automatically. For instance,
+    hidden layers in a neural network have all the first-order interactions, but because
+    of the non-linear activations, it is not limited to linear combinations. However,
+    “manually” defining interaction terms and even non-linear transformation allows
+    us to interpret these better once the model has been fitted. Furthermore, we can
+    also use monotonic constraints on them, precisely what we will do later with `priors_per_year`.
+    For now, let’s examine if its monotonicity holds with `plot_prob_progression`.
+    Have a look at the following code snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE15]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The preceding snippet outputs the progression in the following screenshot,
+    which shows how the new feature is almost monotonic:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Chart, line chart  Description automatically generated](img/B18406_12_06.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 12.6: Probability progression for priors_per_year'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The reason `priors_per_year` isn’t more monotonic is how sparse the over-3.0
+    `priors_per_year` interval is. It would therefore be very unfair to these few
+    defendants to enforce monotonicity on this feature because they present a 75%
+    risk dip. One way to tackle this is to shift them over to the left, by setting
+    `priors_per_year = -1` for these observations, as illustrated in the following
+    code snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE16]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Of course, this shift changes the interpretation of the feature ever so slightly,
+    knowing that the few values of `-1` really mean over `3`. Now, let’s generate
+    another contour map, but this time, between `age_group` and `priors_per_year`.
+    The latter will be discretized in quantiles (`y_intervals=6, use_quantiles=True`)
+    so that the probability of recidivism is more easily observed. The code is shown
+    in the following snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE17]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The output can be seen here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/B18406_12_07.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 12.7: Recidivism probability contour map for age_group and priors_per_year'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Almost everything is ready, but `age_group` is still categorical, so we have
+    to encode it to take a numerical form.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Categorical encoding
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: The best categorical encoding method for `age_group` is **ordinal encoding**,
+    also known as **label encoding**, because it will retain its order. We should
+    also encode the other two categorical features in the dataset, `sex` and `race`.
+    For `sex`, ordinal encoding converts it into binary form—equivalent to **dummy
+    encoding**. On the other hand, `race` is a tougher call because it has three categories,
+    and using ordinal encoding could lead to bias. However, whether to use **one-hot
+    encoding** instead depends on which model classes you are using. Tree-based models
+    have no bias issues with ordinal features but other models that operate with weights
+    on a feature basis, such as neural networks and logistic regression, could be
+    biased by this order.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Considering that the dataset has been balanced on `race`, there’s a lower risk
+    of this happening and we will remove this feature later anyway, so we will go
+    ahead and ordinal-encode it.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'To ordinal-encode the three features, we will use scikit-learn’s `OrdinalEncoder`.
+    We can use its `fit_transform` function to fit and transform the features in one
+    fell swoop. Then, we should also delete unnecessary features while we are at it.
+    Have a look at the following code snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE18]'
+  prefs: []
+  type: TYPE_PRE
+- en: Now, we aren’t entirely done yet. We still ought to initialize our random seeds
+    and train/test split our data.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Other preparations
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'The next preparations are straightforward. To ensure reproducibility, let’s
+    set a random seed everywhere it is needed, then set our `y` as `is_recid` and
+    `X` as every other feature. We perform `train_test_split` on those two. Lastly,
+    we reconstruct the `recidivism_df` DataFrame with the `X` followed by the `y`.
+    The only reason for this is so that `is_recid` is the last column, which will
+    help with the next step. The code can be seen here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE19]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We will now verify that Spearman’s correlations have improved where needed
+    and stay the same otherwise. Have a look at the following code snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE20]'
+  prefs: []
+  type: TYPE_PRE
+- en: The preceding code outputs the DataFrame shown in *Figure 12.8*. Please compare
+    it with *Figure 12.2*. Note that discretized in quantiles, `age` is slightly less
+    monotonically correlated with the target. Once ordinalized, `c_charge_degree`
+    is also much more correlated, and `priors_per_year` has also improved over `priors_count`.
+    No other features should have been affected, including those that have the lowest
+    coefficients.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The output can be seen here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Table  Description automatically generated](img/B18406_12_08.png)Figure 12.8:
+    Spearman correlation coefficients of all features toward the target (after feature
+    engineering)'
+  prefs: []
+  type: TYPE_IMG
+- en: Features with the lowest coefficients are likely also unnecessary in a model,
+    but we will let the model decide if they are useful through regularization. That’s
+    what we will do next.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Tuning models for interpretability
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Traditionally, regularization was only achieved by imposing penalty terms such
+    as **L1**, **L2**, or **elastic net** on the coefficients or weights, which shrink
+    the impact of the least relevant features. As seen in the *Embedded methods* section
+    of *Chapter 10*, *Feature Selection and Engineering for Interpretability*, this
+    form of regularization results in feature selection while also reducing overfitting.
+    And this brings us to another broader definition of regularization, which does
+    not require a penalty term. Often, this comes as imposing a limitation, or a stopping
+    criterion that forces the model to curb its complexity.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In addition to regularization, both in its narrow (penalty-based) and broad
+    sense (overfitting methods), there are other methods that tune a model for interpretability—that
+    is, improve the fairness, accountability, and transparency of a model through
+    adjustments to the training process. For instance, the class imbalance hyperparameters
+    we discussed in *Chapter 10*, *Feature Selection and Engineering for Interpretability*,
+    and the adversarial debiasing in *Chapter 11*, *Bias Mitigation and Causal Inference
+    Methods*, enhance fairness. Also, the constraints we will study further in this
+    chapter have potential benefits for fairness, accountability, and transparency.
+  prefs: []
+  type: TYPE_NORMAL
+- en: There are so many different tuning possibilities and model classes. As stated
+    at the beginning of the chapter, we will focus on interpretability-related options,
+    but will also limit the model classes to a popular deep learning library (Keras),
+    a handful of popular tree ensembles (XGBoost, Random Forest, and so on), **Support
+    Vector Machines** (**SVMs**), and logistic regression. Except for the last one,
+    these are all considered black-box models.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Tuning a Keras neural network
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'For a Keras model, we will choose the best regularization parameters through
+    hyperparameter tuning and **stratified K-fold cross-validation**. We will do this
+    using the following steps:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: First, we need to define the model and the parameters to tune.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Then, we run the tuning.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Next, we examine its results.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Finally, we extract the best model and evaluate its predictive performance.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Let’s look at each of these steps in detail.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Defining the model and parameters to tune
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'The first thing we ought to do is create a function (`build_nn_mdl`) to build
+    and compile a regularizable Keras model. The function takes arguments that will
+    help tune it. It takes a tuple with the number of neurons in hidden layers (`hidden_layer_sizes`),
+    and a value of L1 (`l1_reg`) and L2 (`l1_reg`) regularization to apply on the
+    layer’s kernel. Lastly, it takes the `dropout` parameter, which, unlike L1 and
+    L2 penalties, is a **stochastic regularization method** because it employs random
+    selection. Have a look at the following code snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE21]'
+  prefs: []
+  type: TYPE_PRE
+- en: The previous function initializes the model (`nn_model`) as a `Sequential` model
+    with an input layer that corresponds to the number of features in training data,
+    and a `Normalization()` layer that standardizes the input. Then, if either penalty
+    term is over zero, it will set a dictionary (`reg_args`) with the `kernel_regularizer`
+    assigned to `tf.keras.regularizers.l1_l2` initialized with these penalties. Once
+    it adds the hidden (`Dense`) layers with the corresponding `hidden_layer_size`,
+    it will pass the `reg_args` dictionary as extra arguments to each layer. After
+    all hidden layers have been added, it will optionally add the `Dropout` layer
+    and the final `Dense` layer with the `sigmoid` activation for the output. The
+    model is then compiled with `binary_crossentropy` and an `Adam` optimizer with
+    a slow learning rate and is set to monitor `accuracy` and `auc` metrics.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Running the hyperparameter tuning
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'Now that we have defined the model and parameters to tune, we initialize the
+    `RepeatedStratifiedKFold` cross-validator, which splits (`n_splits`) the training
+    data in five a total of three times (`n_repeats`), using different randomization
+    in each repetition. We then create a grid (`nn_grid`) for the grid-search hyperparameter
+    tuning. It’s testing only two possible options for three of the parameters (`l1_reg`,
+    `l2_reg`, and `dropout`), which will result in ![](img/B18406_12_002.png) combinations.
+    We will use a scikit-learn wrapper (`KerasClassifier`) for our model to be compatible
+    with the scikit-learn grid search. Speaking of which, we next initialize `GridSearchCV`,
+    which, using the Keras model (`estimator`), performs a cross-validated (`cv`)
+    grid search (`param_grid`). We want it to choose the best parameters based on
+    precision (`scoring`) and not raise errors in the process (`error_score=0`). Finally,
+    we fit `GridSearchCV` as we would with any Keras model, passing `X_train`, `y_train`,
+    `epochs`, and `batch_size`. The code can be seen in the following snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE22]'
+  prefs: []
+  type: TYPE_PRE
+- en: Next, we can examine the results of our grid search.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Examining the results
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'Once the grid search has been completed, you can output the best parameters
+    in a dictionary with this command: `print(nn_grid_result.best_params_)`. Or you
+    can place all the results into a DataFrame, sort them by the highest precision
+    (`sort_values`), and output them as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE23]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The output can be seen here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Table  Description automatically generated](img/B18406_12_09.png)Figure 12.9:
+    Results for cross-validated grid search for a neural net model'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Evaluating the best model
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'Another important element that the grid search produced is the best-performing
+    model (`nn_grid_result.best_estimator_`). We can create a dictionary to store
+    all the models we will fit in this chapter (`fitted_class_mdls`) and then, using
+    `evaluate_class_mdl`, evaluate this regularized Keras model and keep the evaluation
+    in the dictionary at the same time. Have a look at the following code snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE24]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The output can be seen here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Chart, treemap chart  Description automatically generated](img/B18406_12_10.png)Figure
+    12.10: Evaluation of the regularized Keras model'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Calibrating the class balance can be improved even further by employing a custom
+    loss function or class weights, as we will do later. Next, we will cover how to
+    tune other model classes.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Tuning other popular model classes
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: In this section, we will fit many different models, both unregularized and regularized.
+    To this end, we will pick from a wide selection of parameters that perform penalized
+    regularization, control overfitting through other means, and account for class
+    imbalance.
+  prefs: []
+  type: TYPE_NORMAL
+- en: A quick introduction to relevant model parameters
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: For your reference, there are two tables with parameters used to tune many popular
+    models. These have been split into two parts. Part A (*Figure 12.11*) has five
+    scikit-learn models with penalty regularization. Part B (*Figure 12.12*) shows
+    all the tree ensembles, including scikit-learn’s Random Forest models and models
+    from the most popular boosted-tree libraries (XGBoost, LightGBM, and CatBoost).
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Part A can be seen here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Table, calendar  Description automatically generated](img/B18406_12_11.png)Figure
+    12.11: Tuning parameters for penalty-regularized scikit-learn models'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In *Figure 12.11*, you can observe models in the columns and corresponding
+    parameter names in the rows with their default values to the right. In between
+    the parameter name and default value, there’s a plus or minus sign indicating
+    whether changing the defaults in one direction or another should make the model
+    more conservative. These parameters are also grouped by the following categories:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**algorithm**: Some training algorithms are less prone to overfitting, but
+    this often depends on the data.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**regularization**: Only in the stricter sense. In other words, parameters
+    that control penalty-based regularization.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**iterations**: This controls how many training rounds, iterations, or epochs
+    are performed. Adjusting this in one direction or another can impact overfitting.
+    In tree-based models, the number of estimators or trees is what’s analogous.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**learning rate**: This controls how quickly the learning happens. It works
+    in tandem with iterations. The lower the learning rate, the more iterations are
+    needed to optimize the objective function.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**early stopping**: These parameters control when to stop the training. This
+    allows you to prevent your model from overfitting to training data.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**class imbalance**: For most models, this penalizes misclassifications on
+    smaller classes in the loss function, and for tree-based models, in particular,
+    it is used to reweight the splitting criterion. Either way, it only works with
+    classifiers.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**sample weight**: We leveraged this one in *Chapter 11*, *Bias Mitigation
+    and Causal Inference Methods*, to assign weights on a sample basis to mitigate
+    bias.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: There are both classification and regression models in the headings, and they
+    share the same parameters. Please note that scikit-learn’s `LinearRegression`
+    isn’t featured under `LogisticRegression` because it doesn’t have built-in regularization.
+    In any case, we will use only classification models in this section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Part B can be seen here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Table, calendar  Description automatically generated](img/B18406_12_12.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: '![Table, calendar  Description automatically generated](img/B18406_12_12.1.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 12.12: Tuning parameters for tree-ensemble models'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '*Figure 12.12* is very similar to *Figure 12.11* except that it has a few more
+    parameter categories that are only available in tree ensembles, such as the following:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**feature sampling**: This works by considering fewer features in node splits,
+    nodes, or tree training. It is a stochastic regularization method because features
+    are randomly selected.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**tree size**: This constrains the tree either by maximum depth or maximum
+    leaves, or some other parameter that restricts its growth, which, in turn, curbs
+    overfitting.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**splitting**: Any parameter that controls how nodes in the tree are split
+    can indirectly impact overfitting.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**bagging**: Also known as **bootstrap aggregating**, this starts by bootstrapping,
+    which involves randomly taking samples from the training data to fit weak learners.
+    This method reduces variance and helps with overfitting, and by extension, the
+    corresponding sampling parameters are usually prominent in hyperparameter tuning.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**constraints**: We will explain these in further detail in the next section,
+    but this maps how the features should be constrained to decrease or increase against
+    the output. It can reduce overfitting in areas where data is very sparse. However,
+    reducing overfitting is not usually the main goal, while interaction constraints
+    can limit which features are allowed to interact.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Please note that parameters with an asterisk (`*`) in *Figure 12.12* denote
+    those set in the `fit` function as opposed to those initialized with the model.
+    Also, except for scikit-learn’s `RandomForest` models, all other parameters typically
+    have many aliases. For these, we are using the scikit-learn wrapper functions,
+    but all the parameters also exist in the native versions. We can’t possibly explain
+    every model parameter here, but it is recommended that you go directly to the
+    documentation for more insight into what each one does. The point of the section
+    was to serve as a guide or reference.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Next, we will take steps similar to what we did with the Keras model but for
+    many different models at once, and, lastly, we will assess the best model for
+    fairness.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Batch hyperparameter tuning models
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'OK—so, now that we have taken a quick crash course on which levers we can pull
+    to tune the models, let’s define a dictionary with all the models, as we’ve done
+    in other chapters. This time, we have included a `grid` with some parameter values
+    for a grid search. Have a look at the following code snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE25]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The next step is to add a `for` loop to every model in the dictionary, then
+    `deepcopy` it and `fit` it to produce a “base” unregularized model. Next, we produce
+    an evaluation for it with `evaluate_class_mdl` and save it into the `fitted_class_mdls`
+    dictionary we had previously created for the Keras model. Now, we need to produce
+    the regularized version of the model. So, we do another `deepcopy` and follow
+    the same steps we took with Keras to do the `RepeatedStratifiedKFold` cross-validated
+    grid search with `GridSearchCV`, and we also evaluate in the same way, saving
+    the results in the fitted model dictionary. The code is shown in the following
+    snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE26]'
+  prefs: []
+  type: TYPE_PRE
+- en: Once the code has finished, we can rank models by precision.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Evaluating models by precision
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'We can extract the fitted model dictionary’s metrics and place them into a
+    DataFrame with `from_dict`. We can then sort the models by their highest test
+    precision and color code the two columns that matter the most, which are `precision_test`
+    and `recall_test`. The code can be seen in the following snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE27]'
+  prefs: []
+  type: TYPE_PRE
+- en: The preceding code will output the DataFrame shown in *Figure 12.13*. You can
+    tell that regularized tree-ensemble models mostly rule the ranks, followed by
+    their unregularized counterparts. The one exception is regularized Nu-SVC, which
+    is number one, and its unregularized version is dead last!
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The output can be seen here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Table  Description automatically generated](img/B18406_12_13.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 12.13: Top models according to the cross-validated grid search'
+  prefs: []
+  type: TYPE_NORMAL
+- en: You will find that the Keras regularized neural network model has lower precision
+    than regularized logistic regression, but higher recall. It’s true that we want
+    to optimize for high precision because it impacts false positives, which we want
+    to minimize, but precision can be at 100% and recall at 0%, and if that’s the
+    case, your model is no good. At the same time, there’s fairness, which is about
+    having a low false-positive rate but being equally distributed across races. So,
+    there’s a balancing act, and chasing one metric won’t get us there.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Assessing fairness for the highest-performing model
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'To determine how to proceed, we must first assess how our highest-performing
+    model does in terms of fairness. We can do this with `compare_confusion_matrices`.
+    As you would do with scikit-learn’s `confusion_matrix`, the first argument is
+    the ground truth or target values (often known as `y_true`), and the second is
+    the model’s predictions (often known as `y_pred`). The difference here is it takes
+    two sets of `y_true` and `y_pred`, one corresponding to one segment of the observations
+    and one to another. After these first four arguments, you give each segment a
+    name, so this is what the following two arguments tell you. Lastly, `compare_fpr=True`
+    ensures that it will compare the **False Positive Rate** (**FPR**) between both
+    confusion matrices. Have a look at the following code snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE28]'
+  prefs: []
+  type: TYPE_PRE
+- en: '![Chart, treemap chart  Description automatically generated](img/B18406_12_14.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 12.14: Confusion matrices between races for the regularized CatBoost
+    model'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '*Figure 12.15* tells us that the FPRs are significantly lower for the regularized
+    model. You can see the output here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Chart, waterfall chart, treemap chart  Description automatically generated](img/B18406_12_15.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 12.15: Confusion matrices between races for the base CatBoost model'
+  prefs: []
+  type: TYPE_NORMAL
+- en: However, the base model in *Figure 12.15* has an FPR ratio of 1.11 compared
+    to 1.47 for the regularized model, which is significantly more despite the similar
+    overall metrics. But when trying to achieve several goals at once, it’s hard to
+    evaluate and compare models, and that’s what we will do in the next section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Optimizing for fairness with Bayesian hyperparameter tuning and custom metrics
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: Our mission is to produce a model with high precision and good recall while
+    maintaining fairness across different races. So, achieving this mission will require
+    a custom metric to be designed.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Designing a custom metric
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'We could use the F1 score, but it treats precision and recall equally, so we
+    will have to create a weighted metric. We can also factor in how precision and
+    recall are distributed for each race. One way to do this is by using the standard
+    deviation, which quantifies the variation in this distribution. To that end, we
+    will penalize precision with half the intergroup standard deviation for precision,
+    and we can call this penalized precision. The formula is shown here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/B18406_12_003.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'We can do the same for recall, as illustrated here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/B18406_12_004.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Then, we make a weighted average for penalized precision and recall where precision
+    is worth twice as much as recall, as illustrated here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/B18406_12_005.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'To compute this new metric, we will need to create a function that we can call
+    `weighted_penalized_pr_average`. It takes `y_true` and `y_pred` as the predictive
+    performance metrics. However, it also includes `X_group` with a `pandas` series
+    or array containing the values for the group, and `group_vals` with a list of
+    values that it will subset the predictions by. In this case, the group is `race`,
+    which can be values from 0 to 2\. The function includes a `for` loop that iterates
+    through these possible values, subsetting the predictions by each group. That
+    way, it can compute precision and recall for each group. After this, the rest
+    of the function simply performs the three mathematical operations outlined previously.
+    The code can be seen in the following snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE29]'
+  prefs: []
+  type: TYPE_PRE
+- en: Now, to put this function to work, we will need to run the tuning.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Running Bayesian hyperparameter tuning
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: '**Bayesian optimization** is a *global optimization method* that uses the posterior
+    distribution of black-box objective functions and their continuous parameters.
+    In other words, it sequentially searches the best parameters to test next based
+    on past results. Unlike grid search, it doesn’t try fixed combinations of parameters
+    on a grid but exploits what it already knows and explores the unknown.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The `bayesian-optimization` library is model-agnostic. All it needs is a function
+    and parameters with their bounds. It will explore values for those parameters
+    within those bounds. The function takes those parameters and returns a number.
+    This is the number, or target, that the Bayesian optimization algorithm will maximize.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The following code is for the `objective` function, which initializes a `RepeatedStratifiedKFold`
+    cross-validation with four splits and three repeats. It then iterates across the
+    splits and fits the `CatBoostClassifier` with them. Lastly, it computes the `weighted_penalized_pr_average`
+    custom metric for each model training and appends it to a list. Finally, the function
+    returns the `median` of the custom metric for all 12 training samples. The code
+    is shown in the following snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE30]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Now that the function has been defined, running the Bayesian optimization process
+    is straightforward. First, set the parameter-bounds dictionary (`pbounds`), initialize
+    `BayesianOptimization` with the `hyp_catboost` function, and then run it with
+    `maximize`. The `maximize` function takes `init_points`, which sets how many iterations
+    it should run initially using random exploration. Then, `n_iter` is the number
+    of optimization iterations it should perform to find the maximum value. We will
+    set `init_points` and `n_iter` to `3` and `7`, respectively, because it could
+    take a long time, but the larger these numbers, the better. The code can be seen
+    in the following snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE31]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Once it’s finished, you can access the best parameters, like this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE32]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'It will return a dictionary with the parameters, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE33]'
+  prefs: []
+  type: TYPE_PRE
+- en: Now, let’s fit a model with these parameters and evaluate it.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Fitting and evaluating a model with the best parameters
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'Initializing `CatBoostClassifier` with these parameters is as simple as passing
+    the `best_params` dictionary as an argument. Then, all you need to do is `fit`
+    the model and evaluate it (`evaluate_class_mdl`). The code is shown in the following
+    snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE34]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The preceding snippet outputs the following predictive performance metrics:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE35]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'They are the highest `Accuracy_test`, `Precision_test`, and `Recall_test` metrics
+    we have achieved so far. Let’s now see how the model fares with fairness using
+    `compare_confusion_matrices`. Have a look at the following code snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE36]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The preceding code outputs *Figure 12.16*, which shows some of the best fairness
+    metrics we have obtained so far, as you can see here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Chart  Description automatically generated](img/B18406_12_16.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 12.16: Comparison of confusion matrices between races for the optimized
+    CatBoost model'
+  prefs: []
+  type: TYPE_NORMAL
+- en: These results are good, but we cannot be completely assured that the model is
+    not racially biased because the feature is still there. One way to measure its
+    impact is through feature importance methods.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Examining racial bias through feature importance
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'Although CatBoost is our best-performing model in most metrics, including accuracy,
+    precision, and F1 score, we are moving forward with XGBoost because CatBoost doesn’t
+    support interaction constraints, which we will implement in the next section.
+    But first, we will compare them both in terms of what they found important. Also,
+    **SHapley Additive exPlanations** (**SHAP**) values provide a robust means to
+    measure and visualize feature importance, so let’s compute them for our optimized
+    CatBoost and regularized XGBoost models. To do so, we need to initialize `TreeExplainer`
+    with each model and then use `shap_values` to produce the values for each, as
+    illustrated in the following code snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE37]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Next, we can generate two `summary_plot` plots side by side, using Matplotlib’s
+    `subplot`, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE38]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The output can be seen here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/B18406_12_17.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 12.17: SHAP summary plot for the regularized XGBoost and optimized CatBoost
+    models'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In any case, it makes sense to remove `race` from the training data, but we
+    must first ascertain why the model thinks this is a critical feature. Have a look
+    at the following code snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE39]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'In *Chapter 4*, *Global Model-Agnostic Interpretation Methods*, we discussed
+    assessing interaction effects. It’s time to revisit this topic, but this time,
+    we will extract SHAP’s interaction values (`shap_interaction_values`) instead
+    of using SHAP’s dependence plots. We can easily rank SHAP interactions with a
+    `summary_plot` plot. A SHAP summary plot is very informative, but it’s not nearly
+    as intuitive as a heatmap for interactions. To generate a heatmap with labels,
+    we must place the `shap_xgb_interact_values` summed on the first axis in a DataFrame,
+    then name the columns and rows (`index`) with the names of the features. The rest
+    is simply using Seaborn’s `heatmap` function to plot the DataFrame as a heatmap.
+    The code can be seen in the following snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE40]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The preceding code produced the heatmap shown in *Figure 12.18*. It demonstrates
+    how `race` interacts most heavily with `length_of_stay`, `age_group`, and `priors
+    per year`. These interactions would, of course, disappear once we removed `race`.
+    However, given this finding, careful consideration ought to be given if these
+    features don’t have racial bias built in. Research supports the need for `age_group`
+    and `priors_per_year`, which leaves `length_of_stay` as a candidate for scrutiny.
+    We won’t do this in this chapter, but it’s certainly food for thought:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Graphical user interface, application  Description automatically generated](img/B18406_12_18.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 12.18: Heatmap with SHAP interaction values for the regularized XGBoost
+    model'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Another interesting insight from *Figure 12.18* is how features can be clustered.
+    You can draw a box around the lower-right quadrant between `c_charge_degree` and
+    `priors_per_year` because, once we remove `race`, most of the interaction will
+    be located here. There are many benefits to limiting troubling interactions. For
+    instance, why should all the juvenile delinquency features, such as `juv_fel_count`,
+    interact with `age_group`? Why should `sex` interact with `length_of_stay`? Next,
+    we will learn how to place a fence around the lower-right quadrant, limiting interactions
+    between those features with **interaction constraints**. We will also ensure monotonicity
+    for `priors_per_year` with **monotonic constraints**.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Implementing model constraints
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'We will discuss how to implement constraints first with XGBoost and all popular
+    tree ensembles, for that matter, because the parameters are named the same (see
+    *Figure 12.12*). Then, we will do so with TensorFlow Lattice. But before we move
+    forward with any of that, let’s remove `race` from the data, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE41]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Now, with `race` out of the picture, the model may still have some bias. However,
+    the feature engineering we performed and the constraints we will place can help
+    align the model against them, given the double standards we found in *Chapter
+    6**, Anchors and Counterfactual Explanations*. That being said, the resulting
+    model might perform worse against the test data. There are two reasons for this,
+    outlined here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**Loss of information**: Race, especially through interaction with other features,
+    impacted the outcome, so it unfortunately carried some information.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Misalignment between reality and policy-driven ideals**: This occurs when
+    the main reason to enforce these constraints is to ensure that the model not only
+    complies with domain knowledge but also ideals, and these might not be evident
+    in the data. We must remember that a whole host of institutional racism could
+    have tainted the ground truth. The model reflects the data, but the data reflects
+    reality on the ground, which is itself biased.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: With that in mind, let’s get started with constraint implementation!
+  prefs: []
+  type: TYPE_NORMAL
+- en: Constraints for XGBoost
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: We will take three simple steps in this section. We will first define our training
+    parameters, then train and evaluate a constrained model, and, lastly, examine
+    the effects of the constraints.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Setting regularization and constraint parameters
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'We take the best parameters for our regularized XGBoost model with `print(fitted_class_mdls[''xgb_reg''][''cv_best_params''])`.
+    They are in the `best_xgb_params` dictionary, along with `eta` and `max_depth`.
+    Then, to enforce monotonic constraints on `priors_per_year`, we must first know
+    its position and the direction of the monotonic correlation. From *Figure 12.8*,
+    we know the answers to both questions. It is the last feature, and the correlation
+    is positive, so the `mono_con` tuple should have nine items, with the last one
+    being a `1` and the rest `0`s. As for interaction constraints, we will only allow
+    the last five features to interact with each other, and the same goes for the
+    first four. The `interact_con` tuple is a list of lists that reflects these constraints.
+    The code can be seen in the following snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE42]'
+  prefs: []
+  type: TYPE_PRE
+- en: Next, we will train and evaluate the XGBoost model with these constraints.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Training and evaluating the constrained model
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'We will now train and evaluate our constrained model. First, we initialize
+    the `XGBClassifier` model with our constraint and regularization parameters and
+    then fit it using training data that lacks the `race` feature (`X_train_con`).
+    We then evaluate the predictive performance with `evaluate_class_mdl` and compare
+    fairness with `compare_confusion_matrices`, as we have done before. The code can
+    be seen in the following snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE43]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The confusion matrix output can be seen here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Chart  Description automatically generated](img/B18406_12_19.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 12.19: Comparison of confusion matrices between races for the constrained
+    XGBoost model'
+  prefs: []
+  type: TYPE_NORMAL
+- en: One thing to consider is that, although racial inequity is a primary concern
+    of this chapter, we also want to ensure that the model is optimal in other ways.
+    As stated before, it’s a balancing act. For instance, it’s only fitting that defendants
+    with the most `priors_per_year` are riskier than those with the least, and we
+    ensured this with monotonic constraints. Let’s verify these outcomes!
+  prefs: []
+  type: TYPE_NORMAL
+- en: Examining constraints
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'An easy way to observe the constraints in action is to plot a SHAP `summary_plot`,
+    as we did in *Figure 12.17*, but this time, we will only plot one. Have a look
+    at the following ode snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE44]'
+  prefs: []
+  type: TYPE_PRE
+- en: The preceding code produces *Figure 12.20*. This demonstrates how `priors_per_year`
+    from left to right is a cleaner gradient, which means that lower values are consistently
+    having a negative impact, and the higher ones a positive one—as they should!
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'You can see the output here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Chart  Description automatically generated](img/B18406_12_20.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 12.20: SHAP summary plot for the constrained XGBoost model'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Next, let’s examine the `age_group` versus `priors_per_year` interaction we
+    saw through the lens of the data in *Figure 12.7*. We can also use `plot_prob_contour_map`
+    for models by adding extra arguments, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The fitted model (`fitted_xgb_con_mdl`)
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The DataFrame to use for inference with the model (`X_test_con`)
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The names of the two columns in the DataFrame to compare on each axis (`x_col`
+    and `y_col`)
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'The outcome is an interaction partial dependence plot, like those shown in
+    *Chapter 4*, *Global Model-Agnostic Interpretation Methods*, except that it uses
+    the dataset (`recidivism_df`) to create the histograms for each axis. We will
+    create two such plots right now for comparison—one for the regularized XGBoost
+    model and another for the constrained one. The code for this can be seen in the
+    following snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE45]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The preceding code produces the plots shown in *Figure 12.21*. It shows that
+    the regularized XGBoost model reflects the data (see *Figure 12.7*). On the other
+    hand, the constrained XGBoost model smoothened and simplified the contours, as
+    can be seen here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Chart, diagram  Description automatically generated](img/B18406_12_21.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 12.21: Recidivism probability contour map for age_group and priors_per_year
+    according to XGBoost regularized and constrained models'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Next, we can generate the SHAP interaction values heatmap from *Figure 12.18*
+    but for the constrained model. The code is the same but uses the `shap_xgb_con_explainer`
+    SHAP explainer and `X_test_con` data. The code can be seen in the following snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE46]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The output can be seen here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![A picture containing application  Description automatically generated](img/B18406_12_22.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 12.22: Heatmap with SHAP interaction values for the constrained XGBoost
+    model'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Now, let’s see how TensorFlow implements monotonicity and other “shape constraints”
+    via TensorFlow Lattice.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Constraints for TensorFlow Lattice
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: Neural networks can be very efficient in finding an optimal solution for the
+    `loss` function. The loss is tied to a consequence we wish to predict. In this
+    case, that would be 2-year recidivism. In ethics, a *utilitarian* (or *consequentialist*)
+    view of fairness has no problem with this as long as the model’s training data
+    isn’t biased. Yet a *deontological* view is that ethical principles or policies
+    drive ethical questions and supersede consequences. Inspired by this, **TensorFlow
+    Lattice** (**TFL**) can embody ethical principles in models as model shape constraints.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'A lattice is an **interpolated lookup table**, which is a grid that approximates
+    inputs to outputs through interpolation. In high-dimensional space, these grids
+    become hypercubes. The mappings of each input to output are constrained through
+    **calibration layers**, and they support many kinds of constraints—not just monotonicity.
+    *Figure 12.23* shows this here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Diagram  Description automatically generated](img/B18406_12_23.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 12.23: Some of the constraints supported by TensorFlow Lattice'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '*Figure 12.23* shows several shape constraints. The first three are applied
+    to a single feature (*x*) constraining the ![](img/B18406_12_006.png) line, representing
+    the output. The last two are applied to a pair of features (*x*[1] and *x*[2])
+    constraining the color-coded contour map (![](img/B18406_12_007.png)). A brief
+    explanation for each follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**Monotonicity**: This makes the function (![](img/B18406_12_008.png)) always
+    increase (1) or decrease (-1) against the input (*x*).'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Convexity**: This forces the function (![](img/B18406_12_009.png)) to be
+    convex (1) or concave (-1) against the input (*x*). Convexity can be mixed with
+    monotonicity to have an effect like the one in *Figure 12.23*.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Unimodality**: This is like monotonicity, except that it goes in both directions,
+    allowing the function (![](img/B18406_12_010.png)) to have a single valley (1)
+    or peak (-1).'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Trust**: This forces one monotonic feature (*x*[1]) to rely on another one
+    (*x*[2]). The example in *Figure 12.23* is **Edgeworth Trust**, but there’s also
+    a **Trapezoid Trust** variation with a different shape constraint.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Dominance**: Monotonic dominance constrains one monotonic (*x*[1]) feature
+    to define the direction of the slope or effects when compared to another (*x*[2]).
+    An alternative, range dominance, is similar, except both features are monotonic.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Neural networks are particularly prone to overfitting, and the levers for controlling
+    it are comparably more difficult. For instance, exactly what combination of hidden
+    nodes, dropout, weight regularization, and epochs will lead to an acceptable level
+    of overfitting is challenging to tell. On the other hand, moving a single parameter
+    in a tree-based model, tree depth, in one direction will likely lower overfitting
+    to an acceptable level, albeit it might require many different parameters to make
+    it optimal.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Enforcing shape constraints not only increases interpretability but also regularizes
+    the model because it simplifies the function. TFL also supports different kinds
+    of penalty-based regularization on a per-feature basis or to the calibration layer’s
+    kernel, leveraging L1 and L2 penalties via **Laplacian**, **Hessian**, **Torsion**,
+    and **Wrinkle** regularizers. These regularizers have the effect of making functions
+    more flat, linear, or smooth. We won’t explain them but it suffices to say that
+    there is regularization to cover many use cases.
+  prefs: []
+  type: TYPE_NORMAL
+- en: There are also several ways to implement the framework—too many to elaborate
+    here! Yet, it’s important to point out that this example is just one of a handful
+    of ways of implementing it. TFL comes with built-in **canned estimators** that
+    abstract some of the configurations. You can also create a **custom estimator**
+    using the TFL layers. For Keras, you can either use **premade models** or build
+    a Keras model with TensorFlow Lattice layers. This last one is what we will do
+    next!
+  prefs: []
+  type: TYPE_NORMAL
+- en: Initializing the model and Lattice inputs
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: We will now create a series of *input layers*, which each include a single feature.
+    These connect to *calibration layers*, which make each input fit into a **Piece-Wise
+    Linear** (**PWL**) function that complies with individual constraints and regularizations,
+    except for `sex`, which will use categorical calibration. The calibration layers
+    all feed into a multidimensional *Lattice layer*, producing output via a *Dense
+    layer* with *sigmoid* activation. This description can be a lot to take in, so
+    feel free to skip ahead to *Figure 12.24* to get some visual aid.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Incidentally, there are many kinds of layers available that you can connect
+    to produce a **Deep Lattice Network** (**DLN**), including the following:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**Linear** for linear functions between more than one input, including those
+    with dominance shape constraints.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Aggregation** to perform an aggregation function on more than one input.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Parallel combination** to place many calibration layers within a single function,
+    making it compatible with Keras `Sequential` layers.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: We won’t use any of these layers in this example, but perhaps knowing this will
+    inspire you to explore the TensorFlow Lattice library further. Anyway, back to
+    this example!
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The first thing to define is `lattice_sizes`, which is a tuple that corresponds
+    to a number of vertices per dimension. We have one dimension per feature in the
+    chosen architecture, so we need to choose nine numbers greater than or equal to
+    two. Features with less cardinality for categorical features or inflection points
+    for continuous ones warrant fewer vertices. However, we might also want to restrict
+    a feature’s expressiveness by purposely choosing an even smaller number of vertices.
+    For instance, `juv_fel_count` has 10 unique values, but we will assign only two
+    vertices to it. `lattice_sizes` is shown here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE47]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Next, we initialize two lists, one to place all the input layers (`model_inputs`)
+    and another for the calibration layers (`lattice_inputs`). Then, for each feature,
+    one by one, we define an input layer with `tf.keras.layers.Input` and a calibration
+    layer with either categorical calibration (`tfl.layers.CategoricalCalibration`)
+    or PWL calibration (`tfl.layers.PWLCalibration`). Both input and calibration layers
+    will be appended to their respective lists for each feature. What happens inside
+    the calibration layer depends on the feature. All PWL calibrations use `input_keypoints`,
+    which asks where the PWL function should be segmented. Sometimes, this is best
+    answered with fixed widths (`np.linspace`), and other times with fixed frequency
+    (`np.quantile`). Categorical calibration instead uses buckets (`num_buckets`)
+    that correspond to the number of categories. All calibrators have the following
+    arguments:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '`output_min`: The minimum output for the calibrator'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`output_max`: The maximum output for the calibrator—always has to match the
+    output minimum + lattice size - 1'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`monotonicity`: Whether it should monotonically constrain the PWL function,
+    and if so, how'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`kernel_regularizer`: How to regularize the function'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'In addition to these arguments, `convexity` and `is_cyclic` (for monotonic
+    unimodal) can modify the constraint shape. Have a look at the following code snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE48]'
+  prefs: []
+  type: TYPE_PRE
+- en: So, we now have a list with `model_inputs` and another with calibration layers,
+    which will be the input to the lattice (`lattice_inputs`). All we need to do now
+    is tie these together to a lattice.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Building a Keras model with TensorFlow Lattice layers
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'We already have the first two building blocks of this model connected. Now,
+    let’s create the last two building blocks, starting with the lattice (`tfl.layers.Lattice`).
+    As arguments, it takes `lattice_sizes`, output minimums and maximums, and `monotonicities`
+    it should enforce. Note that the last item, `priors_per_year`, has monotonicity
+    set as `increasing`. The lattice layer then feeds into the final piece, which
+    is the `Dense` layer with `sigmoid` activation. The code can be seen in the following
+    snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE49]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The first two building blocks as `inputs` can now get connected with the last
+    two as `outputs` with `tf.keras.models.Model`. And voilà! We now have a fully
+    formed model, with the code shown here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE50]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'You can always run `tfl_mdl.summary()` to get an idea of how all the layers
+    connect, but it’s not as intuitive as using `tf.keras.utils.plot_model`, which
+    is illustrated in the following code snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE51]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The preceding code generates the model diagram shown here in *Figure 12.24*:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Diagram  Description automatically generated](img/B18406_12_24.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 12.24: A diagram of the Keras model with TFL layers'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Next, we need to compile the model. We will use a `binary_crossentropy` loss
+    function and an `Adam` optimizer, and employ accuracy and **Area Under the Curve**
+    (**AUC**) as metrics, as illustrated in the following code snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE52]'
+  prefs: []
+  type: TYPE_PRE
+- en: We are almost ready to go now! What follows next is the very last step.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Training and evaluating the model
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'If you take one hard look at *Figure 12.24*, you’ll notice that the model doesn’t
+    have one input layer but nine, so this means that we must split our training and
+    test data into nine parts. We can use `np.split` to do this, which will yield
+    a list of nine NumPy arrays. As for the labels, TFL doesn’t accept arrays with
+    a single dimension. With `expand_dims`, we convert their shapes from `(N,)` to
+    `(N,1)`, as illustrated in the following code snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE53]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Now comes the training! To prevent overfitting, we can use `EarlyStopping`
+    by monitoring the validation AUC (`val_auc`). And to account for class imbalance,
+    in the `fit` function, we use `class_weight`, as illustrated in the following
+    code snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE54]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Once the model has been trained, we can use `evaluate_class_mdl` to output
+    a quick summary of predictive performance, as we have before, and then `compare_confusion_matrices`
+    to examine fairness, as we did previously. The code is shown in the following
+    snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE55]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The output can be seen here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Chart, treemap chart  Description automatically generated](img/B18406_12_25.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 12.25: Comparison of confusion matrices between races for the constrained
+    TensorFlow Lattice model'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Next, we will make some conclusions based on what was learned in this chapter
+    and determine if we accomplished the mission.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Mission accomplished
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: It’s often the data that takes the blame for a poor-performing, uninterpretable,
+    or biased model, and that can be true, but many different things can be done in
+    the preparation and model development stages to improve it. To offer an analogy,
+    it’s like baking a cake. You need quality ingredients, yes. But seemingly small
+    differences in the preparation of these ingredients and baking itself—such as
+    the baking temperature, the container used, and time—can make a huge difference.
+    Hell! Even things that are out of your control, such as atmospheric pressure or
+    moisture, can impact baking! Even after it’s all finished, how many different
+    ways can you assess the quality of a cake?
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'This chapter is about these many details, and, as with baking, they are **part
+    exact science** and **part art form**. The concepts discussed in this chapter
+    also have far-reaching consequences, especially regarding how to optimize a problem
+    that doesn’t have a single goal and has profound societal implications. One possible
+    approach is to combine metrics and account for imbalances. To that end, we have
+    created a metric: a weighted average of precision recall that penalizes racial
+    inequity, and we can efficiently compute it for all of our models and place it
+    into the model dictionary (`fitted_class_mdls`). Then, as we have done before,
+    we put it into a DataFrame and output it but, this time, sort by the custom metric
+    (`wppra_test`). The code can be seen in the following snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE56]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The preceding code produced the DataFrame shown here in *Figure 12.26*:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Table  Description automatically generated](img/B18406_12_26.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 12.26: Top models in this chapter when sorted by weighted penalized
+    precision-recall average custom metric'
+  prefs: []
+  type: TYPE_NORMAL
+- en: In *Figure 12.26*, it’s tempting to propose one of the models at the very top.
+    However, they were trained with `race` as a feature and didn’t account for proven
+    criminal justice *realities*. However, the highest-performing constrained model—the
+    XGBoost one (`xgb_con`)—lacked `race`, ensured that `priors_per_year` is monotonic
+    and that `age_group` isn’t allowed to interact with juvenile delinquency features,
+    and it did all this while significantly improving predictive performance when
+    compared to the original model. It is fairer, too, because it reduced the ratio
+    of the FPR between the privileged and underprivileged groups from 1.84x (*Figure
+    6.2* from *Chapter 6*, *Anchors and Counterfactual Explanations*) to 1.39x (*Figure
+    12.19*). It’s not perfect, but it’s a massive improvement!
+  prefs: []
+  type: TYPE_NORMAL
+- en: The mission was to prove that accuracy and domain knowledge could coexist with
+    progress toward fairness, and we have completed it successfully. That being said,
+    there’s still room for improvement. Therefore, the plan of action would have to
+    showcase the constrained XGBoost model to your client and continue improving and
+    building more constrained models. The unconstrained ones should only serve as
+    a benchmark.
+  prefs: []
+  type: TYPE_NORMAL
+- en: You can make substantial fairness improvements if you combine the methods from
+    this chapter with those learned in *Chapter 11*, *Bias Mitigation and Causal Inference
+    Methods*. We didn’t incorporate them into this chapter, to focus solely on model
+    (or in-processing) methods that are typically not seen as part of the bias-mitigation
+    toolkit, but they very much can assist to that end, not to mention model-tuning
+    methods that serve to make a model more reliable.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Summary
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: After reading this chapter, you should now understand how to leverage data engineering
+    to enhance interpretability, regularization to reduce overfitting, and constraints
+    to comply with policies. The primary end goals are to place guardrails and curb
+    the complexity that hinders interpretability.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the next chapter, we will look at ways to enhance model reliability through
+    adversarial robustness.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Dataset sources
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: ProPublica Data Store (2019). *COMPAS Recidivism Risk Score Data and Analysis*.
+    Originally retrieved from [https://www.propublica.org/datastore/dataset/compas-recidivism-risk-score-data-and-analysis](https://www.propublica.org/datastore/dataset/compas-recidivism-risk-score-data-and-analysis)
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Further reading
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Hastie, T. J., Tibshirani, R. J. and Friedman, J. H. (2001). *The elements of
+    statistical learning*. Springer-Verlag, New York, USA
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Wang, S. & Gupta, M. (2020). *Deontological Ethics By Monotonicity Shape Constraints*.
+    AISTATS. [https://arxiv.org/abs/2001.11990](https://arxiv.org/abs/2001.11990)
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Cotter, A., Gupta, M., Jiang, H., Ilan, E. L., Muller, J., Narayan, T., Wang,
+    S. & Zhu, T. (2019). *Shape Constraints for Set Functions*. ICML. [http://proceedings.mlr.press/v97/cotter19a.html](http://proceedings.mlr.press/v97/cotter19a.html)
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Gupta, M. R., Cotter A., Pfeifer, J., Voevodski, K., Canini, K., Mangylov, A.,
+    Moczydlowski, W. and van Esbroeck, A. (2016). *Monotonic Calibrated Interpolated
+    Look-Up Tables. Journal of Machine Learning Research* 17(109):1−47\. [https://arxiv.org/abs/1505.06378](https://arxiv.org/abs/1505.06378)
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Noble, S. (2018). *Algorithms of oppression: data discrimination in the age
+    of Google*. NYU Press'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Learn more on Discord
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'To join the Discord community for this book – where you can share feedback,
+    ask the author questions, and learn about new releases – follow the QR code below:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[https://packt.link/inml](Chapter_12.xhtml)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/QR_Code107161072033138125.png)'
+  prefs: []
+  type: TYPE_IMG

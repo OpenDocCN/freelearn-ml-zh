@@ -1,0 +1,1957 @@
+- en: '9'
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Productionizing Your Workload with MLOps
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: '**MLOps** is a concept that enables **machine learning** (**ML**) workloads
+    to scale through the automation of model training, model evaluation, and model
+    deployment. MLOps enables traceability with code, data, and models. MLOps allows
+    data scientists and ML professionals to make predictions available to business
+    users at scale with the **Azure Machine Learning** (**AML**) services.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: MLOps is built on the concepts of **CI/CD**. CI/CD is a term that stands for
+    **continuous integration/ continuous delivery** and has been used for software
+    development for decades. CI/CD enables companies to scale their applications and
+    by leveraging those same concepts, we can scale our ML projects, which will rely
+    on CI/CD practices for our MLOps implementation.
+  prefs: []
+  type: TYPE_NORMAL
+- en: One of the challenges of this domain is its complexity. In this chapter, we
+    will go through the scenario of retrieving data, transforming data, building a
+    model, evaluating the model, deploying a model, then pending approval, registering
+    it to a higher environment, and publishing the model as a managed online endpoint,
+    routing traffic to the latest version of the model. This process will leverage
+    Azure DevOps, AML SDK v2, and v2 of the CLI.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In this chapter, we will cover the following topics:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Understanding the MLOps implementation
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Preparing your MLOps environment
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Running an Azure DevOps pipeline
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Technical requirements
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'To proceed with this chapter, the following are the requirements:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Two AML workspaces
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: An Azure DevOps organization, or the ability to create one
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: An Azure DevOps project within an Azure DevOps organization, or the ability
+    to create one
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The ability to assign permissions in the AML-deployed key vaults
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The ability to create Azure DevOps variable groups
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Permission to link an Azure DevOps variable group to Azure key vault
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Two service principals, or permissions to create service principals
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Two service connections, one for each environment, or permissions to create
+    service connections
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The ability to create an Azure DevOps pipeline within an Azure DevOps project
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The ability to create an environment within an Azure DevOps project
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Understanding the MLOps implementation
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: As mentioned, MLOps is a concept, not an implementation. We will provide an
+    implementation of MLOps as the foundation for this chapter. We will establish
+    an Azure DevOps pipeline to orchestrate an AML pipeline for transforming data
+    in the `dev` environment, create a model leveraging MLflow, and evaluate whether
+    the model is performing better or equal to the existing model. Following this
+    pipeline, if a new model is registered, we will deploy this new model in the `dev`
+    environment leveraging `dev` environment, we will trigger an approval process
+    to then register and deploy the new model into the `qa` environment, which will
+    leverage blue/green deployments as well.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Some organizations would choose not to register a model if it was performing
+    just as well as the existing model, especially if the training data had not changed,
+    but this will allow us to see how powerfully AML can handle updating a managed
+    online endpoint. After a solid foundation has been applied, you can update the
+    code to only register a model when it performs better than the existing model,
+    but improving a model is an exercise left to you.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In this chapter, we will leverage an AML pipeline with AML SDK v2, v2 of the
+    CLI, Azure DevOps organizations, and Azure DevOps projects, and take advantage
+    of Azure Key Vault, which has been automatically deployed for you when deploying
+    your environment. You will leverage two AML workspaces. For this chapter, we will
+    refer to them as `dev` and `qa`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In order to break down the MLOps implementation, the following diagram represents
+    the flow that we will create for your MLOps implementation:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.1 – MLOps implementation](img/B18003_09_001.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.1 – MLOps implementation
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the preceding figure, Azure DevOps is the orchestrator. When code is checked
+    into the **main** branch, Azure DevOps will trigger off the Azure DevOps pipeline.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We will create an Azure DevOps pipeline that consists of two stages. One stage
+    is `dev stage`, and one will be `qa stage`. In `dev stage`, we will leverage the
+    AML CLI to first get the initial model version and place it into a variable in
+    the DevOps pipeline. After retrieving the model version, we will run the AML pipeline
+    that handles the model creation and registration. After running the AML pipeline,
+    we will retrieve the model version again in the Azure DevOps pipeline. If the
+    model version has not changed, we know that no new model has been registered.
+    If the model version has increased, then we know we want to deploy this model
+    in the `dev` environment through Azure DevOps and proceed to deploy this model
+    to the `qa` environment. Given the `qa` environment is a higher environment, we
+    will include an approval process. The registration and deployment into the `qa`
+    environment must first be approved. Once it is approved, the registration and
+    deployment into the `qa` environment will proceed.
+  prefs: []
+  type: TYPE_NORMAL
+- en: As part of the managed online endpoint, we can deploy a new model to an existing
+    managed online endpoint through blue/green deployments. When a model is first
+    deployed to a managed online endpoint, we set the traffic to 100%. In the case
+    of a new version of a model being deployed, we initially set the traffic to 0
+    for the new model, wait for it to be successfully deployed, and for the given
+    managed online endpoint, we will then swap the traffic to the latest version of
+    the model to 100% and delete the old model deployment. This ensures the uptime
+    for a given managed online endpoint. Users of the rest endpoint will not be interrupted
+    during the model deployment process once a managed online endpoint is deployed.
+  prefs: []
+  type: TYPE_NORMAL
+- en: To set up our MLOps pipeline we will leverage several key resources. During
+    the MLOps automation pipeline, we will leverage a `dev` AML workspace, and one
+    for connecting to the `qa` AML workspace. In addition to the service connections,
+    we will leverage the **key vaults** for each of the environments storing sensitive
+    information. We will link these key vaults using **variable groups** in Azure
+    DevOps. This will keep our Azure DevOps pipelines clean and easy to understand.
+    Refer to *Figure 9**.1* for a visual overview of the resources we are going to
+    leverage.
+  prefs: []
+  type: TYPE_NORMAL
+- en: This chapter is an opportunity to leverage your understanding of the functionality
+    implemented so far in this book and put it all into practice. Let us get started
+    looking at the technical requirements for a successful MLOps pipeline implementation
+    leveraging the AML CLI v2 and SDK v2 with Azure DevOps.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Preparing your MLOps environment
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'In this section, we will go through ensuring that the technical requirements
+    are fulfilled, given you have permission to do so. To prepare your environment,
+    we will be doing the following:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Creating a second AML workspace
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Creating an Azure DevOps Organization and Project
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Confirming the code in the `dev` AML workspace
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Moving the code to your Azure DevOps Repo
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Setting up variables in Azure Key Vault
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Setting up Azure DevOps environment variable groups
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Creating an Azure DevOps environment
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Setting your Azure DevOps service connections
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Creating an Azure DevOps pipeline
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Running an Azure DevOps pipeline
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Creating a second AML workspace
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'Up to this point, you have been working in a single AML workspace. With our
+    MLOps pipeline implementation, we will be using two workspaces. For information
+    on deploying a second AML workspace, see [*Chapter 1*](B18003_01.xhtml#_idTextAnchor020),
+    *Introducing the Azure Machine Learning Service*. After you have created a second
+    AML workspace, continue to the next step: *Creating an Azure DevOps organization*
+    *and project*.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Creating an Azure DevOps organization and project
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: An Azure DevOps pipeline is held within an **Azure DevOps project**. An Azure
+    DevOps project is held within an **Azure DevOps organization**. You will be required
+    to have an Azure DevOps project to host your code repository that you can write
+    code to and create Azure DevOps pipelines, create service connections, create
+    variable groups, and link to your key vaults. You may already have an Azure DevOps
+    organization set up. Your administrator will have chosen either to have a single
+    project in an Azure DevOps organization that supports many repositories and many
+    Azure DevOps pipelines or to have many projects with one or many repositories
+    in an Azure DevOps organization. If your administrator has already created an
+    Azure DevOps organization, you can either request a new Azure DevOps project within
+    the Azure DevOps organization, or access to an existing Azure DevOps project with
+    a repository to hold your code, and the ability to create Azure DevOps pipelines.
+    If you already have an Azure DevOps organization and project, continue to the
+    next subsection, *Confirming code in the dev* *AML workspace*.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We will continue with setting up an Azure DevOps organization through the web
+    portal. An Azure DevOps organization will host your project, and a project will
+    hold your source code in a repository, as well as Azure DevOps pipelines for automating
+    your MLOps pipeline.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'If you do not have an Azure DevOps organization, please follow the following
+    steps to create one:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Sign in to Azure DevOps at [https://dev.azure.com/](https://dev.azure.com/).
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'In the left-hand menu, select **New organization** as shown in the following
+    screenshot:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.2 – New organization](img/B18003_09_002.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.2 – New organization
+  prefs: []
+  type: TYPE_NORMAL
+- en: This will bring up a new window for getting started with the process of creating
+    an Azure DevOps organization. Then, click on the **Continue** button.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.3 – Get started with Azure DevOps](img/B18003_09_003.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.3 – Get started with Azure DevOps
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'This brings you to the next screen for creating your Azure DevOps organization:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.4 – Creating your Azure DevOps organization](img/B18003_09_004.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.4 – Creating your Azure DevOps organization
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Azure DevOps organizations are required to be unique, so you need to create
+    yours with a name that has not already been taken. As shown in *Figure 9**.4*,
+    populate the following information:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Name your organization. A unique organization is required. In the preceding
+    example, we have opted for `mmxdevops`.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: The location at which to host your projects – we have selected **Central US**.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Enter the characters you see on the screen – we have typed `Dp5Ls` for validation.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Click on the **Continue** button.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: The next screen will ask you to fill in the **Project name** field for where
+    your code and MLOps pipelines will be held. As shown in *Figure 9**.5*, we have
+    selected a **Private** project. If you are working in an organization, you may
+    see an option for an **Enterprise** project. If this option is not available to
+    you, create a **Private** project. Creating a **Public** project will allow public
+    access to your project. A private project will give you the ability to add users
+    that you choose to your project if you would like to share it. Finally, click
+    on the **+ Create** **project** button.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.5 – Creating an Azure DevOps organization](img/B18003_09_005.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.5 – Creating an Azure DevOps organization
+  prefs: []
+  type: TYPE_NORMAL
+- en: Now that your project has been created, you will have a place to hold key resources
+    required for MLOps.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'The Azure DevOps project includes the following two key components:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**Repos**: A place to store your code'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Pipelines**: A place to create your MLOps pipeline automation'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'We will leverage these as shown in *Figure 9**.6*:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.6 – Creating an Azure DevOps organization](img/B18003_09_006.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.6 – Creating an Azure DevOps organization
+  prefs: []
+  type: TYPE_NORMAL
+- en: We will explore leveraging both **Repos** and **Pipelines** later in the chapter.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Congratulations – you have set up an Azure DevOps organization and project.
+    Now it is time to dig into creating the repository for holding your code.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In *Figure 9**.6*, you can see that **Repos** is one of the menu options. Select
+    this to enter the repository section of your Azure DevOps project as shown in
+    *Figure 9**.7*:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.7 – Empty repository](img/B18003_09_007.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.7 – Empty repository
+  prefs: []
+  type: TYPE_NORMAL
+- en: There are three important items that we will copy and save for future use. Selecting
+    the copy button, as shown in *Figure 9**.7* marked as **a**, will copy the URL
+    to your Git repository. Selecting the **Generate Git Credentials** button, marked
+    as **b** in the figure, will give you a user and password. We will provide the
+    information to link the code in your AML workspace to your Azure DevOps repository
+    in the AML terminal.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Tip
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'At any time, to head to your DevOps Project, you can enter the following URL:
+    `https://dev.azure.com/<organization_name>/<project_name>`.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Now that we have copied the URL, the user, and the password for connecting to
+    your Azure DevOps project, we are ready to review the next requirement for your
+    AML workspace.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Connecting to your AML workspace
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: In addition to your Azure DevOps organization and project, we will need to connect
+    to your AML workspace to leverage SDK v2 and the AML CLI v2 to implement an MLOps
+    pipeline, as done in previous chapters.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In the previous chapter, we cloned the Git repository. If you have not already
+    done so, continue to follow the steps provided ahead. If you have already cloned
+    the repository, skip ahead to the next section:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Open the terminal on your **Compute** instance. Note that the path will include
+    your user in the directory. Type the following into the terminal to clone the
+    sample notebooks into your working directory:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE0]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: Clicking on the refresh icon will update and refresh the notebooks displayed
+    on your screen.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'Review the notebooks in your `Azure-Machine-Learning-Engineering` directory.
+    This will display the files cloned into your working directory as shown in *Figure
+    9**.8*:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.8 – Azure-Machine-Learning-Engineering directory](img/B18003_09_008.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.8 – Azure-Machine-Learning-Engineering directory
+  prefs: []
+  type: TYPE_NORMAL
+- en: Now that your code is in your `dev` AML environment, you are ready to move your
+    code to your Azure DevOps repo. At this point, the code required to build your
+    MLOps pipeline is in your AMLS workspace. In the next subsection, we will move
+    your code from the AML workspace into the DevOps repo in your Azure DevOps project.
+    This connection will simulate the work a data scientist or MLOps engineer would
+    do. Write code in your AML workspace, and commit that code to your Azure DevOps
+    repo.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Moving code to the Azure DevOps repo
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: We already have your code in our first AML workspace, which is referred to as
+    our `dev` AML workspace. Now, we will move your code over to our Azure DevOps
+    repo.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Navigate to a terminal session in your `dev` AML workspace:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In your terminal, navigate to your `Azure-Machine-Learning-Engineering` folder
+    as follows:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE1]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'First, we will need to specify that the directory is safe by typing the following
+    command:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE2]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'We will want to update your origin, which specifies the remote location your
+    code resides in, into a repository in your Azure DevOps project. In the following
+    command, we will replace the URL with that of your Azure DevOps repo. This will
+    be the URL you copied from *Figure 9**.7*. The command to do this, in general,
+    is the following:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE3]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'To review that your origin has been set correctly, you can type the following
+    command in your terminal:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE4]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'To enable your Git user information to be saved, you can set the following:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE5]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'Next, we will set the Git user information as follows:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE6]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: '[PRE7]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: '[PRE8]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'To push to the origin, which is the repo in your Azure DevOps project, you
+    can type the following command:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE9]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: '[PRE10]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: '[PRE11]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: '[PRE12]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: This will prompt a password, which was provided when you clicked on the credentials
+    for your Azure DevOps project, referred to in *Figure 9**.9*.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'After using the preceding command, the code will now be copied from your AML
+    workspace, over to the repo in your Azure DevOps project as shown in the following
+    screenshot:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.9 – Azure DevOps MLOps project](img/B18003_09_009.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.9 – Azure DevOps MLOps project
+  prefs: []
+  type: TYPE_NORMAL
+- en: At this stage, you have successfully moved your code over to your Azure DevOps
+    repository. Changes made to the code on an AML compute resource that are committed
+    to your repository will be reflected and updated in your Azure DevOps repository.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the next subsection, we will be setting up variables in Azure Key Vault for
+    each of the AML workspace environments.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Setting up variables in Azure Key Vault
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'When your AML workspace was deployed, Azure Key Vault was also deployed for
+    each of your workspaces. We will leverage each key vault to store sensitive information
+    related to each workspace so Azure DevOps can connect and run the AML pipeline
+    and AML CLI v2 commands on an Azure DevOps build agent. We could have chosen not
+    to leverage the default key vaults deployed with the AML workspace and spun up
+    two separate key vaults for this task, but given the resources are already available,
+    we will choose to continue with leveraging the default deployed key vaults. To
+    set up variables in Azure Key Vault, follow these steps:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Head over to the Azure portal by going to [https://portal.azure.com/](https://portal.azure.com/)
+    and locate your AML workspace. Click on the resource, as shown in the following
+    figure:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.10 – AML workspace icon in the Azure portal](img/B18003_09_010.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.10 – AML workspace icon in the Azure portal
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Clicking on the resource, we can see the overview of the AML workspace includes
+    **Key** **Vault** information:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.11 – AML workspace overview](img/B18003_09_011.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.11 – AML workspace overview
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Clicking on the **Key Vault** name will bring us directly to the Azure key
+    vault, as shown here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.12 – Azure Key Vault overview](img/B18003_09_012.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.12 – Azure Key Vault overview
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Currently, you are not authorized to view **Secrets**, so click on the **Access
+    polices** menu on the left as shown in the preceding figure. This will bring up
+    the **Access policies** options as shown here:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.13 – Azure Key Vault access policies](img/B18003_09_013.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.13 – Azure Key Vault access policies
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Clicking on **+ Create** as shown in *Figure 9**.14* will present you with
+    options for assigning permissions. Under **Secret permissions**, check **Get**,
+    **List**, **Set**, and **Delete**, and click on **Next**:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.14 – Setting secret permission options](img/B18003_09_014.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.14 – Setting secret permission options
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'You will then search for yourself either by name or email address to assign
+    yourself the permissions, as shown in the following figure:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.15 – Searching by email to assign Azure Key Vault selected permissions](img/B18003_09_015.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.15 – Searching by email to assign Azure Key Vault selected permissions
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In the text box shown in *Figure 9**.16*, type your email address and find
+    yourself to assign access:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.16 – Locating your email address](img/B18003_09_016.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.16 – Locating your email address
+  prefs: []
+  type: TYPE_NORMAL
+- en: After you have found yourself, select your name, and click on the **Next** button.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: You will then be given the option to select an application – do not select anything
+    in the **Application (optional)** section and click **Next**.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.17 – Skipping Application (optional)](img/B18003_09_017.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.17 – Skipping Application (optional)
+  prefs: []
+  type: TYPE_NORMAL
+- en: Finally, click on the **Create** button under the **Review +** **create** section.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.18 – Creating Azure Key Vault permissions](img/B18003_09_018.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.18 – Creating Azure Key Vault permissions
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Now that you have permission to view and create secrets, head to the **Secrets**
+    option in the left-hand menu:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.19 – Secrets option in the left-hand menu](img/B18003_09_019.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.19 – Secrets option in the left-hand menu
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Click on the **+ Generate/Import** button, as shown here:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.20 – Generating a new secret](img/B18003_09_020.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.20 – Generating a new secret
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'This brings up the screen for **Create a secret**, as shown in the following
+    figure:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.21 – Create a secret](img/B18003_09_021.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.21 – Create a secret
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Populate a secret and click on the **Create** button for each of the values
+    listed in the following table, as they will be leveraged by your Azure DevOps
+    pipeline. The table provided here gives you sample information in the **Value**
+    column. This sample information should be taken from the overview of your AML
+    workspace as shown in *Figure 9**.11*, except for the location. Based on where
+    your AML workspace is deployed, the location value can be found here – [https://github.com/microsoft/azure-pipelines-extensions/blob/master/docs/authoring/endpoints/workspace-locations](https://github.com/microsoft/azure-pipelines-extensions/blob/master/docs/authoring/endpoints/workspace-locations):'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '| **Key** **Vault variable** | **Value** |'
+  prefs: []
+  type: TYPE_TB
+- en: '| `resourceGroup` | `aml-dev-rg` |'
+  prefs: []
+  type: TYPE_TB
+- en: '| `wsName` | `aml-dev` |'
+  prefs: []
+  type: TYPE_TB
+- en: '| `location` | `eastus` |'
+  prefs: []
+  type: TYPE_TB
+- en: Figure 9.22 – Azure key vault variables for the dev Azure key vault
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Now that you have set up the Azure key vault for your first AML workspace,
+    we will follow the same *steps 1 to 13* to set up the Azure key vault and values
+    for your second AML workspace. This information should be taken from the overview
+    of your second `qa` AML workspace, as shown in *Figure 9**.11*:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '| **Key** **Vault variable** | **Value** |'
+  prefs: []
+  type: TYPE_TB
+- en: '| `resourceGroup` | `aml-qa-rg` |'
+  prefs: []
+  type: TYPE_TB
+- en: '| `wsName` | `aml-qa` |'
+  prefs: []
+  type: TYPE_TB
+- en: '| `location` | `eastus` |'
+  prefs: []
+  type: TYPE_TB
+- en: Figure 9.23 – Azure key vault variables for the qa Azure key vault
+  prefs: []
+  type: TYPE_NORMAL
+- en: Note
+  prefs: []
+  type: TYPE_NORMAL
+- en: In a real scenario, we would typically see either a non-prod and prod environment,
+    or `dev`, `qa`, and `prod`. This code can be extended to support *n* number of
+    environments.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Once you have completed this for both environments, you are ready to move on
+    to the next step – setting up your environment variable groups.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Setting up environment variable groups
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: Now that your variables are securely in Azure Key Vault, we will set up variable
+    group to hold your settings to be leveraged inside your Azure DevOps pipeline.
+    An variable group is a collection of variables that are leveraged together in
+    an Azure DevOps pipeline task. This means that each task can use variables that
+    specify whether we are going to the `dev` environment with the `dev` service connection
+    or connecting in the `qa` environment, leveraging the `qa` service connection.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We will be creating two variable groups, `devops-variable-group-dev` and `devops-variable-group-qa`,
+    to simulate moving from one environment to another:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'From the left-hand menu, select the **Pipelines** blue rocket icon, and select
+    the **Library** option as shown:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.24 – Library option](img/B18003_09_024.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.24 – Library option
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Selecting the **Library** option, you will be prompted to create a new variable
+    group as shown here:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.25 – New variable group](img/B18003_09_025.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.25 – New variable group
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Clicking on the `devops-variable-group-dev`, and enable the **Link secrets
+    from an Azure key vault as variables** option, as shown in the following screenshot:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.26 – Variable group creation](img/B18003_09_026.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.26 – Variable group creation
+  prefs: []
+  type: TYPE_NORMAL
+- en: You will need to click on the **Authorize** button for your Azure subscription.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: When selecting the Azure key vault to link with your variable group, make sure
+    that you link the `dev` key vault with the `devops-variable-group-dev` variable
+    group, and the `qa` key vault with the `devops-variable-group-qa` variable group.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.27 – Variable group link to Azure Key Vault](img/B18003_09_027.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.27 – Variable group link to Azure Key Vault
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'After the authorization for the key vault has been completed, click on the
+    **+ Add** icon to add the secrets from your key vault into your Azure DevOps variable
+    group shown as follows:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.28 – Adding variables to the Azure DevOps variable group](img/B18003_09_028.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.28 – Adding variables to the Azure DevOps variable group
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Clicking on the **+ Add** icon, you will be prompted to select secrets from
+    the Azure key vault you have linked to the variable group, as shown here:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.29 – Selecting Azure key vault variables](img/B18003_09_029.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.29 – Selecting Azure key vault variables
+  prefs: []
+  type: TYPE_NORMAL
+- en: Select the three variables you populated from *Figure 9**.22* and *Figure 9**.23*,
+    and click on the `devops-variable-group-dev` should be linked to your `dev` Azure
+    key vault, and `devops-variable-group-qa` should be linked to your `qa` Azure
+    key vault.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Do remember to click on the **Save** icon for each of your variable groups:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.30 – Saving an Azure DevOps variable group](img/B18003_09_030.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.30 – Saving an Azure DevOps variable group
+  prefs: []
+  type: TYPE_NORMAL
+- en: At this point, you should ensure you have linked two variable groups, and each
+    variable group should be linked to the key vault specific to that environment.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Clicking on the **Library** icon in the left-hand menu within Azure DevOps
+    will bring up **Variable groups** that you have populated as shown here:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.31 – Azure DevOps variable groups](img/B18003_09_031.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.31 – Azure DevOps variable groups
+  prefs: []
+  type: TYPE_NORMAL
+- en: Congratulations – you have set up two variable groups pointing to two different
+    key vaults, each holding information regarding the specific workspace. Note that
+    this is very extensible. Any variable that holds sensitive information that you
+    would like to pass to your pipeline can leverage a secret in Key Vault stored
+    in a variable group. Azure Key Vault provides you with the flexibility to have
+    unique secure information per AML workspace in your MLOps pipeline.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The next Azure DevOps component we will set up is the environment for providing
+    approval for the model registration and model deployment in the `qa` AML workspace.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Creating an Azure DevOps environment
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'In this subsection, we will create an Azure DevOps environment called `qa`
+    so we can apply governance to the model deployment in the `qa` environment. An
+    Azure DevOps environment requires approvers. We will be able to reference this
+    environment in our Azure DevOps pipeline as we progress to the `qa` environment:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the **Pipeline**s section in the left-hand pane in your Azure DevOps project,
+    select the **Environments** icon, and select **New environment**.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'This will pull up a new popup, as shown in this screenshot:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.32 – Azure DevOps environment](img/B18003_09_032.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.32 – Azure DevOps environment
+  prefs: []
+  type: TYPE_NORMAL
+- en: For the name, type `qa`, leave Resource set to **None**, and select the **Create**
+    button.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'On the top-right side of the environment, you will see an **Add resource**
+    button with three dots next to it, shown in the following figure. Click on the
+    three dots:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.33 – Add resource](img/B18003_09_033.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.33 – Add resource
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Clicking on the three dots, go to **Approvals and checks**, as shown in the
+    following screenshot:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.34 – Approvals and checks](img/B18003_09_034.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.34 – Approvals and checks
+  prefs: []
+  type: TYPE_NORMAL
+- en: After clicking on the **Approvals and checks** option, a new screen will be
+    displayed that will allow you to enter your approvers.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'A screen will be displayed, **Add your first check**, as shown here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.35 – Approvals and checks](img/B18003_09_035.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.35 – Approvals and checks
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Select **Approvals**, which will bring up the **Approvals** configuration shown
+    here:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.36 – Setting approvers](img/B18003_09_036.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.36 – Setting approvers
+  prefs: []
+  type: TYPE_NORMAL
+- en: Add yourself to **Approvals**, ensure under that **Advanced**, you have checked
+    **Allow approvers to approve their own runs**, and select **Create**.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Now that you have created your Azure DevOps environment, we are ready to create
+    an Azure DevOps service connection.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Setting your Azure DevOps service connections
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: An Azure DevOps service connection uses a service principal to connect and gain
+    access to run code on your behalf. The service connection will run your Azure
+    DevOps pipeline as the service principal specified in the service connection.
+    An AML service connection allows you to connect Azure DevOps to your workspace.
+    This means that we will create two service connections, one for each AML workspace.
+  prefs: []
+  type: TYPE_NORMAL
+- en: There is a special kind of service connection that specifies that it is an ML
+    workspace service connection. This extension is not required, so if there is an
+    administrator for your Azure DevOps organization, they can provide you with a
+    service principal and not use this extension, but it is ideal, as it indicates
+    what the service principal will be leveraged for.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We will begin by installing an AML extension for your Azure DevOps organization.
+    To install this into your Azure DevOps environment, perform the following steps:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Navigate to [https://marketplace.visualstudio.com/](https://marketplace.visualstudio.com/),
+    and select the `Azure Machine Learning`, as shown in the following screenshot:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.37 – Visual Studio Marketplace](img/B18003_09_037.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.37 – Visual Studio Marketplace
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'This will bring up the AML Azure DevOps extension shown as follows:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.38 – Azure DevOps ML extension](img/B18003_09_038.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.38 – Azure DevOps ML extension
+  prefs: []
+  type: TYPE_NORMAL
+- en: Clicking on the icon shown in *Figure 9**.38* will bring up detailed information
+    about the extension.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'Click on the **Get it free** button to begin the installation process. This
+    will bring you to the next screen where it is verifying that you have permission
+    to install the extension in your Azure DevOps organization, as shown in the following
+    screenshot:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.39 – Verifying installation permissions](img/B18003_09_039.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.39 – Verifying installation permissions
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'After the permissions have been confirmed, you will be prompted to install
+    for your Azure DevOps organization, as shown here:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.40 – Install option](img/B18003_09_040.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.40 – Install option
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Click on the **Install** button and you will be prompted to head over to your
+    Azure DevOps organization now that the extension has been installed, as shown
+    in the following screenshot:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.41 – Installation confirmation](img/B18003_09_041.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.41 – Installation confirmation
+  prefs: []
+  type: TYPE_NORMAL
+- en: Click on the **Proceed to organization** button, as shown in the preceding screenshot.
+    This will bring you to your Azure DevOps organization.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'Then, click on your project inside your Azure DevOps organization as shown
+    in the following screenshot:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.42 – Azure DevOps project](img/B18003_09_042.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.42 – Azure DevOps project
+  prefs: []
+  type: TYPE_NORMAL
+- en: Inside your project, in the left-hand menu, you can see **Project settings**
+    in the menu. Click on the **Project** **settings** icon.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Clicking on **Project settings**, you will see **Service Connections** in the
+    menu. Click on the icon for **Service Connections**.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'Click on the **Create service connection** icon on the top left of your screen;
+    this will bring up the **New service connection** window, as shown in the following
+    screenshot:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.43 – New service connection](img/B18003_09_043.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.43 – New service connection
+  prefs: []
+  type: TYPE_NORMAL
+- en: Click on the **Azure Resource Manager** option here, scroll to the bottom, and
+    click **Next**.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'This will bring up another screen, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.44 – Automatic creation of a service principal](img/B18003_09_044.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.44 – Automatic creation of a service principal
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In order to leverage the **Service principal (automatic)** option, you will
+    be required to have the authorization in your Azure subscription to create **Service
+    Principal** instances. If you are working in an environment where this option
+    is not authorized, you will be able to request a service principal from your Azure
+    subscription administrator, and they can provide you with the information required
+    to create a service connection manually. Refer to the following screenshot:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.45 – Service connection information](img/B18003_09_045.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.45 – Service connection information
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Populate the information on the screen as shown in *Figure 9**.45*. The **Subscription
+    Id**, **Subscription Name**, **Resource Group**, and **ML Workspace Name** information
+    is all available on the AML resource overview screen shown in *Figure 9**.11*.
+    **ML Workspace Location** is based on where the resource is deployed. To confirm
+    that you use the right value, a table is available here: [https://github.com/microsoft/azure-pipelines-extensions/blob/master/docs/authoring/endpoints/workspace-locations](https://github.com/microsoft/azure-pipelines-extensions/blob/master/docs/authoring/endpoints/workspace-locations).'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Be sure to check **Grant access permission to all pipelines** before hitting
+    **save** on your Azure service connection.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The `.yml` file that defines your Azure DevOps pipeline will expect certain
+    values for the service connection. Create your service connection to the `dev`
+    environment as `aml-dev`, and your service connection to the `qa` environment
+    as `aml-qa`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Congratulations – you have set up two service connections, one pointing to your
+    `dev` AML workspace, and one pointing to your `qa` AML workspace. We will continue
+    to the next subsection on creating your Azure DevOps pipeline.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Creating an Azure DevOps pipeline
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: To setup your Azure DevOps pipeline, we are going to generate some code. Recall
+    that your code is in your `dev` AML workspace. In order to walk you through creating
+    the Azure DevOps pipeline, we have created a sample notebook in `Chapter 09`,
+    `Chapter 9` `MLOps.ipynb`, shown in the following screenshot.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Inside your `dev` instance of your AML workspace, you will see the notebook
+    as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.46 – Chapter 9 MLOps notebook](img/B18003_09_046.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.46 – Chapter 9 MLOps notebook
+  prefs: []
+  type: TYPE_NORMAL
+- en: Open the notebook and slowly walk yourself through the code, executing each
+    cell and creating the required files for your MLOps pipeline.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We start with the notebook by connecting to our AML workspace and ensuring our
+    data is ready to be leveraged by our MLOps pipeline. Often, demos include the
+    data that you are going to be leveraging as part of the pipeline, but in a real-world
+    pipeline, your data is going to reside somewhere that is not in your MLOps folder,
+    so we will take the data from the folder and register it if it is not registered
+    already.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We are going to create an AML pipeline, to facilitate that, we create separate
+    folders for each of the steps in the pipeline. We are going to create a step for
+    data preparation, model training, and model evaluation. We will leverage our Azure
+    DevOps pipeline to handle the deployment, but we will create a `.yml` file definition
+    for the AML pipeline, and we also create a folder to hold that pipeline definition,
+    as well as a folder to hold our `conda` environment `.``yml` file.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We will create a compute cluster for the AML pipeline to leverage. We could
+    argue that this should have been included in the MLOps pipeline, but this resource
+    will automatically scale up and down as required by our pipelines, so we left
+    this resource outside of the Azure DevOps pipeline – however, you certainly can
+    take this pipeline and extend it to include this functionality.
+  prefs: []
+  type: TYPE_NORMAL
+- en: After creating the `conda` `.yml` file to handle the environment, and a script
+    for each step in the AML pipeline, we stitch the code together in an AML pipeline
+    job, which was covered in [*Chapter 7*](B18003_07.xhtml#_idTextAnchor102), *Deploying
+    ML Models for* *Batch Scoring*.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Here’s the script for creating the environment for the pipeline to leverage:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.47 – conda .yml file for the environment information](img/B18003_09_047.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.47 – conda .yml file for the environment information
+  prefs: []
+  type: TYPE_NORMAL
+- en: Review each step in the pipeline and the code in the notebook of this chapter,
+    as it creates an AML job pipeline to create a model and register the model.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Note that the first step will expect the raw data parameter that will tell
+    the code where to find the `titanic.csv` file. In addition to the source location,
+    the pipeline definition indicates where the data will be stored. This script is
+    quite helpful in providing a generic solution for your pipeline to leverage data.
+    Each step within the AML pipeline has a set of defined input and output parameters
+    that are captured within the pipeline definition `.yml` file, `aml_train_and_eval_pipeline.yml`,
+    which the notebook generates in the pipeline directory under `src` in the chapter
+    folder directory. Reviewing this code, you can see how the inputs and outputs
+    in the script are specified in the pipe definition:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.48 – AML pipeline definition](img/B18003_09_048.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.48 – AML pipeline definition
+  prefs: []
+  type: TYPE_NORMAL
+- en: Note
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Pipeline job definitions include great flexibility. The schema for defining
+    a job can be reviewed here: [https://azuremlschemas.azureedge.net/latest/commandJob.schema.json](https://azuremlschemas.azureedge.net/latest/commandJob.schema.json).'
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the pipeline definition here, we have specified the type for the prep job
+    as `command` as per the schema definition. We have specified where the code can
+    be found for the step. For the command itself, we specify to run Python and provide
+    the file and the parameters that will be passed to the Python script from our
+    defined inputs and outputs. We can see that the input was defined as `ro_mount`,
+    or a read-only mount to the specified file, and the output was defined as `rw_mount`,
+    or a read-write mount with a specified file location. In addition, the environment
+    was specified as the `conda` `.yml` file generated, and an Ubuntu image is also
+    specified.
+  prefs: []
+  type: TYPE_NORMAL
+- en: This initial `prep_job` combined with a `train_job` and an `eval_job` make up
+    the AML pipeline.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Now that we have reviewed the AML pipeline, we will look at the files required
+    for the model deployment in both the `dev` and `qa` environments.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Note
+  prefs: []
+  type: TYPE_NORMAL
+- en: Managed online endpoint names must be unique in each Azure region.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In addition to the AML pipeline definition, the notebook also generates files
+    for handling the managed online endpoint deployment. When running the notebook,
+    be sure to update the `name` value for `create-endpoint.yml` and the `name` value
+    for `create-endpoint-dev.yml`; in `model_deployment.yml`, provide the `endpoint_name`
+    value as the one you specified in `create-endpoint.yml`; and in `model_deployment-dev.yml`,
+    provide the `endpoint_name` value you specified in the `create-endpoint-dev.yml`
+    file.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Here is a screenshot of the `create-endpoint-dev.yml` file:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.49 – dev AML workspace managed online endpoint .yml file](img/B18003_09_049.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.49 – dev AML workspace managed online endpoint .yml file
+  prefs: []
+  type: TYPE_NORMAL
+- en: This file shown here provides the name and authorization mode that your managed
+    online endpoint will leverage during deployment in the `dev` environment. Be sure
+    to update **line 3**, as the name must be unique in the Azure region into which
+    the AML workspace is deployed.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The following is a screenshot of the `model_deployment-dev.yml` file used for
+    the deployment to the managed online endpoint. The `endpoint_name` value here
+    should match the name specified for the managed online endpoint:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.50 – dev AML workspace deployment to the managed online endpoint
+    yml file](img/B18003_09_050.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.50 – dev AML workspace deployment to the managed online endpoint yml
+    file
+  prefs: []
+  type: TYPE_NORMAL
+- en: Just as the names should match for the managed online deployment in the `dev`
+    environment, they also need to match up in the `qa` environment.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Here is a screenshot of the `create-endpoint.yml` file. This is the file used
+    to create the managed online endpoint deployment in the `qa` AML workspace:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.51 – qa AML workspace Managed Online Endpoint .yml file](img/B18003_09_051.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.51 – qa AML workspace Managed Online Endpoint .yml file
+  prefs: []
+  type: TYPE_NORMAL
+- en: As shown in the figure here, `qa` environment and the `dev` environment.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Here is a screenshot of the `model_deployment.yml` file:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.52 – qa AML workspace deployment to managed online endpoint yml
+    file](img/B18003_09_052.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.52 – qa AML workspace deployment to managed online endpoint yml file
+  prefs: []
+  type: TYPE_NORMAL
+- en: As shown in the figure here, this file will be leveraged for online deployment
+    in the `qa` environment, and it will go to `endpoint_name` to create a deployment,
+    so be sure to update `create-endpoint.yml` file.
+  prefs: []
+  type: TYPE_NORMAL
+- en: These files are leveraged within the Azure DevOps pipeline definition, which
+    we will discuss next.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The following is a snippet of the `AzureDevOpsPipeline.yml` file that orchestrates
+    the MLOps pipeline:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.53 – Azure DevOpsPipeline.yml file definition](img/B18003_09_053.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.53 – Azure DevOpsPipeline.yml file definition
+  prefs: []
+  type: TYPE_NORMAL
+- en: The `AzureDevOpsPipeline.yml` file starts by specifying the image that an Azure
+    DevOps build agent will leverage. The pipeline will trigger when there is a code
+    change to `main`. The pipeline is leveraging both `devops-variable-group-dev`
+    and `devops-variable-group-qa`, which we set up earlier.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In this `.yml` file, be sure to update the value for `ENDPT_NAME` to be the
+    value you specified in `create-endpoint.yml` and `endpoint_name` in your `model_deployment.yml`
+    files.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Be sure to also update `DEV_ENDPT_NAME` to be the value for the `name` variable
+    you specified in your `create-endpoint-dev.yml` file and the `endpoint_name` `model_deployment-dev.yml`
+    file.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The code here shows that in the `AzureDevOpsPipeline.yml` file, the values
+    that will need to be replaced for your MLOps deployment:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.54 – Azure DevOps pipeline variable replacement](img/B18003_09_054.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.54 – Azure DevOps pipeline variable replacement
+  prefs: []
+  type: TYPE_NORMAL
+- en: The DevOps pipeline is broken into two stages – one stage for the `dev` environment
+    pipeline run and model deployment in the `dev` environment, and the second stage
+    for the model promotion and deployment into the `qa` environment.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Inside the Azure DevOps stages, we leverage a set of jobs, which are CLI tasks
+    that leverage v2 of the AML CLI for retrieving the initial model version in the
+    `dev` environment, running the AML pipeline, and then retrieving the final model
+    version. This final model version indicates whether a model should be registered
+    in the `qa` environment:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE13]'
+  prefs: []
+  type: TYPE_PRE
+- en: The preceding code is retrieved from the first stage and the first step within
+    your Azure DevOps pipeline. Running this with Azure DevOps, we will retrieve the
+    latest version of the model with the model name specified by the variable that
+    is defined in your Azure DevOps pipeline as shown in the figure here. As you can
+    see in the code, not only do we leverage the variable groups but we can also leverage
+    variables defined directly in an Azure DevOps pipeline, as is the case with the
+    `model_name` variable. Given this value does not change on the basis of the environment,
+    we have added it to the pipeline definition itself, but we could have included
+    it in the key vaults and retrieved it through our Azure DevOps variable groups
+    as well.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The command run in Azure DevOps is modified slightly when placed into the Azure
+    DevOps pipeline `yml` file, shown as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.55 – Checking whether the model exists](img/B18003_09_055.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.55 – Checking whether the model exists
+  prefs: []
+  type: TYPE_NORMAL
+- en: Inside our Azure CLI task in the Azure DevOps pipeline, we are checking whether
+    the result of querying for the model in the workspace comes back as an empty string,
+    and then we set the `modelversion` variable to `0`; otherwise, we retrieve it
+    and set the `modeldeversion` variable in the Azure DevOps pipeline.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'This will place the model version into an Azure DevOps variable that can be
+    evaluated later in the pipeline, by running the following command:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE14]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'After setting the initial model version, we run the AML workspace pipeline
+    from the Azure DevOps pipeline by leveraging the following code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE15]'
+  prefs: []
+  type: TYPE_PRE
+- en: Note that we set `force_rerun` to `True` here. AML knows the data has not changed,
+    and if the code has not changed, then it reuses steps instead of rerunning them,
+    which is great in a production workload. However, in a demo for updating a model,
+    we would like to see the model version consistently updating, so we have set that
+    value to `True`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In the first stage, we check whether the final model version and the initial
+    model version are equal or not. The code here depicts checking the model version
+    and setting an output variable, `runme`, to either `true` or `false`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.56 – Checking the model version](img/B18003_09_056.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.56 – Checking the model version
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'If they are different, then we would like to deploy the new model in the `dev`
+    environment, and we deploy the model with the AML CLI command:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE16]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'In the code here, we reference the endpoint `.yml` file, the resource group,
+    the workspace name, and the endpoint name. After the endpoint is created, we can
+    create an online deployment, as shown here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE17]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Finally, we can update the traffic to the endpoint to be 100% by leveraging
+    the following command:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE18]'
+  prefs: []
+  type: TYPE_PRE
+- en: Note that we are tagging the endpoint with the deployment. By tagging the endpoint,
+    we can quickly see which deployment is being used by our endpoint. This means
+    the next time a new model is registered, we can create a new deployment to an
+    existing managed online endpoint, ramp up its traffic, and then delete the old
+    deployment.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In the Azure DevOps pipeline, before handling the deployment, we check whether
+    an endpoint already exists with our specified name by leveraging this command:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE19]'
+  prefs: []
+  type: TYPE_PRE
+- en: Therefore, the second time, the endpoint will exist, and we will not create
+    an endpoint, but we will still deploy an endpoint.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The second stage in the pipeline is the `QAPromoteModel` pipeline. It connects
+    to the `dev` AML workspace and retrieves the model, downloads it, and then uses
+    it in the `qa` environment. Once the model is downloaded onto the Azure DevOps
+    build agent, we can register that in the `qa` AML workspace:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE20]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Once the model is registered in the `qa` environment, we can check whether
+    a managed online endpoint exists in the `qa` environment. If it has not yet been
+    deployed, an online endpoint will be created leveraging the `create-endpoint.yml`
+    file through the use of the AML CLI v2 as shown in the following code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE21]'
+  prefs: []
+  type: TYPE_PRE
+- en: If this managed online endpoint does exist, then we will then use `az ml online-deployment`
+    to create a deployment in the managed online endpoint to leverage the model. After
+    it is deployed, we can set the traffic on the managed online endpoint deployment
+    to 100% traffic for our new deployment.
+  prefs: []
+  type: TYPE_NORMAL
+- en: If the model has already been deployed in this environment, there is no need
+    to deploy the managed online endpoint, but we will want to swap from the previous
+    deployment to our new deployment. This means we should create a new online deployment,
+    and update a tag on the managed online endpoint that specifies which deployment
+    is being used. This allows us to consistently create new deployments and swap
+    from the previous online deployment to our next deployment, updating the traffic
+    and then deleting the old deployment in the `qa` environment, as was done in the
+    `dev` environment.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Once you run your pipelines, you will be able to see the tag information for
+    your managed online endpoint in the `dev` or `qa` environment from its details
+    as shown in this figure.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.57 – Managed online endpoint tag](img/B18003_09_057.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.57 – Managed online endpoint tag
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Each time this code runs, a new deployment name is generated, leveraging the
+    epoch of the deployment time. This ensures that we have a unique name for a given
+    deployment. Having this unique name ensures no conflicts will occur when deploying
+    your online deployment. After the online deployment succeeds, we update the traffic
+    to the latest online deployment, and then delete the old online deployment. This
+    figure shows a deployment to a managed online endpoint:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.58 – Deployment to a managed online endpoint](img/B18003_09_058.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.58 – Deployment to a managed online endpoint
+  prefs: []
+  type: TYPE_NORMAL
+- en: Note that in the figure, in the name after deployment, we include the model
+    version number before **v** to quickly identify the model version for a given
+    deployment.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Now that you have reviewed the code and executed the notebook, generating the
+    files needed for the Azure DevOps pipeline, a check-in of your code to the remote
+    origin now pointing to your Azure DevOps repository will ensure the proper files
+    are in place to create your Azure DevOps pipeline, which is our next step in the
+    process. To check this code in, you can run the following commands:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE22]'
+  prefs: []
+  type: TYPE_PRE
+- en: Congratulations – your Azure DevOps environment is now linked with your AML
+    workspaces. You have made it through the required steps for preparing your MLOps
+    environment. You created an Azure DevOps organization and project. You moved your
+    code into Azure DevOps, set up your Azure key vault, and linked it to your Azure
+    DevOps variable groups. You also created an Azure DevOps environment to handle
+    the approval process. You created your Azure DevOps service connections and, finally,
+    committed the code required to create and run an Azure DevOps pipeline. In the
+    next section, you will set up your Azure DevOps pipeline, which will trigger running
+    an Azure DevOps pipeline.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Running an Azure DevOps pipeline
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'We will start this section by creating an Azure DevOps pipeline. Your Azure
+    DevOps pipeline will be kicked off any time you make a change to your code and
+    push it to the **main** branch:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Inside Azure DevOps on the left-hand pane, select **Pipelines** and you will
+    see the following screen:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.59 – Creating your first Azure DevOps Pipeline](img/B18003_09_059.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.59 – Creating your first Azure DevOps Pipeline
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Click on the **Create Pipeline** button to begin the process, which will bring
+    up the following window:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.60 – Selecting where your code is located](img/B18003_09_060.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.60 – Selecting where your code is located
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the previous section, *Preparing your MLOps environment*, you placed your
+    code into a code repository in Azure DevOps. Select the **Azure Repos Git** option
+    from the preceding screenshot and this will ask you to select your repository,
+    as shown in the following screenshot. Select your **mlops** repository here.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.61 – Selecting your repository](img/B18003_09_061.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.61 – Selecting your repository
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Next, select the **Existing Azure Pipelines YAML file** option to use the pipeline
+    you created by running your notebook and checking it into your Git repository:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.62 – Configure your pipeline](img/B18003_09_062.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.62 – Configure your pipeline
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Selecting this will take you to the next screen, as shown here:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.63 – Selecting your YAML file](img/B18003_09_063.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.63 – Selecting your YAML file
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In the **Path** dropdown, navigate to the **/Chapter09/src/AzureDevOpsPipeline.yml**
+    file as shown here:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.64 – Retrieving the path of AzureDevOpsPipeline.yml file](img/B18003_09_064.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.64 – Retrieving the path of AzureDevOpsPipeline.yml file
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Click on the **Continue** option after selecting the **AzureDevOpsPipeline.yml**
+    file. This will bring up the source code for the Azure DevOps pipeline, as follows:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.65 – Retrieving your YAML](img/B18003_09_065.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.65 – Retrieving your YAML
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the preceding screenshot, click on the **Run** button. When this pipeline
+    runs, it will leverage your service connections. To use your service connections,
+    you will need to provide permission for them to run.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Click on the `aml-dev` service connection:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.66 – Providing Azure DevOps with permission](img/B18003_09_066.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.66 – Providing Azure DevOps with permission
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'After clicking on the **View** option, you will provide permission for the
+    pipeline to run. Click on the **Permit** button, as shown in the following screenshot:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.67 – Permitting the pipeline to use the service connection](img/B18003_09_067.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.67 – Permitting the pipeline to use the service connection
+  prefs: []
+  type: TYPE_NORMAL
+- en: Provide the appropriate permissions so the pipeline can execute by selecting
+    **Permit** for each of the permissions needed as the pipeline progresses.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'As the pipeline executes, you can see the icons displaying that the workload
+    is progressing, as shown in the following screenshot:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.68 – Pipeline execution](img/B18003_09_068.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.68 – Pipeline execution
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Clicking on the **DevTrainingPipeline** stage will bring you to the details
+    of the run, as shown here:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.69 – Pipeline details](img/B18003_09_069.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.69 – Pipeline details
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'As the initial pipeline kicks off, the model named `mmchapter9titanic` may
+    not exist yet, depending on whether you ran the pipeline from your AML workspace.
+    In this case, inside Azure DevOps, if you click on the **Get Initial Model Version**
+    task, you will see the following error message:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.70 – Initial model find](img/B18003_09_070.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.70 – Initial model find
+  prefs: []
+  type: TYPE_NORMAL
+- en: This is correct given the model does not yet exist. In this case, we set the
+    model version to `0` in the pipeline to continue a successful pipeline run.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Note that as `dev` instance of your AML workspace as a pipeline as shown in
+    the following screenshot:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.71 – AML pipeline run](img/B18003_09_071.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.71 – AML pipeline run
+  prefs: []
+  type: TYPE_NORMAL
+- en: As your Azure DevOps pipeline hits `deploydevmodel`, if it fails, it will likely
+    be due to the fact your endpoint name in your region is already taken. If you
+    have a failed task on the `deploydevmodel` task, look at the contents of the message
+    in Azure DevOps. It is likely to say, **There is already an endpoint with this
+    name, Endpoint name needs to be unique within a region. Try some** **other name.**
+  prefs: []
+  type: TYPE_NORMAL
+- en: If that is the case, update your `.yml` files to leverage a different endpoint
+    name.
+  prefs: []
+  type: TYPE_NORMAL
+- en: After the model deployment completes in the `dev` environment, the pipeline
+    will request approval to promote the model to the next environment.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Once the `dev` stage is complete, approval will be requested, as shown here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.72 – Azure DevOps pipeline request for permission](img/B18003_09_072.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.72 – Azure DevOps pipeline request for permission
+  prefs: []
+  type: TYPE_NORMAL
+- en: Clicking on `QAPromote` model stage to retrieve the pending stage and approve
+    or reject moving the model to the `qa` environment.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.73 – Pending QA promotion approval](img/B18003_09_073.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.73 – Pending QA promotion approval
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Clicking on the **Review** button, you will be able to either select **Reject**
+    or **Approve** for the model promotion, as shown here:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.74 – QA promotion approval](img/B18003_09_074.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.74 – QA promotion approval
+  prefs: []
+  type: TYPE_NORMAL
+- en: Once the QA promotion is approved, the model can be deployed to the `qa` environment.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.75 – qa environment deployment](img/B18003_09_075.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.75 – qa environment deployment
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'As your pipeline runs, you can review the model registered in your `dev` AML
+    workspace. As the pipeline executes, head over to your `qa` AML workspace and
+    you will see a registered model, shown as follows:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.76 – Registered model for the qa environment](img/B18003_09_076.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.76 – Registered model for the qa environment
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In addition to the registered model, you can review your managed online endpoint,
+    as follows:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.77 –  Deployed online endpoint for the qa environment](img/B18003_09_077.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.77 – Deployed online endpoint for the qa environment
+  prefs: []
+  type: TYPE_NORMAL
+- en: The figure here demonstrates reviewing the managed online endpoint in the `qa`
+    environment. Clicking on the name on the screen provides you with detailed information
+    about the managed online endpoint.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'Inside the managed online endpoint, you will see the deployed instance of your
+    model as shown here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.78 – Managed online endpoint deployment in a qa environment](img/B18003_09_078.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.78 – Managed online endpoint deployment in a qa environment
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The deployment name is based on the epoch. Each time a model is deployed in
+    the `qa` AML workspace, it checked the tag property:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 9.79 – Tag property of the managed online endpoint](img/B18003_09_079.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 9.79 – Tag property of the managed online endpoint
+  prefs: []
+  type: TYPE_NORMAL
+- en: Provided there is a model deployed, it creates a new deployment, updates the
+    tag, and deletes the old deployment. This ensures that users will experience minimal
+    interruption as the new endpoint is deployed.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In this chapter, you set up your MLOps pipeline by leveraging Azure DevOps to
+    automate the orchestration of data preparation, model development, and model evaluation
+    and registration; deploying the model by leveraging blue/green deployments; and
+    promoting it from one environment to the next.
+  prefs: []
+  type: TYPE_NORMAL
+- en: You are encouraged to leverage your `dev` AML workspace, make code modifications
+    and review the process of your Azure DevOps pipeline, kick off your `dev` AML
+    workspace pipeline, register the model in the `qa` environment, and update the
+    managed online endpoints. Now that you have deployed managed online endpoints
+    through an MLOps pipeline, take caution, as the endpoints are leveraging compute.
+    You should delete the endpoints when you are not using them to keep your costs
+    down. Congratulations – you have successfully implemented an MLOps pipeline!
+  prefs: []
+  type: TYPE_NORMAL
+- en: Summary
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In this chapter, the focus was on deploying your model as a managed online endpoint
+    to support real-time inferencing use cases in an automated fashion.
+  prefs: []
+  type: TYPE_NORMAL
+- en: This chapter brought together the concepts that you learned about in previous
+    chapters, as well as introducing you to Azure DevOps and the orchestration it
+    makes possible. Leveraging Azure DevOps, code and deployments are traceable. Azure
+    DevOps pipelines automate triggering the orchestration of the `dev` environment
+    pipeline, moving the registered model to the higher environment. Leveraging Azure
+    Key Vault, we can securely hold information to support multiple environments,
+    linking those to your Azure DevOps environment groups. With MLflow integration,
+    metrics are captured for the model generated in the `dev` environment, and that
+    model number is registered in a higher environment and then added to the managed
+    online endpoint. We implemented an MLOps pipeline to automate data transformation,
+    model creation, evaluation, and model deployment.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the next chapter, we will explore leveraging Deep Learning in your AML workspace.
+    This will be a guide to leveraging object detection with AutoML to solve your
+    object detection objectives.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Further reading
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'As mentioned, in this chapter, we tried to provide a basis for creating your
+    own MLOps pipeline. We encourage you to check out two additional resources for
+    building your MLOps pipelines with AML:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[https://github.com/Azure/mlops-v2](https://github.com/Azure/mlops-v2)'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '[https://github.com/microsoft/MLOpsPython](https://github.com/microsoft/MLOpsPython)'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Part 3: Productionizing Your Workload with MLOps'
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In this section, readers will learn how to integrate AMLS jobs with Azure DevOps
+    and Github to achieve an MLOps solution.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'This section has the following chapters:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[*Chapter 10*](B18003_10.xhtml#_idTextAnchor196), *Using Deep Learning in Azure
+    Machine Learning*'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '[*Chapter 11*](B18003_11.xhtml#_idTextAnchor204), *Using Distributed Training
+    in AMLS*'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL

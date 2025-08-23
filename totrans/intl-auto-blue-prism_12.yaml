@@ -1,0 +1,943 @@
+- en: '12'
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Power Service Interruptions
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In this chapter, we’ll again be looking at a scenario modeled after a real-life
+    use case. The examples in this chapter will focus on the post-production maintenance
+    and ML model deployment activities that are important for continued IA solution
+    operation. The goal of this chapter is to become familiar with model deployments,
+    rollbacks, and exporting audit data through SQL.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In this scenario, we’re a power utility company that has an existing ML model
+    that’s already in production. This model predicts whether certain regions of the
+    power grid will have an outage based on weather indicators, date and time indicators,
+    measurements from current power infrastructure, and historical data.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The IA team wants to use this existing model and build a new model for new automation.
+    First, the outage ML model will be regularly called to predict whether heavily
+    populated regions will have an outage. If a potential outage is detected, we want
+    to then predict which customers are most likely to call the customer service hotline.
+    The model to predict customer complaints will be developed as part of this project.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Once we’ve predicted which customers are likely to call customer service, we
+    will send them an SMS informing them of a potential power outage ahead of time.
+    The aim of this IA project is to reduce the number of calls to customer service,
+    which saves money, reduces phone queue wait times, and improves customer satisfaction.
+    The proposal to build this new model and automation has been approved by the governance
+    board.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The outage prediction model is maintained by a separate, internal ML team. The
+    decision is made to develop and maintain the customer complaints prediction model
+    within the IA function as the necessary expertise is present.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In this chapter, we’re going to cover the following topics:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: ML model background information
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Solution design
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Handling model deployments
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Exporting data for audit
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Technical requirements
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Install SQL Server Management Studio [https://aka.ms/ssmsfullsetup](https://aka.ms/ssmsfullsetup)
+    so that you can execute queries against the BP database. SQL Server Management
+    Studio is used in *Example 4* and *Example 5*.
+  prefs: []
+  type: TYPE_NORMAL
+- en: ML model background information
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Let’s analyze the requirements and characteristics of the two ML models (outage
+    prediction and customer complaints). This information will help us understand
+    the procedure needed to deploy and roll back the models. It will also help us
+    determine what options we have to capture ML auditing data.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Outage prediction model
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: The **outage prediction** (**OP**) model is already being used elsewhere in
+    the utility and is managed by a different internal team. We’ve received the necessary
+    approvals to use their ML endpoint for the IA solution.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Consumption and deployment method
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: The model is hosted on the intranet and is called using an HTTP API. As this
+    is a pre-existing model, the deployment method is already determined. A *replacement*
+    deployment methodology that requires downtime is used. The ML team will notify
+    us when the model will be taken offline for maintenance. For model updates, the
+    API endpoint is *overwritten*, meaning that only the latest version of the model
+    can ever be called. This means that rolling back by changing the endpoint URL
+    is not possible.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Prediction volumes
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: After discussing with project stakeholders, we decide to focus the automation
+    on four regions. This will be expanded in further phases of the project. We decide
+    on a prediction interval of 30 minutes for every region, from 6:00 AM to 10:00
+    PM. Sending SMSs to customers outside of this time frame won’t be effective. This
+    adds up to 112 calls to the API per day, which is an acceptable volume for the
+    ML team.
+  prefs: []
+  type: TYPE_NORMAL
+- en: HITL reviews, interface, and SLAs
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: It’s not possible for anyone outside of experts to review predictions, so it’s
+    decided that reviews aren’t needed. There are also no SLAs to meet since this
+    isn’t an already existing (nor critical) process. Customers currently aren’t being
+    notified ahead of time if there might be an outage. However, we’ve set a target
+    to notify customers within 30 minutes of receiving a *potential outage* prediction
+    from the OP model.
+  prefs: []
+  type: TYPE_NORMAL
+- en: ML auditing
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: While server logs can be requested from the ML team, the lead time to receive
+    them is undefined because it isn’t something that they have an existing procedure
+    or SLA for. Because of this, the IA team decides to retain a copy of the API calls
+    to the model in BP. Since they work for public service, the IA team is conscious
+    of maintaining an audit trail for their ML calls.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We’ve finished gathering information about the OP model that’s relevant to the
+    IA solution. Let’s look at the customer complaints model next.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Customer complaints model
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: The **customer complaints** (**CC**) model predicts whether a customer is likely
+    to call the customer support hotline based on demographic information, billing
+    data, time of day, past calling behavior, and so on. The model will be developed
+    and maintained by the IA team. The team decides to build a *binary classification*
+    model that predicts between *will call* and *won’t call* using either regression
+    or tree-based techniques. These techniques are favored because they have some
+    degree of interpretability inherent to them.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Consumption and deployment method
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: The IA team decides to deploy the CC ML solution as a native Code Stage that
+    will run directly on the Digital Workers themselves. This will be possible because
+    of the type of algorithm that is chosen.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Prediction volumes
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: The number of predictions needed depends on the number of residential electrical
+    meters (customers) in the region. The largest region has roughly 10,000 customers.
+    Assuming that it takes one minute to gather the model’s input data from various
+    systems and make the prediction, it would require 334 digital workers to process
+    10,000 predictions within 30 minutes, which is unacceptable.
+  prefs: []
+  type: TYPE_NORMAL
+- en: To bring the amount of time needed to make predictions down to a manageable
+    level, the IA team decides to have a completely separate BP Process that gathers
+    the necessary input data. This Process will generate predictions for each customer
+    in the target regions on a weekly basis. Using a weekly prediction (and not a
+    live prediction) is deemed to be a reasonable compromise as the customer data
+    that is input to the model doesn’t change regularly.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The weekly customer complaint prediction results will be saved into a database.
+    The saved prediction result can be used by the Process that sends SMSs if an outage
+    is predicted for a region.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Let’s assume that there are 20,000 residences in total in the four regions,
+    each taking one minute to process. If we run the customer complaints prediction
+    Process during off-peak hours, from 9:00 PM to 5:00 AM, it would require 6 digital
+    workers to process 20,000 cases per week. After discussing with the business users,
+    we are given the green light to run this CC prediction on six digital workers
+    that are idle during off-peak hours, improving the overall utilization of the
+    workforce.
+  prefs: []
+  type: TYPE_NORMAL
+- en: HITL reviews, interface, and SLAs
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: Human review of predictions is not needed as no one really knows how to predict
+    whether someone is apt to call the hotline. There are also no SLAs to complete
+    the prediction by, although we have self-imposed criteria of updating a customer’s
+    prediction weekly.
+  prefs: []
+  type: TYPE_NORMAL
+- en: ML auditing
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: Auditing is required. Since the ML model is run from Code Stages, the logs must
+    be saved into BP.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We’ve finished looking at the two ML models. Let’s summarize the details that
+    are relevant to the IA solution. This will inform us of how we can deploy, roll
+    back, and retrieve ML logs for auditing.
+  prefs: []
+  type: TYPE_NORMAL
+- en: ML model summary
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'A summary of the ML model characteristics that are relevant to the design and
+    operation of the solution is provided in the following table:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '| **Model** | **Deployment method** | **HITL** **review criteria** | **HITL**
+    **review interface** | **HITL** **review SLA** | **ML Auditing** |'
+  prefs: []
+  type: TYPE_TB
+- en: '| OP | Replacement API | N/A | N/A | N/A | In the IA solution |'
+  prefs: []
+  type: TYPE_TB
+- en: '| CC | Code Stage | N/A | N/A | N/A | In the IA solution |'
+  prefs: []
+  type: TYPE_TB
+- en: 'Table 12.1: A summary of the ML model characteristics'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Solution design
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: We don’t need to consider designing separate Processes and Work Queues for *reviews*
+    since reviews aren’t possible for either of the ML models. There’s also no need
+    to *link* Work Queue Items between the two ML models as they are independent and
+    *communicate* by saving the customer complaint prediction results in a database.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Two main candidates for high-level solution design are possible. The first potential
+    design is shown in the following diagram. In this design, we keep the Processes
+    and Work Queues separate for the ML portions of the solution. This results in
+    a four Process, four Work Queue design. It allows for independent scaling and
+    targeted auditing of the ML models directly from the BP user interface. The major
+    downsides of this first design are the number of licenses needed and the increased
+    complexity of scheduling.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 12.1: Potential design 1: Separate Processes and Work Queues for the
+    ML portions](img/B18416_12_1.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 12.1: Potential design 1: Separate Processes and Work Queues for the
+    ML portions'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The next potential design is to not separate the ML into separate Processes
+    and Work Queues. An example of this second design is shown in the following screenshot.
+    With this design, we will need to either query the database manually to extract
+    ML audit information or export the Session Logs as CSV and filter them from there.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 12.2: Potential design 2: Don’t separate Processes and Work Queues
+    for the ML portions](img/B18416_12_2.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 12.2: Potential design 2: Don’t separate Processes and Work Queues for
+    the ML portions'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Let’s consider the need to *scale* ML predictions separately from its main Process.
+    For the OP model, the prediction volumes are low, so there isn’t any reason to
+    scale ML independently from the main Process. For the CC model, the bottleneck
+    will likely be in retrieving all of the necessary input data from the various
+    CRM, customer support, and billing systems. The ML portion only contributes to
+    a fraction of the total execution time, and there’s a one-to-one relationship
+    between a customer and a prediction, so it isn’t necessary to scale the CC model
+    predictions separately.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Next, let’s consider the *auditability* needs. There’s no need to give feedback
+    on any reviewed results since reviews aren’t possible in this use case. While
+    it would be possible for the customer support team to inform the IA team whether
+    someone has actually called following a service interruption, this is something
+    that will happen outside of BP.
+  prefs: []
+  type: TYPE_NORMAL
+- en: There may be a need to allow parties external to the IA team to access Session
+    Logs for export. An alternative to exporting data from BP is to query the DB directly.
+    The IA team doesn’t anticipate needing to export Session Log data regularly for
+    the purpose of ML auditing, or to check the ML logs for specific Sessions or Items,
+    so the likelihood of needing to perform exporting actions from the BP user interface
+    is low. The IA team decides to perform ML auditing through the BP database. The
+    solution design chosen is the simpler one in *Figure 12**.2*.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Handling model deployments
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Imagine that the IA solution has been implemented and is running in production
+    already. We receive word from the ML team that the OP model, which is maintained
+    by a different internal team, will be updated, and that downtime will occur. Recall
+    that only one version of the OP model is live and that previous versions cannot
+    be called. Let’s go through an example of what the IA team needs to do on the
+    day that the OP model gets updated.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Example 1 – Outage prediction model deployment
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'In this example, we will go through the steps needed to deploy a new version
+    of the OP model for use in BP. Recall that the OP model uses a *replacement* deployment
+    strategy. This example has seven high-level steps:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Importing the `.bprelease` sample (created from the Synchronous Review template).
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Running the Process once to create Session Logs.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Retiring the Schedule.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Waiting for the Sessions to complete.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Changing the Environment Variable that stores the model version.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Unretiring the Schedule.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Running the Process with the new model to create Session Logs.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Import the Release
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: Let’s import a Release that has been developed based on the design in *Figure
+    12**.2*.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Download the Release from GitHub: [https://github.com/PacktPublishing/Intelligent-Automation-with-Blue-Prism/blob/main/ch12/Ex_1_Outage_Prediction_Model_Deployment.bprelease](https://github.com/PacktPublishing/Intelligent-Automation-with-Blue-Prism/blob/main/ch12/Ex_1_Outage_Prediction_Model_Deployment.bprelease).'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Import the Release into BP..
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Ensure that two Processes, one Object, two Work Queues, two Schedules, three
+    Environment Variables, and two Credentials have been imported.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 12.3 – The contents of .bprelease](img/B18416_12_3.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 12.3 – The contents of .bprelease
+  prefs: []
+  type: TYPE_NORMAL
+- en: Visit *System* | *Security* | *Credentials*. Open the **Ch12 OP Prediction Kill
+    Switch** Credential and ensure that the *Access Rights* are granted to the **01
+    – Outage Prediction Notification** Process, in addition to the correct Roles and
+    Resources.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Visit *System* | *Security* | *Credentials*. Open the **Ch12 CC Prediction Kill
+    Switch** Credential and ensure that the *Access Rights* are granted to the **02
+    – Customer Complaint Prediction** Process, in addition to the correct Roles and
+    Resources.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: After importing, we need to run the Process once to generate some Session Log
+    data.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Run the Process
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'Execute the Process once from the Control Room so that Session Logs are generated.
+    While the Session Logs aren’t needed for this example, they are needed for *Example
+    4*:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Run the **01 – Outage Prediction Notification** Process once from the Control
+    Room. Wait for the Session to complete.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Open *Control* | *Queue Management* | *Ch12* | *01 – Outage Prediction Notification*.
+    See that four Items, each representing one of the four regions, have been created.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Next, let’s begin deploying the new OP ML model. The first step is to retire
+    the Schedule that runs the Process that calls the OP model prediction, *01 – Outage*
+    *Prediction Notification*.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Retire the Schedule
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: Two Schedules were imported in the Release. We only need to retire the *Ch12
+    Outage Prediction Notification* Schedule, since that’s the one that runs the Process
+    which calls the OP prediction model.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Under *Control* | *Scheduler*, right-click on the *Ch12 Outage Prediction Notification*
+    Schedule and choose *Retire*. You should be able to retire even if there are Sessions
+    that are still executing.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 12.4: Retire the Ch12 Outage Prediction Notification Schedule](img/B18416_12_4.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 12.4: Retire the Ch12 Outage Prediction Notification Schedule'
+  prefs: []
+  type: TYPE_NORMAL
+- en: After retiring the Schedule, we need to ensure that no active Sessions are running
+    the **01 - Outage Prediction** **Notification** Process.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Wait for the Sessions to stop
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'There are a few things we can do here, and they depend on how much time we
+    have before the ML model is taken offline. If the ML model will be taken offline
+    very shortly, we can trigger the OP Model’s kill switch. This will halt execution
+    just prior to calling the ML algorithm. If the Choice Stage on the Main Page is
+    correctly designed, we can retry the Work Queue Items that are marked as Exceptions
+    due to activating the kill switch. Upon retrying, execution should resume to the
+    point right before the ML prediction is called. If the amount of time that we
+    have is greater than the expected amount of time for the current Item to complete,
+    we can *Request Stop* on all of the in-flight Sessions. Finally, if we have lots
+    of time, we can wait for all of the Sessions to complete:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Under *Control* | *Session Management*, select **01 – Outage Prediction Notification**
+    as the *Process* filter. Ensure that all of the other filters are set to **All**.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 12.5 – Filter Session Management to see the 01 – Outage Prediction
+    Notification Process](img/B18416_12_5.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 12.5 – Filter Session Management to see the 01 – Outage Prediction Notification
+    Process
+  prefs: []
+  type: TYPE_NORMAL
+- en: Wait until all Sessions have finished running, Request Stop on the Sessions,
+    or trigger the **Ch12 OP Prediction Kill Switch**. The one that should be used
+    will depend on the expected execution time for one Work Queue Item, and how much
+    time there is before the model is taken offline.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Now, let’s assume that some time has passed, and we’ve been notified that the
+    ML deployment has completed. The next steps are to modify the **Ch12 OP Model
+    Version** Environment Variable and to unretire the Schedule.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Update the Environment Variable to the new ML model version
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: Since the OP model only has one version, we need to keep track of when it’s
+    updated manually. In this case, we need to update a `DateTime` Environment Variable.
+    Once the model version is updated, we can allow Schedules to resume. Under *System*
+    | *Processes* | *Environment Variables*, edit the value of the **Ch12 OP Model
+    Version** Environment Variable so that it uses the current date and time.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Unretire the Schedules
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: Now we wait for the ML team to inform us that the new model is ready to use.
+    Once we’ve been notified, we can unretire the schedules so that processing can
+    begin again. Under *Control* | *Retired Schedules*, right-click on the *Ch12 Outage
+    Prediction Notification* Schedule, and *Unretire* it.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Run the Process with the new model
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: Run the **01 – Outage Prediction Notification** Process from the Control Room
+    again. This step is only needed to generate Session Logs for a future example.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We’ve completed the steps needed to deploy a new version of the OP model, which
+    required downtime, into our IA solution. Now let’s look at how we can deploy a
+    new version of the CC model which uses a Code Stage.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Example 2 – Customer complaint model deployment
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: Let’s suppose that the CC ML model Object has been updated and that this deployment
+    doesn’t require any new DLLs. Note that the model version (1.5.3) before deployment
+    can be found as a Data Item on the `Initialise` Page of the **Customer Complaints
+    ML Model** Object. Also, note that the Action that returns the predicted result
+    also returns the model version as well. This means that we don’t need to use an
+    Environment Variable to store the model version.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 12.6: The CC ML Object Action returns the model version.](img/B18416_12_6.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 12.6: The CC ML Object Action returns the model version.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'This example has three high-level steps:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Running the **02 – Customer Complaints Prediction** Process once to create Session
+    Logs.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Deploying the new model by importing an Object.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Running the Process again to create Session Logs.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Our first step is to run the existing Process once to generate some Session
+    Log data. This data will be used in *Example 5*.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Run the Process
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: Execute the Process once from the Control Room so that Session Logs are generated.
+    From the Control Room, run the **02 – Customer Complaints Prediction** Process
+    once. This will create 20 Items (customers), who belong to one of the four regions.
+    Next, we need to download the Object and verify that the model version has been
+    updated.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Download, check the model version, and import the Object
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'In this case, the updated model is provided as a `.bpobject` file. We need
+    to download it and verify that the model version is not the same as the previous
+    version (1.5.3):'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Download the Object from GitHub: [https://github.com/PacktPublishing/Intelligent-Automation-with-Blue-Prism/blob/main/ch12/Ex_2_BPA_Object_Customer_Complaints_ML_Model.bpobject](https://github.com/PacktPublishing/Intelligent-Automation-with-Blue-Prism/blob/main/ch12/Ex_2_BPA_Object_Customer_Complaints_ML_Model.bpobject).'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Import the downloaded Object into BP.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Under *Studio | Objects |* *Ch12*, open the **Customer Complaints ML Model**
+    Object in the Object Studio.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: On the `Initialise` Page, verify that the **Model Version** Data Item has been
+    updated by the developers from the previous version (1.5.3).
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 12.7: Verify that the Model Version Data Item has been changed from
+    1.5.3](img/B18416_12_7.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 12.7: Verify that the Model Version Data Item has been changed from
+    1.5.3'
+  prefs: []
+  type: TYPE_NORMAL
+- en: We’ve confirmed that the model version has changed. Since this is a Code Stage
+    deployment, without any new DLLs, importing the new Object is all that we need
+    to do. In-flight Sessions from before the Object import will still be using the
+    old Object definition with the previous model version. New Sessions that start
+    after the Object import will use the updated Object and model version.
+  prefs: []
+  type: TYPE_NORMAL
+- en: If you want to be safer, you can check if the model version has been updated
+    before importing it into BP. If the file is a `.bpobject` file, you can open it
+    in any text editor and search for *Model Version*. You can also perform a similar
+    search if the file is a `.``bprelease` file.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 12.8: The model version can be viewed by opening the .bpobject file
+    in Notepad](img/B18416_12_8.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 12.8: The model version can be viewed by opening the .bpobject file
+    in Notepad'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Finally, let’s run the Process again, to generate Session Logs with the updated
+    model version.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Use the new ML model
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: Execute the Process again from the Control Room. These Session Logs are required
+    for *Example 5*. From the Control Room, run the **02 – Customer Complaints Prediction**
+    Process again.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We’ve completed the steps required to deploy a Code Stage-based model that didn’t
+    require any new `.dll` files to be copied. This was straightforward and only required
+    importing the new Object file. Next, let’s look at the steps needed to roll back
+    this ML model deployment.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Example 3 – Rollback customer complaint model deployment
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'Suppose that we’ve found an issue with the new CC model. Let’s go through the
+    exercise of rolling back to the previous version. This example has three high-level
+    steps:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Activating the kill switch (optional).
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Finding and importing the previous version of the Object.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Running the **02 – Customer Complaints Prediction** Process once to create Session
+    Logs.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: If there are Sessions that are underway, we can consider turning on the kill
+    switch, to prevent any further calls to the CC ML model.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Activate the customer complaint model kill switch (optional)
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: If the issue with the model is critical, we can optionally trigger the kill
+    switch, so that further predictions won’t be made using the CC model. We can activate
+    the kill switch by invalidating the Credential.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Visit *System* | *Security* | *Credentials*. Double-click on the **Ch12 CC Prediction
+    Kill** **Switch** Credential.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Tick the *Marked as invalid* box and press *OK*.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Now that Sessions can no longer use the CC model any further, we can begin the
+    rollback procedure. First, let’s get a copy of the previous Object.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Obtain and import the previous Object
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: There are a few ways to obtain an old version of an Object. You can retrieve
+    it from a previous Release, and only re-import the Object. You might also have
+    a copy in a shared location or version control system. If you don’t have a readily
+    available copy of the previous Object, we can export it through the *Compare*
+    function in BP.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Important note
+  prefs: []
+  type: TYPE_NORMAL
+- en: BP Customer Support will often provide customers with database maintenance scripts.
+    One of these scripts deletes historical versions of Objects and Processes in the
+    `BPAAuditEvents` table if they’re older than a certain number of days. This could
+    prevent you from using the *Compare* function. Please check with your database
+    team to determine whether this maintenance script is in use.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Click once on the **Customer Complaints ML Model** Object under *Studio* | *Objects*
+    | *Ch12*. The Object’s version history will appear on the right.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Hold down the *Ctrl* button and select the two latest versions of the Object.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 12.9: Select the two latest versions of the Object](img/B18416_12_9.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 12.9: Select the two latest versions of the Object'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Right-click and choose *Compare*. This opens the Business Object Comparison
+    window. See that the two Objects have different model versions.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 12.10: Open the Object Comparison window](img/B18416_12_10.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 12.10: Open the Object Comparison window'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Click on *File* | *Export Left Side* in the *Business Object* *Comparison* window.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 12.11: Export the previous version of the Object](img/B18416_12_11.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 12.11: Export the previous version of the Object'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Save the exported Object to a location of your choice.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Import the saved Object back into BP and overwrite the latest version.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Next, let’s run the Process to generate Session Logs with the old model.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Use the old ML model
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: Execute the Process again from the Control Room. This data will be used in *Example
+    5*. From the Control Room, run the **02 – Customer Complaints Prediction** Process
+    again.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We’ve finished looking at examples of how to deploy new versions of the OP and
+    CC models. We also went through an example of how to roll back the CC model, which
+    used a Code Stage. Next, let’s look at the next major ongoing task that is needed
+    for IA, which is exporting data for ML auditing.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Exporting data for audit
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Based on the solution design, the easiest way to extract ML-related logs is
+    to query the Session Logs database tables directly. Let’s go through an example
+    of what query to use and what we should expect to see after requesting for the
+    ML logs to be extracted from the database. In production, it’s expected that these
+    steps would be performed by a database administrator.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Important note
+  prefs: []
+  type: TYPE_NORMAL
+- en: The SQL query in the following example assumes that you are using the `BPASessionLog_NonUnicode`
+    table to store your logs. Replace that table with `BPASessionLog_Unicode` in the
+    query if you’re using Unicode logging.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Example 4 – Exporting OP model data through SQL
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: In this example, we’ll be querying the inputs, outputs, and model version used
+    for every call to the *OP model* through SQL Server Management Studio. This example
+    relies on having completed *Example 1*, where we executed the **01 – Outage Prediction
+    Notification** Process twice, once before deployment and once after.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We expect to see *four* Session Log records with an older `DateTime` model
+    version and *four* Session Log records with a newer `DateTime` model version:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Open SQL Server Management Studio and connect to your BP database server.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Right-click on your database in the *Object Explorer* (IA in the following image).
+    Choose *New Query*. An empty query editor window will appear.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 12.12: Open a new Query window](img/B18416_12_12.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 12.12: Open a new Query window'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Copy and paste the following query into the editor window and *execute* it:
+    `SELECT * FROM (SELECT logid, stagename, LAG(result, 1, 0) OVER(ORDER BY logid)
+    as modelversion, attributexml, startdatetime from BPASessionLog_NonUnicode WHERE
+    stagename in (''Log [Model Version]'', ''Set [Prediction] and [Confidence Score]'')
+    AND processname = ''01 - Outage Prediction Notification'') as tbl WHERE stagename
+    = ''Set [Prediction] and [``Confidence Score]'';`.'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Verify that your result looks similar to the result shown in *Figure 12**.13*.
+    The *modelversion* column shows the value of the **Ch12 OP Model Version** Environment
+    Variable. Notice that the *modelversion* of the first four rows differs from the
+    last four rows. The *attributexml* column shows the values of any other input
+    and output parameters of the model that you want to store in the *Set [Prediction]
+    and [Confidence Score]* Multi Calc Stage.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 12.13: The query result for extracting the ML Session Logs for audit](img/B18416_12_13.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 12.13: The query result for extracting the ML Session Logs for audit'
+  prefs: []
+  type: TYPE_NORMAL
+- en: We’ve finished exporting the Session Logs that tell us the model version, inputs,
+    and outputs of the OP ML model. The query that we used was taken from [*Chapter
+    9*](B18416_09.xhtml#_idTextAnchor146), and it can be used by any Process that’s
+    developed using the IA template from [*Chapter 7*](B18416_07.xhtml#_idTextAnchor114),
+    with just a few modifications. The only change that we made here is to modify
+    the name of the Process.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Now, suppose that we want to also export the ML audit logs for the CC model
+    that’s called using an Object and Code Stage. We’ll see that the steps and the
+    query are almost exactly the same.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Example 5 – Exporting customer complaint model data through SQL
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: In this example, we’ll be querying the inputs, outputs, and model version used
+    for every call to the *CC model* through SQL Server Management Studio. This example
+    makes use of the Session Logs generated from *Example 2* and *Example 3*, so make
+    sure to go through those examples first.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We expect to see 60 rows returned, where each row represents a customer. The
+    first 20 rows are from before the ML model is updated and should show model version
+    *1.5.3*. The next 20 rows are from after updating the ML model and should show
+    model version *1.6.0*. The last 20 rows are from after rolling back the model
+    and should show model version *1.5.3*:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Open SQL Server Management Studio and connect to your BP database server.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Right-click on your database in the *Object Explorer*. Choose *New Query*. An
+    empty query editor window will appear.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'Copy and paste the following query into the editor window and *execute* it:
+    `SELECT * FROM (SELECT logid, stagename, LAG(result, 1, 0) OVER(ORDER BY logid)
+    as modelversion, attributexml, startdatetime from BPASessionLog_NonUnicode WHERE
+    stagename in (''Log [Model Version]'', ''Set [Prediction] and [Confidence Score]'')
+    AND processname = ''02 - Customer Complaints Prediction'') as tbl WHERE stagename
+    = ''Set [Prediction] and [Confidence Score]'';`. The only difference between this
+    query and the query in *Example 4* is that the name of the Process has changed.'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Verify that 60 rows are returned by the query, with the first 20 rows having
+    *modelversion* 1.5.3, the next 20 rows having *modelversion* 1.6.0, and the final
+    20 rows having *modelversion* 1.5.3.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: We’ve completed exporting the ML audit logs for the CC model. Since it uses
+    the IA template, we only needed to change the name of the Process in the query.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Summary
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In this chapter, we went through a scenario-based example of a power utility
+    company that used two different ML models. The first model predicts grid outages.
+    It’s API-hosted and maintained by an internal ML team. The second model predicts
+    whether customers will call the customer support hotline and is developed and
+    maintained by the IA team. This customer complaint model is deployed through a
+    Code Stage. From analyzing the characteristics and requirements of both ML models,
+    we came up with a solution design that did not separate ML into individual Processes
+    and Work Queues.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Next, we focused on two critical tasks that are needed for IA. These are deploying
+    new ML models and extracting ML-specific data for audit purposes. We went through
+    examples of deploying both the OP and CC models and rolling back the CC one. Finally,
+    we looked at how ML Session Log data can be extracted directly through SQL for
+    auditing purposes.
+  prefs: []
+  type: TYPE_NORMAL
+- en: While mechanically simple, thinking through the steps needed, and practicing
+    how to deploy and rollback ML models is a must for mature IA teams. ML will only
+    receive more and more scrutiny in the future, not just from management, but the
+    legal system as well. If an issue with a model is found, we need to be able to
+    quickly roll back and figure out which customers have been affected by the ML
+    prediction.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the next and final chapter, we’ll take a look at the wider BP product ecosystem.
+    We’ll discuss four additional IA-related products, and how they can contribute
+    to your firm’s IA program. Finally, we’ll also discuss three important IA trends.
+  prefs: []
+  type: TYPE_NORMAL

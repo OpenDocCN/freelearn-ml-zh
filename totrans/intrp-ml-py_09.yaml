@@ -1,0 +1,1783 @@
+- en: '9'
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Interpretation Methods for Multivariate Forecasting and Sensitivity Analysis
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Throughout this book, we have learned about various methods we can use to interpret
+    supervised learning models. They can be quite effective at assessing models while
+    also uncovering their most influential predictors and their hidden interactions.
+    But as the term supervised learning suggests, these methods can only leverage
+    known samples and permutations based on these known samples’ distributions. However,
+    when these samples represent the past, things can get tricky! As the Nobel laureate
+    in physics Niels Bohr famously quipped, “Prediction is very difficult, especially
+    if it’s about the future.”
+  prefs: []
+  type: TYPE_NORMAL
+- en: Indeed, when you see data points fluctuating in a time series, they may appear
+    to be rhythmically dancing in a predictable pattern – at least in the best-case
+    scenarios. Like a dancer moving to a beat, every repetitive movement (or frequency)
+    can be attributed to seasonal patterns, while a gradual change in volume (or amplitude)
+    is attributed to an equally predictable trend. The dance is inevitably misleading
+    because there are always missing pieces of the puzzle that slightly shift the
+    data points, such as a delay in a supplier’s supply chain causing an unexpected
+    dent in today’s sales figures. To make matters worse, there are also unforeseen
+    catastrophic once-in-a-decade, once-in-a-generation, or simply once-ever events
+    that can radically make the somewhat understood movement of a time series unrecognizable,
+    similar to a ballroom dancer having a seizure. For instance, in 2020, sales forecasts
+    everywhere, either for better or worse, were rendered useless by COVID-19!
+  prefs: []
+  type: TYPE_NORMAL
+- en: We could call this an extreme outlier event, but we must recognize that models
+    weren’t built to predict these momentous events because they were trained on almost
+    entirely likely occurrences. Not predicting these unlikely yet most consequential
+    events is why we shouldn’t place so much trust in forecasting models to begin
+    with, especially without discussing certainty or confidence bounds.
+  prefs: []
+  type: TYPE_NORMAL
+- en: This chapter will examine a multivariate forecasting problem with **Long Short-Term
+    Memory** (**LSTM**) models. We will first assess the models with traditional interpretation
+    methods, followed by the **Integrated Gradient** method we learned about in *Chapter
+    7*, *Visualizing Convolutional Neural Networks*, to generate our model’s local
+    attributions.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'But more importantly, we will understand the LSTM’s learning process and limitations
+    better. We will then employ a prediction approximator method and SHAP’s `KernelExplainer`
+    for both global and local interpretation. Lastly, *forecasting and uncertainty
+    are intrinsically linked*, and *sensitivity analysis* is a family of methods designed
+    to measure the uncertainty of the model’s output in relation to its input, so
+    it’s very useful in forecasting scenarios. We will also study two such methods:
+    **Morris** for *factor prioritization* and **Sobol** for *factor fixing*, which
+    involves cost sensitivity.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The following are the main topics we are going to cover:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Assessing time series models with traditional interpretation methods
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Generating LSTM attributions with integrated gradients
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Computing global and local attributions with SHAP’s `KernelExplainer`
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Identifying influential features with factor prioritization
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Quantifying uncertainty and cost sensitivity with factor fixing
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Let’s begin!
+  prefs: []
+  type: TYPE_NORMAL
+- en: Technical requirements
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: This chapter’s example uses the `mldatasets`, `pandas`, `numpy`, `sklearn`,
+    `tensorflow`, `matplotlib`, `seaborn`, `alibi`, `distython`, `shap`, and `SALib`
+    libraries. Instructions on how to install all these libraries can be found in
+    this book’s preface.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The code for this chapter is located here: [https://packt.link/b6118](https://packt.link/b6118).'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The mission
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Highway traffic congestion is a problem that’s affecting cities across the world.
+    As the number of vehicles per capita steadily increases across the developing
+    world with not enough road and parking infrastructure to keep up with it, congestion
+    has been increasing at alarming levels. In the United States, the vehicle per
+    capita statistic is among the highest in the world (838 per 1,000 people in 2019).
+    For this reason, US cities represent 62 out of the 381 cities worldwide with at
+    least a 15% congestion level.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Minneapolis is one such city (see *Figure 9.1*) where that threshold was recently
+    surpassed and keeps rising. To put this metropolitan area into context, congestion
+    levels are extremely severe at above 50%, but moderate-level congestion (15-25%)
+    is already a warning sign of bad congestion to come. It’s challenging to reverse
+    congestion once it reaches 25% because any infrastructure improvement will be
+    costly to implement without disrupting traffic even further. One of the worst
+    congestion points is between the twin cities of Minneapolis and St. Paul throughout
+    the Interstate 94 (I-94) highway, which congests alternate routes as commuters
+    try to cut travel time. Knowing this, the mayors of both cities have obtained
+    some federal funding to expand the highway:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Graphical user interface, application  Description automatically generated](img/B18406_09_01.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 9.1: TomTom’s 2019 traffic index for Minneapolis'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The mayors want to be able to tout a completed expansion as a joint accomplishment
+    to get reelected for a second term. However, they are well aware that a noisy,
+    dirty, and obstructive expansion can be a big nuisance for commuters, so the construction
+    project could backfire politically if it’s not made nearly invisible. Therefore,
+    they have stipulated that the construction company prefabricates as much as possible
+    elsewhere and assembles only during low-volume hours. These hours have less than
+    1,500 vehicles per hour. They can also only work on one direction of the highway
+    at a time and only block no more than half of its lanes when they are working
+    on it. To ensure compliance with these stipulations, they will fine the company
+    if they are blocking more than a quarter of the highway any time that volume is
+    above this threshold, at a rate of $15 per vehicle.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In addition to that, if the construction crew are on-site blocking half the
+    highway while traffic is over 1,500 vehicles per hour, it will cost them $5,000
+    a day. To put this into perspective, blocking during a typical peak hour could
+    cost the construction company $67,000 per hour, plus the $5,000 daily fee! The
+    local authorities will use **Automated Traffic Recorder** (**ATR**) stations along
+    the route to monitor traffic volume, as well as local traffic police to register
+    when lanes are getting blocked for construction.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The project has been planned as a 2-year construction project; the first year
+    will expand the westbound lanes on the I-94 route, while the second will expand
+    the eastbound lanes. The on-site portion of the construction will only occur from
+    May through October because snow is less likely to delay construction during these
+    months. Throughout the rest of the year, they will focus on pre-fabrication. They
+    will attempt to work weekdays only because the workers union negotiated generous
+    overtime pay for weekends. Therefore, weekend construction will happen only if
+    there are significant delays. However, the union agreed to work holidays May through
+    October for the same rate.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The construction company doesn’t want to take any risks! Therefore, they need
+    a model to predict traffic for the I-94 route and, more importantly, to understand
+    what factors create uncertainty and possibly increase costs. They have hired a
+    machine learning expert to do this: you!'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The ATR data provided by the construction company includes hourly traffic volumes
+    up to September 2018, as well as weather data at the same timescale. It only consists
+    of the westbound lanes because that expansion will come first.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The approach
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'You have trained a stateful **Bidirectional LSTM** model with almost four years’
+    worth of data (October 2012 – September 2016). You reserved the last year for
+    testing (September 2017–2018) and the prior year to that for validation (September
+    2016 –2017). This made sense because the combined testing and validation datasets
+    align well with the highway expansion project’s expected conditions (March – November).
+    You wondered about using other splitting schemes that leveraged only the data
+    representative of these conditions, but you didn’t want to reduce the training
+    data so drastically, and maybe they might need it for winter predictions after
+    all. A look-back window defines how much past data a time series model has access
+    to. You chose 168 hours (1 week) as the look-back window size. Given the stateful
+    nature of the model, as the model moves forward in the training data, it can learn
+    daily and weekly seasonality, as well as some trends and patterns that can only
+    be observed across several weeks. You also trained another two models. You have
+    outlined the following steps to meet the client’s expectations:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: With *RMSE*, *regression plots*, *confusion matrices*, and much more, you will
+    access the models’ predictive performance and, more importantly, how the error
+    is distributed.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: With *integrated gradients*, you will understand if you took the best modeling
+    strategy since it can help you visualize each of the model’s pathways to a decision,
+    and help you choose a model based on that.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: With *SHAP’s* `KernelExplainer` and a prediction approximation method, you will
+    derive both a global and local understanding of what features matter to the chosen
+    model.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: With *Morris sensitivity analysis*, you will identify *factor prioritization*,
+    which ranks factors (in other words, features) by how much they can drive output
+    variability.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: With *Sobol sensitivity analysis*, you will compute *factor fixing*, which helps
+    determine what factors aren’t influential. It does this by quantifying the input
+    factors’ contributions and interactions to the output’s variability. With this,
+    you can understand what factors may have the most effect on potential fines and
+    costs, thus producing a variance-based cost-sensitivity analysis.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: The preparation
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'You can find the code for this example here: [https://github.com/PacktPublishing/Interpretable-Machine-Learning-with-Python-2E/blob/main/09/Traffic_compact1.ipynb](https://github.com/PacktPublishing/Interpretable-Machine-Learning-with-Python-2E/blob/main/09/Traffic_compact1.ipynb).'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Loading the libraries
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'To run this example, you will need to install the following libraries:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '`mldatasets` to load the dataset'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`pandas` and `numpy` to manipulate the dataset'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`tensorflow` to load the model'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`sklearn` (scikit-learn), `matplotlib`, `seaborn`, `alibi`, `distython`, `shap`,
+    and `SALib` to create and visualize the interpretations'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'You should load all of them first:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE0]'
+  prefs: []
+  type: TYPE_PRE
+- en: Let’s check that TensorFlow has loaded the right version by using the `print(tf.__version__)`
+    command. It should be 2.0 or above.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Understanding and preparing the data
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: '[PRE1]'
+  prefs: []
+  type: TYPE_PRE
+- en: '[PRE2]'
+  prefs: []
+  type: TYPE_PRE
+- en: There should be over 52,000 records and 16 columns. We can verify this with
+    `traffic_df.info()`. The output should check out. All the features are numerical
+    and have no missing values, and the categorical features have already been one-hot
+    encoded for us.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The data dictionary
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'There are only nine features, but they become 16 columns because of categorical
+    encoding:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '`dow`: Ordinal; day of the week starting with Monday (between 0 and 6)'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`hr`: Ordinal; hour of the day (between 0 and 23)'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`temp`: Continuous; average temperature in Celsius (between-30 and 37)'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`rain_1h`: Continuous; mm of rainfall occurred in the hour (between 0 and 21)'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`snow_1h`: Continuous; cm of snow (when converted to liquid form) occurred
+    in the hour (between 0 and 2.5)'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`cloud_coverage`: Continuous; percentage of cloud coverage (between 0 and 100)'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`is_holiday`: Binary; is the day a national or state holiday when it occurs
+    Monday to Friday (1 for yes, 0 for no)?'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`traffic_volume`: Continuous; the target feature capturing traffic volume'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`weather`: Categorical; a short description of the weather during that hour
+    (Clear | Clouds | Haze | Mist | Rain | Snow | Unknown | Other)'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Understanding the data
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: The first step in understanding a time series problem is understanding the target
+    variable. This is because it determines how you approach everything else, from
+    data preparation to modeling. The target variable is likely to have a special
+    relationship with time, such as a seasonal movement or a trend.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Understanding weeks
+  prefs:
+  - PREF_H4
+  type: TYPE_NORMAL
+- en: 'First, we can sample one 168-hour period from every season to understand the
+    variance a bit better between days of the week, and then get an idea of how they
+    could vary across seasons and holidays:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE3]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The preceding code generates the plots shown in *Figure 9.2*. If you read them
+    from left to right, you’ll see that they all start with Wednesday and end with
+    Tuesday of the following week. Every day of the week starts and ends at a low
+    point, with a high point in between. Weekdays tend to have two peaks corresponding
+    to morning and afternoon rush hour, while weekends only have one mid-afternoon
+    bump:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/B18406_09_02.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 9.2: Several sample weekly periods for traffic_volume representing each
+    season'
+  prefs: []
+  type: TYPE_NORMAL
+- en: There are some major outliers, such as Saturday October 31, which is basically
+    Halloween and is not an official holiday. Also, February 2 (a Tuesday) was the
+    beginning of a severe snowstorm, and the period in the late summer is much more
+    chaotic than the other sample weeks. It turns out that in that year, the state
+    fair occurred. Like Halloween, it’s not a federal or a regional holiday, but it’s
+    important to note that the fairgrounds are located halfway between Minneapolis
+    and St. Paul. You’ll also notice that on Friday July 29, there’s a midnight bump
+    in traffic, which can be attributed to this being a big day for Minneapolis concerts.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Trying to explain these inconsistencies while comparing periods in your time
+    series is a good exercise as it helps you figure out what variables to add to
+    your model, or at least know what is missing. In our case, we know our `is_holiday`
+    variable doesn’t include days such as Halloween or the entire state fair week,
+    nor do we have a variable for big music or sporting events. To produce a more
+    robust model, it would be advisable to look for reliable external data sources
+    and add more features that cover all these possibilities, not to mention validate
+    the existing variables. For now, we will work with what we’ve got.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Understanding days
+  prefs:
+  - PREF_H4
+  type: TYPE_NORMAL
+- en: It is crucial for the highway expansion project to understand what traffic looks
+    like for the average workday. The construction crew will be working on weekdays
+    only (Monday to Friday) unless they experience delays, in which case they will
+    also work weekends. We must also make a distinction between holidays and other
+    weekdays because these are likely to be different.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'To this end, we will create a DataFrame (`weekend_df`) and engineer a new column
+    (`type_of_day`) that codes hours as being part of a “Holiday,” “Weekday,” or “Weekend.”
+    Then, we can group by this column and the `hr` column, and aggregate with `mean`
+    and standard deviation (`std`). We can then `pivot` so that we have one column
+    with the average and standard deviations traffic volumes for every `type_of_day`
+    category, where the rows represent the hours of the day (`hr`). Then, we can plot
+    the resulting DataFrame. We can create intervals with the standard deviations:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE4]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The preceding snippet results in the following plot. It represents the hourly
+    average, but there’s quite a bit of variation, which is why the construction company
+    is proceeding with caution. There are horizontal lines that have been plotted
+    representing each of the thresholds:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 5,300 for full capacity.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 2,650 for half-capacity, after which the construction company will get fined
+    the daily amount specified.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 1,500 is the no-construction threshold, after which the construction company
+    will get fined the hourly amount specified.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'They only want to work Monday to Friday during the hours that are typically
+    below the 1,500 threshold. These five hours would be 11 p.m. (the day before)
+    to 5 a.m. If they had to work weekends, this schedule would typically be delayed
+    until 1 a.m. and end at 6 a.m. There’s considerably less variance during weekdays,
+    so it’s understandable why the construction company is adamant about only working
+    weekdays. During these hours, holidays appear to be similar to weekends, but holidays
+    tend to vary even more than weekends, which is potentially even more problematic:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Chart  Description automatically generated](img/B18406_09_03.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 9.3: The average hourly traffic volume for holidays, weekdays, and weekends,
+    with intervals'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Usually, for a project like this, you would explore the predictor variables
+    to the extent we have done with the target. This book is about model interpretation,
+    so we will learn about the predictors by interpreting the models. But before we
+    get to the models, we must prepare the data for them.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Data preparation
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'The first data preparation step is to split it into train, validation, and
+    test sets. Please note that the test dataset comprises the last 52 weeks (`2184`
+    hours), while the validation dataset comprises the 52 weeks before that, so it
+    starts at `4368` and ends `2184` hours before the last row of the DataFrame:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE5]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Now that the DataFrame has been split, we can plot it to ensure that its parts
+    are split as intended. We can do so with the following code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE6]'
+  prefs: []
+  type: TYPE_PRE
+- en: The preceding code produces *Figure 9.4*. It shows that almost 4 years of data
+    was allocated for the training dataset, and a year to validate and test each.
+    We won’t reference the validation dataset from this point on during this exercise
+    because it was only instrumental during training to assess the model’s predictive
+    performance after every epoch.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Chart  Description automatically generated with low confidence](img/B18406_09_04.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 9.4: Time series split into train, validation, and test sets'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The next step is to min-max normalize the data. We are doing this because larger
+    values lead to slower learning for all neural networks in general and LSTMs are
+    very prone to **exploding and vanishing gradients**. Relatively uniform and small
+    numbers can help counter these problems. We will discuss this later in this chapter,
+    but basically, the network becomes either numerically unstable or ineffective
+    at reaching a global minimum.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We can min-max normalize with `MinMaxScaler` from the `scikit` package. For
+    now, all we will do is `fit` the scaler so that we can use them whenever we need
+    them. We will create a scaler for our target (`traffic_volume`) called `y_scaler`
+    and another for the rest of the variables (`X_scaler`) with the entire dataset,
+    so that transformations are consistent no matter what part you are using, be it
+    `train`, `valid`, or `test`. All the `fit` process does is save the formula to
+    make each variable fit between zero and one:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE7]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Now, we will `transform` both our train and test datasets with our scaler,
+    creating *y* and *X* pairs for each:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE8]'
+  prefs: []
+  type: TYPE_PRE
+- en: However, for a time series model, the *y* and *X* pairs we created aren’t useful
+    because each observation is a timestep. And each timestep is more than the features
+    that occur for that timestep, but to a certain extent what happens before it,
+    called lags. For instance, say if we predict traffic based on 168 lagged observations,
+    for every label, we will need the previous 168 hours of each feature. Therefore,
+    you have to generate an array for every timestep, as well as its lags. Fortunately,
+    `keras` has a function called `TimeseriesGenerator` that takes your *X* and *y*
+    and produces a generator that feeds the data to your model. You must specify a
+    certain `length`, which is the number of lagged observations (also known as the
+    **lookback window**). The default `batch_size` is one, but we are using 24 because
+    the client prefers to get forecasts 24 hours at a time, and also training and
+    inference are much faster with a larger batch size.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Naturally, when you need to forecast tomorrow, you will need tomorrow’s weather,
+    but you can complete the timesteps with weather forecasts:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE9]'
+  prefs: []
+  type: TYPE_PRE
+- en: '[PRE10]'
+  prefs: []
+  type: TYPE_PRE
+- en: Any model that was trained with a 1-week look-back window and 24-hour batch
+    size will need this generator. Each generator is a list of tuples corresponding
+    to each batch. Index 0 of this tuple is the *X* feature array, while index 1 is
+    the *y* label array. Therefore, the first number output is the length of the list,
+    which is the number of batches. The dimensions of the *X* and *y* array follow.
+  prefs: []
+  type: TYPE_NORMAL
+- en: For instance, `gen_train` has 1,454 batches, and each batch has 24 timesteps,
+    with a length of 168 and 15 features. The shape of the predicted labels expected
+    from these 24 timesteps is `(24,1)`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Lastly, before moving forward with handling models and stochastic interpretation
+    methods, let’s attempt to make things more reproducible by initializing our random
+    seeds:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE11]'
+  prefs: []
+  type: TYPE_PRE
+- en: Loading the LSTM model
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'We can quickly load the model and output its summary like this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE12]'
+  prefs: []
+  type: TYPE_PRE
+- en: '[PRE13]'
+  prefs: []
+  type: TYPE_PRE
+- en: Now, let’s assess the `LSTM_traffic_168_compact1` model using traditional interpretation
+    methods.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Assessing time series models with traditional interpretation methods
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: A time series regressor model can be evaluated as you would evaluate any regression
+    model; that is, using metrics derived from the **mean squared error** or the **R-squared**
+    score. There are, of course, cases in which you will need to use a metric with
+    medians, logs, deviances, or absolute values. These models don’t require any of
+    this.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Using standard regression metrics
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: The `evaluate_reg_mdl` function can evaluate the model, output some standard
+    regression metrics, and plot them. The parameters for this model are the fitted
+    model (`lstm_traffic_mdl`), `X_train` (`gen_train`), `X_test` (`gen_test`), `y_train`,
+    and `y_test`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Optionally, we can specify a `y_scaler` so that the model is evaluated with
+    the labels’ inverse transformed, which makes the plot and **root mean square error**
+    (**RMSE**) much easier to interpret. Another optional parameter that is very much
+    necessary, in this case, is `y_truncate=True` because our `y_train` and `y_test`
+    are of larger dimensions than the predicted labels. This discrepancy happens because
+    the first prediction occurs several timesteps after the first timestep in the
+    dataset due to the look-back window. Therefore, we would need to deduct these
+    timesteps from `y_train` in order to match the length of `gen_train`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We will now evaluate both models with the following code. To observe the prediction’s
+    progress as it happens, we will use `predopts={"verbose":1}`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE14]'
+  prefs: []
+  type: TYPE_PRE
+- en: '![](img/B18406_09_05.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 9.5: Predictive performance evaluations for the “LSTM_traffic_168_compact1”
+    model'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We can also evaluate the model by comparing observed versus predicted traffic.
+    It would be helpful to break down the error by the hour and type of day too. To
+    this end, we can create DataFrames with these values – one for each model. But
+    first, we must truncate the DataFrame (`-y_test_pred.shape[0]`) so that it matches
+    the length of the predictions array, and we won’t need all the columns, so we
+    are providing indexes for only those we are interested in: `traffic_volume` is
+    #7 but we also will want `dow` (#0), `hr` (#1), and `is_holiday` (#6). We will
+    rename `traffic_volume` to `actual_traffic` and create a new column called `predicted_traffic`
+    with our predictions. Then, we will engineer a `type_of_day` column, as we did
+    previously, which tells us if it’s a holiday, weekday, or weekend. Finally, we
+    can drop the `dow` and `is_holiday` columns since we won’t need them:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE15]'
+  prefs: []
+  type: TYPE_PRE
+- en: You can quickly review the contents of the DataFrames by simply running a cell
+    with `evaluate_df`. It should have 4 columns.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Predictive error aggregations
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'It may be that some days and times of day are more prone to predictive errors.
+    To get a better sense of how these errors are distributed across time, we can
+    plot RMSE on an hourly basis segmented by `type_of_day`. To do this, we must first
+    define an `rmse` function and then group each of the models’ evaluated DataFrames
+    by `type_of_day` and `hr` and use the `apply` function to aggregate using the
+    `rmse` function. We can then pivot to ensure that each `type_of_day` has a column
+    with the RMSEs on an hourly basis. We can then average these columns and store
+    them in a series:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE16]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Now that we have DataFrames with the hourly RMSEs for holidays, weekdays, and
+    weekends, as well as the average for these “types” of day, we can plot them using
+    the `evaluate_by_hr` DataFrame. We will also create dotted horizontal lines with
+    the averages for each `type_of_day` from the `mean_by_daytype` `pandas` series:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE17]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The preceding code generated the plot shown in *Figure 9.6*. As we can see,
+    the model has a high RMSE for holidays. However, the model could be overestimating
+    the traffic volume, and overestimating is not as bad as underestimating in this
+    particular use case because underestimating can lead to annoying commuters with
+    traffic delays and additional costs from fines:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Chart, line chart  Description automatically generated](img/B18406_09_06.png)Figure
+    9.6: Hourly RMSE segmented by type_of_day for the “LSTM_traffic_168_compact1”
+    model'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Evaluating the model like a classification problem
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'Indeed, just like classification problems can have false positives and false
+    negatives and one is more costly than the other, you can frame any regression
+    problem with concepts such as underestimation and overestimation. This framing
+    is especially useful when one is more costly than the other. If you have clearly
+    defined thresholds, as we have for this project, you can evaluate any regression
+    problem as you would a classification one. We will assess it with a confusion
+    matrix with half-capacity and no-construction thresholds. To accomplish this,
+    we can use `np.where` to get binary arrays for when the actuals and predictions
+    surpass each threshold. We can then use the `compare_confusion_matrices` function
+    to compare the confusion matrices for the model:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE18]'
+  prefs: []
+  type: TYPE_PRE
+- en: '![Chart  Description automatically generated](img/B18406_09_07.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 9.7: Confusion matrices for going over half and the no-construction
+    threshold for the “LSTM_traffic_168_compact1” model'
+  prefs: []
+  type: TYPE_NORMAL
+- en: We are most interested in the percentage of false negatives (bottom-left quadrant)
+    because predicting no traffic beyond the threshold when, in fact, it did rise
+    above it, will lead to a steep fine. On the other hand, the cost of false positives
+    is in preemptively leaving the construction site when traffic didn’t rise above
+    the threshold after all. It’s better to be safe than sorry, though! If you compare
+    false negatives for the “no-construction” threshold (0.85%), it’s less than a
+    third of that of the half-capacity threshold (3.08%). Ultimately, what matters
+    most is the no-construction threshold because the idea is to stop construction
+    before it gets close to half-capacity.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Now that we have leveraged traditional methods to understand the model’s decisions,
+    let’s move on to some more advanced model-agnostic methods.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Generating LSTM attributions with integrated gradients
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: We first learned about **integrated gradients** (**IG**) in *Chapter 7*, *Visualizing
+    Convolutional Neural Networks*. Unlike the other gradient-based attribution methods
+    studied in that chapter, path-integrated gradients is not contingent on convolutional
+    layers, nor is it limited to classification problems.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In fact, since it computes the gradients of the output concerning the inputs
+    averaged along the path, the input and output could be anything! It is common
+    to use integrated gradients with **Convolutional Neural Networks** (**CNNs**)
+    and **Recurrent Neural Networks** (**RNNs**), like the one we are interpreting
+    in this chapter. Frankly, when you see an IG LSTM example online, it has an embedding
+    layer and is an NLP classifier, but IG could be used very effectively for LSTMs
+    that even process sounds or genetic data!
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The integrated gradient explainer and the explainers that we will use moving
+    forward can access any part of the traffic dataset. First, let’s create a generator
+    for all of it:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE19]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Integrated gradients is a local interpretation method. So, let’s get a few
+    sample “instances of interest” we can interpret. We know holidays may require
+    specialized logic, so let’s see if our model picks up on the importance of `is_holiday`
+    for one example (`holiday_afternoon_s`). Also, mornings are a concern, especially
+    mornings with a larger than average rush hour because of weather conditions, so
+    we have one example for that (`peak_morning_s`). Lastly, a hot day might have
+    more traffic, especially on a weekend (`hot_Saturday_s`):'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE20]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Now that we have created some instances, let’s instantiate our explainers.
+    `IntegratedGradients` from the `alibi` package only requires a deep learning model,
+    but it is recommended to set a number of steps (`n_steps`) for the integral approximation
+    and `internal_batch_size`. We will instantiate an explainer for our model:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE21]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Before we iterate our samples and the explainers, it is important to realize
+    how we need to input the sample to the explainer because it will need a batch
+    of 24\. To this end, we will have to get the index of the sample once we’ve deducted
+    the lookback window (`nidx`). Then, you can obtain the batch for this sample from
+    the generator (`gen_all`). Each batch includes 24 timesteps, so you floor `nidx`
+    by 24 (`nidx//24`) to get the batch’s position for that sample. Once you’ve got
+    the batch for the sample (`batch_X`) and printed the shape `(24, 168, 15)`, it
+    shouldn’t surprise you that the first number is 24\. Of course, we will need to
+    get the index of the sample within the batch (`nidx%24`) to obtain the data for
+    that sample:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE22]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The `for` loop will use the previously explained method to locate the batch
+    for the sample `(batch_X`). This `batch_X` is inputted into the `explain` function.
+    This is because this is a regression problem and there’s no target class; that
+    is, `target=None`. Once the explanation is produced, the `attributions` property
+    will have the attributions for the entire batch. We can only obtain this for the
+    sample and `transpose` it to produce an image that has this shape: `(15, lb)`.
+    The rest of the code in the `for` loop simply obtains the labels to use in the
+    tick marks and then plots an image stretched out to fit the dimensions of our
+    `figure`, along with its labels:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE23]'
+  prefs: []
+  type: TYPE_PRE
+- en: The preceding code will generate the plots shown in *Figure 9.8*. On the *y*-axis,
+    you can see the variable names, while on the *x*-axis, you can see the dates corresponding
+    to the lookback window for the sample in question. The rightmost part of the *x*-axis
+    is the sample’s date, and as you move left, you go backward in time. For instance,
+    the holiday afternoon sample was 4 p.m. September 3 and there is one week’s worth
+    of lookback, so each tick mark backward is a day before that date.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Graphical user interface, application, table  Description automatically generated](img/B18406_09_08.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 9.8: Annotated integrated gradients attribution map for all samples
+    for the “LSTM_traffic_168_compact1” model'
+  prefs: []
+  type: TYPE_NORMAL
+- en: You can tell by the intensity in the attribution maps in *Figure 9.8* which
+    hour/variables mattered for the prediction. The color bar to the right of each
+    attribution map can serve as a key. Negative numbers in red correspond to a negative
+    correlation, while positive numbers in blue correspond to a positive correlation.
+    However, something that is pretty evident is the tendency for intensities to fade
+    as each map goes backward in time. Since it’s bidirectional, this happens from
+    both ends. What is surprising is how fast this happens.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Let’s start from the bottom. For “Hot Saturday,” day of the week, hour, temperature,
+    and clear weather play an important role in this prediction increasingly as you
+    get closer to the predicted time (midday Saturday). The day started cooler, which
+    explains how there’s a patch of red before the blue in the temperature feature.
+  prefs: []
+  type: TYPE_NORMAL
+- en: For “Peak Morning,” attributions make sense since it was clear after it had
+    been previously rainy and cloudy, which caused the rush hour to peak quickly rather
+    than increase slowly. To a certain degree, the LSTM has learned that only recent
+    weather matters – no more than two or three days’ worth. However, that is not
+    the only reason the integrated gradients fade. They also fade because of the **vanishing
+    gradient problem**. This problem occurs during backpropagation because the gradient
+    values are multiplied by the weight matrices in each step, so gradients can exponentially
+    decrease to zero.
+  prefs: []
+  type: TYPE_NORMAL
+- en: LSTMs are organized in a very long sequence, making the network ever more ineffective
+    at capturing dependencies in the long term. Fortunately, these LSTMs are **stateful**,
+    which means they string batches in a sequence by leveraging states from the previous
+    batch. **Statefulness** ensures learning from a long sequence, despite vanishing
+    gradients. This is why when we observe the attribution map for “Holiday Afternoon,”
+    there are negative attributions for `is_holiday`, which makes sense to anticipate
+    no rush hour. It turns out September 3 (Labor Day) is nearly two months after
+    the previous holiday (Independence Day), which is a more festive holiday. Is it
+    possible that the model is picking up on these patterns?
+  prefs: []
+  type: TYPE_NORMAL
+- en: We could try subcategorizing holidays by their traffic patterns to see if that
+    helps the model identify them. We could also make rolling aggregations of previous
+    weather conditions to make it easier for the model to pick up on recent weather
+    patterns. Weather patterns span hours, so it is intuitive to aggregate, not to
+    mention easier to interpret. Interpretation methods can point us in the right
+    direction as to how to improve models, and there’s certainly a lot of room for
+    improvement.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Next, we will take a stab at a permutation-based method!
+  prefs: []
+  type: TYPE_NORMAL
+- en: Computing global and local attributions with SHAP’s KernelExplainer
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Permutation methods make changes to the input to assess how much difference
+    they will make to a model’s output. We first discussed this in *Chapter 4*, *Global
+    Model-Agnostic interpretation methods*, but if you recall, there’s a coalitional
+    framework to perform these permutations that will produce the average marginal
+    contribution for each feature across different coalitions of features. This process’s
+    outcome is **Shapley** **values**, which have essential mathematical properties
+    such as additivity and symmetry. Unfortunately, Shapley values are costly to compute
+    for datasets that aren’t small, so the SHAP library has approximation methods.
+    One of these methods is `KernelExplainer`, which we also explained in *Chapter
+    4* and used in *Chapter 5*, *Local Model-Agnostic Interpretation Methods*. It
+    approximates the Shapley values with a weighted local linear regression, just
+    like LIME does.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Why use KernelExplainer?
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: We have a deep learning model, so why aren’t we using SHAP’s `DeepExplainer`
+    as we did with the CNN in *Chapter 7*, *Visualizing Convolutional Neural Networks*?
+    DeepExplainer adapted the DeepLIFT algorithm to approximate the Shapley values.
+    It works very well with any feedforward network that’s used for tabular data,
+    CNNs, and RNNs with an embedding layer, such as those used for an NLP classifier,
+    or even to detect genomic sequences. It gets trickier for multivariate time series
+    because DeepExplainer doesn’t know what to do with the input’s three-dimensional
+    array. Even if it did, it includes data for previous timesteps, so you cannot
+    permute one timestep without considering the previous ones. For instance, if the
+    permutation dictates that the temperature is five degrees lower, shouldn’t that
+    affect all the previous timestep’s temperatures up to a certain number of hours?
+    And what if it’s 20 degrees lower? Doesn’t that mean it’s likely in a different
+    season with entirely different weather – perhaps more clouds and snow as well?
+  prefs: []
+  type: TYPE_NORMAL
+- en: SHAP’s `KernelExplainer` can receive any arbitrary black box `predict` function.
+    It also makes assumptions about the input dimensions. Fortunately, we can change
+    the input data before it permutes it, making it seem to the `KernelExplainer`
+    like it’s dealing with a tabular dataset. The arbitrary `predict` function doesn’t
+    have to simply call the model’s `predict` function – it can change data both on
+    the way in and on the way out!
+  prefs: []
+  type: TYPE_NORMAL
+- en: Defining a strategy to get it to work with a multivariate time series model
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: To mimic likely past weather patterns based on the permutated input data, we
+    could create a generative model or something to that effect. This strategy will
+    help us to generate a variety of past timesteps that fit the permutated timestep,
+    as well as to generate images for a specific class. Although this would likely
+    lead to more accurate predictions, we won’t use this strategy because it’s incredibly
+    time-consuming.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Instead, we will find the time series data that best suits the permutated input
+    with existing examples from our `gen_all` generator. There are distance metrics
+    we can use to find the one that is closest to the permutated input. However, we
+    must place some guardrails because if the permutation is for a Saturday at 5 a.m.
+    with a temperature of 27 degrees Celsius and 90 percent cloud coverage, the closest
+    observation to this one could be on a Friday at 7 a.m., but regardless of the
+    weather traffic, it would be completely different. Therefore, we can implement
+    a filter function that ensures that it only finds the closest observations for
+    the same `dow`, `is_holiday`, and `hr`. The filter function can also clean up
+    the permutated sample to remove or modify anything nonsensical for the model,
+    such as a continuous value for a categorical feature:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/B18406_09_09.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 9.9: Permutation approximation strategy'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '*Figure 9.9* depicts the rest of the process where it uses a distance function
+    to find the closest observation to the modified permutated sample. This function
+    returns the closest observation index, but the model can’t predict on singular
+    observations (or timesteps), so it requires its past hourly history up to the
+    lookback window. For this reason, it retrieves the right batch from the generator
+    and makes a prediction on that, but the predictions will be on a different scale,
+    so they need to be inverse transformed with `y_scaler`. Once the `predict` function
+    has iterated through all the samples and made predictions for them and rescaled
+    them, it sends them back to the `KernelExplainer`, which outputs their SHAP values.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Laying the groundwork for the permutation approximation strategy
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: You can define a custom filter function (`filt_fn`). It takes a `pandas` DataFrame
+    with the entire dataset (`X_df`) you want to filter from, as well as the permutated
+    sample (`x`) for filtering and the length of the `lookback` window.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The function can also modify the permutated sample. In this case, we have to
+    do this because so many features of the model are discrete, but the permutation
+    process makes them continuous. As we mentioned previously, all the filtering does
+    is protect the distance function from finding a nonsensical closest sample to
+    the permutated sample by limiting the options:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE24]'
+  prefs: []
+  type: TYPE_PRE
+- en: If you refer to *Figure 9.9*, after the filter function, the next thing we ought
+    to define is the distance function. We could use any standard distance function
+    accepted by `scipy.spatial.distance.cdist`, such as “Euclidean,” “cosine,” or
+    “Hamming.” The problem with these standard distance functions is that they either
+    work well with continuous or discrete variables but not both. We have both in
+    this dataset!
+  prefs: []
+  type: TYPE_NORMAL
+- en: Fortunately, some alternatives exist that can handle both, such as **Heterogeneous
+    Euclidean-Overlap Metric** (**HEOM**) and **Heterogeneous Value Difference Metric**
+    (**HVDM**). Both methods apply different distance metrics, depending on the nature
+    of the variable. HEOM uses a normalized Euclidean ![](img/B18406_09_001.png) for
+    continuous and , for discrete, “overlap” distance; that is, a distance of zero
+    if the same and one otherwise.
+  prefs: []
+  type: TYPE_NORMAL
+- en: HVDM is more complicated because, for continuous variables, it’s the absolute
+    distance between both values, divided by the standard deviation of the feature
+    in question times four ![](img/B18406_09_002.png)), which is a great distance
+    metric for handling outliers. For discrete variables, it uses a normalized **value
+    difference metric**, which is based on the difference between the conditional
+    probability of both values.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Even though HVDM is better than HEOM for datasets with many continuous values,
+    it is overkill in this case. Once the dataset has been filtered by day of the
+    week (`dow`) and hour (`hr`), the remaining discrete features are all binary,
+    so “overlap” distance is ideal, and for the three remaining continuous features
+    (`temp`, `rain_1h`, `snow_1h`, and `cloud_coverage`), Euclidean distance should
+    suffice. `distython` has an `HEOM` distance method, and all it requires is a background
+    dataset (`X_df.values`) and the indexes of the categorical features (`cat_idxs`).
+    We can programmatically identify these features with an `np.where` command.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'If you want to verify that these are the right ones, run `print(cat_idxs)`
+    in a cell. Only indexes 2, 3, 4, and 5 should be omitted:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE25]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Now, we can create a `lambda` function that puts everything depicted in *Figure
+    9.9* together. It leverages a function called `approx_predict_ts` that takes care
+    of the entire pipeline. It takes our filter function (`filt_fn`), distance function
+    (`heom_dist.heom`), generator (`gen_all`), and fitted model (`lstm_traffic_mdl`),
+    and chains them together, as described in *Figure 9.9*. It also scales the data
+    with our scalers (`X_scaler` and `y_scaler`). Distance is computed on transformed
+    features for higher accuracy, and the predictions are reverse transformed on the
+    way out:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE26]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We can now use the prediction function with `KernelExplainer`, but it should
+    be done on samples that are most representative of the construction crew’s expected
+    working conditions; that is, they plan to work March through November only, preferably
+    on weekdays and in low-traffic hours. To this end, let’s create a DataFrame (`working_season_df`)
+    that only includes these months and initializes a `KernelExplainer` with `predict_fn`
+    and the k-means of the DataFrame as background data:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE27]'
+  prefs: []
+  type: TYPE_PRE
+- en: We can now produce SHAP values for a random set of observations of the `working_season_df`
+    DataFrame.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Computing the SHAP values
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'We will sample 48 observations from it. `KernelExplainer` is rather slow, especially
+    when it’s using our approximation method. To get an optimal global interpretation,
+    it is best to use a high number of observations but also a high `nsamples`, which
+    is the number of times we need to reevaluate the model when explaining each prediction.
+    Unfortunately, having 50 of each would cause the explainer to take many hours
+    to run, depending on your available compute, so we will use `nsamples=10`. You
+    can look at SHAP’s progress bar and adjust it accordingly. Once it’s done, it
+    will produce a feature importance `summary_plot` containing the SHAP values:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE28]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The preceding code plots the summary shown in the following graph. Not surprisingly,
+    `hr` and `dow` are the most important features, followed by some weather features.
+    Strangely enough, temperature and rain don’t seem to weigh in on the predictions,
+    but late spring through fall may not be a significant factor. Or maybe more observations
+    and a higher `nsample` will yield a better global interpretation:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![A picture containing graphical user interface  Description automatically
+    generated](img/B18406_09_10.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 9.10: SHAP summary plot based on the SHAP values produced by 48 sampled
+    observations'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We can do the same with the instances of interest we chose in the previous
+    section for local interpretations. Let’s iterate through all these data points.
+    Then, we can produce a single `shap_values`, but this time with `nsamples=80`,
+    and then generate a `force_plot` for each one:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE29]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The preceding code generates the plots shown in *Figure 9.11*. “Holiday afternoon”
+    has the hour (`hr=16`) pushing toward a higher prediction, while the fact that
+    it’s a Monday (`dow=0`) and a holiday (`is_holiday=1`) is a driving force in the
+    opposite direction. On the other hand, “Peak Morning” is mostly peak due to the
+    hour (`hr=8.0`), but it has a high `cloud_coverage`, affirmative `weather_Clouds`,
+    and yet no rain (`rain_1h=0.0`). Lastly, “Hot Saturday” has the day of the week
+    (`dow=5`) pushing for a lower value, but the abnormally high value is mostly due
+    to it being midday with no rain and clouds. Strangely, higher than normal temperature
+    is not one of the factors:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Timeline  Description automatically generated](img/B18406_09_11.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 9.11: Force plots generated with SHAP values using nsamples=80 for a
+    Holiday Afternoon, Peak Morning, and Hot Saturday'
+  prefs: []
+  type: TYPE_NORMAL
+- en: With SHAP’s game theory-based approach, we can gauge how many permutations for
+    the existing observations marginally vary the predicted outcome across many possible
+    coalitions of features. However, this approach can be very limiting because our
+    background data’s existing variance shapes our understanding of outcome variance.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the real world, *variability is often determined by what is NOT represented
+    in your data – but infinitesimally plausible*. For instance, reaching 25°C (77°F)
+    before 5 a.m. in a Minneapolis summer is not a common occurrence, but with global
+    warming, it could become frequent, so we would want to simulate how it could impact
+    traffic patterns. Forecasting models are particularly prone to risk, so simulating
+    is a crucial interpretation component to assess this uncertainty. A better understanding
+    of uncertainty can yield more robust models and directly inform decisions. Next,
+    we will discuss how we can produce simulations with sensitivity analysis methods.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Identifying influential features with factor prioritization
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: The **Morris method** is one of several global sensitivity analysis methods
+    that range from simple **Fractional factorial** to complicated **Monte Carlo filtering**.
+    Morris is somewhere on this spectrum, falling into two categories. It uses **one-at-a-time
+    sampling**, which means that only one value changes between consecutive simulations.
+    It’s also an **Elementary Effects** (**EE**) method, which means that it doesn’t
+    quantify the exact effect of a factor in a model but rather gauges its importance
+    and relationship with other factors. By the way, **factor** is just another word
+    for a feature or variable that’s commonly used in applied statistics. To be consistent
+    with the related theory, we will use this word in this and the next section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Another property of Morris is that it’s less computationally expensive than
+    the variance-based methods we will study next. It can provide more insights than
+    simpler and less costly methods such as regression-, derivative-, or factorial-based
+    ones. It can’t quantify effects precisely but can identify those with negligible
+    or interaction effects, making it an ideal method for screening factors when the
+    number of factors is low. Screening is also known as **factor prioritization**
+    because it can prioritize your factors by how they are classified.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Computing Morris sensitivity indices
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: The Morris method derives a distribution of elementary effects that it associates
+    with an individual factor. Each EE distribution has a mean (*µ*) and a standard
+    deviation (*σ*). These two statistics are what help map the factors into different
+    classifications. The mean could be negative when the model is non-monotonic, so
+    a Morris method variation adjusts for this with absolute values (*µ*^*) so that
+    it is more manageable to interpret. We will use this variation here.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Now, let’s limit the scope of this problem to make it more manageable. The
+    traffic uncertainties the construction crew will face will be ongoing from May
+    to October, Monday to Friday, from 11 p.m. to 5 a.m. Therefore, we can take the
+    `working_season_df` DataFrame and subset it further to produce a working hours
+    one (`working_hrs_df`) that we can `describe`. We will include the 1%, 50%, and
+    99% percentiles to understand where the median and outliers lie:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE30]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The preceding code produced the table in *Figure 9.12*. We can use this table
+    to extract the ranges we will use for our features in the simulation. Typically,
+    we would use plausible values that have exceeded the existing maximums or minimums.
+    For most models, any feature value can be increased or decreased beyond its known
+    limits, and since the model learned a monotonic relationship, it can infer a realistic
+    outcome. For instance, it might learn that rain beyond a certain point will increasingly
+    diminish traffic. Then, say you want to simulate a severe flood with, say, 30
+    mm of rain per hour; it can accurately predict no traffic:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/B18406_09_12.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 9.12: Summary statistics for the period that the construction crew plans
+    to work through'
+  prefs: []
+  type: TYPE_NORMAL
+- en: However, because we are using a prediction approximation method that samples
+    from historical values, we are limited to how far we can push the boundaries outside
+    of the known. For this reason, we will use the 1% and 99% percentile values as
+    our limits. We should note that this is an important caveat for any findings,
+    especially for features that could plausibly extend beyond these limits, such
+    as `temp`, `rain_1h`, and `snow_1h`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Another thing to note from the summary of *Figure 9.12* is that many weather-related
+    binary features are very sparse. You can tell by their extremely low mean. Each
+    factor that’s added to the sensitivity analysis simulation slows it down, so we
+    will only take the top three; that is, `weather_Clear`, `weather_Clouds`, and
+    `weather_Rain`. These factors are specified along with the other six factors in
+    a “problem” dictionary (`morris_problem`), which has their corresponding `names`,
+    `bounds`, and `groups`. Now, `bounds` is critical because it denotes what ranges
+    of values will be simulated for each factor. We will use [0,4] (Monday to Friday)
+    for `dow` and [-1,4] (11 p.m. to 4 a.m.) for `hr`. The filter function automatically
+    translates negative hours into hours from the day before so that -1 on a Tuesday
+    is equivalent to 23 on a Monday. The rest of the bounds were informed by the percentiles.
+    Note that `groups` all have factors in the same group, except for the three weather
+    ones:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE31]'
+  prefs: []
+  type: TYPE_PRE
+- en: Once the dictionary has been defined, we can generate Morris method samples
+    with `SALib's` `sample` method. In addition to the dictionary, it takes a number
+    of trajectories (`256`) and levels (`num_levels=4`). The method uses a grid with
+    factors and levels to construct the trajectories for which inputs are randomly
+    moved **one at a time** (**OAT**). What is important to heed here is that more
+    levels add more resolution to this grid, potentially making for a better analysis.
+    However, this can be very time-consuming. It’s better to start with a ratio between
+    the number of trajectories and levels of 25:1 or higher.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Then, you can decrease this ratio progressively. In other words, if you have
+    enough compute, you can make `num_levels` match the number of trajectories, but
+    if you have this much compute available, you could try `optimal_trajectories=True`.
+    However, given that we have groups, `local_optimization` would have to be `False`.
+    The output of `sample` is an array that is one column for each factor and (*G*
+    + 1) × *T* rows (where *G* is the number of groups and *T* is the number of trajectories).
+    We have eight groups and 256 trajectories, so `print` should output a shape of
+    2,304 rows and 10 columns:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE32]'
+  prefs: []
+  type: TYPE_PRE
+- en: Given that the `predict` function will only work with 15 factors, we should
+    modify the samples to fill the remaining five factors with zeroes. We use zeroes
+    because that is the median value for these features. Medians are least likely
+    to increase traffic, but you ought to tailor your default values on a case-by-case
+    basis. If you recall our **Cardiovascular Disease** (**CVD**) example from *Chapter
+    2*, *Key Concepts of Interpretability*, the feature value that would increase
+    CVD risk was sometimes the minimum or maximum.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The `np.hstack` function can concatenate the array horizontally so that three
+    zero factors follow the samples for the first eight factors. Then, there’s a lonely
+    ninth sample factor corresponding to `weather_Rain`, followed by two zero factors.
+    The resulting array should have the same number of rows as before but 15 columns:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE33]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The `numpy` array known as `morris_sample_mod` now has the Morris samples in
+    a shape that can be understood by our `predict` function. If this was a model
+    that had been trained on a tabular dataset, we could just leverage the model’s
+    `predict` function. However, just as we did with SHAP, we have to use the approximation
+    method. This time, we won’t use `predict_fn` because we want to set one additional
+    option, `progress_bar=True`, in `approx_predict_ts`. Everything else will remain
+    the same. The progress bar will come in handy because this should take a while.
+    Run the cell and take a coffee break:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE34]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'To produce a sensitivity analysis with `SALib''s` `analyze` function, all you
+    need is your problem dictionary (`morris_problem`), the original Morris samples
+    (`morris_sample`), and the predictions we just produced with those samples (`morris_preds`).
+    There’s an optional confidence interval level argument (`conf_level`), but the
+    default of 0.95 is good. It uses resamples to compute this confidence level, which
+    is 1,000 by default. This setting can also be changed with an optional `num_resamples`
+    argument:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE35]'
+  prefs: []
+  type: TYPE_PRE
+- en: Analyzing the elementary effects
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: '`analyze` will return a dictionary with the Morris sensitivity indices, including
+    the mean (*µ*) and standard deviation (*σ*) elementary effect, as well as the
+    absolute value of the mean (*µ*^*). It’s easier to appreciate these values in
+    a tabular format so that we can place them into a DataFrame and sort and color-code
+    them according to *µ*^*, which can be interpreted as the overall importance of
+    the factor. *σ*, on the other hand, is how much the factor interacts with other
+    ones:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE36]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The preceding code outputs the DataFrame depicted in *Figure 9.13*. You can
+    tell that `is_holiday` is one of the most important factors, at least during the
+    bounds specified in the problem definition (`morris_problem`). Another thing to
+    note is that weather does have an absolute mean elementary effect but inconclusive
+    interaction effects. Groups are challenging to assess, especially when they are
+    sparse binary factors:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Timeline  Description automatically generated](img/B18406_09_13.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 9.13: The elementary effects decomposition of the factors'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The DataFrame in the preceding figure is not the best way to visualize the
+    elementary effects. When there are not too many factors, it’s easier to plot them.
+    `SALib` comes with two plotting methods. The horizontal bar plot (`horizontal_bar_plot`)
+    and covariance plot (`covariance_plot`) can be placed side by side. The covariance
+    plot is excellent, but it doesn’t annotate the areas it delineates. We will learn
+    about these next. So, solely for instructional purposes, we will use `text` to
+    place the annotations:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE37]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The preceding code produces the plots shown in *Figure 9.14*. The bar plot
+    on the left ranks the factors by *µ*^*, while the lines sticking out of each bar
+    signify their corresponding confidence bands. The covariance plot to the right
+    is a scatter plot with *µ*^* on the *x*-axis and *σ* on the *y*-axis. Therefore,
+    the farther right the point is, the more important it is, while the further up
+    it is in the plot, the more it interacts with other factors and becomes increasingly
+    less monotonic. Naturally, this means that factors that don’t interact much and
+    are mostly monotonic ones comply with linear regression assumptions, such as linearity
+    and multicollinearity. However, the spectrum between linear and non-linear or
+    non-monotonic is determined diagonally by the ratio of *σ* and *µ*^*:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Chart, scatter chart  Description automatically generated](img/B18406_09_14.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 9.14: A bar and covariance plot depicting the elementary effects'
+  prefs: []
+  type: TYPE_NORMAL
+- en: You can tell by the preceding covariance plot that all the factors are non-linear
+    or non-monotonic. `hr` is by far the most important, with the following two (`dow`
+    and `temp`) clustered relatively nearby, followed by `weather` and `is_holiday`.
+    The `weather` group is not on the plot because interactivity was inconclusive,
+    yet `cloud_coverage`, `rain_1h`, and `snow_1h` are considerably more interactive
+    than important on their own.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Elementary effects help us understand how to classify our factors in accordance
+    with their effects on model outcomes. However, it’s not a robust method to properly
+    quantify their effects or those derived from factor interactions. For that, we
+    would have to turn to a variance-based global method that uses a probabilistic
+    framework to decompose the output’s variance and trace it back to the inputs.
+    Those methods include **Fourier Amplitude Sensitivity Test** (**FAST**) and **Sobol**.
+    We will study the latter approach next.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Quantifying uncertainty and cost sensitivity with factor fixing
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: With the Morris indices, it became evident that all the factors are non-linear
+    or non-monotonic. There’s a high degree of interactivity between them – as expected!
+    It should be no surprise that climate factors (`temp`, `rain_1h`, `snow_1h`, and
+    `cloud_coverage`) are likely multicollinear with `hr`. There are also patterns
+    to be found between `hr`, `is_holiday`, and `dow` and the target. Many of these
+    factors most definitely don’t have a monotonic relationship with the target. We
+    know this already. For instance, traffic doesn’t consistently increase as hours
+    increase throughout the day. That’s not the case for days of the week either!
+  prefs: []
+  type: TYPE_NORMAL
+- en: However, we didn’t know to what degree `is_holiday` and `temp` impacted the
+    model, particularly during the crew’s working hours, which was an important insight.
+    That being said, factor prioritization with Morris indices is usually to be taken
+    as a starting point or “first setting” because once you ascertain that there are
+    interaction effects, it’s best if you disentangle them. To this end, there’s a
+    “second setting” called **factor fixing**. We can quantify the variance and, by
+    doing so, the uncertainty brought on by all the factors.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Only **variance-based methods** can quantify these effects in a statistically
+    rigorous fashion. **Sobol sensitivity analysis** is one of these methods, which
+    means that it decomposes the model’s output variance into percentages and attributes
+    it to the model’s inputs and interactions. Like Morris, it has a sampling step,
+    as well as a sensitivity index estimation step.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Unlike Morris, the sampling doesn’t follow a series of levels but the input
+    data’s distribution. It uses a **quasi-Monte Carlo method**, where it samples
+    points in hyperspace that follow the inputs’ probability distributions. **Monte
+    Carlo** methods are a family of algorithms that perform random sampling, often
+    for optimization or simulation. They seek shortcuts on problems that would be
+    impossible to solve with brute force or entirely deterministic approaches. Monte
+    Carlo methods are common in sensitivity analysis precisely for this reason. Quasi-Monte
+    Carlo methods have the same goal. However, they converge faster because they use
+    a deterministic low-discrepancy sequence instead of using a pseudorandom one.
+    The Sobol method uses the **Sobol sequence**, devised by the same mathematician.
+    We will use another sampling scheme derived from Sobol’s, called Saltelli’s.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Once the samples have been produced, Monte Carlo estimators compute the variance-based
+    sensitivity indices. These indices are capable of quantifying non-linear non-additive
+    effects and second-order indices, which relate to the interaction between two
+    factors. Morris can reveal interactivity in your model, but not precisely how
+    it is manifested. Sobol can tell you what factors are interacting and to what
+    degree.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Generating and predicting on Saltelli samples
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'To begin a Sobol sensitivity analysis with `SALib`, we must first define a
+    problem. We’ll do the same as we did with Morris. This time, we will reduce the
+    factors because we realized that the `weather` grouping led to inconclusive results.
+    We should include the least sparse of all the weather factors; that is, `weather_Clear`.
+    And since Sobol uses a probabilistic framework, there’s no harm in expanding the
+    bounds to their minimum and maximum values for `temp`, `rain_1h`, and `cloud_coverage`,
+    as seen in *Figure 9.12*:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE38]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Generating the samples should look familiar too. The Saltelli `sample` function
+    requires the following:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: A problem statement (`sobol_problem`)
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: A number of samples to produce per factor (`300`)
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Second-order indices to compute (`calc_second_order=True`)
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Given that we want the interactions, the output of `sample` is an array that
+    has one column for each factor and ![](img/B18406_09_003.png) rows (where *N*
+    is the number of samples and *F* is the number of factors). We have eight factors
+    and 256 samples per factor, so `print` should output a shape of 4,608 rows and
+    8 columns. First, we will modify it, as we did previously, with `hstack` to add
+    the 7 empty factors needed to make the predictions, resulting in 15 columns instead:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE39]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Now, let’s predict on these samples. This should take a while, so it’s coffee
+    time once more:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE40]'
+  prefs: []
+  type: TYPE_PRE
+- en: Performing Sobol sensitivity analysis
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: For Sobol sensitivity analysis (`analyze`), all you need is a problem statement
+    (`sobol_problem`) and the model outputs (`saltelli_preds`). But the predictions
+    don’t tell the story of uncertainty. Sure, there’s variance in the predicted traffic,
+    but that traffic is only a problem once it exceeds 1,500\. Uncertainty is something
+    you want to relate to risk or reward, costs or revenue, loss or profit – something
+    tangible you can connect to your problem.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'First, we must assess if there’s any risk at all. To get an idea of whether
+    the predicted traffic in the samples exceeded the no-construction threshold during
+    working hours, we can use `print(max(saltelli_preds[:,0]))`. The maximum traffic
+    level should be somewhere in the neighborhood of 1,800-1,900, which means that
+    there’s at least some risk that the construction company will pay a fine. Instead
+    of using the predictions (`saltelli_preds`) as the model’s output, we can create
+    a simple binary array with ones when it exceeded 1,500 and zero otherwise. We
+    will call this `costs`, and then run the `analyze` function with it. Note that
+    `calc_second_order=True` is also set here. It will throw an error if `sample`
+    and `analyze` don’t have a consistent setting. Like with Morris, there’s an optional
+    confidence interval level argument (`conf_level`), but the default of 0.95 is
+    good:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE41]'
+  prefs: []
+  type: TYPE_PRE
+- en: '`analyze` will return a dictionary with the Sobol sensitivity indices, including
+    the first-order (`S1`), second-order (`S2`), and total-order (`ST`) indices, as
+    well as the total confidence bounds (`ST_conf`). The indices correspond to percentages,
+    but the totals won’t necessarily add up unless the model is additive. It’s easier
+    to appreciate these values in a tabular format so that we can place them into
+    a DataFrame and sort and color-code them according to the total, which can be
+    interpreted as the overall importance of the factor. However, we will leave the
+    second-order indices out because they are two-dimensional and akin to a correlation
+    plot:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE42]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The preceding code outputs the DataFrame depicted in *Figure 9.15*. You can
+    tell that `temp` and `is_holiday` are in the top four, at least during the bounds
+    specified in the problem definition (`sobol_problem`). Another thing to note is
+    that `weather_Clear` does have more of an effect on its own, but `rain_1h` and
+    `cloud_coverage` seem to have no effect on the potential cost because they have
+    zero total first-order indices:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Timeline  Description automatically generated](img/B18406_09_15.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 9.15: Sobol global sensitivity indices for the eight factors'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Something interesting about the first-order values is how low they are, suggesting
+    that interactions account for most of the model output variance. We can easily
+    produce a heatmap with second-order indices to corroborate this. It’s the combination
+    of these indices and the first-order ones that add up to the totals:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE43]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The preceding code outputs the heatmap in *Figure 9.16*:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Chart, waterfall chart  Description automatically generated](img/B18406_09_16.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 9.16: Sobol second-order indices for the eight factors'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Here, you can tell that `is_holiday` and `weather_Clear` are the two factors
+    that contribute the most to the output variance with the highest absolute value
+    of 0.26\. `dow` and `hr` have sizable interactions with all the factors.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Incorporating a realistic cost function
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: Now, we can create a cost function that takes our inputs (`saltelli_sample`)
+    and outputs (`saltelli_preds`) and computes how much the twin cities would fine
+    the construction company, plus any additional costs the additional traffic could
+    produce.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'It is better to do this if both the input and outputs are in the same array
+    because we will need details from both to calculate the costs. We can use `hstack`
+    to join the samples and their corresponding predictions, producing an array with
+    eight columns (`saltelli_sample_preds`). We can then define a cost function that
+    can compute the costs (`cost_fn`), given an array with these nine columns:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE44]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We know that the half-capacity threshold wasn’t exceeded for any sample predictions,
+    so we won’t even bother to include the daily penalty in the function. Besides
+    that, the fines are $15 per vehicle that exceeds the hourly no-construction threshold.
+    In addition to these fines, to be able to leave on time, the construction company
+    estimates additional costs: $1,500 in extra wages if the threshold is exceeded
+    at 4 a.m. and $4,500 more on Fridays to speed up the moving of their equipment
+    because it can’t stay on the highway shoulder during weekends. Once we have the
+    cost function, we can iterate through the combined array (`saltelli_sample_preds`),
+    calculating costs for each sample. List comprehension can do this efficiently:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE45]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The `print` statement should output a cost somewhere between $170,000 and $200,000\.
+    But not to worry! The construction crew only plans to work about 195 days on-site
+    per year and 5 hours each day, for a total of 975 hours. However, there are 4,608
+    samples, which means that there are almost 5 years’ worth of predicted costs due
+    to excess traffic. In any case, the point of calculating these costs is to figure
+    out how they relate to the model’s inputs. More years’ worth of samples means
+    tighter confidence intervals:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE46]'
+  prefs: []
+  type: TYPE_PRE
+- en: We can now perform the analysis again but with `costs2`, and we can save the
+    analysis into a `factor_fixing2_sa` dictionary. Lastly, we can produce a new sorted
+    and color-coded DataFrame with this dictionary’s values, as we did previously
+    for *Figure 9.15*, which generates the output shown in *Figure 9.17*.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'As you can tell by *Figure 9.17* once the actual costs have been factored in,
+    `dow`, `hr`, and `is_holiday` become riskier factors, while `snow_1h` and `temp`
+    become less relevant when compared to *Figure 9.15*:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Timeline  Description automatically generated](img/B18406_09_17.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 9.17: Sobol global sensitivity indices for the eight factors using the
+    realistic cost function'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'One thing that is hard to appreciate with a table is the confidence intervals
+    of the sensitivity indices. For that, we can use a bar plot, but first, we must
+    convert the entire dictionary into a DataFrame so that `SALib''s` plotting function
+    can plot it:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE47]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The preceding code generates the bar plot in *Figure 9.18*. The 95% confidence
+    interval for `dow` is much larger than for other important factors, which shouldn’t
+    be surprising considering how much variance there is between days of the week.
+    Another interesting insight is how `weather_Clear` has negative first-order effects,
+    so the positive total-order indices are entirely attributed to second-order ones,
+    which expand the confidence interval:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Chart, scatter chart  Description automatically generated](img/B18406_09_18.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 9.18: Bar plot with the Sobol sensitivity total-order indices and their
+    confidence intervals using a realistic cost function'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'To understand how, let’s plot the heatmap shown in *Figure 9.16* again but
+    this time using `factor_fixing2_sa` instead of `factor_fixing_sa`. The heatmap
+    in *Figure 9.19* should depict how the realistic costs reflect the interactions
+    in the model:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Chart, waterfall chart  Description automatically generated](img/B18406_09_19.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 9.19: Sobol second-order indices for seven factors while factoring a
+    more realistic cost function'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The preceding heatmap shows similar salient interactions to those in *Figure
+    9.16* but they’re much more nuanced since there are more shades. It becomes evident
+    that `weather_Clear` has a magnifying effect when combined with `is_holiday`,
+    and a tempering effect for `dow` and `hr`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Mission accomplished
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: The mission was to train a traffic prediction model and understand what factors
+    create uncertainty and possibly increase costs for the construction company. We
+    can conclude a significant portion of the potential $35,000/year in fines can
+    be attributed to the `is_holiday` factor. Therefore, the construction company
+    should rethink working holidays. There are only seven or eight holidays between
+    March and November, and they could cost more because of the fines than working
+    on a few Sundays instead. With this caveat, the mission was successful, but there’s
+    still a lot of room for improvement.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Of course, these conclusions are for the `LSTM_traffic_168_compact1` model –
+    which we can compare with other models. Try replacing the `model_name` at the
+    beginning of the notebook with `LSTM_traffic_168_compact2`, an equally small but
+    significantly more robust model, or `LSTM_traffic_168_optimal`, a larger slightly
+    better-performing model, and re-running the notebook. Or glance at the notebooks
+    named `Traffic_compact2` and `Traffic_optimal`, which already have been re-run
+    with these corresponding models. You will find that it is possible to train and
+    select models that manage uncertain inputs much better. That being said, improvement
+    doesn’t always come by simply selecting a better model.
+  prefs: []
+  type: TYPE_NORMAL
+- en: For instance, one thing that could be covered in further depth is the true impact
+    of `temp`, `rain_1h`, and `snow_1h`. Our prediction approximation method precluded
+    Sobol from testing the effect of extreme weather events. If we modified the model
+    to train on aggregated weather features at single timesteps and built in some
+    guardrails, we could simulate weather extremes with Sobol. And the “third setting”
+    of sensitivity analysis, known as factor mapping, could help pinpoint how exactly
+    some factor values affect the predicted outcome, leading to a sturdier cost-benefit
+    analysis, but we won’t cover that in this chapter.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Throughout *Part Two* of this book, we explored an ecosystem of interpretation
+    methods: global and local; model-specific and model-agnostic; permutation-based
+    and sensitivity-based. There’s no shortage of interpretation methods to choose
+    from for any machine learning use case. However, it cannot be stressed enough
+    that *NO method is perfect*. Still, they can complement each other to approximate
+    a better understanding of your machine learning solution and the problem it aims
+    to solve.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'This chapter’s focus on certainty in forecasting was designed to shed light
+    on a particular problem in the machine learning community: overconfidence. *Chapter
+    1*, *Interpretation, Interpretability, Explainability; and Why Does It All Matter?*,
+    in the *A business case of interpretability* section, described the many biases
+    that infest human decision-making. These biases are often fueled by overconfidence
+    in domain knowledge or our models’ impressive results. And these impressive results
+    cloud us from grasping the limitations of our models as the public distrust of
+    AI increases.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'As we discussed in *Chapter 1*, *Interpretation, Interpretability, Explainability;
+    and Why Does It All Matter?*, machine learning is only meant to tackle *incomplete
+    problems*. Otherwise, we might as well use deterministic and procedural programming
+    like those found in closed-loop systems. The best we can do to solve an incomplete
+    problem is an incomplete solution, which should be optimized to solve as much
+    of it as possible. Whether through gradient descent, least-squares estimation,
+    or splitting and pruning a decision tree, machine learning doesn’t produce a model
+    that generalizes perfectly. That lack of completeness in machine learning is precisely
+    why we need interpretation methods. In a nutshell: models learn from our data,
+    and we can learn a lot from our models, but only if we interpret them!'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Interpretability doesn’t stop there, though. Model interpretations can drive
+    decisions and help us understand model strengths and weaknesses. However, often,
+    there are problems in the data or models themselves that can make them less interpretable.
+    In *Part Three* of this book, we’ll learn how to tune models and the training
+    data for interpretability by reducing complexity, mitigating bias, placing guardrails,
+    and enhancing reliability.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Statistician George E.P. Box famously quipped that “*all models are wrong,
+    but some are useful*.” Perhaps they aren’t always wrong, but humility is required
+    from machine learning practitioners to accept that even high-performance models
+    should be subject to scrutiny and our assumptions about them. Uncertainty with
+    machine learning models is expected and shouldn’t be a source of shame or embarrassment.
+    This leads us to another takeaway from this chapter: that uncertainty comes with
+    ramifications, be it costs or profit lift, and that we can gauge these with sensitivity
+    analysis.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Summary
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: After reading this chapter, you should understand how to assess a time series
+    model’s predictive performance, know how to perform local interpretations for
+    them with integrated gradients, and know how to produce both local and global
+    attributions with SHAP. You should also know how to leverage sensitivity analysis
+    factor prioritization and factor fixing for any model.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the next chapter, we will learn how to reduce the complexity of a model and
+    make it more interpretable with feature selection and engineering.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Dataset and image sources
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'TomTom, 2019, Traffic Index: [https://nonews.co/wp-content/uploads/2020/02/TomTom2019.pdf](https://nonews.co/wp-content/uploads/2020/02/TomTom2019.pdf)'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'UCI Machine Learning Repository, 2019, Metro Interstate Traffic Volume Data
+    Set: [https://archive.ics.uci.edu/ml/datasets/Metro+Interstate+Traffic+Volume](https://archive.ics.uci.edu/ml/datasets/Metro+Interstate+Traffic+Volume)'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Further reading
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'Wilson, D.R., and Martinez, T., 1997, *Improved Heterogeneous Distance Functions*.
+    J. Artif. Int. Res. 6-1\. pp.1-34: [https://arxiv.org/abs/cs/9701101](https://arxiv.org/abs/cs/9701101)'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Morris, M., 1991, *Factorial sampling plans for preliminary computational experiments*.
+    Quality Engineering, 37, 307-310: [https://doi.org/10.2307%2F1269043](https://doi.org/10.2307%2F1269043)'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Saltelli, A., Tarantola, S., Campolongo, F., and Ratto, M., 2007, *Sensitivity
+    analysis in practice: A guide to assessing scientific models*. Chichester: John
+    Wiley & Sons.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Sobol, I.M., 2001, *Global sensitivity indices for nonlinear mathematical models
+    and their Monte Carlo estimates*. MATH COMPUT SIMULAT,55(1–3),271-280: [https://doi.org/10.1016/S0378-4754(00)00270-6](https://doi.org/10.1016/S0378-4754(00)00270-6)'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Saltelli, A., P. Annoni, I. Azzini, F. Campolongo, M. Ratto, and S. Tarantola,
+    2010, *Variance based sensitivity analysis of model output. Design and estimator
+    for the total sensitivity index*. Computer Physics Communications, 181(2):259-270:
+    [https://doi.org/10.1016/j.cpc.2009.09.018](https://doi.org/10.1016/j.cpc.2009.09.018
+    )'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Learn more on Discord
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'To join the Discord community for this book – where you can share feedback,
+    ask the author questions, and learn about new releases – follow the QR code below:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[https://packt.link/inml](Chapter_9.xhtml)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/QR_Code107161072033138125.png)'
+  prefs: []
+  type: TYPE_IMG

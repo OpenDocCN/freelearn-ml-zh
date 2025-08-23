@@ -1,0 +1,564 @@
+- en: '10'
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: LightGBM Models with PostgresML
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In this chapter, we’ll look at a unique MLOps platform called **PostgresML**.
+    PostgresML is a Postgres database extension that allows you to train and deploy
+    ML models using SQL.
+  prefs: []
+  type: TYPE_NORMAL
+- en: PostgresML and SQL are a significant departure from the scikit-learn style of
+    programming we’ve used throughout this book. However, as we’ll see in this chapter,
+    performing ML model development and deployment at the database level has significant
+    advantages regarding data movement requirements and inferencing latency.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The main topics in this chapter are as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: An overview of PostgresML
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Getting started with PostgresML
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: A customer churn case study with PostgresML and LightGBM
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Technical requirements
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: This chapter includes practical examples of working with PostgresML. Docker
+    will be used to set up a PostgresML environment and is recommended to run the
+    examples. The code for this chapter is available at [https://github.com/PacktPublishing/Practical-Machine-Learning-with-LightGBM-and-Python/tree/main/chapter-10](https://github.com/PacktPublishing/Practical-Machine-Learning-with-LightGBM-and-Python/tree/main/chapter-10).
+  prefs: []
+  type: TYPE_NORMAL
+- en: Introducing PostgresML
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: PostgresML ([https://postgresml.org/](https://postgresml.org/)) is an extension
+    for Postgres that allows practitioners to implement the entire ML life cycle on
+    top of a Postgres database for text and tabular data.
+  prefs: []
+  type: TYPE_NORMAL
+- en: PostgresML utilizes SQL as the interface to train models, create deployments,
+    and make predictions. The use of SQL means model and data operations can be combined
+    seamlessly and fit naturally into Postgres DB data engineering environments.
+  prefs: []
+  type: TYPE_NORMAL
+- en: There are many advantages to having a shared data and ML platform. As we saw
+    in the previous chapter, with SageMaker, significant effort is spent on moving
+    data around. This is a common problem in ML environments where data, especially
+    transactional data, lives in production databases, and complex data engineering
+    workflows need to be created to extract data from production sources, transform
+    the data for ML use, and load the data into a store that’s accessible to the ML
+    platform (such as S3 for SageMaker).
+  prefs: []
+  type: TYPE_NORMAL
+- en: By combining the data store with the ML platform, PostgresML does away with
+    moving data from one platform to another, saving significant time, effort, storage,
+    and potentially egress costs.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Further, modeling from live transactional data means that training data is always
+    up to date (read directly from the system of record) instead of gated behind a
+    refresh. This eliminates errors that stem from working with outdated data or data
+    being transformed or loaded incorrectly by ETL jobs.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Latency and round trips
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: A typical pattern for model deployment, which we’ve illustrated in earlier chapters,
+    is deploying models behind a web API. In microservice terms, the model deployment
+    is just another service that can be composed of other services to realize the
+    overall system goal.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Deployment as a web service has several advantages. First, interoperability
+    with other systems is straightforward via network calls when using web standards
+    such as REST. Second, it allows you to independently deploy the model code, isolated
+    from the rest of the system, affording resilience and independent scaling.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'However, deploying models as separate services also has a significant downside:
+    latency and network round trips.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let’s consider an e-commerce example. A common ML problem in e-commerce settings
+    is fraud detection. Here is a system architecture diagram of a simple e-commerce
+    system:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 10.1 – Simplified e-commerce system architecture illustrating the
+    interaction between functional services (transaction) and an ML-driven service
+    (fraud detection)](img/B16690_10_01.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 10.1 – Simplified e-commerce system architecture illustrating the interaction
+    between functional services (transaction) and an ML-driven service (fraud detection)
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Considering the architecture in *Figure 10**.1*, the flow for a new transaction
+    proceeds as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The transaction is sent to the transaction service.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: The transaction service calls the fraud detection service with the details of
+    the new transaction.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: The fraud detection service receives the new transaction, loads the relevant
+    model from model storage (if needed), loads historical data from the transaction
+    storage, and responds to the transaction service with the prediction.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: The transaction service receives the fraud prediction and stores the transaction
+    with the relevant classification.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: A few variations on this workflow might exist. However, due to the separation
+    of the transaction and fraud detection services, many network round trips have
+    to be made to process a new transaction. Making the fraud prediction also requires
+    fetching historical data from the transaction storage to feed to the model.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The networking call latency and round trips add significant overhead to the
+    transaction. If the goal is to achieve a low-latency or real-time system, significantly
+    more complex architectural components are required – for example, caching for
+    the model and transactional data and higher throughput web services.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'With PostgresML, the architecture may be simplified as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 10.2 – Combining the ML services with data storage using PostgresML
+    allows for a more straightforward system design](img/B16690_10_02.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 10.2 – Combining the ML services with data storage using PostgresML allows
+    for a more straightforward system design
+  prefs: []
+  type: TYPE_NORMAL
+- en: Although this example is an oversimplification, the point is that significant
+    overhead is added to the overall process of leveraging ML models in a service-oriented
+    architecture with separate model services.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Through PostgresML, we can eliminate the need for separate model storage and
+    overheads of loading models and, importantly, combine data storage calls and predictions
+    into a single call on the data storage layer with no network overhead in between.
+    PostgresML’s benchmarks found that the simplified architecture improved performance
+    by a factor of 40 within a cloud environment [1].
+  prefs: []
+  type: TYPE_NORMAL
+- en: However, there are also downsides to this architecture. First, the database
+    is now a single point of failure. If the database is unavailable, all models and
+    predictive capabilities are also unavailable. Second, the architecture mixes the
+    concerns of data storage and ML modeling and inference. Depending on the use case,
+    training and deploying ML models has different server infrastructure needs compared
+    to serving SQL queries and storing data. The mixture of concerns might force you
+    to compromise on one or the other responsibilities or significantly increase database
+    infrastructure costs to support all use cases.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In this section, we introduced PostgresML and explained, at a conceptual level,
+    the advantages of combining our data store and ML service. Now, we’ll look at
+    practically setting up and getting started with PostgresML, alongside some basic
+    functionality.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Getting started with PostgresML
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: PostgresML, of course, relies on PostgreSQL being installed. PostgresML requires
+    PostgreSQL 11, with newer versions also supported. PostgresML also requires Python
+    3.7+ to be installed on your system. Both ARM and Intel/AMD architectures are
+    supported.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Note
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'This section provides an overview of the steps and dependencies required to
+    start working with PostgresML and the features at the time of writing. For up-to-date
+    information, check out the official [website: https://postg](https://postgresml.org/)resml.org/.
+    The simplest way to run PostgresML is to use Docker. For more information, check
+    out the *Quick Start with Docker* documentation: [https://postgresml.org/docs/guides/setup/quick_start_with_docker](https://postgresml.org/docs/guides/setup/quick_start_with_docker).'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The extension can be installed with official package tools (such as APT) or
+    compiled from sources. Once all the dependencies and the extension have been installed,
+    `postgresql.conf` must be updated to load the PostgresML library, and the database
+    server must be restarted:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE0]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'With PostgresML installed, the extension must be created within the database
+    you plan to use. This can be done in the regular PostgreSQL way from a SQL console:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE1]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Verify the installation, like so:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE2]'
+  prefs: []
+  type: TYPE_PRE
+- en: Training models
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: Now, let’s look at the features provided by PostgresML. As stated in the introduction,
+    PostgresML has a SQL API. The following code examples should be run in a SQL console.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The extension function for training a model is as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE3]'
+  prefs: []
+  type: TYPE_PRE
+- en: We need to supply `project_name` as the first parameter. PostgresML organizes
+    models and deployments into projects, and projects are uniquely identified by
+    their names.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Next, we specify the model’s `task`: either classification or regression. `relation_name`
+    and `y_column_name` set up the data for the training run. The relation is the
+    table or view where the data is defined, and the Y column’s name specifies the
+    target column within the relation.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'These are the only required parameters for training. Training a linear model
+    (the default) can be done as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE4]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'When `pgml.train` is called, PostgresML copies the data into the `pgml` schema:
+    this ensures all training runs are reproducible and enables training to be rerun
+    using different algorithms or parameters but the same data. `relation_name` and
+    `task` are also only required the very first time training is done for a project.
+    To train a second model for a project, we can simplify the training call like
+    so:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE5]'
+  prefs: []
+  type: TYPE_PRE
+- en: When calling this code, a LightGBM regression model is trained on the same data.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The algorithm parameter sets the learning algorithm to use. PostgresML supports
+    various algorithms, including LightGBM, XGBoost, scikit-learn’s random forests
+    and extra trees, **support vector machines** (**SVMs**), linear models, and unsupervised
+    algorithms such as K-means clustering.
+  prefs: []
+  type: TYPE_NORMAL
+- en: By default, 25% of the data is used as a test set, and the test data is selected
+    at random. This can be controlled with the `test_size` and `test_sampling` parameters.
+    Alternative test sampling methods select data from the first or last rows.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Hyperparameter optimization
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'PostgresML supports performing `search`: grid search and random search. To
+    set the hyperparameter ranges for the HPO, a JSON object is used with the `search_params`
+    parameter. HPO parameters are specified using `search_args`. Here’s an example:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE6]'
+  prefs: []
+  type: TYPE_PRE
+- en: Preprocessing
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: PostgresML also supports performing certain types of preprocessing when training
+    a model. As with the training data and configuration, the preprocessing is also
+    stored with the project, so the same preprocessing can be applied when using a
+    model for predictions.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Regarding pre-processing, PostgresML supports encoding categorical variables,
+    imputing missing values, and scaling numerical values. Preprocessing rules are
+    set using a JSON object via the `preprocess` parameter, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE7]'
+  prefs: []
+  type: TYPE_PRE
+- en: Here, we applied ordinal encoding for the model feature. Alternatively, PostgresML
+    also supports one-hot encoding and target encoding. We also imported missing values
+    (as indicated by `NULL` in the column) using the mean of the price and applied
+    standard (normal) scaling to the price and the fuel economy features.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Deploying and prediction
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: PostgresML automatically calculates appropriate metrics on the test set after
+    training, including R 2, the F1 score, precision, recall, `ROC_AUC`, accuracy
+    and log loss. PostgresML will then automatically deploy the model after training
+    if the key metric for the model (R 2 for regression and F1 for classification)
+    improves over the currently deployed model.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'However, deployments can also be managed manually for a project with the `pgml.deploy`
+    function:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE8]'
+  prefs: []
+  type: TYPE_PRE
+- en: The deployment strategies supported by PostgresML are `best_score`, which immediately
+    deploys the model with the best key metrics; `most_recent`, which deploys the
+    most recently trained model; and `rollback`, which rolls back the current deployment
+    to the previously deployed model.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'With a model deployed, predictions can be made with the `pgml.predict` function:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE9]'
+  prefs: []
+  type: TYPE_PRE
+- en: The `pgml.predict` function accepts the project name and the features for prediction.
+    Features may be either arrays or composite types.
+  prefs: []
+  type: TYPE_NORMAL
+- en: PostgresML dashboard
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: PostgresML provides a web-based dashboard for a more accessible interface to
+    PostgresML features. The dashboard is deployed separately from PostgreSQL and
+    is not required for administration or fully utilizing PostgresML features as all
+    functionality is also accessible via SQL queries.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The dashboard provides access to a list of projects, models, deployments, and
+    data snapshots. More details can also be found on trained models via the dashboard,
+    including hyperparameter settings and training metrics:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 10.3 – PostgresML dashboard showing a list of trained models](img/B16690_10_03.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 10.3 – PostgresML dashboard showing a list of trained models
+  prefs: []
+  type: TYPE_NORMAL
+- en: Besides offering a view of projects, models, and deployments, the dashboard
+    also allows the creation of SQL notebooks, similar to Jupyter Notebooks. These
+    SQL notebooks provide a simple interface to interact with PostgresML if another
+    SQL console is not readily available.
+  prefs: []
+  type: TYPE_NORMAL
+- en: This concludes our section on getting started with PostgresML. Next, we’ll look
+    at an end-to-end case study of training and deploying a PostgresML model.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Case study – customer churn with PostgresML
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Let’s revisit the customer churn problem for a telecommunications provider.
+    As a reminder, the dataset consists of customers and their account and cost information
+    associated with the telecommunication provider.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Data loading and preprocessing
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'Our data will typically already be available within the PostgreSQL database
+    in a real-world setting. However, for our example, we will start by loading the
+    data. First, we must create the table the data is loaded into:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE10]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Note that in our table structure, for a few of our columns, the types do not
+    match what we may expect: for example, monthly and total charges should be real
+    values. We’ll address this during our preprocessing.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Next, we can load our CSV data into the table. PostgreSQL provides a `COPY`
+    statement for this purpose:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE11]'
+  prefs: []
+  type: TYPE_PRE
+- en: Running this statement reads the CSV file and adds the data to our table.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Note
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'If you run PostgresML in a Docker container (which is recommended to get started),
+    the CSV file must first be copied to the container runtime. This can be done with
+    the following command (substituting your own container name):'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '`docker cp` `telco/telco-churn.csv postgresml-postgres-1:/tmp/telco-churn.csv`.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'With the data loaded, we can perform our preprocessing. We perform this in
+    three steps: cleaning data directly in the table, creating a table view that coerces
+    the data to appropriate types, and using PostgresML’s preprocessing functionality:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE12]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We must replace the empty text values in total charges with `NULL`, allowing
+    PostgresML to impute the values later:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE13]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We then create a view to prepare the data for training. Notably, two type transformations
+    are performed: features with `Yes`/`No` values are mapped to booleans, and we
+    cast our monthly and total charges to `REAL` values (after mapping the text values
+    to `NULL`). We also exclude `CustomerId` from the view as this can’t be used for
+    training.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Training and hyperparameter optimization
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'We can train our LightGBM model as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE14]'
+  prefs: []
+  type: TYPE_PRE
+- en: We set the view as our relation, with the churn column being our target feature.
+    For preprocessing, we use the mean to ask PostgresML to impute missing values
+    for the `totalcharges` feature.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We also set up hyperparameter optimization using 500 iterations of a random
+    search with the specified search parameter ranges.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'After completing training, we will be able to see our trained and deployed
+    model in the dashboard:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 10.4 – Trained LightGBM model, as seen in the PostgresML dashboard](img/B16690_10_04.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 10.4 – Trained LightGBM model, as seen in the PostgresML dashboard
+  prefs: []
+  type: TYPE_NORMAL
+- en: The dashboard shows the metrics for our model and the best-performing hyperparameters.
+    Our model achieved an F1 score of 0.6367 and an accuracy of 0.8239.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The same information can also be retrieved with the following SQL query should
+    the dashboard be unavailable:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE15]'
+  prefs: []
+  type: TYPE_PRE
+- en: Our model is automatically deployed when trained and is ready to make predictions.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Predictions
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'We can make predictions manually using a composite type as the feature data.
+    This can be done as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE16]'
+  prefs: []
+  type: TYPE_PRE
+- en: We use the PostgreSQL `ROW` expression to set up the data, casting literals
+    to the correct types for our model.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'However, the more common way to leverage a PostgresML model is to incorporate
+    predictions into regular business queries. For example, here, we’ve selected all
+    the data from the original customer data table and added the prediction for each
+    row using the `pgml.predict` function:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE17]'
+  prefs: []
+  type: TYPE_PRE
+- en: Similar to calling the predict function manually, we use the `ROW` expression
+    to pass data to the `pgml.predict` function but select the data from the table.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'This also clearly illustrates the advantage of using PostgresML: a consumer
+    of the ML model could query new customer data alongside the predictions with minimal
+    overhead and in the same business transaction with a single network call.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Summary
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: This chapter provided an overview of PostgresML, a unique MLOps platform that
+    allows training and calling models from SQL queries on top of an existing PostgreSQL
+    database.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We discussed the platform’s advantages in simplifying an ML-enabled landscape
+    and reducing overhead and network latency in a service-oriented architecture.
+    An overview of the core features and the API was provided.
+  prefs: []
+  type: TYPE_NORMAL
+- en: This chapter concluded with a practical example of leveraging PostgresML for
+    a classification problem, illustrating how to train a LightGBM model, perform
+    hyperparameter optimization, deploy it, and leverage it for predictions in a handful
+    of SQL queries.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the next chapter, we will look at distributed and GPU-based learning with
+    LightGBM.
+  prefs: []
+  type: TYPE_NORMAL
+- en: References
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: '| *[**1]* | *PostgresML is 8-40x faster than Python HTTP microservices, [Online].
+    Available* *at* [*https://postgresml.org/blog/postgresml-is-8x-faster-than-python-http-microservices*](https://postgresml.org/blog/postgresml-is-8x-faster-than-python-http-microservices)*.*
+    |'
+  prefs: []
+  type: TYPE_TB

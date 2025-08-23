@@ -1,0 +1,1261 @@
+- en: '*Chapter 11*: Hyperparameter Tuning and Automated Machine Learning'
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In the previous chapter, we learned how to train **convolutional neural networks**
+    and complex **deep neural networks**. When training these models, we are often
+    confronted with difficult choices in terms of the various parameters we should
+    use, such as the number of layers, filter dimensions, the type and order of layers,
+    regularization, batch size, learning rate, the number of epochs, and many more.
+    And this is not only the case for DNNs – the same challenges arise when we need
+    to select the correct preprocessing steps, features, models, and model parameters
+    in statistical ML approaches.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In this chapter, we will look at optimizing the training process to remove some
+    of the non-optimal human choices in ML. This will help you train better models
+    faster and more efficiently without manual intervention. First, we will explore
+    **hyperparameter optimization** (also called **HyperDrive** in Azure Machine Learning),
+    a standard technique for optimizing parameters in an ML process. By evaluating
+    different sampling techniques for hyperparameter sampling, such as random sampling,
+    grid sampling, and Bayesian optimization, you will learn how to efficiently trade
+    model runtime for model performance.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the second half of this chapter, we will look at model optimization by automating
+    the complete end-to-end ML training process using **Automated Machine Learning**.
+    This process is also often referred to as **AutoML**. Using Automated Machine
+    Learning, we can optimize preprocessing, feature engineering, model selection,
+    hyperparameter tuning, and model stacking all in one abstract optimization pipeline.
+  prefs: []
+  type: TYPE_NORMAL
+- en: One benefit of Azure Machine Learning is that both parameter optimization (HyperDrive)
+    and model optimization (Automated Machine Learning) are supported in the same
+    generalized way. This means we can deploy both to an auto-scaling training cluster,
+    store the best model or parameter combination on disk, and then deploy the best
+    model to production without ever leaving our notebook environment.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The following topics will be covered in this chapter:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Finding the optimal model parameters with HyperDrive
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Finding the optimal model with Automated Machine Learning
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Technical requirements
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'In this chapter, we will use the following Python libraries and versions to
+    create decision-tree based ensemble classifiers:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '`azureml-core 1.34.0`'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`azureml-sdk 1.34.0`'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Similar to the previous chapters, you can run this code using either a local
+    Python interpreter or a notebook environment hosted in Azure Machine Learning.
+    However, all the scripts need to be scheduled in Azure Machine Learning training
+    clusters.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'All the code examples in this chapter can be found in this book''s GitHub repository:
+    [https://github.com/PacktPublishing/Mastering-Azure-Machine-Learning-Second-Edition/tree/main/chapter11](https://github.com/PacktPublishing/Mastering-Azure-Machine-Learning-Second-Edition/tree/main/chapter11).'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Finding the optimal model parameters with HyperDrive
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In ML, we typically deal with either parametric or non-parametric models. Models
+    represent the distribution of the training data to make predictions for unseen
+    data from the same distribution. While parametric models (such as linear regression,
+    logistic regression, and neural networks) represent the training data distribution
+    by using a learned set of parameters, non-parametric models describe the training
+    data distribution through other traits, such as decision trees (all tree-based
+    classifiers), training samples (k-nearest neighbors), or weighted training samples
+    (support vector machine).
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**Parametric models** such as linear or logistic regression are typically defined
+    by a constant number of parameters that are independent of the training data.
+    These models make strong assumptions about the training data, so they often require
+    fewer training samples. As a result, both training and inferencing are usually
+    very fast.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: In comparison, for **non-parametric models** such as decision trees or k-nearest
+    neighbors, the number of traits usually increases with the number of training
+    samples. While these models don't assume anything about the training data distribution,
+    many training samples are required. This often leads to slow training and slow
+    interference performance.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The term **hyperparameter** refers to all the parameters that are used to configure
+    and tune the training process of parametric or non-parametric models. The following
+    is a list of some typical hyperparameters in a neural network:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The number of hidden layers
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The number of units per layer
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Batch size
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Filter dimensions
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Learning rate
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Regularization terms
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Dropout
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Loss metric
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The number of hyperparameters and parameter values for training a simple ML
+    model is astonishing. Have you ever caught yourself manually tweaking a parameter
+    in your training processes, such as the number of splits in a decision-based classifier
+    or the number of units in a neural network classifier? If so, you are not alone!
+    However, it's very important to accept that manually tweaking parameters requires
+    deep expertise in the specific model or model configuration. However, we can't
+    possibly be an expert in every type of statistical modeling, ML, and optimization
+    to tune all the possible parameters manually. Given that the number of parameter
+    choices is enormous, it is not feasible to try all possible combinations, so we
+    need to find a better way to optimize them.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Not only can we not possibly try all the distinct combinations of parameters
+    manually, but in many cases, we also can't possibly predict the outcome of a tweak
+    in a hyperparameter, even with expert knowledge. In such scenarios, we can start
+    looking at finding the optimal set of parameters automatically. This process is
+    called **hyperparameter tuning** or **hyperparameter search**.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Hyperparameter tuning entails automatically testing a model's performance against
+    different sets of hyperparameter combinations and ultimately choosing the best
+    combination of hyperparameters. The definition of the *best performance* depends
+    on the chosen metric and validation method. For example, stratified-fold cross-validation
+    with the f1-score metric will yield a different set of optimal parameters than
+    the accuracy metric with k-fold cross-validation.
+  prefs: []
+  type: TYPE_NORMAL
+- en: One reason why we are discussing hyperparameter tuning (and Automated Machine
+    Learning later) in this book is that we have a competitive advantage from using
+    elastic cloud computing infrastructure. While it is difficult to train hundreds
+    of models sequentially on your laptop, it is easy to train thousands of models
+    in parallel in the cloud using cheap auto-scaling compute. Using cheap cloud storage,
+    we can also persist all potentially good models for later analysis. Many of the
+    recent ML papers have shown that we can often achieve better results by using
+    more compute power and/or better parameter choices.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Before we begin tuning hyperparameters, we want to remind you of the importance
+    of a baseline model. For many practical ML tasks, you should be able to achieve
+    good performance using a single tree-based ensemble classifier or a pre-trained
+    neural network with default parameters. If this is not the case, hyperparameter
+    tuning won't magically output parameters for a top-performing best-in-class model.
+    In this case, it would be better to go back to data preprocessing and feature
+    engineering to build a better baseline model first, before tuning the batch sizes,
+    the number of hidden units, or the number of trees.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Another issue to avoid with hyperparameter tuning is overfitting and focusing
+    on the wrong performance metric or validation method. As with any other optimization
+    technique, hyperparameter tuning will yield the best parameter combination for
+    a given loss function or metric. Therefore, it is essential to validate your loss
+    function before starting hyperparameter tuning.
+  prefs: []
+  type: TYPE_NORMAL
+- en: As with most other techniques in ML, there are multiple ways to find the best
+    hyperparameters for a model. The most popular techniques are *grid search*, *random
+    search*, and *Bayesian optimization*. In this chapter, we will investigate all
+    three of them, discuss their strengths and weaknesses, and experiment with practical
+    examples.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Sampling all possible parameter combinations using grid search
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: '**Grid search** (or **grid sampling**) is a popular technique for finding the
+    optimal hyperparameters from a parameter grid by testing every possible parameter
+    combination of the multi-dimensional parameter grid. For every parameter (continuous
+    or categorical), we need to define all the values or value ranges that should
+    be tested. Popular ML libraries provide tools to create these parameter grids
+    efficiently.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Two properties differentiate grid search from other hyperparameter sampling
+    methods:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: All parameter combinations are assumed to be independent of each other, which
+    means they can be tested in parallel. Therefore, given a set of 100 possible parameter
+    combinations, we can start 100 models to test all the combinations in parallel.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: By testing all possible parameter combinations, we can ensure that we search
+    for a global optimum rather than a local optimum.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Grid search works perfectly for smaller ML models with only a few hyperparameters
+    but grows exponentially with every additional parameter because it adds a new
+    dimension to the parameter grid.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s look at how grid search can be implemented using Azure Machine Learning.
+    In Azure Machine Learning, the hyperparameter tuning functionality lives in the
+    `hyperdrive` package. Here is what we are going to do:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Create a grid sampling configuration
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Define a primary metric to define the tuning goal
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Create a `hyperdrive` configuration
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Submit the `hyperdrive` configuration as an experiment to Azure Machine Learning
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'Let''s look at these steps in more detail:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'First, we must create the grid sampling configuration by defining the parameter
+    choices and ranges for grid sampling, as shown in the following code block:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE0]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: In the preceding code, we defined a parameter grid using discrete parameter
+    choices along three parameter dimensions – the number of neurons in the first
+    layer, the number of neurons in the second layer, and the training batch size.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The parameter names are formatted as command-line arguments because they will
+    be passed as arguments to the training script. So, we need to make sure that the
+    training script can configure parameters via command-line arguments. The following
+    code shows what this could look like in your training example:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE1]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: With grid sampling, we can test all the possible combinations of these parameters.
+    This will result in a total of 32 runs (*4 x 4 x 2*) that we could theoretically
+    run in parallel, as the training runs, and the parameter configurations are independent
+    of each other. In this case, the total number of required training runs is obvious
+    as we are only using discrete parameter ranges. Later, we will see that this is
+    not the case for random sampling and Bayesian optimization. For these other methods,
+    we sample from a continuous distribution, so the number of training runs won't
+    be bounded. We will also see that the number of parallel runs can affect the optimization
+    process when parameter choices are not independent. So, let's appreciate the simplicity
+    of the grid sampling solution for a small number of discrete parameters.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Next, we need to define a metric that measures the performance of each parameter
+    combination. This metric can be any numeric value that is logged by the training
+    script. Please note that this metric does not need to be the same as the loss
+    function – it can be any measurement that you would like to use to compare different
+    parameter pairs. Have a look at the following example. Here, we have decided to
+    maximize the `accuracy` metric and defined the following parameters:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE2]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: In the preceding code, we chose the `accuracy` metric, which is what we want
+    to maximize. Here, you can see that we simply specified any metric name as a string.
+    To use this metric to evaluate hyperparameter optimization runs, the training
+    script needs to log a metric with this exact name. We saw this in the previous
+    chapters, where we emitted metrics for an Azure Machine Learning run.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We must use the same metric name of `primary_metric_name` to define and log
+    a metric that can be picked up by `hyperdrive` to evaluate the run in the training
+    script:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE3]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'Before we continue, recall the script run configuration from the previous chapters.
+    Similar to the previous chapters, we must configure a CPU-based Azure Machine
+    Learning training cluster defined as `aml_cluster` and an environment called `tf_env`
+    containing all the relevant packages for running TensorFlow:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE4]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'Now, we can initialize the `hyperdrive` configuration, which consists of the
+    estimator, the sampling grid, the optimization metric, and the number of runs
+    and concurrent runs:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE5]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: In grid sampling, the number of runs should correspond with the number of possible
+    parameter combinations. As it is a required attribute, we need to compute this
+    value and pass it here. The maximum number of concurrent runs in grid sampling
+    is limited only by the number of nodes in your Azure Machine Learning cluster.
+    We are using a four-node cluster, so we have set the number to `4` to maximize
+    concurrency.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Finally, we can submit the `hyperdrive` configuration to an experiment, which
+    will execute all the concurrent child runs on the specified compute target:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE6]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'The preceding snippet will kick off the training process, build and register
+    new Docker images if needed, initialize and scale up the nodes in the cluster,
+    and finally run the training scripts on the cluster. Each script will be parameterized
+    using a unique parameter combination from the sampling grid. The following screenshot
+    shows the resulting experiment run. We can go to this page by clicking on the
+    link that is returned from the preceding code snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 11.1 – Grid sampling overview ](img/B17928_11_01.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 11.1 – Grid sampling overview
+  prefs: []
+  type: TYPE_NORMAL
+- en: Here, we can see the sampling policy's name, which is **GRID**, and the configured
+    parameter space. These parameters will be applied as command-line arguments to
+    the training script.
+  prefs: []
+  type: TYPE_NORMAL
+- en: As you may have guessed already, not everything is great when you must sample
+    all the possible parameter combinations from a multi-dimensional grid. As the
+    number of hyperparameters grows, so do the dimensions of the grid. And each dimension
+    of parameters adds a magnitude of new parameter configurations that need to be
+    tested. And don't forget that testing a parameter's configuration usually means
+    performing training, cross-validation, and test set predictions on your model,
+    which can take a significant number of resources.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Imagine that you want to search for the best parameter combination for five
+    parameters with 10 different values for each parameter. Let''s assume the following:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: We are testing 105 (*10 x 10 x 10 x 10 x 10*) parameter combinations.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: One training run takes only 2 minutes.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: We are performing four-fold cross-validation.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Here, we would end up with 555 days (*2min x 4 x 10^5 = 800,000min*) of combined
+    training time. While you could decrease the total runtime by running parameter
+    combinations in parallel, other methods exist that are better suited for large
+    numbers of parameters, such as random sampling. Let's see how we can limit the
+    required runtime of the parameter optimization search by sampling parameter configurations
+    at random.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Testing random combinations using random search
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: '**Random search** is another popular hyperparameter sampling method that''s
+    similar to grid search. The main difference is that instead of testing all the
+    possible parameter combinations, only a few combinations are randomly selected
+    and tested. The main idea is that grid search often samples nearby parameter configurations
+    that have little effect on model performance. Therefore, we waste a lot of time
+    chasing similarly bad solutions where we could use our time to try diverse and
+    hopefully more successful parameter configurations.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: When you're dealing with large amounts of hyperparameters (for example, more
+    than 5), random search will find a good set of hyperparameters much faster than
+    grid search – however, it might not be the optimal result. Even so, in many cases,
+    it will be a reasonable trade-off to use random search over grid search to improve
+    prediction performance with hyperparameter tuning.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In random search, parameters are usually sampled from a continuous distribution
+    instead of discrete parameter choices being used. This leads to a slightly different
+    way of defining the parameter grid. Instead of providing choices for distinct
+    values, we can define a distribution function for each parameter to draw random
+    values from a continuous range.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Like grid search, all parameter combinations are independent if they're drawn
+    with replacement, which means they can be fully parallelized. If a parameter grid
+    with 10,000 distinct parameter configurations is provided, we can run and test
+    all the models in parallel.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s look at random search in Azure Machine Learning:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'As with all other hyperparameter optimization methods, we find the random sampling
+    method in the `hyperdrive` package. As we discussed previously, we can now define
+    probability distribution functions such as `normal` and `uniform` for each parameter
+    instead of choosing only discrete parameters:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE7]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: Using continuous parameter ranges is not the only difference in random sampling.
+    Due to the possibility of sampling an infinite amount of parameter configurations
+    from a continuous range, we need a way to specify the duration of the search.
+    We can use the `max_total_runs` and `max_duration_minutes` parameters to define
+    the expected runtime in minutes or to limit the amount of sampled parameter configurations.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s test 25 different configurations and run the hyperparameter tuning process
+    for a maximum of 60 minutes. We must set the following parameters:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE8]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'We will reuse the same metric that we defined in the previous section, namely
+    *accuracy*. The `hyperdrive` configuration looks as follows:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE9]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'Similar to the previous example, we must submit the `hyperdrive` configuration
+    to Azure Machine Learning from the authoring runtime, which will schedule all
+    the optimization runs on the compute target:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE10]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: Random sampling is an excellent choice for testing large numbers of tunable
+    hyperparameters or sampling values from a continuous range. However, instead of
+    optimizing the parameter configurations step by step, we simply try all those
+    configurations at random and compare how they perform.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the next section, we will learn how to find a good parameter combination
+    faster by stopping training runs early. In the subsequent section, *Optimizing
+    parameter choices using Bayesian optimization*, we will look at a more elegant
+    way of navigating through the parameter space in hyperparameter tuning by using
+    optimization.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Converging faster using early termination
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: Both the grid and random sampling techniques test models for poor parameter
+    choices and hence spend precious compute resources on fitting poorly parameterized
+    models to your training data. **Early termination** is a technique that stops
+    a training run early if the intermediate results look worse than other runs. It
+    is a great solution for speeding up expensive hyperparameter optimization techniques.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In general, you should always try to use early termination when using either
+    grid or random sampling. You get no benefit from training all the parameter combinations
+    if the results are a lot worse than for some of the existing runs.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Once we understand the idea of canceling poor-performing runs, we need to find
+    a way to specify a threshold of when a run should be canceled – we refer to this
+    threshold as the **termination policy**. Azure Machine Learning provides the most
+    popular termination policies, namely **bandit**, **median stopping**, and **truncation
+    selection**. Let's take a look at them and see what their differences are.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Before we get into the details, though, let''s learn how to configure early
+    termination. In Azure Machine Learning, we can parameterize the different early
+    termination policies with two global properties, namely `evaluation_interval`
+    and `delay_evaluation`. These parameters control how often the early termination
+    policy is tested. An example of using these parameters are as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE11]'
+  prefs: []
+  type: TYPE_PRE
+- en: The units of both parameters are in intervals. An `run.log()`. For example,
+    when you're training a neural network, an interval will equal one training epoch.
+    The `delay_evaluation` parameter controls how many intervals we want to wait after
+    the start to test the early termination policy for the first time. In the preceding
+    example, we configured it as `10`, so we wait for 10 epochs before testing the
+    early termination policy.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Then, every other policy evaluation is configured using the `evaluation_interval`
+    parameter. It describes how many iterations need to pass until the next test.
+    In the preceding example, we set `evaluation_interval` to `1`, which is also the
+    default value. This means that we test the early termination policy every interval
+    after the `delay_evaluation` interval – here, every 1 iteration. Let's look into
+    the three termination policies in more detail.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The median stopping policy
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'Let''s start with the easiest termination policy – the **median stopping policy**.
+    It takes no other arguments than the two default arguments, which control when
+    and how often the policy should be tested. The median stopping policy keeps track
+    of the running average of the primary metric across all experiment runs. Whenever
+    the median policy is evaluated, it will test whether the current metric is above
+    the median of all running experiments and stop those runs that are below. The
+    following code shows how to create a median stopping early termination policy
+    for any hyperparameter tuning script:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE12]'
+  prefs: []
+  type: TYPE_PRE
+- en: As we can see, it's quite simple to construct a median stopping policy as it
+    is only configured by the two default parameters. Due to its simplicity, it is
+    a very effective method for reducing the runtime of your hyperparameter optimization
+    script. The early termination policy is then applied to the `hyperdrive` configuration
+    file using the `policy` parameter. Now, let's look at the truncation selection
+    policy.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The truncation selection policy
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'Unlike the median stopping policy, the `truncation_percentage` parameter:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE13]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'In the preceding example, we set the `truncation_percentage` value to `10`.
+    This means that whenever the early termination policy is executed, it will kill
+    the lowest-performing 10% of runs. We must also increase the `evaluation_interval`
+    value to `5` as we don''t want to kill runs every epoch, as shown in the following
+    example:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE14]'
+  prefs: []
+  type: TYPE_PRE
+- en: This early termination policy makes sense when only very few training resources
+    are available, and we want to aggressively prune the number of runs each time
+    the early termination policy is evaluated. Let's look at the final policy – the
+    bandit policy.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The bandit policy
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: The `slack_factor` or `slack_amount` parameter. The `slack_factor` parameter
+    describes the relative deviation from the best metric, whereas the `slack_amount`
+    parameter describes the absolute deviation from the best primary metric.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s look at an example. Here, we will configure `hyperdrive` by configuring
+    a `slack_factor` parameter of `0.2` and testing an accuracy value (*bigger is
+    better*). As we did previously, we will set the `evaluation_interval` value to
+    `5` and the `evaluation_delay` value to `10` intervals:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE15]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Let''s say that the best-performing run yields an accuracy of 0.8 after epoch
+    10, which is when the early termination policy gets applied for the first time.
+    Now, all the runs that are performing up to 20% worse than the best metric are
+    killed. We can compute the relative deviation from an accuracy of 0.8 by using
+    the following function:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '*0.8/(1 + 0.2) = 0.67*'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Hence, all the runs that yield a performance that's lower than 0.67 will get
+    canceled by the early termination policy.
+  prefs: []
+  type: TYPE_NORMAL
+- en: A HyperDrive configuration with the termination policy
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'To create a `hyperdrive` configuration, we need to pass the early termination
+    policy using the `policy` parameter. Here is an example of using grid search sampling
+    and the previously defined bandit policy:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE16]'
+  prefs: []
+  type: TYPE_PRE
+- en: The bandit policy is a good trade-off between the median stopping and the truncation
+    selection policy that works well in many cases. You can rest assured that only
+    a well-performing subset of all the hyperparameter configurations will be run
+    and evaluated for multiple intervals.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s submit this HyperDrive configuration as an experiment to Azure Machine
+    Learning. We can use the `RunDetails` method that we saw in the previous chapters
+    to output additional information about the hyperparameter tuning experiment, such
+    as scheduling and parameter information, a visualization of the training performance,
+    and a parallel coordinate chart showing the parameter dimensions:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE17]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'If you run the preceding code, it will run the hyperparameter search for the
+    configured policies. Once the experiment is running, you will see the specified
+    metric for the individual parameter combinations and iterations as a chart in
+    a widget:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 11.2 – HyperDrive – the performance of runs ](img/B17928_11_02.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 11.2 – HyperDrive – the performance of runs
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Besides looking at the defined metric, you can select other visualizations
+    that show the sampled parameters, such as on a parallel coordinates plot, or as
+    two- and three-dimensional scatter plots. Here, you can see which parameter combinations
+    yield high model accuracy:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 11.3 – HyperDrive – visualization of the results ](img/B17928_11_03.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 11.3 – HyperDrive – visualization of the results
+  prefs: []
+  type: TYPE_NORMAL
+- en: In this section, you learned that applying an early termination policy to your
+    hyperparameter optimization script is a simple but extremely effective way to
+    reduce the number of poorly performing training runs. With just a few lines of
+    code, we can reduce the number of training runs to a minimum and only finish those
+    that are yielding promising results.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Important Note
+  prefs: []
+  type: TYPE_NORMAL
+- en: When you're using hyperparameter optimization with random or grid sampling,
+    *always* use an early termination policy.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Optimizing parameter choices using Bayesian optimization
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: In the previous examples, we evaluated different parameter configurations sampled
+    from a grid or at random without any optimization or strategic parameter choice.
+    This had the benefit that all the configurations were independent and could be
+    evaluated in parallel. However, imagine using an ML model to help us find the
+    best parameter combination for a large multi-dimensional parameter space. That's
+    exactly what **Bayesian optimization** does in the domain of hyperparameter tuning.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The job of an optimization method is to find the optimal value (that is, a
+    minimum or maximum) of a predefined objective function. In hyperparameter tuning,
+    we are faced with a very similar problem: we want to find the parameter configuration
+    that yields the best-predefined evaluation metric for an ML model.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'So, how does optimization work for hyperparameter search? First, we must define
+    a hyperplane – a multi-dimensional grid where we can sample our parameter configurations.
+    In the following diagram, we can see such a plane for two parameters along the
+    *x* and *y* axes. The *z*-axis represents the performance of the model that is
+    being tested using the parameters at this specific location:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 11.4 – The Rastrigin function ](img/B17928_11_04.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 11.4 – The Rastrigin function
+  prefs: []
+  type: TYPE_NORMAL
+- en: The preceding diagram shows the multi-dimensional Rastrigin function, as an
+    example of something extremely hard to optimize. In hyperparameter tuning, we
+    often face a similar problem in that finding the optimal solution is difficult
+    – just like finding the global minimum in the Rastrigin function.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Then, we must sample points from this plane and test the first (few) parameter
+    configurations. We assume that the parameters are not independent and that the
+    model will have similar performance when using similar nearby parameters. However,
+    each evaluation only yields a noisy value of the true model performance. Using
+    these assumptions, we can use **Gaussian processes** to combine the model evaluations
+    into a multi-variate continuous Gaussian. Next, we can compute the points for
+    the highest expected improvements on this Gaussian. These points will yield new
+    samples to test with our model.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Luckily, we don't have to implement the algorithm ourselves, but many ML libraries
+    provide a hyperparameter optimization algorithm out of the box. In Azure Machine
+    Learning, we can use the **Bayesian sampling method**, which helps us pick good
+    parameter configurations to optimize the predefined metric.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The parameter grid is defined similarly to the random sampling technique –
+    that is, by using a continuous or discrete parameter space for all the parameter
+    values, as shown in the following code block:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE18]'
+  prefs: []
+  type: TYPE_PRE
+- en: Before we continue, we need to keep one thing in mind. The Bayesian sampling
+    technique tries to predict well-performing parameter configurations based on the
+    results of the previously tested parameters. This means that the parameter choices
+    and runs are not independent anymore. We can't run all the experiments in parallel
+    at the same time as we need the results of some experiments to sample new parameters.
+    Therefore, we need to set an additional parameter to control how many training
+    runs should run concurrently.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We can do this using the `max_concurrent_runs` parameter. To let the Bayesian
+    optimization technique converge, it is recommended to set this value to a small
+    value, for example, in the range of 2-10\. Let''s set the value to 4 for this
+    experiment and the number of total runs to 100\. This means that we are using
+    25 iterations for the Bayesian optimization method, where we explore four parameter
+    configurations concurrently at a time:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE19]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Let''s kick off the experiment with Bayesian sampling:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE20]'
+  prefs: []
+  type: TYPE_PRE
+- en: Unfortunately, this technique can't be parallelized further to finish faster
+    as all the parameter choices are dependent on the results of the previous iteration.
+    However, due to the optimization step, it generally yields good results in a relatively
+    short amount of time.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Another downside of Bayesian optimization or optimization for hyperparameter
+    tuning is that the optimization requires each result of each run with the defined
+    parameter configuration to compute the new parameter choices. Therefore, we can't
+    use early termination together with Bayesian sampling as the training would be
+    stopped earlier, which means no accurate metric can be computed.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Important Note
+  prefs: []
+  type: TYPE_NORMAL
+- en: Early termination doesn't work for optimization techniques such as Bayesian
+    optimization because it requires the final testing score to compute the parameter
+    gradient.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Once you''ve played around with using ML to optimize an ML model, you may already
+    think about taking it one step further: why should we stop at optimizing hyperparameters,
+    and why shouldn''t we optimize model choices, network structures, or model stacking
+    altogether?'
+  prefs: []
+  type: TYPE_NORMAL
+- en: And this is a perfectly valid thought. No human can test all the variations
+    of different ML models, different parameter configurations, and different nested
+    models together. In the next section, we will do exactly this and optimize not
+    just parameters but also model architecture and preprocessing steps using Automated
+    Machine Learning
+  prefs: []
+  type: TYPE_NORMAL
+- en: Finding the optimal model with Automated Machine Learning
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: '**Automated Machine Learning** is an exciting new trend that many (if not all)
+    cloud providers follow. The aim is to provide a service to users that automatically
+    preprocesses your data, selects an ML model, and trains and optimizes the model
+    to fit your training data to optimize a specified error metric. This will create
+    and train a fully automated end-to-end ML pipeline that only needs your labeled
+    training data and target metric as input. Here is a list of steps that Automated
+    Machine Learning optimizes for you:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Data preprocessing
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Feature engineering
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Model selection
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Hyperparameter tuning
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Model ensembling
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: While most experienced ML engineers or data scientists would be very cautious
+    about the effectiveness of such an automated approach, it still has a ton of benefits,
+    which will be explained in this section. If you like the idea of hyperparameter
+    tuning, then you will find value in Automated Machine Learning.
+  prefs: []
+  type: TYPE_NORMAL
+- en: A good way to think about Automated Machine Learning is that it performs a hyperparameter
+    search over the complete end-to-end ML pipeline, similar to Bayesian optimization,
+    but over a much larger parameter space. The parameters are now individual steps
+    in the end-to-end ML pipeline, which should be automated. The great thing about
+    Automated Machine Learning is that instead of going through the dumb sampling
+    of all possible parameter choices, it will predict how well certain preprocessing
+    steps and models will perform on a dataset before actually training a model. This
+    process is called **meta-learning** and will help the optimization process yield
+    great candidate solutions for the pipeline without spending time being evaluated.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The unfair advantage of Automated Machine Learning
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: Let's evaluate the advantages of Automated Machine Learning If we look at the
+    list of automated steps we mentioned earlier, each one requires days for an experienced
+    data scientist to explore, evaluate, and fine-tune. Even steps such as selecting
+    the correct model, such as either LightGBM or XGBoost for gradient-based tree
+    ensemble classification, are non-trivial as they require experience and knowledge
+    of both tools. Moreover, we all know that those two are only a tiny subset of
+    all the possible options for a classification model. If we look at hyperparameter
+    tuning and model stacking, we can immediately tell that the amount of work that's
+    required to build a great ensemble model is non-trivial.
+  prefs: []
+  type: TYPE_NORMAL
+- en: This is not only a problem of knowledge or expertise. It's also very time-consuming.
+    Automated Machine Learning aims to replace manual steps with automated best practices,
+    applying continuously improving rules, and heavily optimizing every possible human
+    choice. It's very similar to hyperparameter tuning but for the complete end-to-end
+    process. A machine will find the best parameters much faster and much more accurately
+    than a human by using optimization instead of manual selection.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We can also look at Automated Machine Learning from a different perspective,
+    namely as a **machine learning as a service** (**MLaaS**) product: data in, model
+    (or prediction endpoint) out. By now, you should be aware that each step of building
+    an end-to-end ML pipeline is a thorough, complicated, and time-consuming task.
+    Even when you can choose the correct model and tuning parameters using Bayesian
+    optimization, the cost of building this infrastructure and operating it is significant.
+    In this case, choosing MLaaS would provide you with an ML infrastructure for a
+    fraction of the usual cost.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: There is another reason why the idea of Automated Machine Learning is very interesting.
+    It separates the ML part from your data-fitting problem and leaves you with what
+    you should know best – the data. Similar to using a managed service in the cloud
+    (for example, a managed database), which lets you focus on implementing business
+    logic rather than operating infrastructure, Automated Machine Learning will allow
+    you to use a managed ML pipeline built on best practices and optimization by using
+    data instead of specific ML algorithms.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'This also leads to the reason why Automated Machine Learning is still a great
+    fit for many (mature) companies – it reduces a prediction problem to the most
+    important tasks:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Data acquisition
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Data cleansing
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Data labeling
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Selecting an error metric
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: We don't want to judge anyone, but ML practitioners often like to skip these
+    topics and dive right into the fun parts, namely feature engineering, model selection,
+    parameterization, stacking, and tuning. Therefore, a good start for every ML project
+    is to start with an Automated Machine Learning baseline model, because it will
+    force you to focus only on the data side. After achieving a good initial score,
+    you can always go ahead and start further feature engineering and build a model
+    if needed.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Now that we've talked about the Automated Machine Learning trend being reasonable
+    and that you could benefit from it in one way or another, let's dive deep into
+    some examples and code. We will look at the different capabilities of Azure Automated
+    Machine Learning, a product of Azure Machine Learning, as applied in a standard
+    end-to-end ML pipeline.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Before we jump into the code, let's take a look at what problem Azure Automated
+    Machine Learning can tackle. In general, we can decide between *classification*,
+    *regression*, and *time series forecasting* in Automated Machine Learning As we
+    know from the previous chapters, time series forecasting is simply a variant of
+    regression, where all the predicted values are in the future.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Hence, the most important task after choosing the correct ML task is choosing
+    the proper error metric that should be optimized. The following list shows all
+    the error metrics that are supported:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '`accuracy`, `AUC_weighted`, `average_precision_score_weighted`, `norm_macro_recall`,
+    and `precision_score_weighted`'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`spearman_correlation`, `normalized_root_mean_squared_error`, `r2_score`, and
+    `normalized_mean_absolute_error`'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: You should be familiar with most of these metrics as they are variants of the
+    most popular error metrics for classification and regression.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Among the supported models, there's LogisticRegression, SGD, MultinomialNaiveBayes,
+    SVM, KNN, Random Forest, ExtremeRandomTrees, LigthtGBM, GradientBoosting, DNN,
+    Lasso, Arima, Prophet, and more. The great thing about a managed service in the
+    cloud is that this list will most likely grow in the future and add the most recent
+    state-of-the-art models. However, this list should be thought of just as additional
+    information for you, since the idea of Automated Machine Learning is that the
+    models are automatically chosen for you. However, according to the user's preference,
+    individual models can be allow- or deny-listed for Automated Machine Learning.
+  prefs: []
+  type: TYPE_NORMAL
+- en: With all this in mind, let's look at a classification example that uses Automated
+    Machine Learning
+  prefs: []
+  type: TYPE_NORMAL
+- en: A classification example with Automated Machine Learning
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: When you're using new technology, it's always good to take a step back and think
+    about what the technology could be capable of. Let's use the same approach to
+    figure out how automated preprocessing could help us in a typical ML project and
+    where its limitations will be.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Automated Machine Learning is great for applying best-practice transformations
+    to your dataset: applying date/time transformations, as well as the normalization
+    and standardization of your data when using linear regression, handling missing
+    data or dropping low-variance features, and so on. A long list of features is
+    provided by Microsoft that is expected to grow in the future.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Let's recall what we learned in [*Chapter 7*](B17928_07_ePub.xhtml#_idTextAnchor112),
+    *Advanced Feature Extraction with NLP*. While Automated Machine Learning can detect
+    free text and convert it into a numeric feature vector, it won't be able to understand
+    the semantic meaning of the data in your business domain. Therefore, it will be
+    able to transform your textual data, but if you need to semantically encode your
+    text or categorical data, you have to implement that yourself.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Another thing to remember is that Automated Machine Learning will not try to
+    infer any correlations between different feature dimensions in your training data.
+    Hence, if you want to combine two categorical columns into a combined feature
+    column (for example, using one-hot-encoding, mean embedding, and so on), then
+    you will have to implement this on your own.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In Automated Machine Learning there are two different sets of preprocessors
+    – the `preprocess` argument is specified. If you have worked with scikit-learn
+    before, then most of the following preprocessing techniques should be fairly familiar
+    to you:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '`StandardScaler`: Normalization – mean subtraction and scaling a feature to
+    unit variance.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`MinMaxScaler`: Normalization – scaling a feature by the minimum and maximum.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`MaxAbsScaler`: Normalization – scaling a feature by the maximum absolute value.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`RobustScaler`: Normalization – scaling a feature to the quantile range.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`PCA`: Linear dimensionality reduction based on PCA.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`TruncatedSVD`: Linear dimensionality reduction-based truncated **singular
+    value decomposition** (**SVD**). Contrary to PCA, this estimator does not center
+    the data beforehand.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`SparseNormalizer`: Normalization – each sample is normalized independently.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Complex preprocessing is referred to as **featurization**. These preprocessing
+    steps are more complicated and apply various tasks during Automated Machine Learning
+    optimization. As a user of Azure Automated Machine Learning, you can expect this
+    list to grow and include new state-of-the-art transformations as they become available.
+    The following list shows the various featurization steps:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**Drop high cardinality or no variance features**: Drops high cardinality (for
+    example, hashes, IDs, or GUIDs) or no variance (for example, all values missing
+    or the same value across all rows) features.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Impute missing values**: Imputes missing values for numerical features (mean
+    imputation) and categorical features (mode imputation).'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Generate additional features**: Generates additional features derived from
+    date/time (for example, year, month, day, day of the week, day of the year, quarter,
+    week of the year, hour, minute, and second) and text features (term frequency
+    based on n-grams).'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Transform and encode**: Encodes categorical features using one-hot encoding
+    (low cardinality) and one-hot-hash encoding (high cardinality). Transforms numeric
+    features with few unique values into categorical features.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Word embeddings**: Uses a pre-trained embedding model to convert text into
+    aggregated feature vectors using mean embeddings.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Target encodings**: Performs target encoding on categorical features.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Text target encoding**: Performs target encoding on text features using a
+    bag-of-words model.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Weight of evidence**: Calculates the correlation of categorical columns to
+    the target column through the weight of evidence and outputs a new feature per
+    column per class.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Cluster distance**: Trains a k-means clustering model on all the numerical
+    columns and computes the distance of each feature to its centroid before outputting
+    a new feature per column per cluster.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Let's start with a simple Automated Machine Learning classification task that
+    also uses preprocessing.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We will start by defining a dictionary containing the Automated Machine Learning
+    configuration. To enable standard preprocessing such as scaling, normalization,
+    and PCA/SVD, we need to set the `preprocess` property to `true`. For advanced
+    preprocessing and feature engineering, we need to set the `featurization` property
+    to `auto`. The following code block shows all these settings:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE21]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Using this configuration, we can now load a dataset using `pandas`. As shown
+    in the following snippet, we are loading the `titanic` dataset and specifying
+    the target column as a string. This column is required later for configuring Automated
+    Machine Learning:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE22]'
+  prefs: []
+  type: TYPE_PRE
+- en: Important Note
+  prefs: []
+  type: TYPE_NORMAL
+- en: When you're using Automated Machine Learning and the local execution context,
+    you can use a pandas DataFrame as the input source. However, when you execute
+    the training process on a remote cluster, you need to wrap the data in an Azure
+    Machine Learning dataset.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Whenever we use a black-box classifier, we should also hold out a test set
+    to verify the test performance of the model to validate generalization. Therefore,
+    we must split the data into training and test sets:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE23]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Finally, we can supply all the required parameters to the Automated Machine
+    Learning configuration constructor. In this example, we are using a local execution
+    target to train the Automated Machine Learning experiment. However, we can also
+    provide an Azure Machine Learning dataset and submit the experiment to our training
+    cluster:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE24]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Let''s submit the Automated Machine Learning configuration as an experiment
+    to the defined compute target and wait for completion. We can output the run details:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE25]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Similar to `HyperDriveConfig`, we can see that `RunDetails` for Automated Machine
+    Learning shows a lot of useful information about your current experiment. Not
+    only can you see all of your scheduled and running models, but you also get a
+    nice visualization of the trained models and their training performance. The following
+    screenshot shows the accuracy of the first 14 runs of the Automated Machine Learning
+    experiment:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 11.5 – Automated Machine Learning – visualization of the results ](img/B17928_11_05.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 11.5 – Automated Machine Learning – visualization of the results
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Finally, after 15 minutes, we can retrieve the best ML pipeline from the Automated
+    Machine Learning run. From now on, we will refer to this pipeline simply as the
+    **model**, as all the preprocessing steps are packed into the model, which itself
+    is a pipeline of operations. We can use the following code to retrieve the pipeline:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE26]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The resulting fitted pipeline (called `best_model`) can now be used exactly
+    like a scikit-learn estimator. We can store it on disk, register it to the model
+    store, deploy it to a *container instance*, or simply evaluate it on the test
+    set. We will see this in more detail in [*Chapter 14*](B17928_14_ePub.xhtml#_idTextAnchor217),
+    *Model Deployment, Endpoints, and Operations*. Finally, we want to evaluate the
+    best model. To do so, we will take the testing set that we separated from the
+    dataset beforehand and predict the output on the fitted model:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE27]'
+  prefs: []
+  type: TYPE_PRE
+- en: In the preceding code, we used the `accuracy_score` function from scikit-learn
+    to compute the accuracy of the final model. These steps are all you need to perform
+    classification on a dataset using automatically preprocessed data and fitted models.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Summary
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In this chapter, we introduced hyperparameter optimization through **HyperDrive**
+    and model optimization through **Automated Machine Learning** Both techniques
+    can help you efficiently retrieve the best model for your ML task.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**Grid sampling** works great with classical ML models, and also when the number
+    of tunable parameters is fixed. All the values on a discrete parameter grid are
+    evaluated. In **random sampling**, we can apply a continuous distribution for
+    the parameter space and select as many parameter choices as we can fit into the
+    configured training duration. Random sampling performs better on a large number
+    of parameters. Both sampling techniques can/should be tuned using an **early stopping
+    criterion**.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Unlike random and grid sampling, **Bayesian optimization** probes the model
+    performance to optimize the following parameter choices. This means that each
+    set of parameter choices and the resulting model performance are used to compute
+    the next best parameter choices. Therefore, Bayesian optimization uses ML to optimize
+    parameter choices for your ML model. Since the underlying Gaussian process requires
+    the resulting model performance, early stopping does not work with Bayesian optimization.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We also learned that Automated Machine Learning is a generalization of Bayesian
+    optimization on the complete end-to-end ML pipeline. Instead of choosing only
+    hyperparameters, we also choose pre-processing, feature engineering, model selection,
+    and model stacking methods and optimize those together. Automated Machine Learning
+    speeds up this process by predicting which models will perform well on your data
+    instead of blindly trying all possible combinations. Both techniques are essential
+    for a great ML project; Automated Machine Learning lets you focus on the data
+    and labeling first, while hyperparameter tuning lets you optimize a specific model.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the next chapter, we will look at training DNNs where the data or the model
+    parameters don't fit into the memory of a single machine anymore, and therefore
+    distributed learning is required.
+  prefs: []
+  type: TYPE_NORMAL

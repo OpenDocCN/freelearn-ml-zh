@@ -1,0 +1,958 @@
+- en: '*Chapter 12*: Distributed Machine Learning on Azure'
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In the previous chapter, we learned about hyperparameter tuning through search
+    and optimization, using HyperDrive as well as Automated Machine Learning as a
+    special case of hyperparameter optimization, involving feature engineering, model
+    selection, and model stacking. Automated Machine Learning is **machine learning
+    as a service** (**MLaaS**), whereby the only input is your data, an ML task, and
+    an error metric. It's hard to imagine running all experiments and parameter combinations
+    for Automated Machine Learning on a single machine or a single CPU/GPUwe are looking
+    into ways to speed up the training process through parallelization and distributed
+    computing.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In this chapter, we will look into distributed and parallel computing algorithms
+    and frameworks for efficiently training ML models in parallel. The goal of this
+    chapter is to build an environment in Azure where you can speed up the training
+    process of classical ML and deep learning models by adding more machines to your
+    training environment, thereby scaling out the cluster.
+  prefs: []
+  type: TYPE_NORMAL
+- en: First, we will take a look at the different methods and fundamental building
+    blocks for **distributed ML**. You will grasp the difference between training
+    independent models in parallel, as done in HyperDrive and Automated Machine Learning,
+    and training a single model ensemble on a large dataset in parallel by partitioning
+    the training data. We will then look into distributed ML for single models and
+    discover data-distributed and model-distributed training methods. Both methods
+    are often used in real-world scenarios for speeding up or enabling the training
+    of large deep neural networks.
+  prefs: []
+  type: TYPE_NORMAL
+- en: After that, we will discover the most popular frameworks for distributed ML
+    and how they can be used in Azure and in combination with Azure Machine Learning
+    compute. The transition between execution engines, communication libraries, and
+    functionality for distributed ML libraries is smooth but often hard to understand.
+    However, after reading this chapter, you will understand the difference between
+    running Apache Spark in Databricks with MLlib and using Horovod, Gloo, PyTorch,
+    and TensorFlow parameter servers.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the final section, we will take a look at two practical examples of how to
+    implement the functionality we'll be covering in Azure and integrate it with Azure
+    Machine Learning compute.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'This chapter covers the following topics:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Exploring methods for distributed ML
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Using distributed ML in Azure
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Technical requirements
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'In this chapter, we will use the following Python libraries and versions to
+    create decision-tree-based ensemble classifiers:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '`azureml-core 1.34.0`'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`azureml-sdk 1.34.0`'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`horovod 0.23.0`'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`tensorflow 2.6.0`'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`pyspark 3.2.0`'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`numpy 1.19.5`'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`pandas 1.3.2`'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`scikit-learn 0.24.2`'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Similar to previous chapters, you can execute this code using either a local
+    Python interpreter or a notebook environment hosted in Azure Machine Learning.
+  prefs: []
+  type: TYPE_NORMAL
+- en: All code examples in this chapter can be found in the GitHub repository for
+    this book, found at [https://github.com/PacktPublishing/Mastering-Azure-Machine-Learning-Second-Edition/tree/main/chapter12](https://github.com/PacktPublishing/Mastering-Azure-Machine-Learning-Second-Edition/tree/main/chapter12).
+  prefs: []
+  type: TYPE_NORMAL
+- en: Exploring methods for distributed ML
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'The journey of implementing ML pipelines is very similar for a lot of users
+    and is often similar to the steps described in the previous chapters. When users
+    start switching from experimentation to real-world data or from small examples
+    to larger models, they often experience a similar issue: training large parametric
+    models on large amounts of data—especially DL models—takes a very long time. Sometimes,
+    epochs last hours, and training takes days to converge.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Waiting hours or even days for a model to converge means precious time wasted
+    for many engineers, as it makes it a lot harder to interactively tune the training
+    process. Therefore, many ML engineers need to speed up their training process
+    by leveraging various distributed computing techniques. The idea of distributed
+    ML is as simple as speeding up a training process by adding more compute resources.
+    In the best case, the training performance improves linearly by adding more machines
+    to the training cluster (scaling out). In this section, we will take a look at
+    the most common patterns of distributed ML and try to understand and reason about
+    them. In the next section of this chapter, we will also apply them to some real-world
+    examples.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Most modern ML pipelines use some of the techniques discussed in this chapter
+    to speed up the training process once their data or models become larger. This
+    is similar to the need for big data platforms—such as Spark, Hive, and so on—for
+    data preprocessing, once the data gets large. Hence, while this chapter seems
+    overly complex, we would recommend revisiting it whenever you are waiting for
+    your model to converge or want to produce better results faster.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'There are generally three patterns for leveraging distributed computing for
+    ML, as presented here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Training independent models on small data in parallel
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Training copies of a model in parallel on different subsets of the data
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Training different parts of the same model in parallel
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Let's take a look at each of these methods.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Training independent models on small data in parallel
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'We will first look at the easiest example: training (small) independent models
+    on a (small) dataset. A typical use case for this parallel training is performing
+    a hyperparameter search or the optimization of a classic ML model or a small neural
+    network. This is very similar to what we covered in [*Chapter 11*](B17928_11_ePub.xhtml#_idTextAnchor178),
+    *Hyperparameter Tuning and Automated Machine Learning*. Even Automated Machine
+    Learning—where multiple individual independent models are trained and compared—uses
+    this approach under the hood. In parallel training, we aim to speed up the training
+    of multiple independent models with different parameters by training these models
+    in parallel.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The following diagram shows this case, where instead of training the individual
+    models in sequence on a single machine, we train them in parallel:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 12.1 – Parallel processing ](img/B17928_12_01.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 12.1 – Parallel processing
+  prefs: []
+  type: TYPE_NORMAL
+- en: You can see that no communication or synchronization is required during the
+    training process of the individual models. This means that we can train either
+    on multiple CPUs/GPUs on the same machine or on multiple machines.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'When using Azure Machine Learning for hyperparameter tuning, this parallelization
+    is easy to achieve by configuring an Azure Machine Learning compute target with
+    multiple nodes and selecting the number of concurrent runs through the `max_concurrent_runs`
+    parameter of the HyperDrive configuration. In Azure Machine Learning HyperDrive,
+    all it takes is to specify an estimator and `param_sampling`, and submit the HyperDrive
+    configuration as an experiment in order to run the individual task in parallel,
+    as shown here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE0]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Here are some formulas to compute the value for `max_concurrent_runs` for HyperDrive
+    or any other distributed computing setup:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: For CPU-based training, the maximal number of concurrent training runs is limited
+    by the number of available CPUs and compute nodes. The available physical memory
+    is also a limitation, but swapping to virtual memory allow us to consume more
+    memory than is physically available.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: For GPU-based training, the maximal number of concurrent training runs is limited
+    by the number of available GPUs and compute nodes, as well as the amount of available
+    GPU memory. Typically, one training run is pinned to one physical GPU, but through
+    GPU virtualization we can also train multiple models on a single physical GPU
+    if enough GPU memory is available.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Here is a guide to how to estimate how much memory a single model will consume:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**Size of a single parameter**:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Half-precision float: 16 bits (2 bytes).'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Single-precision float: 32 bits (4 bytes)—this is often the default.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Double-precision float: 64 bits (8 bytes).'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Number of parameters required for a model**:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Parametric model: Sum of all parameters'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Non-parametric model: Number of representations (for example, decision trees)
+    * number of a representation''s parameters'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Then, you multiply additional factors, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Models using backpropagation: overall memory * 2'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Models using batching: overall memory * batch size'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Models using (recurrent) states: memory per state * number of recurrent steps'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: While this use case seems very similar, let's move on to the next use case where
+    we are given a large dataset that cannot be copied onto every machine.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Training a model ensemble on large datasets in parallel
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: The next thing we will discuss is a very common optimization within ML, particularly
+    when training models on large datasets. In order to train models, we usually require
+    a large amount of data that rarely all fits into the memory of a single machine.
+    Therefore, it is often required to split the data into chunks and train multiple
+    individual models on the different chunks.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The following screenshot shows two ways of splitting data into smaller chunks—by
+    splitting the rows horizontally (left) or by splitting the columns vertically
+    (right):'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 12.2 – Data split: horizontal (row-wise) versus vertical (column-wise)
+    ](img/B17928_12_02.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 12.2 – Data split: horizontal (row-wise) versus vertical (column-wise)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: You could also mix both techniques to extract a subset from your training data.
+    Whenever you are using tools from the big data domain—such as MapReduce, Hive,
+    or Spark—partitioning your data will help you to speed up your training process
+    or enable training over huge amounts of data in the first place.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'A good example of performing data-distributed training is to train a massive
+    tree ensemble of completely separate decision-tree models, also called a random
+    forest. By splitting the data into many thousands of randomized chunks, you can
+    train one decision tree per chunk of data and combine all trained trees into a
+    single ensemble model. Apache Hivemall is a library based on Hive and Spark that
+    does exactly this on either of the two execution engines. Here is an example of
+    training multiple XGBoost multi-class ensemble models on Hive using **Hive Query
+    Language** (**HiveQL**) and Apache Hivemall:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE1]'
+  prefs: []
+  type: TYPE_PRE
+- en: In the preceding function, we use the `cluster` keyword to randomly move rows
+    of data to the reducers. This will partition the data horizontally and train an
+    XGBoost model per partition on each reducer. By defining the number of reducers,
+    we also define the number of models trained in parallel. The resulting models
+    are stored in a table where each row defines the parameters of one model. In a
+    prediction, we would simply combine all individual models and perform an average-voting
+    criterion to retrieve the final result.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Another example of this approach would be a standard Spark pipeline that trains
+    multiple independent models on vertical and horizontal data partitions. When we''ve
+    finished training the individual models, we can use an average-voting criterion
+    during inference to find the optimal result for a prediction task. Here is a small
+    example script for training multiple models on horizontally partitioned data in
+    parallel using Python, PySpark, and scikit-learn:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE2]'
+  prefs: []
+  type: TYPE_PRE
+- en: In the preceding function, we can now load almost any amount of data and repartition
+    it such that each partition fits into the local memory of a single node. If we
+    have 1 `collect()` method to return all trained models to the head node.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We could have also decided to just store the models from each individual worker
+    on disk or in a distributed filesystem, but it might be nicer to just combine
+    the results on a single node. In this example, you see we have the freedom to
+    choose either of the two methods because all models are independent of each other.
+    This is not true for cases where the models are suddenly dependent on each other—for
+    example, when minimizing a global gradient or splitting a single model over multiple
+    machines, which are both common use cases when training DNNs in the same way.
+    In this case, we need some new operators to steer the control flow of the data
+    and gradients. Let's look into these operators in the following section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Fundamental building blocks for distributed ML
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: As we saw in the previous example, we need some fundamental building blocks
+    or operators to manage the data flow in a distributed system. We call these operators
+    **collective algorithms**. These algorithms implement common synchronization and
+    communication patterns for distributed computing and are required when training
+    ML models. Before we jump into distributed training methods for DNNs, we will
+    have a quick look at these patterns to understand the foundations.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The most common communication patterns in distributed systems are listed here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: One-to-one
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: One-to-many (also called *broadcast* or *scatter* patterns)
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Many-to-one (also called *gather* or *reduce* patterns)
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Many-to-many (also called *all-gather* or *all-reduce* patterns)
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'The following screenshot gives a great overview of these patterns and shows
+    how the data flows between the individual actors of a system:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 12.3 – Communication patterns in distributed systems ](img/B17928_12_03.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 12.3 – Communication patterns in distributed systems
+  prefs: []
+  type: TYPE_NORMAL
+- en: We can immediately think back to the hyperparameter optimization technique of
+    Bayesian optimization. First, we need to **broadcast** the training data from
+    the master to all worker nodes. Then, we can choose parameter combinations from
+    the parameter space on the master and broadcast those to the worker nodes as well.
+    Finally, we perform training on the worker nodes, before then **gathering** all
+    the model validation scores from the worker nodes on the master. By comparing
+    the scores and applying Bayes' theorem, we can predict the next possible parameter
+    combinations and repeat broadcasting them to the worker nodes.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Did you notice something in the preceding algorithm? How can we know that all
+    worker nodes finished the training process, and gather all scores from all worker
+    nodes? To do this, we will use another building block called synchronization,
+    or **barrier synchronization**. With barrier synchronization, we can schedule
+    the execution of a task such that it needs to wait for all other distributed tasks
+    to be finished. The following screenshot shows a good overview of the synchronization
+    pattern in multiprocessors:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 12.4 – Synchronization mechanism ](img/B17928_12_04.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 12.4 – Synchronization mechanism
+  prefs: []
+  type: TYPE_NORMAL
+- en: As you can see, we implicitly used these algorithms already in the previous
+    chapter, where they were hidden from us behind the term *optimization*. Now, we
+    will use them explicitly by changing the optimizers in order to train a single
+    model over multiple machines.
+  prefs: []
+  type: TYPE_NORMAL
+- en: As you might have already realized, these patterns are not new and are used
+    by your operating system many times per second. However, in this case, we can
+    take advantage of these patterns and apply them to the execution graph of a distributed
+    training process, and through specialized hardware (for example, by connecting
+    two GPUs together using **InfiniBand** (**IB**)).
+  prefs: []
+  type: TYPE_NORMAL
+- en: In order to use this collective algorithm with a different level of hardware
+    support (GPU support and vectorization), you need to select a communication backend.
+    These backends are libraries that often run as a separate process and implement
+    communication and synchronization patterns. Popular libraries for collective algorithms
+    include **Gloo**, **Message Passing Interface** (**MPI**), and **NVIDIA Collective
+    Communications Library** (**NCCL**).
+  prefs: []
+  type: TYPE_NORMAL
+- en: Most DL frameworks, such as PyTorch or TensorFlow, provide their own higher-level
+    abstractions on one of these communication backends—for example, PyTorch **Remote
+    Procedure Call** (**RPC**) and a TensorFlow **parameter server (PS)**. Instead
+    of using a different execution and communication framework, you could also choose
+    a general-purpose framework for distributed computing, such as Spark.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Important Note
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The PyTorch documentation has an up-to-date guide on when to use which collective
+    communication library: https://pytorch.org/docs/stable/distributed.html#which-backend-to-use.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: As you can see, the list of possible choices is endless, and multiple combinations
+    are possible. We haven't even talked about Horovod, a framework used to add distributed
+    training to other DL frameworks through distributed optimizers. The good part
+    is that most of these frameworks and libraries are provided in all Azure Machine
+    Learning runtimes as well as being supported through the Azure ML SDK. This means
+    you will often only specify the desired backend, supply your model to any specific
+    framework, and let Azure Machine Learning handle the setup, initialization, and
+    management of these tools. We will see this in action in the second half of this
+    chapter.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Speeding up deep learning with data-parallel training
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: Another variation of distributed data-parallel training is very common in DL.
+    In order to speed up the training of larger models, we can run multiple training
+    iterations with different chunks of data on distributed copies of the same model.
+    This is especially crucial when each training iteration takes a significant amount
+    of time (for example, multiple seconds), which is a typical scenario for training
+    large DNNs where we want to take advantage of multi-GPU environments.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Data-distributed training for DL is based on the idea of using a **distributed
+    gradient descent** (**DGD**) algorithm, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Distribute a copy of the model to each node.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Distribute a chunk of data to each node.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Run a full pass through the network on each node and compute the gradient.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Collect all gradients on a single node and compute the average gradient.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Send the average gradient to all nodes.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Update all models using the average gradient.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'The following diagram shows this in action for multiple models, running the
+    forward/backward pass individually and sending the gradient back to the parameter
+    server:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 12.5 – Data-parallel training ](img/B17928_12_05.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 12.5 – Data-parallel training
+  prefs: []
+  type: TYPE_NORMAL
+- en: As seen here, the server computes the average gradient, which is sent back to
+    all other nodes. We can immediately see that, suddenly, communication is required
+    between the worker nodes and a primary node (let's call it the *parameter server*),
+    and that synchronization is required too while waiting for all models to finish
+    computing the gradient.
+  prefs: []
+  type: TYPE_NORMAL
+- en: A great example of this use case is speeding up the training process of DL models
+    by parallelizing the backpropagation step and combining the gradients from each
+    node to an overall gradient. TensorFlow currently supports this distribution mode
+    using a so-called parameter server. The *Horovod* framework developed at Uber
+    provides a handy abstraction for distributed optimizers and plugs into many available
+    ML frameworks or distributed execution engines, such as TensorFlow, PyTorch, and
+    Apache Spark. We will take a look at practical examples of using Horovod and Azure
+    Machine Learning in the *Horovod – a distributed DL training framework* section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Training large models with model-parallel training
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: Lastly, another common use case in DL is to train models that are larger than
+    the provided GPU memory of a single GPU. This approach is a bit trickier as it
+    requires the model execution graph to be split among different GPUs or even different
+    machines. While this is not a big problem in CPU-based execution and is often
+    done in Spark, Hive, or TensorFlow, we also need to transfer the intermediate
+    results between multiple GPU memories. In order to do this effectively, extra
+    hardware and drivers such as **Infiniband** (GPU-to-GPU communication) and **GPUDirect**
+    (efficient GPU memory access) are required.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The following diagram displays the difference between computing multiple gradients
+    in parallel (on the left) and computing a single forward pass of a distributed
+    model (on the right):'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 12.6 – Model-parallel training ](img/B17928_12_06.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 12.6 – Model-parallel training
+  prefs: []
+  type: TYPE_NORMAL
+- en: The latter is a lot more complicated as data has to be exchanged during forward
+    and backward passes between multiple GPUs and/or multiple nodes.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In general, we choose between two scenarios: multi-GPU training on a single
+    machine and multi-GPU training on multiple machines. As you might expect, the
+    latter is a lot more difficult, as it requires communication between and the synchronization
+    of multiple machines over a network.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In the following script, we create a simple model running distributed on two
+    GPUs using PyTorch. Using `.to(''cuda:*'')` methods throughout the model, we define
+    the GPU on which an operation should be performed. In addition, we also need to
+    add the same annotation to the input data for these computations:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE3]'
+  prefs: []
+  type: TYPE_PRE
+- en: As we can see in the preceding code, we configure the network to compute the
+    first fully connected layer on GPU `0` whereas the second fully connected layer
+    is computed on GPU `1`. When configuring forward steps, we also need to configure
+    the inputs to both layers accordingly.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Training the model using a built-in optimizer and loss function is not very
+    different from non-distributed models. The only difference is that we also have
+    to define the target GPU for the training labels so that the loss can be computed,
+    as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE4]'
+  prefs: []
+  type: TYPE_PRE
+- en: As you can see, we have split individual layers to run on multiple GPUs, while
+    the data between these layers needs to be transferred during forward and backward
+    passes. We have to apply code changes to the model itself in order to specify
+    which parts of the model should run on which GPU.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Important Note
+  prefs: []
+  type: TYPE_NORMAL
+- en: Please note that we could also make this split dynamic, such that we split the
+    model into *x* consecutive subgraphs that are executed on *x* GPUs.
+  prefs: []
+  type: TYPE_NORMAL
+- en: It's interesting to note that many of the techniques discussed in this chapter
+    can be combined. We could, for example, train one multi-GPU model per machine,
+    while partitioning the data into chunks and computing multiple parts of the gradient
+    on multiple machines—hence adopting a data-distributed model-parallel approach.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the next section, we will learn how to put these concepts into practice.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Using distributed ML in Azure
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: The *Exploring methods for distributed ML* section contained an overwhelming
+    amount of different parallelization scenarios, various communication backends
+    for collective algorithms, and code examples using different ML frameworks and
+    even execution engines. The amount of choice when it comes to ML frameworks is
+    quite large, and making an educated decision is not easy. This choice gets even
+    more complicated as some frameworks are supported out of the box in Azure Machine
+    Learning while others have to be installed, configured, and managed by the user.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In this section, we will go through the most common scenarios, learn how to
+    choose the correct combination of frameworks, and implement a distributed ML pipeline
+    in Azure.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In general, you have three choices for running distributed ML in Azure, as
+    follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The first obvious choice is using Azure Machine Learning, the notebook environment,
+    the Azure Machine Learning SDK, and Azure Machine Learning compute clusters. This
+    will be the easiest solution for many complex use cases. Huge datasets can be
+    stored on Azure Blob Storage, and models can be trained as data-parallel and/or
+    model-parallel models with different communication backends. Everything is managed
+    for you by wrapping your training script with an estimator abstraction.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The second choice is to use a different authoring and execution engine for your
+    code instead of Azure Machine Learning notebooks and Azure Machine Learning compute
+    clusters. A popular option is Azure Databricks with integrated interactive notebooks
+    and Apache Spark as a distributed execution engine. Using Databricks, you can
+    use the pre-built ML images and auto-scaling clusters, which provides a great
+    environment for running distributed ML training.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The third choice is to build and roll out your own custom solution. To do so,
+    you need to build a separate cluster with virtual machines or Kubernetes and orchestrate
+    the setup, installation, and management of the infrastructure and code. While
+    this is the most flexible solution, it is also—by far—the most complex and time-consuming
+    to set up.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: For this book, we will first look into Horovod optimizers, Azure Databricks,
+    and Apache Spark before diving deeper into Azure Machine Learning.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Horovod – a distributed deep learning training framework
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: '**Horovod** is a framework for enabling **distributed DL** and was initially
+    developed and made open source by Uber. It provides a unified way to support the
+    distributed training of existing DL training code for the following supported
+    frameworks—TensorFlow, Keras, PyTorch, and Apache MXNet. The design goal was to
+    make the transition from single-node training to data-parallel training extremely
+    simple for any existing project, and hence enable these models to train faster
+    on multiple GPUs in a distributed environment.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Horovod is an excellent choice as a drop-in replacement for optimizers in any
+    of the supported frameworks for data-parallel training. It integrates nicely with
+    the supported frameworks through initialization and update steps or update hooks,
+    by simply abstracting the GPUs from the DL code. From a user''s perspective, only
+    minimal code changes have to be done to support data-parallel training for your
+    model. Let''s take a look at an example using Keras and implement the following
+    steps:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Initialize Horovod.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Configure Keras to read GPU information from Horovod.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Load a model and split training data.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Wrap the Keras optimizer as a Horovod distributed optimizer.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Implement model training.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Execute the script using `horovodrun`.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'The detailed steps are listed here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The first step is the same for any script using Horovod—we first need to load
+    `horovod` from the correct package and initialize it, as follows:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE5]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'Next, we need to perform a custom setup step, which varies depending on the
+    framework used. This step will set up the GPU configuration for the framework,
+    and ensure that it can call the abstracted versions through Horovod. The code
+    is illustrated in the following snippet:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE6]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'Now, we can simply take our single-node, single-GPU Keras model and define
+    all parameters and the training and validation data. There is nothing special
+    required during this step, as we can see here:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE7]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'Finally, we arrive at the magical part, where we wrap the framework optimizer—in
+    this case, Adadelta from Keras—as a Horovod distributed optimizer. For all subsequent
+    code, we will simply use the distributed optimizer instead of the default one.
+    We also need to adjust the learning rate to the number of used GPUs, as the resulting
+    gradient will be averaged from the individual changes. This can be done using
+    the following code:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE8]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'The remaining part looks fairly simple. It involves compiling the model, fitting
+    the model, and evaluating the model, just as with the single-node counterpart.
+    It''s worth mentioning that we need to add a callback to initialize all gradients
+    during the training process. The code is illustrated in the following snippet:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE9]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: When looking at the preceding code, it's fair to say that Horovod is not over-promising
+    on making it easy to extend your code for distributed execution using a data-parallel
+    approach and distributed gradient computation. If you have looked into the native
+    TensorFlow or PyTorch versions, you will have seen that this requires far fewer
+    code changes and is a lot more readable and portable than a parameter server or
+    RPC framework.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The Horovod framework uses a communication based on MPI to handle collective
+    algorithms under the hood, and usually requires one running process per GPU per
+    node. However, it can also run on top of the Gloo backend or a custom MPI backend
+    through a configuration option. Here is a sample snippet of how to use the `horovodrun`
+    command to start a training process on two machines, `server1` and `server2`,
+    each using four separate GPUs:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE10]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: Running and debugging Horovod on your own cluster can still be painful when
+    you only want to speed up your training progress by scaling out your cluster.
+    Therefore, Azure Machine Learning compute provides a wrapper that does all the
+    heavy lifting for you, requiring only a training script with Horovod annotations.
+    We will see this in the *Training models with Horovod on Azure Machine Learning*
+    section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Model-parallel training can be combined with Horovod by using the model-parallel
+    features of the underlying framework and using only one Horovod process per machine
+    instead of per GPU. However, this is a custom configuration and is currently not
+    supported in Azure Machine Learning.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Implementing the HorovodRunner API for a Spark job
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: In many companies, ML is an additional data processing step on top of existing
+    data pipelines. Therefore, if you have huge amounts of data and you are already
+    managing Spark clusters or using Azure Databricks to process that data, it is
+    easy to also add distributed training capabilities.
+  prefs: []
+  type: TYPE_NORMAL
+- en: As we have seen in the *Exploring methods for distributed ML* section of this
+    chapter, we can simply train multiple models using parallelization or by partitioning
+    the training data. However, we could also train DL models and benefit from distributed
+    ML techniques to speed up the training process.
+  prefs: []
+  type: TYPE_NORMAL
+- en: When using the Databricks ML runtime, you can leverage Horovod for Spark to
+    distribute your training process. This functionality is available through the
+    `HorovodRunner` API and is powered by Spark's barrier-mode execution engine to
+    provide a stable communication backend for long-running jobs. Using `HorovodRunner`
+    on the head node, it will send the training function to the workers and start
+    the function using the MPI backend. This all happens under the hood within the
+    Spark process.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Again, this is one of the reasons why Horovod is quite easy to use, as it is
+    literally just a drop-in replacement for your current optimizer. Imagine that
+    you usually run your Keras model on Azure Databricks using the PySpark engine;
+    however, you would like to add Horovod to speed up the training process by leveraging
+    other machines in the cluster and splitting the gradient descent over multiple
+    machines. In order to do so, you would have to add literally only two lines of
+    code to the example from the previous section, as seen here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE11]'
+  prefs: []
+  type: TYPE_PRE
+- en: In the preceding code snippet, we observe that we only need to initialize `HorovodRunner()`
+    with the number of worker nodes. Calling the `run()` method with the training
+    function will automatically start the new workers and the MPI communication backend
+    and will send the training code to the workers, executing the training in parallel.
+    Therefore, you can now add data-parallel training to your long-running Spark ML
+    jobs.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Training models with Horovod on Azure Machine Learning
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: One of the benefits of moving to a cloud service is that you can consume functionality
+    as a service rather than managing infrastructure on your own. Good examples are
+    managed databases, lambda functions, managed Kubernetes, or container instances,
+    where choosing a managed service means that you can focus on your application
+    code while the infrastructure is managed for you in the cloud.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The Azure Machine Learning service sits in a similar spot where you can consume
+    many of the different functionalities through an SDK (such as model management,
+    optimization, training, and deployments) so that you don't have to maintain an
+    ML cluster infrastructure. This brings a huge benefit when it comes to speeding
+    up DNNs through distributed ML. If you have stuck with Azure Machine Learning
+    compute until now, then moving to data-parallel training is as difficult as adding
+    a single parameter to your training configuration—for any of the various choices
+    discussed in this chapter.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Let's think about running the Keras training script in data-parallel mode using
+    a Horovod optimizer in a distributed environment. You need to make sure all the
+    correct versions of your tools are set up (from **Compute Unified Device Architecture**
+    (**CUDA**) to **CUDA Deep Neural Network** (**cuDNN**), GPUDirect, MPI, Horovod,
+    TensorFlow, and Keras) and play together nicely with your current operating system
+    and hardware. Then, you need to distribute the training code to all machines,
+    start the MPI process, and then call the script using Horovod and the relevant
+    command-line argument on every machine in the cluster. And we haven't even talked
+    about authentication, data access, or auto-scaling.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'With Azure Machine Learning, you get an ML environment that just works and
+    will be kept up to date for you. Let''s take a look at the previous Horovod and
+    Keras training script, which we stored in a `train.py` file. Now, similar to the
+    previous chapters, we create an estimator to wrap the training call for the Azure
+    Machine Learning SDK. To enable multi-GPU data-parallel training using Horovod
+    and the MPI backend, we simply add the relevant parameters. The resulting script
+    looks like this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE12]'
+  prefs: []
+  type: TYPE_PRE
+- en: Using the `use_gpu` flag, we can enable GPU-specific machines and their corresponding
+    images with precompiled binaries for our Azure Machine Learning compute cluster.
+    Using `node_count` and `process_count_per_node`, we specify the level of concurrency
+    for the data-parallel training, where `process_count_per_node` should correspond
+    with the number of GPUs available per node. Finally, we set the `distributed_backend`
+    parameter to `mpi` to enable the MPI communication backend for this estimator.
+    Another possible option would be using `ps` to enable the TensorFlow `ParameterServer`
+    backend.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Finally, to start up the job, we simply submit the experiment, which will automatically
+    set up the MPI session on each node and call the training script with the relevant
+    arguments for us. I don''t know how you feel about this, but for me, this is a
+    really big step forward from the previous manual examples. The following line
+    of code shows how you can submit the experiment:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE13]'
+  prefs: []
+  type: TYPE_PRE
+- en: Wrapping your training as part of an Azure Machine Learning estimator gives
+    you the benefit of fine-tuning your training script configuration for multiple
+    environments, be it multi-GPU data-parallel models for distributed gradient descent
+    training or single-node instances for fast inference. By combining distributed
+    DL with Azure Machine Learning compute auto-scaling clusters, you can get the
+    most from the cloud by using pre-built managed services instead of manually fiddling
+    with infrastructure and configurations.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Summary
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Distributed ML is a great approach to scaling out your training infrastructure
+    in order to gain speed in your training process. It is applied in many real-world
+    scenarios and is very easy to use with Horovod and Azure Machine Learning.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Parallel execution is similar to hyperparameter searching, while distributed
+    execution is similar to Bayesian optimization, which we discussed in detail in
+    the previous chapter. Distributed executions need methods to perform communication
+    (such as one-to-one, one-to-many, many-to-one, and many-to-many) and synchronization
+    (such as barrier synchronization) efficiently. These so-called collective algorithms
+    are provided by communication backends (MPI, Gloo, and NCCL) and allow efficient
+    GPU-to-GPU communication.
+  prefs: []
+  type: TYPE_NORMAL
+- en: DL frameworks build higher-level abstractions on top of communication backends
+    to perform model-parallel and data-parallel training. In data-parallel training,
+    we partition the input data to compute multiple independent parts of the model
+    on different machines and add up the results in a later step. A common technique
+    in DL is distributed gradient descent, where each node performs gradient descent
+    on a partition of the input batch, and a master collects all the separate gradients
+    to compute the overall average gradient of the combined model. In model-parallel
+    training, you distribute a single model over multiple machines. This is often
+    the case when a model doesn't fit into the GPU memory of a single GPU.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Horovod is an abstraction on top of existing optimizers of other ML frameworks,
+    such as TensorFlow, Keras, PyTorch, and Apache MXNet. It provides an easy-to-use
+    interface to add data-distributed training to an existing model without many code
+    changes. While you could run Horovod on a standalone cluster, the Azure Machine
+    Learning service provides good integration by wrapping its functionality as an
+    estimator object. You learned how to run Horovod on an Azure Machine Learning
+    compute cluster to speed up your training process through distributed ML with
+    a few lines of Horovod initialization and a wrapper over the current optimizer.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the next chapter, we will use all the knowledge from the previous chapters
+    to train recommendation engines on Azure. Recommendation engines often build on
+    top of other NLP feature extraction or classification models and hence combine
+    many of the techniques we have learned about so far.
+  prefs: []
+  type: TYPE_NORMAL
