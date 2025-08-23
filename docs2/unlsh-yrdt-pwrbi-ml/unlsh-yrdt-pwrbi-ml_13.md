@@ -1,6 +1,6 @@
 
 
-# 在 Power BI 数据流中使用 OpenAI 和 Azure OpenAI
+# 第十三章：在 Power BI 数据流中使用 OpenAI 和 Azure OpenAI
 
 本书*第十二章*概述了 OpenAI 和 Azure OpenAI 技术。该章节还探讨了使用 FAA 野生动物撞击数据将这些前沿 AI 技术融入您用例的方法。为了提高*第十二章*的内容质量，使用了 OpenAI ChatGPT 生成更好的文本。展望未来，ChatGPT 将偶尔作为提高本书其他部分写作质量的工具使用。
 

@@ -1,4 +1,4 @@
-# *第三章*：准备 Azure Machine Learning 工作区
+# 第三章：*第三章*：准备 Azure Machine Learning 工作区
 
 在上一章中，我们学习了如何导航不同的 Azure 服务以在云中实现 ML 解决方案。我们意识到，对于程序化训练自定义 ML 模型并自动化基础设施和部署来说，最佳服务是 Azure Machine Learning 服务。在本章中，我们将设置并探索 Azure Machine Learning 工作区，创建云训练集群，并在本地和云计算上执行数据实验，同时收集 Azure Machine Learning 中 ML 运行的全部工件。
 

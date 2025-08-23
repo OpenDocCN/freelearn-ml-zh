@@ -1,6 +1,6 @@
 
 
-# 使用 PostgresML 的 LightGBM 模型
+# 第十章：使用 PostgresML 的 LightGBM 模型
 
 在本章中，我们将探讨一个独特的 MLOps 平台，称为**PostgresML**。PostgresML 是一个 Postgres 数据库扩展，允许您使用 SQL 训练和部署机器学习模型。
 

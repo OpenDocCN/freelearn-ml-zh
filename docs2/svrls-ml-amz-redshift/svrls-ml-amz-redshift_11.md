@@ -1,6 +1,6 @@
 
 
-# 数据库推理的自定义模型
+# 第十一章：数据库推理的自定义模型
 
 在本书中，我们介绍了使用**Redshift 机器学习**（**Redshift ML**）原生训练模型的过程。然而，可能存在需要利用 Redshift 外部构建的模型的情况。为了解决这个问题，Redshift ML 提供了**Bring Your Own Model**（**BYOM**）功能，允许用户将他们的 Amazon SageMaker 机器学习模型与 Amazon Redshift 集成。此功能便于在仓库中存储的数据上执行预测和其他机器学习任务，而无需数据移动。
 

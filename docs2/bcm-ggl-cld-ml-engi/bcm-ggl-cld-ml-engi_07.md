@@ -1,6 +1,6 @@
 
 
-# 探索 Google Cloud Vertex AI
+# 第七章：探索 Google Cloud Vertex AI
 
 在上一章中，我们讨论了 Google Cloud BQML，它用于从结构化数据中开发机器学习模型，以及 Google 的 TensorFlow 和 Keras 框架，它们为机器学习模型开发提供了一个高级 API 接口。在本章中，我们将讨论 Cloud Vertex AI，这是 Google 为机器学习模型开发提供的集成云服务套件。我们将检查 Vertex AI 套件及其所有产品和服务。
 

@@ -1,6 +1,6 @@
 
 
-# Python 中 LightGBM 的概述
+# 第三章：Python 中 LightGBM 的概述
 
 在上一章中，我们探讨了决策树的集成学习方法。详细讨论了 **bootstrap aggregation**（**bagging**）和梯度提升，并提供了如何在 scikit-learn 中应用这些技术的实际示例。我们还展示了 **梯度提升决策树**（**GBDTs**）训练速度慢，在某些问题上可能表现不佳。
 

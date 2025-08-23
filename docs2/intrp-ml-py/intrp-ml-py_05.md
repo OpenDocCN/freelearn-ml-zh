@@ -1,6 +1,6 @@
 
 
-# 局部模型无关解释方法
+# 第五章：局部模型无关解释方法
 
 在前两章中，我们专门讨论了全局解释方法。本章将探讨局部解释方法，这些方法旨在解释为什么做出了单个预测或一系列预测。它将涵盖如何利用**SHapley Additive exPlanations**（**SHAP**）的`KernelExplainer`以及另一种称为**Local Interpretable Model-agnostic Explanations**（**LIME**）的局部解释方法。我们还将探讨如何使用这些方法处理表格和文本数据。
 

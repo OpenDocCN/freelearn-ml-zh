@@ -1,6 +1,6 @@
 
 
-# 学习 BQ/BQML、TensorFlow 和 Keras
+# 第六章：学习 BQ/BQML、TensorFlow 和 Keras
 
 在第一部分中构建了 GCP 和 Python 基础，并在第二部分中理解了机器学习概念和开发过程之后，我们现在进入本书的第三部分：*在 GCP 中精通机器学习*。我们将从学习 Google 如何对结构化数据进行机器学习以及 Google 机器学习框架 TensorFlow 和 Keras 开始。在本章中，我们将涵盖以下主题：
 

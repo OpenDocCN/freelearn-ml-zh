@@ -1,6 +1,6 @@
 
 
-# 使用 AWS SageMaker 进行 LightGBM MLOps
+# 第九章：使用 AWS SageMaker 进行 LightGBM MLOps
 
 在*第八章*“使用 LightGBM 的机器学习管道和 MLOps”中，我们使用 scikit-learn 构建了一个端到端的 ML 管道。我们还探讨了将管道封装在 REST API 中，并将我们的 API 部署到云端。
 

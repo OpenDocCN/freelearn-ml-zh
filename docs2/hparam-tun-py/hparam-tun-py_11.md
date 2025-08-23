@@ -1,4 +1,4 @@
-# *第九章*: 通过 Optuna 进行超参数调优
+# 第九章：*第九章*: 通过 Optuna 进行超参数调优
 
 `scikit-optimize`。
 

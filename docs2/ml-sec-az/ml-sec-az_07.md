@@ -1,6 +1,6 @@
 
 
-# 管理和保护您的 Azure Machine Learning 工作空间
+# 第七章：管理和保护您的 Azure Machine Learning 工作空间
 
 在数据和访问管理之后是基础设施。尽管 Azure Machine Learning 是一种云服务，但这并不意味着我们不能利用 Azure 或本地基础设施的服务来隔离我们的资源并保护它们免受公共访问。
 

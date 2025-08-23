@@ -1,6 +1,6 @@
 
 
-# 使用 Kaggle 笔记本学习和工作
+# 第三章：使用 Kaggle 笔记本学习和工作
 
 Kaggle 笔记本——直到最近还被称为**内核**——是浏览器中的 Jupyter 笔记本，可以免费运行。这意味着您可以从任何有互联网连接的设备执行实验，尽管可能比手机大一些会更好。以下是从 Kaggle 网站引用的环境技术规格（截至本文写作时）；最新版本可以在[`www.kaggle.com/docs/notebooks`](https://www.kaggle.com/docs/notebooks)验证：
 

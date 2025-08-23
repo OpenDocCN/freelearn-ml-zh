@@ -1,4 +1,4 @@
-# *第七章*：通过 Scikit 进行超参数调整
+# 第七章：*第七章*：通过 Scikit 进行超参数调整
 
 `scikit-learn`是数据科学家使用最多的 Python 包之一。此包提供了一系列的`scikit-learn`功能，还有其他针对超参数调整任务的包，这些包建立在`scikit-learn`之上或模仿其接口，例如`scikit-optimize`和`scikit-hyperband`。
 

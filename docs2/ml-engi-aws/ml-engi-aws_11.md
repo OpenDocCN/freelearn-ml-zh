@@ -1,6 +1,6 @@
 
 
-# 使用 SageMaker Pipelines 的机器学习流水线
+# 第十一章：使用 SageMaker Pipelines 的机器学习流水线
 
 在 *第十章* 中，*使用 Amazon EKS 上的 Kubeflow 的机器学习流水线*，我们使用了 **Kubeflow**、**Kubernetes** 和 **Amazon EKS** 来构建和运行一个端到端的 **机器学习**（**ML**）流水线。在这里，我们能够在运行的 Kubernetes 集群中自动化 ML 过程中的几个步骤。如果你想知道我们是否也可以使用 **SageMaker** 的不同特性和功能来构建 ML 流水线，那么对这个问题的快速回答将是 *YES*！
 

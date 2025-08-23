@@ -1,4 +1,4 @@
-# *第十章*：使用 DEAP 和 Microsoft NNI 进行高级超参数调整
+# 第十章：*第十章*：使用 DEAP 和 Microsoft NNI 进行高级超参数调整
 
 **DEAP**和**Microsoft NNI**是 Python 包，提供了其他包中未实现的多种超参数调整方法，这些包我们在第 7-9 章中讨论过。例如，遗传算法、粒子群优化、Metis、基于群体的训练以及更多。
 

@@ -1,6 +1,6 @@
 
 
-# 比较 LightGBM、XGBoost 和深度学习
+# 第四章：比较 LightGBM、XGBoost 和深度学习
 
 上一章介绍了用于构建**梯度提升决策树（GBDTs**）的 LightGBM。在本章中，我们将 LightGBM 与两种用于建模表格数据的其他方法进行比较：XGBoost，另一个用于构建梯度提升树的库，以及**深度神经网络（DNNs**），一种最先进的机器学习技术。
 

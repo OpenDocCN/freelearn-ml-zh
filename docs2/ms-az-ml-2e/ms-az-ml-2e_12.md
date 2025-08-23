@@ -1,4 +1,4 @@
-# *第九章*：使用 Azure Machine Learning 构建 ML 模型
+# 第九章：*第九章*：使用 Azure Machine Learning 构建 ML 模型
 
 在前面的章节中，我们学习了 Azure Machine Learning 中的数据集、预处理、特征提取和管道。在本章中，我们将利用我们迄今为止所获得的知识来创建和训练一个强大的基于树的集成分类器。
 

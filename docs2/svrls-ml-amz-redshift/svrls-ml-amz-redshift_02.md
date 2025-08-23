@@ -1,6 +1,6 @@
 
 
-# 在 Redshift Serverless 上加载数据和分析
+# 第二章：在 Redshift Serverless 上加载数据和分析
 
 在上一章中，我们向您介绍了**Amazon Redshift Serverless**，并演示了如何从 Amazon Redshift 控制台创建无服务器端点。我们还解释了如何使用**Amazon Redshift 查询编辑器 v**连接和查询您的数据仓库。在本章中，我们将更深入地探讨您可以将数据加载到 Amazon Redshift Serverless 数据仓库的不同方法。
 

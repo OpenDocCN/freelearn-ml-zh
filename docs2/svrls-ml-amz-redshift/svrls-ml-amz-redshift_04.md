@@ -1,6 +1,6 @@
 
 
-# 利用 Amazon Redshift ML
+# 第四章：利用 Amazon Redshift ML
 
 在上一章中，我们讨论了**机器学习**（ML）的整体优势以及它如何融入您的数据仓库。
 

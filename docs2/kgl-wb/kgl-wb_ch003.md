@@ -1,4 +1,4 @@
-# 2 Makridakis 竞赛：M5 在 Kaggle 上的准确性和不确定性
+# 第三章：2 Makridakis 竞赛：M5 在 Kaggle 上的准确性和不确定性
 
 ## 加入我们的 Discord 书籍社区
 
