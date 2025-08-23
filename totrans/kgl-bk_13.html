@@ -1,0 +1,851 @@
+<html><head></head><body>
+  <div id="_idContainer343" class="Basic-Text-Frame">
+    <h1 class="chapterNumber">11</h1>
+    <h1 id="_idParaDest-174" class="chapterTitle">Modeling for NLP</h1>
+    <p class="normal"><strong class="keyWord">Natural language processing</strong> (<strong class="keyWord">NLP</strong>) is<a id="_idIndexMarker911"/> a field operating at the intersection of linguistics, computer science, and AI. Its primary focus is algorithms to process and analyze large amounts of natural language data. Over the last few years, it has become an increasingly popular topic of Kaggle competitions. While the domain itself is very broad and encompasses very popular topics such as chatbots and machine translation, in this chapter we will focus on specific subsets that Kaggle contests frequently deal with.</p>
+    <p class="normal">Sentiment analysis as a <a id="_idIndexMarker912"/>simple classification problem is extremely popular and discussed all over, so we’ll begin with a somewhat more interesting variation on the problem: identifying sentiment-supporting phrases in a tweet. We’ll proceed to describe an example solution to the problem of open domain question answering and conclude with a section on augmentation for NLP problems, which is a topic that receives significantly less attention than its computer vision counterpart.</p>
+    <p class="normal">To summarize, we will cover:</p>
+    <ul>
+      <li class="bulletList">Sentiment analysis</li>
+      <li class="bulletList">Open domain Q&amp;A</li>
+      <li class="bulletList">Text augmentation strategies</li>
+    </ul>
+    <h1 id="_idParaDest-175" class="heading-1">Sentiment analysis</h1>
+    <p class="normal">Twitter is one<a id="_idIndexMarker913"/> of<a id="_idIndexMarker914"/> the most popular social media platforms and an important communication tool for many, individuals and companies alike. </p>
+    <p class="normal">Capturing sentiment in language is particularly important in the latter context: a positive tweet can go viral and spread the word, while a particularly negative one can be harmful. Since human language is complicated, it is important not to just decide on the sentiment, but also to be able to investigate the <em class="italic">how</em>: which words actually led to the sentiment description?</p>
+    <p class="normal">We will demonstrate an approach to this problem by using data from the <em class="italic">Tweet Sentiment Extraction </em>competition (<a href="https://www.kaggle.com/c/tweet-sentiment-extraction"><span class="url">https://www.kaggle.com/c/tweet-sentiment-extraction</span></a>). For brevity, we have omitted the imports from the following code, but you can find them in the corresponding Notebook in the GitHub repo for this chapter.</p>
+    <p class="normal">To get a better feel for the problem, let’s start by looking at the data:</p>
+    <pre class="programlisting code"><code class="hljs-code">df = pd.read_csv(<span class="hljs-string">'/kaggle/input/tweet-sentiment-extraction/train.csv'</span>)
+df.head()
+</code></pre>
+    <p class="normal">Here are the first few rows:</p>
+    <figure class="mediaobject"><img src="../Images/B17574_11_01.png" alt="Obraz zawierający stół  Opis wygenerowany automatycznie"/></figure>
+    <p class="packt_figref">Figure 11.1: Sample rows from the training data</p>
+    <p class="normal">The actual tweets are stored in the <code class="inlineCode">text</code> column. Each of them has an associated <code class="inlineCode">sentiment</code>, along with the<a id="_idIndexMarker915"/> <strong class="keyWord">support phrase</strong> stored in the <code class="inlineCode">selected_text</code> column (the part of the tweet that was the basis for the decision on sentiment assignment).</p>
+    <p class="normal">We start by defining basic cleanup functions. First, we want to get rid of website URLs and non-characters and replace the stars people use in place of swear words with a single token, <code class="inlineCode">"swear"</code>. We use some regular expressions to help us do this:</p>
+    <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">def</span><span class="hljs-function"> </span><span class="hljs-title">basic_cleaning</span><span class="hljs-function">(</span><span class="hljs-params">text</span><span class="hljs-function">):</span>
+    text=re.sub(<span class="hljs-string">r'https?://www\.\S+\.com'</span>,<span class="hljs-string">''</span>,text)
+    text=re.sub(<span class="hljs-string">r'[^A-Za-z|\s]'</span>,<span class="hljs-string">''</span>,text)
+    text=re.sub(<span class="hljs-string">r'\*+'</span>,<span class="hljs-string">'swear'</span>,text) <span class="hljs-comment"># Capture swear words that are **** out</span>
+    <span class="hljs-keyword">return</span> text
+</code></pre>
+    <p class="normal">Next, we remove<a id="_idIndexMarker916"/> HTML from the content of the tweets, as well as emojis:</p>
+    <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">def</span><span class="hljs-function"> </span><span class="hljs-title">remove_html</span><span class="hljs-function">(</span><span class="hljs-params">text</span><span class="hljs-function">):</span>
+    html=re.<span class="hljs-built_in">compile</span>(<span class="hljs-string">r'&lt;.*?&gt;'</span>)
+    <span class="hljs-keyword">return</span> html.sub(<span class="hljs-string">r''</span>,text)
+<span class="hljs-keyword">def</span><span class="hljs-function"> </span><span class="hljs-title">remove_emoji</span><span class="hljs-function">(</span><span class="hljs-params">text</span><span class="hljs-function">):</span>
+    emoji_pattern = re.<span class="hljs-built_in">compile</span>(<span class="hljs-string">"["</span>
+                           <span class="hljs-string">u"\U0001F600-\U0001F64F"</span> <span class="hljs-comment">#emoticons</span>
+                           <span class="hljs-string">u"\U0001F300-\U0001F5FF"</span> <span class="hljs-comment">#symbols &amp; pictographs</span>
+                           <span class="hljs-string">u"\U0001F680-\U0001F6FF"</span> <span class="hljs-comment">#transport &amp; map symbols</span>
+                           <span class="hljs-string">u"\U0001F1E0-\U0001F1FF"</span> <span class="hljs-comment">#flags (iOS)</span>
+                           <span class="hljs-string">u"\U00002702-\U000027B0"</span>
+                           <span class="hljs-string">u"\U000024C2-\U0001F251"</span>
+                           <span class="hljs-string">"]+"</span>, flags=re.UNICODE)
+    <span class="hljs-keyword">return</span> emoji_pattern.sub(<span class="hljs-string">r''</span>, text)
+</code></pre>
+    <p class="normal">Lastly, we want to be able to remove repeated characters (for example, so we have “way” instead of “waaaayyyyy”):</p>
+    <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">def</span><span class="hljs-function"> </span><span class="hljs-title">remove_multiplechars</span><span class="hljs-function">(</span><span class="hljs-params">text</span><span class="hljs-function">):</span>
+    text = re.sub(<span class="hljs-string">r'(.)\1{3,}'</span>,<span class="hljs-string">r'\1'</span>, text)
+    <span class="hljs-keyword">return</span> text
+</code></pre>
+    <p class="normal">For convenience, we combine the four functions into a single cleanup function:</p>
+    <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">def</span><span class="hljs-function"> </span><span class="hljs-title">clean</span><span class="hljs-function">(</span><span class="hljs-params">df</span><span class="hljs-function">):</span>
+    <span class="hljs-keyword">for</span> col <span class="hljs-keyword">in</span> [<span class="hljs-string">'text'</span>]:<span class="hljs-comment">#,'selected_text']:</span>
+        df[col]=df[col].astype(<span class="hljs-built_in">str</span>).apply(<span class="hljs-keyword">lambda</span> x:basic_cleaning(x))
+        df[col]=df[col].astype(<span class="hljs-built_in">str</span>).apply(<span class="hljs-keyword">lambda</span> x:remove_emoji(x))
+        df[col]=df[col].astype(<span class="hljs-built_in">str</span>).apply(<span class="hljs-keyword">lambda</span> x:remove_html(x))
+        df[col]=df[col].astype(<span class="hljs-built_in">str</span>).apply(<span class="hljs-keyword">lambda</span> x:remove_multiplechars(x))
+    <span class="hljs-keyword">return</span> df
+</code></pre>
+    <p class="normal">The last bit of preparation involves writing functions for creating the embeddings based on a pre-trained model (the <code class="inlineCode">tokenizer</code> argument):</p>
+    <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">def</span><span class="hljs-function"> </span><span class="hljs-title">fast_encode</span><span class="hljs-function">(</span><span class="hljs-params">texts, tokenizer, chunk_size=</span><span class="hljs-number">256</span><span class="hljs-params">, maxlen=</span><span class="hljs-number">128</span><span class="hljs-function">):</span>
+    tokenizer.enable_truncation(max_length=maxlen)
+    tokenizer.enable_padding(max_length=maxlen)
+    all_ids = []
+    
+    <span class="hljs-keyword">for</span> i <span class="hljs-keyword">in</span> <span class="hljs-built_in">range</span>(<span class="hljs-number">0</span>, <span class="hljs-built_in">len</span>(texts), chunk_size):
+        text_chunk = texts[i:i+chunk_size].tolist()
+        encs = tokenizer.encode_batch(text_chunk)
+        all_ids.extend([enc.ids <span class="hljs-keyword">for</span> enc <span class="hljs-keyword">in</span> encs])
+    
+    <span class="hljs-keyword">return</span> np.array(all_ids)
+</code></pre>
+    <p class="normal">Next, we <a id="_idIndexMarker917"/>create a pre-processing function enabling us to work with the entire corpus:</p>
+    <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">def</span><span class="hljs-function"> </span><span class="hljs-title">preprocess_news</span><span class="hljs-function">(</span><span class="hljs-params">df,stop=stop,n=</span><span class="hljs-number">1</span><span class="hljs-params">,col=</span><span class="hljs-string">'text'</span><span class="hljs-function">):</span>
+    <span class="hljs-string">'''Function to preprocess and create corpus'''</span>
+    new_corpus=[]
+    stem=PorterStemmer()
+    lem=WordNetLemmatizer()
+    <span class="hljs-keyword">for</span> text <span class="hljs-keyword">in</span> df[col]:
+        words=[w <span class="hljs-keyword">for</span> w <span class="hljs-keyword">in</span> word_tokenize(text) <span class="hljs-keyword">if</span> (w <span class="hljs-keyword">not</span> <span class="hljs-keyword">in</span> stop)]
+       
+        words=[lem.lemmatize(w) <span class="hljs-keyword">for</span> w <span class="hljs-keyword">in</span> words <span class="hljs-keyword">if</span>(<span class="hljs-built_in">len</span>(w)&gt;n)]
+     
+        new_corpus.append(words)
+        
+    new_corpus=[word <span class="hljs-keyword">for</span> l <span class="hljs-keyword">in</span> new_corpus <span class="hljs-keyword">for</span> word <span class="hljs-keyword">in</span> l]
+    <span class="hljs-keyword">return</span> new_corpus
+</code></pre>
+    <p class="normal">Using our previously prepared functions, we can clean and prepare the training data. The <code class="inlineCode">sentiment</code> column is our target, and we convert it to dummy variables (one-hot encoding) for performance:</p>
+    <pre class="programlisting code"><code class="hljs-code">df.dropna(inplace=<span class="hljs-built_in">True</span>)
+df_clean = clean(df)
+df_clean_selection = df_clean.sample(frac=<span class="hljs-number">1</span>)
+X = df_clean_selection.text.values
+y = pd.get_dummies(df_clean_selection.sentiment)
+</code></pre>
+    <p class="normal">A necessary next step is <strong class="keyWord">tokenization</strong> of<a id="_idIndexMarker918"/> the input texts, as well as conversion into sequences (along with padding, to ensure equal lengths across the dataset):</p>
+    <pre class="programlisting code"><code class="hljs-code">tokenizer = text.Tokenizer(num_words=<span class="hljs-number">20000</span>)
+tokenizer.fit_on_texts(<span class="hljs-built_in">list</span>(X))
+list_tokenized_train = tokenizer.texts_to_sequences(X)
+X_t = sequence.pad_sequences(list_tokenized_train, maxlen=<span class="hljs-number">128</span>)
+</code></pre>
+    <p class="normal">We will <a id="_idIndexMarker919"/>create the embeddings for our model using <strong class="keyWord">DistilBERT</strong> and use<a id="_idIndexMarker920"/> them as-is. DistilBERT is a lightweight version of BERT: the tradeoff is 3% performance loss at 40% fewer parameters. We could train the embedding layer and gain performance – at the cost of massively increased training time.</p>
+    <pre class="programlisting code"><code class="hljs-code">tokenizer = transformers.AutoTokenizer.from_pretrained(<span class="hljs-string">"distilbert-base-uncased"</span>)  
+<span class="hljs-comment"># Save the loaded tokenizer locally</span>
+save_path = <span class="hljs-string">'/kaggle/working/distilbert_base_uncased/'</span>
+<span class="hljs-keyword">if</span> <span class="hljs-keyword">not</span> os.path.exists(save_path):
+    os.makedirs(save_path)
+tokenizer.save_pretrained(save_path)
+<span class="hljs-comment"># Reload it with the huggingface tokenizers library</span>
+fast_tokenizer = BertWordPieceTokenizer(
+                 <span class="hljs-string">'distilbert_base_uncased/vocab.txt'</span>, lowercase=<span class="hljs-literal">True</span>)
+fast_tokenizer
+</code></pre>
+    <p class="normal">We can use the previously defined <code class="inlineCode">fast_encode</code> function, along with the <code class="inlineCode">fast_tokenizer</code> defined above, to encode the tweets:</p>
+    <pre class="programlisting code"><code class="hljs-code">X = fast_encode(df_clean_selection.text.astype(<span class="hljs-built_in">str</span>),
+                fast_tokenizer,
+                maxlen=<span class="hljs-number">128</span>)
+</code></pre>
+    <p class="normal">With the data prepared, we can construct the model. For the sake of this demonstration, we will go with a fairly standard architecture for these applications: a combination of LSTM layers, normalized by global pooling and dropout, and a dense layer on top. In order to achieve a truly competitive solution, some tweaking of the architecture would be needed: a “heavier” model, bigger embeddings, more units in the LSTM layers, and so on.</p>
+    <pre class="programlisting code"><code class="hljs-code">transformer_layer = transformers.TFDistilBertModel.from_pretrained(<span class="hljs-string">'distilbert-base-uncased'</span>)
+embedding_size = <span class="hljs-number">128</span>
+input_ = Input(shape=(<span class="hljs-number">100</span>,))
+inp = Input(shape=(<span class="hljs-number">128</span>, ))
+embedding_matrix=transformer_layer.weights[<span class="hljs-number">0</span>].numpy()
+x = Embedding(embedding_matrix.shape[<span class="hljs-number">0</span>],
+              embedding_matrix.shape[<span class="hljs-number">1</span>],
+              embeddings_initializer=Constant(embedding_matrix),
+              trainable=<span class="hljs-literal">False</span>)(inp)
+x = Bidirectional(LSTM(<span class="hljs-number">50</span>, return_sequences=<span class="hljs-literal">True</span>))(x)
+x = Bidirectional(LSTM(<span class="hljs-number">25</span>, return_sequences=<span class="hljs-literal">True</span>))(x)
+x = GlobalMaxPool1D()(x)
+x = Dropout(<span class="hljs-number">0.5</span>)(x)
+x = Dense(<span class="hljs-number">50</span>, activation=<span class="hljs-string">'relu'</span>, kernel_regularizer=<span class="hljs-string">'L1L2'</span>)(x)
+x = Dropout(<span class="hljs-number">0.5</span>)(x)
+x = Dense(<span class="hljs-number">3</span>, activation=<span class="hljs-string">'softmax'</span>)(x)
+model_DistilBert = Model(inputs=[inp], outputs=x)
+model_DistilBert.<span class="hljs-built_in">compile</span>(loss=<span class="hljs-string">'categorical_crossentropy'</span>,
+                              optimizer=<span class="hljs-string">'adam'</span>,
+                              metrics=[<span class="hljs-string">'accuracy'</span>])
+</code></pre>
+    <p class="normal">There is no <a id="_idIndexMarker921"/>special need to pay attention to a temporal dimension of the data, so we are fine with a random split into training and validation, which can be achieved inside a call to the <code class="inlineCode">fit</code> method:</p>
+    <pre class="programlisting code"><code class="hljs-code">model_DistilBert.fit(X,y,batch_size=<span class="hljs-number">32</span>,epochs=<span class="hljs-number">10</span>,validation_split=<span class="hljs-number">0.1</span>)
+</code></pre>
+    <p class="normal">Below is some sample output:</p>
+    <pre class="programlisting con"><code class="hljs-con">Epoch 1/10
+27480/27480 [==============================] - 480s 17ms/step - loss: 0.5100 - accuracy: 0.7994
+Epoch 2/10
+27480/27480 [==============================] - 479s 17ms/step - loss: 0.4956 - accuracy: 0.8100
+Epoch 3/10
+27480/27480 [==============================] - 475s 17ms/step - loss: 0.4740 - accuracy: 0.8158
+Epoch 4/10
+27480/27480 [==============================] - 475s 17ms/step - loss: 0.4528 - accuracy: 0.8275
+Epoch 5/10
+27480/27480 [==============================] - 475s 17ms/step - loss: 0.4318 - accuracy: 0.8364
+Epoch 6/10
+27480/27480 [==============================] - 475s 17ms/step - loss: 0.4069 - accuracy: 0.8441
+Epoch 7/10
+27480/27480 [==============================] - 477s 17ms/step - loss: 0.3839 - accuracy: 0.8572
+</code></pre>
+    <p class="normal">Generating a prediction from the fitted model proceeds in a straightforward manner. In order to utilize <a id="_idIndexMarker922"/>all the available data, we begin by re-training our model on all available data (so no validation):</p>
+    <pre class="programlisting code"><code class="hljs-code">df_clean_final = df_clean.sample(frac=<span class="hljs-number">1</span>)
+X_train = fast_encode(df_clean_selection.text.astype(<span class="hljs-built_in">str</span>),
+                      fast_tokenizer,
+                      maxlen=<span class="hljs-number">128</span>)
+y_train = y
+</code></pre>
+    <p class="normal">We refit the model on the entire dataset before generating the predictions:</p>
+    <pre class="programlisting code"><code class="hljs-code">Adam_name = adam(lr=<span class="hljs-number">0.001</span>)
+model_DistilBert.<span class="hljs-built_in">compile</span>(loss=<span class="hljs-string">'categorical_crossentropy'</span>,optimizer=Adam_name,metrics=[<span class="hljs-string">'accuracy'</span>])
+history = model_DistilBert.fit(X_train,y_train,batch_size=<span class="hljs-number">32</span>,epochs=<span class="hljs-number">10</span>)
+</code></pre>
+    <p class="normal">Our next step is to process the test data into the same format we are using for training data fed into the model:</p>
+    <pre class="programlisting code"><code class="hljs-code">df_test = pd.read_csv(<span class="hljs-string">'/kaggle/input/tweet-sentiment-extraction/test.csv'</span>)
+df_test.dropna(inplace=<span class="hljs-literal">True</span>)
+df_clean_test = clean(df_test)
+X_test = fast_encode(df_clean_test.text.values.astype(<span class="hljs-built_in">str</span>),
+                     fast_tokenizer,
+                     maxlen=<span class="hljs-number">128</span>)
+y_test = df_clean_test.sentiment
+</code></pre>
+    <p class="normal">Finally, we generate the predictions:</p>
+    <pre class="programlisting code"><code class="hljs-code">y_preds = model_DistilBert.predict(X_test)
+y_predictions = pd.DataFrame(y_preds,
+                             columns=[<span class="hljs-string">'negative'</span>,<span class="hljs-string">'neutral'</span>,<span class="hljs-string">'positive'</span>])
+y_predictions_final = y_predictions.idxmax(axis=<span class="hljs-number">1</span>)
+accuracy = accuracy_score(y_test,y_predictions_final)
+<span class="hljs-built_in">print</span>(<span class="hljs-string">f"The final model shows </span><span class="hljs-subst">{accuracy:</span><span class="hljs-number">.2</span><span class="hljs-subst">f}</span><span class="hljs-string"> accuracy on the test set."</span>)
+</code></pre>
+    <p class="normal">The final model shows <strong class="keyWord">0.74</strong> accuracy on the test set. Below we show a sample of what the output looks like; as you can see already from these few rows, there are some instances where the sentiment is obvious to a human reader, but the model fails to capture it:</p>
+    <figure class="mediaobject"><img src="../Images/B17574_11_02.png" alt="Obraz zawierający stół  Opis wygenerowany automatycznie"/></figure>
+    <p class="packt_figref">Figure 11.2: Example rows from the predicted results</p>
+    <p class="normal">We have <a id="_idIndexMarker923"/>now demonstrated a sample pipeline for solving sentiment attribution problems (identifying parts of the text that lead to annotator decisions on sentiment classification). There are some improvements that can be made if you want to achieve competitive performance, given below in order of likely impact:</p>
+    <ul>
+      <li class="bulletList"><strong class="keyWord">Larger embeddings</strong>: This allows us to capture more information already at the (processed) input data level</li>
+      <li class="bulletList"><strong class="keyWord">Bigger model</strong>: More units in the LSTM layers</li>
+      <li class="bulletList"><strong class="keyWord">Longer training</strong>: In other words, more epochs</li>
+    </ul>
+    <p class="normal">While the improvements listed above will undoubtedly boost the performance of the model, the core elements of our pipeline are reusable:</p>
+    <ul>
+      <li class="bulletList">Data cleaning and pre-processing</li>
+      <li class="bulletList">Creating text embeddings</li>
+      <li class="bulletList">Incorporating recurrent layers and regularization in the target model architecture</li>
+    </ul>
+    <p class="normal">We’ll now move on to a discussion of open domain question answering, a frequent problem encountered in NLP competitions.</p>
+    <div class="interviewBox">
+      <div class="intervieweePhoto">
+        <img src="../Images/Abhishek_Thakur.png" alt=""/>
+      </div>
+      <p class="intervieweeName">Abhishek Thakur</p>
+      <p class="normal"><a href="https://www.kaggle.com/abhishek"><span class="url">https://www.kaggle.com/abhishek</span></a></p>
+      <p class="normal">We<a id="_idIndexMarker924"/> caught up with Abhishek Thakur, the world’s first quadruple Kaggle Grandmaster. He currently works at Hugging Face, where he is building AutoNLP; he also wrote pretty much the only book on Kaggle in English (aside from this one!), <em class="italic">Approaching (Almost) Any Machine Learning Problem</em>.</p>
+      <p class="interviewHeader">What’s your specialty on Kaggle?</p>
+      <p class="normal"><em class="italic">None. Every competition is different and there is so much to learn from each one of them. If I were to have a specialty, I would win all competitions in that domain.</em></p>
+      <p class="interviewHeader">How do you approach a Kaggle competition? How different is this approach to what you do in your day-to-day work?</p>
+      <p class="normal"><em class="italic">The first thing I do is to take a look at the data and try to understand it a bit. If I’m late to the competition, I take the help of public EDA kernels. </em></p>
+      <p class="normal"><em class="italic">The first thing I do when approaching a problem on (or off) Kaggle is to build a benchmark. Building a benchmark is very important as it provides you with a baseline you can compare your future models to. If I’m late to the game, for building the baseline, I try not to take the help of public Notebooks. If we do that, we think only in a single direction. At least, that’s what I feel. </em></p>
+      <p class="normal"><em class="italic">When I am done with a benchmark, I try to squeeze as much as possible without doing anything complicated like stacking or blending. Then I go over the data and models again and try to improve on the baseline, one step at a time.</em></p>
+
+      <p class="normal"><em class="italic">Day-to-day work sometimes has a lot of similarities. Most of the time there is a benchmark and then you have to come up with techniques, features, models that beat the benchmark.</em></p>
+      <p class="interviewHeader">What was the most interesting competition you entered? Did you have any special insights?</p>
+      <p class="normal"><em class="italic">Every competition is interesting.</em></p>
+      <p class="interviewHeader">Has Kaggle helped you in your career?</p>
+      <p class="normal"><em class="italic">Sure, it has helped. In the last few years, Kaggle has gained a very good reputation when it comes to hiring data scientists and machine learning engineers. Kaggle rank and experience with many datasets is something that surely helps in the industry in one way or another. The more experienced you are with approaching different types of problems, the faster you will be able to iterate. And that’s something very useful in industries. No one wants to spend several months doing something that doesn’t bring any value to the business.</em></p>
+      <p class="interviewHeader">In your experience, what do inexperienced Kagglers often overlook? What do you know now that you wish you’d known when you first started?</p>
+      <p class="normal"><em class="italic">Most beginners give up quite easily. It’s very easy to join a Kaggle competition and get intimidated by top scorers. If beginners want to succeed on Kaggle, they have to have perseverance. In my opinion, perseverance is the key. Many beginners also fail to start on their own and stick to public kernels. This makes them think like the authors of public kernels. My advice would be to start with competitions on your own, look at data, build features, build models, and then dive into kernels and discussions to see what others might be doing differently. Then incorporate what you have learned into your own solution.</em></p>
+    </div>
+    <h1 id="_idParaDest-176" class="heading-1">Open domain Q&amp;A</h1>
+    <p class="normal">In this section, we will be looking at the <em class="italic">Google QUEST Q&amp;A Labeling</em> competition (<a href="https://www.kaggle.com/c/google-quest-challenge/overview/description"><span class="url">https://www.kaggle.com/c/google-quest-challenge/overview/description</span></a>). In this competition, question-answer pairs were evaluated by human raters on a diverse set of criteria, such as “question conversational,” “question fact-seeking,” or “answer helpful.” The task was to<a id="_idIndexMarker925"/> predict a numeric value for each of the target columns (corresponding to the criteria); since the labels were aggregated across multiple raters, the objective was effectively a multivariate regression output, with target columns normalized to the unit range.</p>
+    <p class="normal">Before engaging in modeling with advanced techniques (like transformer-based models for NLP), it is frequently a good idea to establish a baseline with simpler methods. As with the previous section, we will omit the imports for brevity, but you can find them in the Notebook in the GitHub repo.</p>
+    <p class="normal">We begin by defining several helper functions, which can help us extract different aspects of the text. First, a function that will output a word count given a string:</p>
+    <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">def</span><span class="hljs-function"> </span><span class="hljs-title">word_count</span><span class="hljs-function">(</span><span class="hljs-params">xstring</span><span class="hljs-function">):</span>
+    <span class="hljs-keyword">return</span> xstring.split().<span class="hljs-built_in">str</span>.<span class="hljs-built_in">len</span>()
+</code></pre>
+    <p class="normal">The metric used in the competition <a id="_idIndexMarker926"/>was <strong class="keyWord">Spearman correlation</strong> (linear correlation computed on ranks: <a href="https://en.wikipedia.org/wiki/Spearman%27s_rank_correlation_coefficient"><span class="url">https://en.wikipedia.org/wiki/Spearman%27s_rank_correlation_coefficient</span></a>). </p>
+    <p class="normal">Since we intend to build a Scikit-learn pipeline, it is useful to define the metric as a scorer (the <code class="inlineCode">make_scorer</code> method is a wrapper in Scikit-learn that takes a scoring function – like accuracy or MSE – and returns a callable that scores an output of the estimator):</p>
+    <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">def</span><span class="hljs-function"> </span><span class="hljs-title">spearman_corr</span><span class="hljs-function">(</span><span class="hljs-params">y_true, y_pred</span><span class="hljs-function">):</span>
+        <span class="hljs-keyword">if</span> np.ndim(y_pred) == <span class="hljs-number">2</span>:
+            corr = np.mean([stats.spearmanr(y_true[:, i],
+                                            y_pred[:, i])[<span class="hljs-number">0</span>]
+<span class="hljs-keyword">for</span> i <span class="hljs-keyword">in</span> <span class="hljs-built_in">range</span>(y_true.shape[<span class="hljs-number">1</span>])])
+        <span class="hljs-keyword">else</span>:
+            corr = stats.spearmanr(y_true, y_pred)[<span class="hljs-number">0</span>]
+        <span class="hljs-keyword">return</span> corr
+    
+custom_scorer = make_scorer(spearman_corr, greater_is_better=<span class="hljs-literal">True</span>)
+</code></pre>
+    <p class="normal">Next, a small helper function to extract successive chunks of size <code class="inlineCode">n</code> from <code class="inlineCode">l</code>. This will help us later with generating embeddings for our body of text without running into memory problems:</p>
+    <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">def</span><span class="hljs-function"> </span><span class="hljs-title">chunks</span><span class="hljs-function">(</span><span class="hljs-params">l, n</span><span class="hljs-function">):</span>
+    <span class="hljs-keyword">for</span> i <span class="hljs-keyword">in</span> <span class="hljs-built_in">range</span>(<span class="hljs-number">0</span>, <span class="hljs-built_in">len</span>(l), n):
+        <span class="hljs-keyword">yield</span> l[i:i + n]
+</code></pre>
+    <p class="normal">Part of the feature set we will use is embeddings from pre-trained models. Recall that the idea <a id="_idIndexMarker927"/>of this section is the construction of a baseline without training elaborate models, but this need not prevent us from using existing ones. </p>
+    <p class="normal">We begin by importing the tokenizer and model, and then we process the corpus in chunks, encoding each question/answer into a fixed-size embedding:</p>
+    <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">def</span><span class="hljs-function"> </span><span class="hljs-title">fetch_vectors</span><span class="hljs-function">(</span><span class="hljs-params">string_list, batch_size=</span><span class="hljs-number">64</span><span class="hljs-function">):</span>
+    <span class="hljs-comment"># Inspired by https://jalammar.github.io/a-visual-guide-to-using-bert-    for-the-first-time/</span>
+    DEVICE = torch.device(<span class="hljs-string">"</span><span class="hljs-string">cuda"</span>)
+    tokenizer = transformers.DistilBertTokenizer.from_pretrained
+                    (<span class="hljs-string">"../input/distilbertbaseuncased/"</span>)
+    model = transformers.DistilBertModel.from_pretrained
+                (<span class="hljs-string">"../input/distilbertbaseuncased/"</span>)
+    model.to(DEVICE)
+    fin_features = []
+    <span class="hljs-keyword">for</span> data <span class="hljs-keyword">in</span> chunks(string_list, batch_size):
+        tokenized = []
+        <span class="hljs-keyword">for</span> x <span class="hljs-keyword">in</span> data:
+            x = <span class="hljs-string">" "</span>.join(x.strip().split()[:<span class="hljs-number">300</span>])
+            tok = tokenizer.encode(x, add_special_tokens=<span class="hljs-literal">True</span>)
+            tokenized.append(tok[:<span class="hljs-number">512</span>])
+        max_len = <span class="hljs-number">512</span>
+        padded = np.array([i + [<span class="hljs-number">0</span>] * (max_len - <span class="hljs-built_in">len</span>(i)) <span class="hljs-keyword">for</span> i <span class="hljs-keyword">in</span> tokenized])
+        attention_mask = np.where(padded != <span class="hljs-number">0</span>, <span class="hljs-number">1</span>, <span class="hljs-number">0</span>)
+        input_ids = torch.tensor(padded).to(DEVICE)
+        attention_mask = torch.tensor(attention_mask).to(DEVICE)
+        <span class="hljs-keyword">with</span> torch.no_grad():
+            last_hidden_states = model(input_ids,
+                                       attention_mask=attention_mask)
+        features = last_hidden_states[<span class="hljs-number">0</span>][:, <span class="hljs-number">0</span>, :].cpu().numpy()
+        fin_features.append(features)
+    fin_features = np.vstack(fin_features)
+    <span class="hljs-keyword">return</span> fin_features
+</code></pre>
+    <p class="normal">We can now proceed to load the data:</p>
+    <pre class="programlisting code"><code class="hljs-code">xtrain = pd.read_csv(data_dir + <span class="hljs-string">'train.csv'</span>)
+xtest = pd.read_csv(data_dir + <span class="hljs-string">'test.csv'</span>)
+xtrain.head(<span class="hljs-number">4</span>)
+</code></pre>
+    <p class="normal">Here are the first few rows:</p>
+    <figure class="mediaobject"><img src="../Images/B17574_11_03.png" alt="Obraz zawierający stół  Opis wygenerowany automatycznie"/></figure>
+    <p class="packt_figref">Figure 11.3: Sample rows from the training data</p>
+    <p class="normal">We specify our <a id="_idIndexMarker928"/>30 target columns of interest:</p>
+    <pre class="programlisting code"><code class="hljs-code">target_cols = [<span class="hljs-string">'question_asker_intent_understanding'</span>,
+               <span class="hljs-string">'question_body_critical'</span>, 
+               <span class="hljs-string">'question_conversational'</span>, <span class="hljs-string">'question_expect_short_answer'</span>, 
+               <span class="hljs-string">'question_fact_seeking'</span>,
+               <span class="hljs-string">'question_has_commonly_accepted_answer'</span>, 
+               <span class="hljs-string">'question_interestingness_others'</span>,
+               <span class="hljs-string">'question_interestingness_self'</span>, 
+               <span class="hljs-string">'question_multi_intent'</span>, <span class="hljs-string">'question_not_really_a_question'</span>, 
+               <span class="hljs-string">'question_opinion_seeking'</span>, <span class="hljs-string">'question_type_choice'</span>, 
+               <span class="hljs-string">'question_type_compare'</span>, <span class="hljs-string">'question_type_consequence'</span>, 
+               <span class="hljs-string">'question_type_definition'</span>, <span class="hljs-string">'question_type_entity'</span>, 
+               <span class="hljs-string">'question_type_instructions'</span>, <span class="hljs-string">'question_type_procedure'</span>, 
+               <span class="hljs-string">'question_type_reason_explanation'</span>,
+               <span class="hljs-string">'question_type_spelling'</span>, 
+               <span class="hljs-string">'question_well_written'</span>, <span class="hljs-string">'answer_helpful'</span>, 
+               <span class="hljs-string">'answer_level_of_information'</span>, <span class="hljs-string">'answer_plausible'</span>, 
+               <span class="hljs-string">'answer_relevance'</span>, <span class="hljs-string">'answer_satisfaction'</span>, 
+               <span class="hljs-string">'answer_type_instructions'</span>, <span class="hljs-string">'answer_type_procedure'</span>, 
+               <span class="hljs-string">'answer_type_reason_explanation'</span>, <span class="hljs-string">'answer_well_written'</span>]
+</code></pre>
+    <p class="normal">For a discussion of their meaning and interpretation, the reader is referred to the competition’s <strong class="screenText">Data</strong> page, at <a href="https://www.kaggle.com/c/google-quest-challenge/data"><span class="url">https://www.kaggle.com/c/google-quest-challenge/data</span></a>.</p>
+    <p class="normal">Next, we proceed <a id="_idIndexMarker929"/>with <strong class="keyWord">feature engineering</strong>. We start by counting the <a id="_idIndexMarker930"/>words in the title and body of the question, as well as the answer. This is a simple yet surprisingly useful feature in many applications:</p>
+    <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">for</span> colname <span class="hljs-keyword">in</span> [<span class="hljs-string">'question_title'</span>, <span class="hljs-string">'question_body'</span>, <span class="hljs-string">'answer'</span>]:
+    newname = colname + <span class="hljs-string">'_word_len'</span>
+    
+    xtrain[newname] = xtrain[colname].<span class="hljs-built_in">str</span>.split().<span class="hljs-built_in">str</span>.<span class="hljs-built_in">len</span>()
+    xtest[newname] = xtest[colname].<span class="hljs-built_in">str</span>.split().<span class="hljs-built_in">str</span>.<span class="hljs-built_in">len</span>()
+</code></pre>
+    <p class="normal">The next feature we create is <strong class="keyWord">lexical diversity</strong>, counting <a id="_idIndexMarker931"/>the proportion of unique words in a chunk of text:</p>
+    <pre class="programlisting code"><code class="hljs-code">colname = <span class="hljs-string">'answer'</span>
+xtrain[colname+<span class="hljs-string">'_div'</span>] = xtrain[colname].apply
+                         (<span class="hljs-keyword">lambda</span> s: <span class="hljs-built_in">len</span>(<span class="hljs-built_in">set</span>(s.split())) / <span class="hljs-built_in">len</span>(s.split()) )
+xtest[colname+<span class="hljs-string">'_div'</span>] = xtest[colname].apply
+                        (<span class="hljs-keyword">lambda</span> s: <span class="hljs-built_in">len</span>(<span class="hljs-built_in">set</span>(s.split())) / <span class="hljs-built_in">len</span>(s.split()) )
+</code></pre>
+    <p class="normal">When dealing with information sourced from online, we can extract potentially informative features by examining the components of a website address (where we define components as elements of the address separated by dots); we count the number of components, and store individual ones as features:</p>
+    <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">for</span> df <span class="hljs-keyword">in</span> [xtrain, xtest]:
+    df[<span class="hljs-string">'domcom'</span>] = df[<span class="hljs-string">'question_user_page'</span>].apply
+                   (<span class="hljs-keyword">lambda</span> s: s.split(<span class="hljs-string">'://'</span>)[<span class="hljs-number">1</span>].split(<span class="hljs-string">'/'</span>)[<span class="hljs-number">0</span>].split(<span class="hljs-string">'.'</span>))
+    <span class="hljs-comment"># Count components</span>
+    df[<span class="hljs-string">'dom_cnt'</span>] = df[<span class="hljs-string">'domcom'</span>].apply(<span class="hljs-keyword">lambda</span> s: <span class="hljs-built_in">len</span>(s))
+    <span class="hljs-comment"># Pad the length in case some domains have fewer components in the name</span>
+    df[<span class="hljs-string">'domcom'</span>] = df[<span class="hljs-string">'domcom'</span>].apply(<span class="hljs-keyword">lambda</span> s: s + [<span class="hljs-string">'none'</span>, <span class="hljs-string">'</span><span class="hljs-string">none'</span>])
+    <span class="hljs-comment"># Components</span>
+    <span class="hljs-keyword">for</span> ii <span class="hljs-keyword">in</span> <span class="hljs-built_in">range</span>(<span class="hljs-number">0</span>,<span class="hljs-number">4</span>):
+        df[<span class="hljs-string">'dom_'</span>+<span class="hljs-built_in">str</span>(ii)] = df[<span class="hljs-string">'domcom'</span>].apply(<span class="hljs-keyword">lambda</span> s: s[ii])
+</code></pre>
+    <p class="normal">Numerous target<a id="_idIndexMarker932"/> columns deal with how relevant the answer is for a given question. One possible way of quantifying this relationship is <a id="_idIndexMarker933"/>evaluating <strong class="keyWord">shared words</strong> within a pair of strings:</p>
+    <pre class="programlisting code"><code class="hljs-code"><span class="hljs-comment"># Shared elements</span>
+<span class="hljs-keyword">for</span> df <span class="hljs-keyword">in</span> [xtrain, xtest]:
+    df[<span class="hljs-string">'q_words'</span>] = df[<span class="hljs-string">'question_body'</span>].apply(<span class="hljs-keyword">lambda</span> s: [f <span class="hljs-keyword">for</span> f <span class="hljs-keyword">in</span> s.split() <span class="hljs-keyword">if</span> f <span class="hljs-keyword">not</span> <span class="hljs-keyword">in</span> eng_stopwords] )
+    df[<span class="hljs-string">'a_words'</span>] = df[<span class="hljs-string">'answer'</span>].apply(<span class="hljs-keyword">lambda</span> s: [f <span class="hljs-keyword">for</span> f <span class="hljs-keyword">in</span> s.split() <span class="hljs-keyword">if</span> f <span class="hljs-keyword">not</span> <span class="hljs-keyword">in</span> eng_stopwords] )
+    df[<span class="hljs-string">'qa_word_overlap'</span>] = df.apply(<span class="hljs-keyword">lambda</span> s: <span class="hljs-built_in">len</span>(np.intersect1d(s[<span class="hljs-string">'q_words'</span>], s[<span class="hljs-string">'a_words'</span>])), axis = <span class="hljs-number">1</span>)
+    df[<span class="hljs-string">'qa_word_overlap_norm1'</span>] = df.apply(<span class="hljs-keyword">lambda</span> s: s[<span class="hljs-string">'qa_word_overlap'</span>]/(<span class="hljs-number">1</span> + <span class="hljs-built_in">len</span>(s[<span class="hljs-string">'a_words'</span>])), axis = <span class="hljs-number">1</span>)
+    df[<span class="hljs-string">'qa_word_overlap_norm2'</span>] = df.apply(<span class="hljs-keyword">lambda</span> s: s[<span class="hljs-string">'qa_word_overlap'</span>]/(<span class="hljs-number">1</span> + <span class="hljs-built_in">len</span>(s[<span class="hljs-string">'q_words'</span>])), axis = <span class="hljs-number">1</span>)
+    df.drop([<span class="hljs-string">'q_words'</span>, <span class="hljs-string">'a_words'</span>], axis = <span class="hljs-number">1</span>, inplace = <span class="hljs-literal">True</span>)
+</code></pre>
+    <p class="normal">Stopwords and punctuation occurrence patterns can tell us something about the style and intent:</p>
+    <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">for</span> df <span class="hljs-keyword">in</span> [xtrain, xtest]:
+    
+    <span class="hljs-comment">## Number of characters in the text ##</span>
+    df[<span class="hljs-string">"question_title_num_chars"</span>] = df[<span class="hljs-string">"</span><span class="hljs-string">question_title"</span>].apply(<span class="hljs-keyword">lambda</span> x: <span class="hljs-built_in">len</span>(<span class="hljs-built_in">str</span>(x)))
+    df[<span class="hljs-string">"question_body_num_chars"</span>] = df[<span class="hljs-string">"question_body"</span>].apply(<span class="hljs-keyword">lambda</span> x: <span class="hljs-built_in">len</span>(<span class="hljs-built_in">str</span>(x)))
+    df[<span class="hljs-string">"answer_num_chars"</span>] = df[<span class="hljs-string">"</span><span class="hljs-string">answer"</span>].apply(<span class="hljs-keyword">lambda</span> x: <span class="hljs-built_in">len</span>(<span class="hljs-built_in">str</span>(x)))
+    <span class="hljs-comment">## Number of stopwords in the text ##</span>
+    df[<span class="hljs-string">"question_title_num_stopwords"</span>] = df[<span class="hljs-string">"question_title"</span>].apply(<span class="hljs-keyword">lambda</span> x: <span class="hljs-built_in">len</span>([w <span class="hljs-keyword">for</span> w <span class="hljs-keyword">in</span> <span class="hljs-built_in">str</span>(x).lower().split() <span class="hljs-keyword">if</span> w <span class="hljs-keyword">in</span> eng_stopwords]))
+    df[<span class="hljs-string">"question_body_num_stopwords"</span>] = df[<span class="hljs-string">"question_body"</span>].apply(<span class="hljs-keyword">lambda</span> x: <span class="hljs-built_in">len</span>([w <span class="hljs-keyword">for</span> w <span class="hljs-keyword">in</span> <span class="hljs-built_in">str</span>(x).lower().split() <span class="hljs-keyword">if</span> w <span class="hljs-keyword">in</span> eng_stopwords]))
+    df[<span class="hljs-string">"answer_num_stopwords"</span>] = df[<span class="hljs-string">"answer"</span>].apply(<span class="hljs-keyword">lambda</span> x: <span class="hljs-built_in">len</span>([w <span class="hljs-keyword">for</span> w <span class="hljs-keyword">in</span> <span class="hljs-built_in">str</span>(x).lower().split() <span class="hljs-keyword">if</span> w <span class="hljs-keyword">in</span> eng_stopwords]))
+    <span class="hljs-comment">## Number of punctuations in the text ##</span>
+    df[<span class="hljs-string">"question_title_num_punctuations"</span>] =df[<span class="hljs-string">'question_title'</span>].apply(<span class="hljs-keyword">lambda</span> x: <span class="hljs-built_in">len</span>([c <span class="hljs-keyword">for</span> c <span class="hljs-keyword">in</span> <span class="hljs-built_in">str</span>(x) <span class="hljs-keyword">if</span> c <span class="hljs-keyword">in</span> string.punctuation]) )
+    df[<span class="hljs-string">"question_body_num_punctuations"</span>] =df[<span class="hljs-string">'question_body'</span>].apply(<span class="hljs-keyword">lambda</span> x: <span class="hljs-built_in">len</span>([c <span class="hljs-keyword">for</span> c <span class="hljs-keyword">in</span> <span class="hljs-built_in">str</span>(x) <span class="hljs-keyword">if</span> c <span class="hljs-keyword">in</span> string.punctuation]) )
+    df[<span class="hljs-string">"answer_num_punctuations"</span>] =df[<span class="hljs-string">'answer'</span>].apply(<span class="hljs-keyword">lambda</span> x: <span class="hljs-built_in">len</span>([c <span class="hljs-keyword">for</span> c <span class="hljs-keyword">in</span> <span class="hljs-built_in">str</span>(x) <span class="hljs-keyword">if</span> c <span class="hljs-keyword">in</span> string.punctuation]) )
+    <span class="hljs-comment">## Number of title case words in the text ##</span>
+    df[<span class="hljs-string">"question_title_num_words_upper"</span>] = df[<span class="hljs-string">"question_title"</span>].apply(<span class="hljs-keyword">lambda</span> x: <span class="hljs-built_in">len</span>([w <span class="hljs-keyword">for</span> w <span class="hljs-keyword">in</span> <span class="hljs-built_in">str</span>(x).split() <span class="hljs-keyword">if</span> w.isupper()]))
+    df[<span class="hljs-string">"question_body_num_words_upper"</span>] = df[<span class="hljs-string">"</span><span class="hljs-string">question_body"</span>].apply(<span class="hljs-keyword">lambda</span> x: <span class="hljs-built_in">len</span>([w <span class="hljs-keyword">for</span> w <span class="hljs-keyword">in</span> <span class="hljs-built_in">str</span>(x).split() <span class="hljs-keyword">if</span> w.isupper()]))
+    df[<span class="hljs-string">"answer_num_words_upper"</span>] = df[<span class="hljs-string">"answer"</span>].apply(<span class="hljs-keyword">lambda</span> x: <span class="hljs-built_in">len</span>([w <span class="hljs-keyword">for</span> w <span class="hljs-keyword">in</span> <span class="hljs-built_in">str</span>(x).split() <span class="hljs-keyword">if</span> w.isupper()]))
+</code></pre>
+    <p class="normal">With the “vintage” features prepared – where our focus is on simple summary statistics of the text, without<a id="_idIndexMarker934"/> paying heed to semantic structure – we can move on to creating <strong class="keyWord">embeddings</strong> for<a id="_idIndexMarker935"/> the questions and answers. We could theoretically train a separate word2vec-type model on our data (or fine-tune an existing one), but for the sake of this presentation we will use a pre-trained model as-is. A useful choice is the <strong class="keyWord">Universal Sentence Encoder</strong> from <a id="_idIndexMarker936"/>Google (<a href="https://tfhub.dev/google/universal-sentence-encoder/4"><span class="url">https://tfhub.dev/google/universal-sentence-encoder/4</span></a>). This model is trained on a variety of data sources. It takes as input a piece of text in English and outputs a 512-dimensional vector.</p>
+    <pre class="programlisting code"><code class="hljs-code">module_url = <span class="hljs-string">"../input/universalsentenceencoderlarge4/"</span>
+embed = hub.load(module_url)
+</code></pre>
+    <p class="normal">The<a id="_idIndexMarker937"/> code for turning the text fields into embeddings is presented below: we loop through the entries in the training/test sets in batches, embed each batch (for memory efficiency reasons), and then append them to the original list. </p>
+    <p class="normal">The final data frames are constructed by stacking each list of batch-level embeddings vertically:</p>
+    <pre class="programlisting code"><code class="hljs-code">embeddings_train = {}
+embeddings_test = {}
+<span class="hljs-keyword">for</span> text <span class="hljs-keyword">in</span> [<span class="hljs-string">'question_title'</span>, <span class="hljs-string">'question_body'</span>, <span class="hljs-string">'answer'</span>]:
+    train_text = xtrain[text].<span class="hljs-built_in">str</span>.replace(<span class="hljs-string">'?'</span>, <span class="hljs-string">'.'</span>).<span class="hljs-built_in">str</span>.replace(<span class="hljs-string">'</span><span class="hljs-string">!'</span>, <span class="hljs-string">'.'</span>).tolist()
+    test_text = xtest[text].<span class="hljs-built_in">str</span>.replace(<span class="hljs-string">'?'</span>, <span class="hljs-string">'.'</span>).<span class="hljs-built_in">str</span>.replace(<span class="hljs-string">'!'</span>, <span class="hljs-string">'.'</span>).tolist()
+    
+    curr_train_emb = []
+    curr_test_emb = []
+    batch_size = <span class="hljs-number">4</span>
+    ind = <span class="hljs-number">0</span>
+    <span class="hljs-keyword">while</span> ind*batch_size &lt; <span class="hljs-built_in">len</span>(train_text):
+        curr_train_emb.append(embed(train_text[ind*batch_size: (ind + <span class="hljs-number">1</span>)*batch_size])[<span class="hljs-string">"outputs"</span>].numpy())
+        ind += <span class="hljs-number">1</span>
+        
+    ind = <span class="hljs-number">0</span>
+    <span class="hljs-keyword">while</span> ind*batch_size &lt; <span class="hljs-built_in">len</span>(test_text):
+        curr_test_emb.append(embed(test_text[ind*batch_size: (ind + <span class="hljs-number">1</span>)*batch_size])[<span class="hljs-string">"outputs"</span>].numpy())
+        ind += <span class="hljs-number">1</span>    
+        
+    embeddings_train[text + <span class="hljs-string">'_embedding'</span>] = np.vstack(curr_train_emb)
+    embeddings_test[text + <span class="hljs-string">'_embedding'</span>] = np.vstack(curr_test_emb)
+    <span class="hljs-built_in">print</span>(text)
+</code></pre>
+    <p class="normal">Given the vector representations for both questions and answers, we can calculate the semantic similarity between the fields by using different distance metrics on the pairs of vectors. The idea behind trying different metrics is the desire to capture diverse types of characteristics; an analogy in the context of classification would be to use both accuracy and entropy to get a complete picture of the situation:</p>
+    <pre class="programlisting code"><code class="hljs-code">l2_dist = <span class="hljs-keyword">lambda</span> x, y: np.power(x - y, <span class="hljs-number">2</span>).<span class="hljs-built_in">sum</span>(axis=<span class="hljs-number">1</span>)
+cos_dist = <span class="hljs-keyword">lambda</span> x, y: (x*y).<span class="hljs-built_in">sum</span>(axis=<span class="hljs-number">1</span>)
+dist_features_train = np.array([
+    l2_dist(embeddings_train[<span class="hljs-string">'question_title_embedding'</span>], embeddings_train[<span class="hljs-string">'answer_embedding'</span>]),
+    l2_dist(embeddings_train[<span class="hljs-string">'question_body_embedding'</span>], embeddings_train[<span class="hljs-string">'answer_embedding'</span>]),
+    l2_dist(embeddings_train[<span class="hljs-string">'question_body_embedding'</span>], embeddings_train[<span class="hljs-string">'question_title_embedding'</span>]),
+    cos_dist(embeddings_train[<span class="hljs-string">'question_title_embedding'</span>], embeddings_train[<span class="hljs-string">'answer_embedding'</span>]),
+    cos_dist(embeddings_train[<span class="hljs-string">'</span><span class="hljs-string">question_body_embedding'</span>], embeddings_train[<span class="hljs-string">'answer_embedding'</span>]),
+    cos_dist(embeddings_train[<span class="hljs-string">'question_body_embedding'</span>], embeddings_train[<span class="hljs-string">'question_title_embedding'</span>])
+]).T
+dist_features_test = np.array([
+    l2_dist(embeddings_test[<span class="hljs-string">'question_title_embedding'</span>], embeddings_test[<span class="hljs-string">'answer_embedding'</span>]),
+    l2_dist(embeddings_test[<span class="hljs-string">'question_body_embedding'</span>], embeddings_test[<span class="hljs-string">'answer_embedding'</span>]),
+    l2_dist(embeddings_test[<span class="hljs-string">'question_body_embedding'</span>], embeddings_test[<span class="hljs-string">'question_title_embedding'</span>]),
+    cos_dist(embeddings_test[<span class="hljs-string">'</span><span class="hljs-string">question_title_embedding'</span>], embeddings_test[<span class="hljs-string">'answer_embedding'</span>]),
+    cos_dist(embeddings_test[<span class="hljs-string">'question_body_embedding'</span>], embeddings_test[<span class="hljs-string">'answer_embedding'</span>]),
+    cos_dist(embeddings_test[<span class="hljs-string">'question_body_embedding'</span>], embeddings_test[<span class="hljs-string">'question_title_embedding'</span>])
+]).T
+</code></pre>
+    <p class="normal">Let’s gather the<a id="_idIndexMarker938"/> distance features in separate columns:</p>
+    <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">for</span> ii <span class="hljs-keyword">in</span> <span class="hljs-built_in">range</span>(<span class="hljs-number">0</span>,<span class="hljs-number">6</span>):
+    xtrain[<span class="hljs-string">'dist'</span>+<span class="hljs-built_in">str</span>(ii)] = dist_features_train[:,ii]
+    xtest[<span class="hljs-string">'dist'</span>+<span class="hljs-built_in">str</span>(ii)] = dist_features_test[:,ii]
+</code></pre>
+    <p class="normal">Finally, we can also create <strong class="keyWord">TF-IDF</strong> representations<a id="_idIndexMarker939"/> of the text fields; the general idea is to create multiple features based on diverse transformations of the input text, and then feed them to a relatively simple model. </p>
+    <p class="normal">This way, we can capture the characteristics of the data without the need to fit a sophisticated deep learning model. </p>
+    <p class="normal">We can <a id="_idIndexMarker940"/>achieve it by analyzing the text at the word as well as the character level. To limit the memory consumption, we put an upper bound on the maximum number of both kinds of features (your mileage might vary; with more memory, these limits can be upped):</p>
+    <pre class="programlisting code"><code class="hljs-code">limit_char = <span class="hljs-number">5000</span>
+limit_word = <span class="hljs-number">25000</span>
+</code></pre>
+    <p class="normal">We instantiate character- and word-level vectorizers. The setup of our problem lends itself to a convenient usage of the <code class="inlineCode">Pipeline</code> functionality from Scikit-learn, allowing a combination of multiple steps in the model fitting procedure. We begin by creating two separate transformers for the title column (word- and character-level):</p>
+    <pre class="programlisting code"><code class="hljs-code">title_col = <span class="hljs-string">'question_title'</span>
+title_transformer = Pipeline([
+    (<span class="hljs-string">'tfidf'</span>, TfidfVectorizer(lowercase = <span class="hljs-literal">False</span>, max_df = <span class="hljs-number">0.3</span>, min_df = <span class="hljs-number">1</span>,
+                             binary = <span class="hljs-literal">False</span>, use_idf = <span class="hljs-literal">True</span>, smooth_idf = <span class="hljs-literal">False</span>,
+                             ngram_range = (<span class="hljs-number">1</span>,<span class="hljs-number">2</span>), stop_words = <span class="hljs-string">'english'</span>, 
+                             token_pattern = <span class="hljs-string">'(?u)\\b\\w+\\b'</span> , max_features = limit_word ))
+])
+title_transformer2 = Pipeline([
+ (<span class="hljs-string">'tfidf2'</span>,  TfidfVectorizer(sublinear_tf=<span class="hljs-literal">True</span>,
+    strip_accents=<span class="hljs-string">'unicode'</span>, analyzer=<span class="hljs-string">'char'</span>,
+    stop_words=<span class="hljs-string">'english'</span>, ngram_range=(<span class="hljs-number">1</span>, <span class="hljs-number">4</span>), max_features= limit_char))   
+])
+</code></pre>
+    <p class="normal">We use the same logic (two different pipelined transformers) for the body:</p>
+    <pre class="programlisting code"><code class="hljs-code">body_col = <span class="hljs-string">'question_body'</span>
+body_transformer = Pipeline([
+    (<span class="hljs-string">'tfidf'</span>,TfidfVectorizer(lowercase = <span class="hljs-literal">False</span>, max_df = <span class="hljs-number">0.3</span>, min_df = <span class="hljs-number">1</span>,
+                             binary = <span class="hljs-literal">False</span>, use_idf = <span class="hljs-literal">True</span>, smooth_idf = <span class="hljs-literal">False</span>,
+                             ngram_range = (<span class="hljs-number">1</span>,<span class="hljs-number">2</span>), stop_words = <span class="hljs-string">'english'</span>, 
+                             token_pattern = <span class="hljs-string">'(?u)\\b\\w+\\b'</span> , max_features = limit_word ))
+])
+body_transformer2 = Pipeline([
+ (<span class="hljs-string">'tfidf2'</span>,  TfidfVectorizer( sublinear_tf=<span class="hljs-literal">True</span>,
+    strip_accents=<span class="hljs-string">'unicode'</span>, analyzer=<span class="hljs-string">'char'</span>,
+    stop_words=<span class="hljs-string">'english'</span>, ngram_range=(<span class="hljs-number">1</span>, <span class="hljs-number">4</span>), max_features= limit_char))   
+])
+</code></pre>
+    <p class="normal">And finally for the answer column:</p>
+    <pre class="programlisting code"><code class="hljs-code">answer_col = <span class="hljs-string">'answer'</span>
+answer_transformer = Pipeline([
+    (<span class="hljs-string">'tfidf'</span>, TfidfVectorizer(lowercase = <span class="hljs-literal">False</span>, max_df = <span class="hljs-number">0.3</span>, min_df = <span class="hljs-number">1</span>,
+                             binary = <span class="hljs-literal">False</span>, use_idf = <span class="hljs-literal">True</span>, smooth_idf = <span class="hljs-literal">False</span>,
+                             ngram_range = (<span class="hljs-number">1</span>,<span class="hljs-number">2</span>), stop_words = <span class="hljs-string">'english'</span>, 
+                             token_pattern = <span class="hljs-string">'(?u)\\b\\w+\\b'</span> , max_features = limit_word ))
+])
+answer_transformer2 = Pipeline([
+ (<span class="hljs-string">'tfidf2'</span>,  TfidfVectorizer( sublinear_tf=<span class="hljs-literal">True</span>,
+    strip_accents=<span class="hljs-string">'unicode'</span>, analyzer=<span class="hljs-string">'char'</span>,
+    stop_words=<span class="hljs-string">'english'</span>, ngram_range=(<span class="hljs-number">1</span>, <span class="hljs-number">4</span>), max_features= limit_char))   
+])
+</code></pre>
+    <p class="normal">We wrap <a id="_idIndexMarker941"/>up the feature engineering part by processing the numerical features. We use simple methods only: missing value imputation to take care of N/A values and a power transformer to stabilize the distribution and make it closer to Gaussian (which is frequently helpful if you are using a numerical feature inside a neural network):</p>
+    <pre class="programlisting code"><code class="hljs-code">num_cols = [
+    <span class="hljs-string">'question_title_word_len'</span>, <span class="hljs-string">'question_body_word_len'</span>,
+    <span class="hljs-string">'answer_word_len'</span>, <span class="hljs-string">'answer_div'</span>,
+    <span class="hljs-string">'question_title_num_chars'</span>,<span class="hljs-string">'question_body_num_chars'</span>,
+    <span class="hljs-string">'answer_num_chars'</span>,
+    <span class="hljs-string">'question_title_num_stopwords'</span>,<span class="hljs-string">'question_body_num_stopwords'</span>,
+    <span class="hljs-string">'answer_num_stopwords'</span>,
+    <span class="hljs-string">'question_title_num_punctuations'</span>,
+    <span class="hljs-string">'question_body_num_punctuations'</span>,<span class="hljs-string">'answer_num_punctuations'</span>,
+    <span class="hljs-string">'question_title_num_words_upper'</span>,
+    <span class="hljs-string">'question_body_num_words_upper'</span>,<span class="hljs-string">'answer_num_words_upper'</span>,
+    <span class="hljs-string">'dist0'</span>, <span class="hljs-string">'dist1'</span>, <span class="hljs-string">'dist2'</span>, <span class="hljs-string">'dist3'</span>, <span class="hljs-string">'dist4'</span>,       <span class="hljs-string">'dist5'</span>
+]
+num_transformer = Pipeline([
+    (<span class="hljs-string">'impute'</span>, SimpleImputer(strategy=<span class="hljs-string">'constant'</span>, fill_value=<span class="hljs-number">0</span>)),
+    (<span class="hljs-string">'scale'</span>, PowerTransformer(method=<span class="hljs-string">'yeo-johnson'</span>))
+])
+</code></pre>
+    <p class="normal">A useful feature <a id="_idIndexMarker942"/>of Pipelines<a id="_idIndexMarker943"/> is they can be combined and nested. Next, we add functionality to handle categorical variables, and then put it all together in a <code class="inlineCode">ColumnTransformer</code> object to streamline the data pre-processing and feature engineering logic. Each part of the input can be handled in its own appropriate manner:</p>
+    <pre class="programlisting code"><code class="hljs-code">cat_cols = [ <span class="hljs-string">'dom_0'</span>,  <span class="hljs-string">'dom_1'</span>, <span class="hljs-string">'dom_2'</span>, 
+    <span class="hljs-string">'dom_3'</span>, <span class="hljs-string">'category'</span>,<span class="hljs-string">'is_question_no_name_user'</span>,
+    <span class="hljs-string">'is_answer_no_name_user'</span>,<span class="hljs-string">'dom_cnt'</span>
+]
+cat_transformer = Pipeline([
+    (<span class="hljs-string">'impute'</span>, SimpleImputer(strategy=<span class="hljs-string">'constant'</span>, fill_value=<span class="hljs-string">''</span>)),
+    (<span class="hljs-string">'encode'</span>, OneHotEncoder(handle_unknown=<span class="hljs-string">'ignore'</span>))
+])
+preprocessor = ColumnTransformer(
+    transformers = [
+        (<span class="hljs-string">'title'</span>, title_transformer, title_col),
+        (<span class="hljs-string">'title2'</span>, title_transformer2, title_col),
+        (<span class="hljs-string">'body'</span>, body_transformer, body_col),
+        (<span class="hljs-string">'body2'</span>, body_transformer2, body_col),
+        (<span class="hljs-string">'answer'</span>, answer_transformer, answer_col),
+        (<span class="hljs-string">'answer2'</span>, answer_transformer2, answer_col),
+        (<span class="hljs-string">'num'</span>, num_transformer, num_cols),
+        (<span class="hljs-string">'cat'</span>, cat_transformer, cat_cols)
+    ]
+)
+</code></pre>
+    <p class="normal">Finally, we are ready to use a <code class="inlineCode">Pipeline</code> object combining pre-processing and model fitting:</p>
+    <pre class="programlisting code"><code class="hljs-code">pipeline = Pipeline([
+    (<span class="hljs-string">'preprocessor'</span>, preprocessor),
+    (<span class="hljs-string">'estimator'</span>,Ridge(random_state=RANDOM_STATE))
+])
+</code></pre>
+    <p class="normal">It is always a <a id="_idIndexMarker944"/>good idea to evaluate the performance of your model out of sample: a convenient way to go about this is to<a id="_idIndexMarker945"/> create <strong class="keyWord">out-of-fold predictions</strong>, which we discussed in <em class="chapterRef">Chapter 6</em>. The procedure involves the following steps:</p>
+    <ol class="numberedList" style="list-style-type: decimal;">
+      <li class="numberedList" value="1">Split the data into folds. In our case we use <code class="inlineCode">GroupKFold</code>, since one question can have multiple answers (in separate rows of the data frame). In order to prevent information leakage, we want to ensure each question only appears in one fold.</li>
+      <li class="numberedList">For each fold, train the model using the data in the other folds, and generate the predictions for the fold of choice, as well as the test set.</li>
+      <li class="numberedList">Average the predictions on the test set.</li>
+    </ol>
+    <p class="normal">We start with preparing the “storage” matrices in which we will store the predictions. <code class="inlineCode">mvalid</code> will contain the out-of-fold predictions, while <code class="inlineCode">mfull</code> is a placeholder for the predictions on the entire test set, averaged across folds. Since several questions contain more than one candidate answer, we stratify our <code class="inlineCode">KFold</code> split on <code class="inlineCode">question_body</code>:</p>
+    <pre class="programlisting code"><code class="hljs-code">nfolds = <span class="hljs-number">5</span>
+mvalid = np.zeros((xtrain.shape[<span class="hljs-number">0</span>], <span class="hljs-built_in">len</span>(target_cols)))
+mfull = np.zeros((xtest.shape[<span class="hljs-number">0</span>], <span class="hljs-built_in">len</span>(target_cols)))
+kf = GroupKFold(n_splits= nfolds).split(X=xtrain.question_body, groups=xtrain.question_body)
+</code></pre>
+    <p class="normal">We loop through the folds and build the separate models:</p>
+    <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">for</span> ind, (train_index, test_index) <span class="hljs-keyword">in</span> <span class="hljs-built_in">enumerate</span>(kf):
+    
+    <span class="hljs-comment"># Split the data into training and validation</span>
+    x0, x1 = xtrain.loc[train_index], xtrain.loc[test_index]
+    y0, y1 = ytrain.loc[train_index], ytrain.loc[test_index]
+    <span class="hljs-keyword">for</span> ii <span class="hljs-keyword">in</span> <span class="hljs-built_in">range</span>(<span class="hljs-number">0</span>, ytrain.shape[<span class="hljs-number">1</span>]):
+        <span class="hljs-comment"># Fit model</span>
+        be = clone(pipeline)
+        be.fit(x0, np.array(y0)[:,ii])
+        filename = <span class="hljs-string">'ridge_f'</span> + <span class="hljs-built_in">str</span>(ind) + <span class="hljs-string">'_c'</span> + <span class="hljs-built_in">str</span>(ii) + <span class="hljs-string">'.pkl'</span>
+        pickle.dump(be, <span class="hljs-built_in">open</span>(filename, <span class="hljs-string">'wb'</span>))
+        
+        <span class="hljs-comment"># Storage matrices for the OOF and test predictions, respectively</span>
+        mvalid[test_index, ii] = be.predict(x1)
+        mfull[:,ii] += be.predict(xtest)/nfolds
+        
+    <span class="hljs-built_in">print</span>(<span class="hljs-string">'---'</span>)
+</code></pre>
+    <p class="normal">Once the fitting <a id="_idIndexMarker946"/>part is done, we can evaluate the performance in accordance with the metric specified in the competition:</p>
+    <pre class="programlisting code"><code class="hljs-code">corvec = np.zeros((ytrain.shape[<span class="hljs-number">1</span>],<span class="hljs-number">1</span>))
+<span class="hljs-keyword">for</span> ii <span class="hljs-keyword">in</span> <span class="hljs-built_in">range</span>(<span class="hljs-number">0</span>, ytrain.shape[<span class="hljs-number">1</span>]):
+    mvalid[:,ii] = rankdata(mvalid[:,ii])/mvalid.shape[<span class="hljs-number">0</span>]
+    mfull[:,ii] = rankdata(mfull[:,ii])/mfull.shape[<span class="hljs-number">0</span>]
+    
+    corvec[ii] = stats.spearmanr(ytrain[ytrain.columns[ii]], mvalid[:,ii])[<span class="hljs-number">0</span>]
+    
+<span class="hljs-built_in">print</span>(corvec.mean())
+</code></pre>
+    <p class="normal">The final score is <strong class="keyWord">0.34</strong>, which is fairly acceptable as a starting point. </p>
+    <p class="normal">In this section, we have demonstrated how to build descriptive features on a body of text. While this is not a winning formula for an NLP competition (the score is OK, but not a guarantee for landing in the medal zone), it is a useful tool to keep in your toolbox. We close this chapter with a section providing an overview of text augmentation techniques.</p>
+    <div class="interviewBox">
+      <div class="intervieweePhoto">
+        <img src="../Images/Shotaro_Ishihara.png" alt=""/>
+      </div>
+      <p class="intervieweeName">Shotaro Ishihara</p>
+      <p class="normal"><a href="https://www.kaggle.com/sishihara"><span class="url">https://www.kaggle.com/sishihara</span></a></p>
+      <p class="normal">Our second <a id="_idIndexMarker947"/>interview of the chapter is with Shotaro Ishihara, aka u++, a Competitions and Notebooks Master who was a member of the winning team in the <em class="italic">PetFinder.my Adoption Prediction</em> competition. He is currently a Data Scientist and Researcher at a Japanese news media company, and has also published books in Japanese on Kaggle, including a translation of Abhishek Thakur’s book. He maintains a weekly newsletter in Japanese on Kaggle initiatives (<a href="https://www.getrevue.co/profile/upura"><span class="url">https://www.getrevue.co/profile/upura</span></a>).</p>
+      <p class="interviewHeader">Where can we find the Kaggle books you’ve written/translated?</p>
+      <p class="normal"><a href="https://www.kspub.co.jp/book/detail/5190067.html"><span class="url">https://www.kspub.co.jp/book/detail/5190067.html</span></a><em class="italic"> is a Kaggle primer for beginners based on the </em>Titanic<em class="italic"> GettingStarted competition.</em></p>
+      <p class="normal"><a href="https://book.mynavi.jp/ec/products/detail/id=123641"><span class="url">https://book.mynavi.jp/ec/products/detail/id=123641</span></a><em class="italic"> is the Japanese translation of Abhishek Thakur’s</em> Approaching (Almost) Any Machine Learning Problem.</p>
+      <p class="interviewHeader">What’s your favorite kind of competition and why? In terms of techniques and solving approaches, what is your specialty on Kaggle?</p>
+      <p class="normal"><em class="italic">In Kaggle, I love joining competitions with tabular or text datasets. These types of datasets are familiar to me because they are widely used in news media companies. I have a good knowledge of the approaches used to handle these datasets.</em></p>
+      <p class="interviewHeader">How do you approach a Kaggle competition? How different is this approach to what you do in your day-to-day work?</p>
+      <p class="normal"><em class="italic">The first process is the same: thinking about how to tackle the problem through exploratory data analysis. Kaggle assumes the use of advanced machine learning, but this is not the case in business. In practice, I try to find ways to avoid using machine learning. Even when I do use it, I prefer working with classical methods such as TF-IDF and linear regression rather than advanced methods such as BERT.</em></p>
+      <p class="interviewHeader">We are interested in learning more about how to avoid using machine learning in real-world problems. Can you give us some examples?</p>
+      <p class="normal"><em class="italic">When working on automated article summaries at work, we adopt a more straightforward extractive approach (</em><a href="https://www.jstage.jst.go.jp/article/pjsai/JSAI2021/0/JSAI2021_1D2OS3a03/_article/-char/en"><span class="url">https://www.jstage.jst.go.jp/article/pjsai/JSAI2021/0/JSAI2021_1D2OS3a03/_article/-char/en</span></a><em class="italic">) rather than a neural network-based method (</em><a href="https://www.jstage.jst.go.jp/article/pjsai/JSAI2021/0/JSAI2021_1D4OS3c02/_article/-char/en"><span class="url">https://www.jstage.jst.go.jp/article/pjsai/JSAI2021/0/JSAI2021_1D4OS3c02/_article/-char/en</span></a><em class="italic">).</em></p>
+
+      <p class="normal"><em class="italic"> It is difficult to guarantee 100% performance with machine learning, and simple methods that are easy for humans to understand and engage with are sometimes preferred.</em></p>
+      <p class="interviewHeader">Tell us about a particularly challenging competition you entered, and what insights you used to tackle the task.</p>
+      <p class="normal"><em class="italic">In the </em>PetFinder.my Adoption Prediction<em class="italic"> competition, a multi-modal dataset was provided. Many participants tried to explore and use all types of data, and the main approach was to extract features from images and texts, concatenate them, and train LightGBM. I also employed the same approach. Surprisingly, one of my teammates, takuoko (</em><a href="https://www.kaggle.com/takuok"><span class="url">https://www.kaggle.com/takuok</span></a><em class="italic">), developed a great neural network that handles all datasets end to end. Well-designed neural networks have the potential to outperform LightGBM in multi-modal competitions. This is a lesson I learned in 2019.</em></p>
+      <p class="interviewHeader">Is that lesson still valid today?</p>
+      <p class="normal"><em class="italic">I think the answer is yes. Compared to 2019, neural networks are getting better and better at handling multimodal data.</em></p>
+      <p class="interviewHeader">Has Kaggle helped you in your career? If so, how?</p>
+      <p class="normal"><em class="italic">Yes. Kaggle gave me a lot of experience in data analysis. The machine learning knowledge I’ve gained from Kaggle has significantly helped me to work more successfully. My achievements in Kaggle and business work were one of the main reasons why I received the 30 Under 30 Awards and Grand Prize in 2020 from the International News Media Association. Kaggle has also allowed me to get to know a lot of people. These relationships have definitely contributed to my career development.</em></p>
+      <p class="interviewHeader">How have you built up your portfolio thanks to Kaggle?</p>
+      <p class="normal"><em class="italic">Learned skills, achieved competition results, and published Notebooks, books, newsletters, and so on.</em></p>
+      <p class="interviewHeader">How do you promote your publishing?</p>
+      <p class="normal"><em class="italic">I have various communication channels and I use the appropriate tools for promotion. For example, Twitter, personal blogs, and YouTube.</em></p>
+      <p class="interviewHeader">In your experience, what do inexperienced Kagglers often overlook? What do you know now that you wish you’d known when you first started?</p>
+      <p class="normal"><em class="italic">The importance of exploratory data analysis. In the field of machine learning, there is a concept of the No Free Lunch theorem. We should not only learn algorithms, but also learn how to address challenges. The No Free Lunch theorem is a statement that there is no universal model that performs well on all problems. </em></p>
+
+      <p class="normal"><em class="italic">In machine learning competitions, it is essential to find a model that is appropriate to the characteristics of the dataset and the task in order to improve your score.</em></p>
+      <p class="interviewHeader">What mistakes have you made in competitions in the past?</p>
+      <p class="normal"><em class="italic">Overfitting to the public leaderboard. In the </em>LANL Earthquake Prediction<em class="italic"> competition, I scored pretty well on the public leaderboard and finished the competition at the rank of fifth. However, my final ranking was 211</em><sup class="superscript-italic" style="font-style: italic;">st</sup><em class="italic">, which means I believed too much in a limited dataset. Overfitting is a very popular concept in machine learning, and I realized the importance of this with pain through Kaggle.</em></p>
+      <p class="interviewHeader">Do you suggest any particular way to avoid overfitting?</p>
+      <p class="normal"><em class="italic">It is important to observe carefully how the training and evaluation datasets are divided. I try to build a validation set that reproduces this partitioning.</em></p>
+      <p class="interviewHeader">Are there any particular tools or libraries that you would recommend using for data analysis or machine learning?</p>
+      <p class="normal"><em class="italic">I love Pandas, which is an essential library for handling tabular datasets. I use it for exploratory data analysis by extracting, aggregating, and visualizing.</em></p>
+      <p class="interviewHeader">What do you suggest readers do to master Pandas?</p>
+      <p class="normal"><em class="italic">You can look at some community tutorials. Kaggle also provides some learning tutorial courses on Pandas and feature engineering.</em></p>
+      <p class="interviewHeader">Do you use other competition platforms? How do they compare to Kaggle?</p>
+      <p class="normal"><em class="italic">I sometimes use Japanese platforms like Signate, Nishika, etc. (</em><a href="https://upura.github.io/projects/data_science_competitions/"><span class="url">https://upura.github.io/projects/data_science_competitions/</span></a><em class="italic">). These are obviously inferior to Kaggle in terms of functionality and UX/UX, but it’s interesting to see familiar subjects like the Japanese language.</em></p>
+    </div>
+    <h1 id="_idParaDest-177" class="heading-1">Text augmentation strategies</h1>
+    <p class="normal">We <a id="_idIndexMarker948"/>discussed augmentation strategies for computer vision problems extensively in the previous chapter. By contrast, similar approaches for textual data are a less well-explored topic (as evidenced by the fact there is no single package like <code class="inlineCode">albumentations</code>). In this section, we demonstrate some of the possible approaches to addressing the problem.</p>
+    <h2 id="_idParaDest-178" class="heading-2">Basic techniques</h2>
+    <p class="normal">As usual, it is<a id="_idIndexMarker949"/> informative to examine the basic approaches first, focusing on random changes and synonym handling. A systematic study of the basic approaches is provided in <em class="italic">Wei</em> and <em class="italic">Zou</em> (2019) at <a href="https://arxiv.org/abs/1901.11196"><span class="url">https://arxiv.org/abs/1901.11196</span></a>.</p>
+    <p class="normal">We begin <a id="_idIndexMarker950"/>with <strong class="keyWord">synonym replacement</strong>. Replacing <a id="_idIndexMarker951"/>certain words with their synonyms produces text that is close in meaning to the original, but slightly perturbed (see the project page at <a href="https://wordnet.princeton.edu/"><span class="url">https://wordnet.princeton.edu/</span></a> if you are interested in more details, like where the synonyms are actually coming from):</p>
+    <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">def</span><span class="hljs-function"> </span><span class="hljs-title">get_synonyms</span><span class="hljs-function">(</span><span class="hljs-params">word</span><span class="hljs-function">):</span>
+    
+    synonyms = <span class="hljs-built_in">set</span>()
+    
+    <span class="hljs-keyword">for</span> syn <span class="hljs-keyword">in</span> wordnet.synsets(word):
+        <span class="hljs-keyword">for</span> l <span class="hljs-keyword">in</span> syn.lemmas():
+            synonym = l.name().replace(<span class="hljs-string">"_"</span>, <span class="hljs-string">" "</span>).replace(<span class="hljs-string">"-"</span>, <span class="hljs-string">" "</span>).lower()
+            synonym = <span class="hljs-string">""</span>.join([char <span class="hljs-keyword">for</span> char <span class="hljs-keyword">in</span> synonym <span class="hljs-keyword">if</span> char <span class="hljs-keyword">in</span> <span class="hljs-string">' qwertyuiopasdfghjklzxcvbnm'</span>])
+            synonyms.add(synonym) 
+    <span class="hljs-keyword">if</span> word <span class="hljs-keyword">in</span> synonyms:
+        synonyms.remove(word)
+    
+    <span class="hljs-keyword">return</span> <span class="hljs-built_in">list</span>(synonyms)
+</code></pre>
+    <p class="normal">We create a <a id="_idIndexMarker952"/>simple wrapper around<a id="_idIndexMarker953"/> the workhorse function defined above, specifying a chunk of text (a string containing multiple words) and replace at most <em class="italic">n</em> of the words:</p>
+    <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">def</span><span class="hljs-function"> </span><span class="hljs-title">synonym_replacement</span><span class="hljs-function">(</span><span class="hljs-params">words, n</span><span class="hljs-function">):</span>    
+    words = words.split()    
+    new_words = words.copy()
+    random_word_list = <span class="hljs-built_in">list</span>(<span class="hljs-built_in">set</span>([word <span class="hljs-keyword">for</span> word <span class="hljs-keyword">in</span> words <span class="hljs-keyword">if</span> word <span class="hljs-keyword">not</span> <span class="hljs-keyword">in</span> stop_words]))
+    random.shuffle(random_word_list)
+    num_replaced = <span class="hljs-number">0</span>
+    
+    <span class="hljs-keyword">for</span> random_word <span class="hljs-keyword">in</span> random_word_list:
+        synonyms = get_synonyms(random_word)
+        
+        <span class="hljs-keyword">if</span> <span class="hljs-built_in">len</span>(synonyms) &gt;= <span class="hljs-number">1</span>:
+            synonym = random.choice(<span class="hljs-built_in">list</span>(synonyms))
+            new_words = [synonym <span class="hljs-keyword">if</span> word == random_word <span class="hljs-keyword">else</span> word <span class="hljs-keyword">for</span> word <span class="hljs-keyword">in</span> new_words]
+            num_replaced += <span class="hljs-number">1</span>
+        
+        <span class="hljs-keyword">if</span> num_replaced &gt;= n: <span class="hljs-comment"># Only replace up to n words</span>
+            <span class="hljs-keyword">break</span>
+    sentence = <span class="hljs-string">' '</span>.join(new_words)
+    <span class="hljs-keyword">return</span> sentence
+</code></pre>
+    <p class="normal">Let’s see how the function works in practice:</p>
+    <pre class="programlisting code"><code class="hljs-code"><span class="hljs-built_in">print</span>(<span class="hljs-string">f" Example of Synonym Replacement: </span><span class="hljs-subst">{synonym_replacement(</span><span class="hljs-string">'The quick brown fox jumps over the lazy dog'</span><span class="hljs-subst">,</span><span class="hljs-number">4</span><span class="hljs-subst">)}</span><span class="hljs-string">"</span>)
+</code></pre>
+    <pre class="programlisting con"><code class="hljs-con">Example of Synonym Replacement: The spry brown university fox jumpstart over the lazy detent
+</code></pre>
+    <p class="normal">Not quite what you would call Shakespearean, but it does convey the same message while changing<a id="_idIndexMarker954"/> the style markedly. We can extend this approach by creating multiple new sentences per tweet:</p>
+    <pre class="programlisting code"><code class="hljs-code">trial_sent = data[<span class="hljs-string">'text'</span>][<span class="hljs-number">25</span>]
+<span class="hljs-built_in">print</span>(trial_sent)
+the free fillin' app on my ipod <span class="hljs-keyword">is</span> fun, im addicted
+<span class="hljs-keyword">for</span> n <span class="hljs-keyword">in</span> <span class="hljs-built_in">range</span>(<span class="hljs-number">3</span>):
+    <span class="hljs-built_in">print</span>(<span class="hljs-string">f" Example of Synonym Replacement: </span><span class="hljs-subst">{synonym_replacement(trial_sent,n)}</span><span class="hljs-string">"</span>)
+</code></pre>
+    <pre class="programlisting con"><code class="hljs-con">Example of Synonym Replacement: the free fillin' app on my ipod <span class="hljs-keyword">is</span> fun, im addict
+Example of Synonym Replacement: the innocent fillin' app on my ipod <span class="hljs-keyword">is</span> fun, im addicted
+Example of Synonym Replacement: the relinquish fillin' app on my ipod <span class="hljs-keyword">is</span> fun, im addict
+</code></pre>
+    <p class="normal">As you can<a id="_idIndexMarker955"/> see, generating variations of a text chunk using synonyms is quite straightforward.</p>
+    <p class="normal">Next, <strong class="keyWord">swapping</strong> is a <a id="_idIndexMarker956"/>simple and <a id="_idIndexMarker957"/>efficient method; we create a modified sentence by randomly swapping the order of words in the text. </p>
+    <p class="normal">Carefully applied, this can be viewed as a potentially useful form <a id="_idIndexMarker958"/>of <strong class="keyWord">regularization</strong>, as it disturbs the sequential nature of the data that models like LSTM rely on. The first step is to define a function swapping words:</p>
+    <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">def</span><span class="hljs-function"> </span><span class="hljs-title">swap_word</span><span class="hljs-function">(</span><span class="hljs-params">new_words</span><span class="hljs-function">):</span>    
+    random_idx_1 = random.randint(<span class="hljs-number">0</span>, <span class="hljs-built_in">len</span>(new_words)-<span class="hljs-number">1</span>)
+    random_idx_2 = random_idx_1
+    counter = <span class="hljs-number">0</span>    
+    <span class="hljs-keyword">while</span> random_idx_2 == random_idx_1:
+        random_idx_2 = random.randint(<span class="hljs-number">0</span>, <span class="hljs-built_in">len</span>(new_words)-<span class="hljs-number">1</span>)
+        counter += <span class="hljs-number">1</span>        
+        <span class="hljs-keyword">if</span> counter &gt; <span class="hljs-number">3</span>:
+            <span class="hljs-keyword">return</span> new_words
+    
+    new_words[random_idx_1], new_words[random_idx_2] = new_words[random_idx_2], new_words[random_idx_1] 
+    <span class="hljs-keyword">return</span> new_words
+</code></pre>
+    <p class="normal">Then, we write a wrapper around this function:</p>
+    <pre class="programlisting code"><code class="hljs-code"><span class="hljs-comment"># n is the number of words to be swapped</span>
+<span class="hljs-keyword">def</span><span class="hljs-function"> </span><span class="hljs-title">random_swap</span><span class="hljs-function">(</span><span class="hljs-params">words, n</span><span class="hljs-function">):</span>    
+    words = words.split()
+    new_words = words.copy()
+    
+    <span class="hljs-keyword">for</span> _ <span class="hljs-keyword">in</span> <span class="hljs-built_in">range</span>(n):
+        new_words = swap_word(new_words)
+        
+    sentence = <span class="hljs-string">' '</span>.join(new_words)    
+    <span class="hljs-keyword">return</span> sentence
+</code></pre>
+    <p class="normal">Synonyms and swapping do<a id="_idIndexMarker959"/> not affect the length of the sentence we are modifying. If in a given <a id="_idIndexMarker960"/>application it is useful to modify that attribute, we can remove or add words to the sentence. </p>
+    <p class="normal">The most common way to implement the former is to delete words at random:</p>
+    <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">def</span><span class="hljs-function"> </span><span class="hljs-title">random_deletion</span><span class="hljs-function">(</span><span class="hljs-params">words, p</span><span class="hljs-function">):</span>
+    words = words.split()
+    
+    <span class="hljs-comment"># Obviously, if there's only one word, don't delete it</span>
+    <span class="hljs-keyword">if</span> <span class="hljs-built_in">len</span>(words) == <span class="hljs-number">1</span>:
+        <span class="hljs-keyword">return</span> words
+    <span class="hljs-comment"># Randomly delete words with probability p</span>
+    new_words = []
+    <span class="hljs-keyword">for</span> word <span class="hljs-keyword">in</span> words:
+        r = random.uniform(<span class="hljs-number">0</span>, <span class="hljs-number">1</span>)
+        <span class="hljs-keyword">if</span> r &gt; p:
+            new_words.append(word)
+    <span class="hljs-comment"># If you end up deleting all words, just return a random word</span>
+    <span class="hljs-keyword">if</span> <span class="hljs-built_in">len</span>(new_words) == <span class="hljs-number">0</span>:
+        rand_int = random.randint(<span class="hljs-number">0</span>, <span class="hljs-built_in">len</span>(words)-<span class="hljs-number">1</span>)
+        <span class="hljs-keyword">return</span> [words[rand_int]]
+    sentence = <span class="hljs-string">' '</span>.join(new_words)
+    
+    <span class="hljs-keyword">return</span> sentence
+</code></pre>
+    <p class="normal">Let’s look at some examples:</p>
+    <pre class="programlisting code"><code class="hljs-code"><span class="hljs-built_in">print</span>(random_deletion(trial_sent,<span class="hljs-number">0.2</span>))
+<span class="hljs-built_in">print</span>(random_deletion(trial_sent,<span class="hljs-number">0.3</span>))
+<span class="hljs-built_in">print</span>(random_deletion(trial_sent,<span class="hljs-number">0.4</span>))
+</code></pre>
+    <pre class="programlisting con"><code class="hljs-con">the free fillin' app on my <span class="hljs-keyword">is</span> fun, addicted
+free fillin' app on my ipod <span class="hljs-keyword">is</span> im addicted
+the free on my ipod <span class="hljs-keyword">is</span> fun, im
+</code></pre>
+    <p class="normal">If we can remove, we <a id="_idIndexMarker961"/>can also add, of course. Random insertion of words to a sentence can be<a id="_idIndexMarker962"/> viewed as the NLP equivalent of adding noise or blur to an image:</p>
+    <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">def</span><span class="hljs-function"> </span><span class="hljs-title">random_insertion</span><span class="hljs-function">(</span><span class="hljs-params">words, n</span><span class="hljs-function">):</span>    
+    words = words.split()
+    new_words = words.copy()    
+    <span class="hljs-keyword">for</span> _ <span class="hljs-keyword">in</span> <span class="hljs-built_in">range</span>(n):
+        add_word(new_words)        
+    sentence = <span class="hljs-string">' '</span>.join(new_words)
+    <span class="hljs-keyword">return</span> sentence
+<span class="hljs-keyword">def</span><span class="hljs-function"> </span><span class="hljs-title">add_word</span><span class="hljs-function">(</span><span class="hljs-params">new_words</span><span class="hljs-function">):</span>    
+    synonyms = []
+    counter = <span class="hljs-number">0</span>
+    
+    <span class="hljs-keyword">while</span> <span class="hljs-built_in">len</span>(synonyms) &lt; <span class="hljs-number">1</span>:
+        random_word = new_words[random.randint(<span class="hljs-number">0</span>, <span class="hljs-built_in">len</span>(new_words)-<span class="hljs-number">1</span>)]
+        synonyms = get_synonyms(random_word)
+        counter += <span class="hljs-number">1</span>
+        <span class="hljs-keyword">if</span> counter &gt;= <span class="hljs-number">10</span>:
+            <span class="hljs-keyword">return</span>        
+    random_synonym = synonyms[<span class="hljs-number">0</span>]
+    random_idx = random.randint(<span class="hljs-number">0</span>, <span class="hljs-built_in">len</span>(new_words)-<span class="hljs-number">1</span>)
+    new_words.insert(random_idx, random_synonym)
+</code></pre>
+    <p class="normal">Here is the function in action:</p>
+    <pre class="programlisting code"><code class="hljs-code"><span class="hljs-built_in">print</span>(random_insertion(trial_sent,<span class="hljs-number">1</span>))
+<span class="hljs-built_in">print</span>(random_insertion(trial_sent,<span class="hljs-number">2</span>))
+<span class="hljs-built_in">print</span>(random_insertion(trial_sent,<span class="hljs-number">3</span>))
+</code></pre>
+    <pre class="programlisting con"><code class="hljs-con">the free fillin' app on my addict ipod <span class="hljs-keyword">is</span> fun, im addicted
+the complimentary free fillin' app on my ipod along <span class="hljs-keyword">is</span> fun, im addicted
+the free along fillin' app addict on my ipod along <span class="hljs-keyword">is</span> fun, im addicted
+</code></pre>
+    <p class="normal">We can combine all the transformations discussed above into a single function, producing four <a id="_idIndexMarker963"/>variants of the same sentence:</p>
+    <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">def</span><span class="hljs-function"> </span><span class="hljs-title">aug</span><span class="hljs-function">(</span><span class="hljs-params">sent,n,p</span><span class="hljs-function">):</span>
+    <span class="hljs-built_in">print</span>(<span class="hljs-string">f" Original Sentence : </span><span class="hljs-subst">{sent}</span><span class="hljs-string">"</span>)
+    <span class="hljs-built_in">print</span>(<span class="hljs-string">f" SR Augmented Sentence : </span><span class="hljs-subst">{synonym_replacement(sent,n)}</span><span class="hljs-string">"</span>)
+    <span class="hljs-built_in">print</span>(<span class="hljs-string">f" RD Augmented Sentence : </span><span class="hljs-subst">{random_deletion(sent,p)}</span><span class="hljs-string">"</span>)
+    <span class="hljs-built_in">print</span>(<span class="hljs-string">f" RS Augmented Sentence : </span><span class="hljs-subst">{random_swap(sent,n)}</span><span class="hljs-string">"</span>)
+    <span class="hljs-built_in">print</span>(<span class="hljs-string">f" RI Augmented Sentence : </span><span class="hljs-subst">{random_insertion(sent,n)}</span><span class="hljs-string">"</span>)
+aug(trial_sent,<span class="hljs-number">4</span>,<span class="hljs-number">0.3</span>)
+</code></pre>
+    <pre class="programlisting con"><code class="hljs-con">Original Sentence : the free fillin' app on my ipod is fun, im addicted
+SR Augmented Sentence : the disembarrass fillin' app on my ipod is fun, im hook
+RD Augmented Sentence : the free app on my ipod fun, im addicted
+RS Augmented Sentence : on free fillin' ipod is my the app fun, im addicted
+RI Augmented Sentence : the free fillin' app on gratis addict my ipod is complimentary make up fun, im addicted
+</code></pre>
+    <p class="normal">The <a id="_idIndexMarker964"/>augmentation methods discussed above do not exploit the structure of text data - to give one example, even analyzing a simple characteristic like “part of speech” can help us construct more useful transformations of the original text. This is the approach we will now focus on.</p>
+    <h2 id="_idParaDest-179" class="heading-2">nlpaug</h2>
+    <p class="normal">We <a id="_idIndexMarker965"/>conclude this section by demonstrating the capabilities provided by the <code class="inlineCode">nlpaug</code> package (<a href="https://github.com/makcedward/nlpaug"><span class="url">https://github.com/makcedward/nlpaug</span></a>). It aggregates different methods for text augmentation and <a id="_idIndexMarker966"/>is designed to be lightweight and easy to incorporate into a workflow. We demonstrate some examples of the functionality contained therein below.</p>
+    <pre class="programlisting code"><code class="hljs-code">! pip install nlpaug
+</code></pre>
+    <p class="normal">We import the character- and word-level augmenters, which we will use to plug in specific methods:</p>
+    <pre class="programlisting code"><code class="hljs-code"><span class="hljs-keyword">import</span> nlpaug.augmenter.char <span class="hljs-keyword">as</span> nac
+<span class="hljs-keyword">import</span> nlpaug.augmenter.word <span class="hljs-keyword">as</span> naw
+test_sentence = <span class="hljs-string">"I genuinely have no idea what the output of this sequence of words will be - it will be interesting to find out what nlpaug can do with this!"</span>
+</code></pre>
+    <p class="normal">What happens when we <a id="_idIndexMarker967"/>apply a <strong class="keyWord">simulated typo</strong> to our test sentence? This transformation can be parametrized in a number of ways; for a full list of parameters and their explanations, the reader is encouraged to examine the official documentation: <a href="https://nlpaug.readthedocs.io/en/latest/augmenter/char/keyboard.html"><span class="url">https://nlpaug.readthedocs.io/en/latest/augmenter/char/keyboard.html</span></a>.</p>
+    <pre class="programlisting code"><code class="hljs-code">aug = nac.KeyboardAug(name=<span class="hljs-string">'Keyboard_Aug'</span>, aug_char_min=<span class="hljs-number">1</span>,
+                      aug_char_max=<span class="hljs-number">10</span>, aug_char_p=<span class="hljs-number">0.3</span>, aug_word_p=<span class="hljs-number">0.3</span>,
+                      aug_word_min=<span class="hljs-number">1</span>, aug_word_max=<span class="hljs-number">10</span>, stopwords=<span class="hljs-literal">None</span>,
+                      tokenizer=<span class="hljs-literal">None</span>, reverse_tokenizer=<span class="hljs-literal">None</span>,
+                      include_special_char=<span class="hljs-literal">True</span>, include_numeric=<span class="hljs-literal">True</span>,
+                      include_upper_case=<span class="hljs-literal">True</span>, lang=<span class="hljs-string">'en'</span>, verbose=<span class="hljs-number">0</span>,
+                      stopwords_regex=<span class="hljs-literal">None</span>, model_path=<span class="hljs-literal">None</span>, min_char=<span class="hljs-number">4</span>)
+test_sentence_aug = aug.augment(test_sentence)
+<span class="hljs-built_in">print</span>(test_sentence)
+<span class="hljs-built_in">print</span>(test_sentence_aug)
+</code></pre>
+    <p class="normal">This is the output:</p>
+    <pre class="programlisting con"><code class="hljs-con">I genuinely have no idea what the output of this sequence of words will be - it will be interesting to find out what nlpaug can do with this!
+I geb&amp;ine:y have no kdeZ qhQt the 8uYput of tTid sequsnDr of aorVs will be - it wi,k be jnterewtlHg to find out what nlpaug can do with this!
+</code></pre>
+    <p class="normal">We can<a id="_idIndexMarker968"/> simulate<a id="_idIndexMarker969"/> an <strong class="keyWord">OCR error</strong> creeping into our input:</p>
+    <pre class="programlisting code"><code class="hljs-code">aug = nac.OcrAug(name=<span class="hljs-string">'OCR_Aug'</span>, aug_char_min=<span class="hljs-number">1</span>, aug_char_max=<span class="hljs-number">10</span>,
+                 aug_char_p=<span class="hljs-number">0.3</span>, aug_word_p=<span class="hljs-number">0.3</span>, aug_word_min=<span class="hljs-number">1</span>,
+                 aug_word_max=<span class="hljs-number">10</span>, stopwords=<span class="hljs-literal">None</span>, tokenizer=<span class="hljs-literal">None</span>,
+                 reverse_tokenizer=<span class="hljs-literal">None</span>, verbose=<span class="hljs-number">0</span>,
+                 stopwords_regex=<span class="hljs-literal">None</span>, min_char=<span class="hljs-number">1</span>)
+test_sentence_aug = aug.augment(test_sentence)
+<span class="hljs-built_in">print</span>(test_sentence)
+<span class="hljs-built_in">print</span>(test_sentence_aug)
+</code></pre>
+    <p class="normal">We get:</p>
+    <pre class="programlisting con"><code class="hljs-con">I genuinely have no idea what the output of this sequence of words will be - it will be interesting to find out what nlpaug can do with this!
+I 9enoine1y have no idea what the ootpot of this sequence of wokd8 will be - it will be inteke8tin9 to find out what nlpaug can du with this!
+</code></pre>
+    <p class="normal">While<a id="_idIndexMarker970"/> useful, character-level transformations have a limited scope when it comes to creative changes in the data. Let us examine what possibilities <code class="inlineCode">nlpaug</code> offers when it comes to word-level modifications. Our first example is replacing a fixed percentage of words with their antonyms:</p>
+    <pre class="programlisting code"><code class="hljs-code">aug = naw.AntonymAug(name=<span class="hljs-string">'Antonym_Aug'</span>, aug_min=<span class="hljs-number">1</span>, aug_max=<span class="hljs-number">10</span>, aug_p=<span class="hljs-number">0.3</span>,
+                     lang=<span class="hljs-string">'eng'</span>, stopwords=<span class="hljs-literal">None</span>, tokenizer=<span class="hljs-literal">None</span>,
+                     reverse_tokenizer=<span class="hljs-literal">None</span>, stopwords_regex=<span class="hljs-literal">None</span>,
+                     verbose=<span class="hljs-number">0</span>)
+test_sentence_aug = aug.augment(test_sentence)
+<span class="hljs-built_in">print</span>(test_sentence)
+<span class="hljs-built_in">print</span>(test_sentence_aug)
+</code></pre>
+    <p class="normal">We get:</p>
+    <pre class="programlisting con"><code class="hljs-con">I genuinely have no idea what the output of this sequence of words will be - it will be interesting to find out what nlpaug can do with this!
+I genuinely lack no idea what the output of this sequence of words will differ - it will differ uninteresting to lose out what nlpaug can unmake with this!
+</code></pre>
+    <p class="normal"><code class="inlineCode">nlpaug</code> also<a id="_idIndexMarker971"/> offers us a possibility for, for example, replacing synonyms; such transformations can also be achieved with the more basic techniques discussed above. For<a id="_idIndexMarker972"/> completeness’ sake, we demonstrate a small sample below, which uses a BERT architecture under the hood:</p>
+    <pre class="programlisting code"><code class="hljs-code">aug = naw.ContextualWordEmbsAug(model_path=<span class="hljs-string">'bert-base-uncased'</span>,
+                                model_type=<span class="hljs-string">''</span>, action=<span class="hljs-string">'substitute'</span>,
+                                <span class="hljs-comment"># temperature=1.0,</span>
+                                top_k=<span class="hljs-number">100</span>,
+                                <span class="hljs-comment"># top_p=None,</span>
+                                name=<span class="hljs-string">'ContextualWordEmbs_Aug'</span>, aug_min=<span class="hljs-number">1</span>,
+                                aug_max=<span class="hljs-number">10</span>, aug_p=<span class="hljs-number">0.3</span>, 
+                                stopwords=<span class="hljs-literal">None</span>, device=<span class="hljs-string">'cpu'</span>,
+                                force_reload=<span class="hljs-literal">False</span>,
+                                <span class="hljs-comment"># optimize=None,</span>
+                                stopwords_regex=<span class="hljs-literal">None</span>,
+                                verbose=<span class="hljs-number">0</span>, silence=<span class="hljs-literal">True</span>)
+test_sentence_aug = aug.augment(test_sentence)
+<span class="hljs-built_in">print</span>(test_sentence)
+<span class="hljs-built_in">print</span>(test_sentence_aug)
+</code></pre>
+    <p class="normal">Here is the result:</p>
+    <pre class="programlisting con"><code class="hljs-con">I genuinely have no idea what the output of this sequence of words will be - it will be interesting to find out what nlpaug can do with this!
+i genuinely have no clue what his rest of this series of words will say - its will seemed impossible to find just what we can do with this!
+</code></pre>
+    <p class="normal">As you can see, <code class="inlineCode">nlpaug</code> offers a broad range of options for modifying your textual input to generate augmentations. Which ones should actually be chosen is very much context-dependent and the decision requires a<a id="_idIndexMarker973"/> little bit of domain knowledge, suited to a particular<a id="_idIndexMarker974"/> application.</p>
+    <div class="packt_tip">
+      <p class="normal">Some places for further exploration would be beginner competitions such as <em class="italic">Natural Language Processing with Disaster Tweets</em> (<a href="https://www.kaggle.com/c/nlp-getting-started"><span class="url">https://www.kaggle.com/c/nlp-getting-started</span></a>), as well as more intermediate or advanced ones like <em class="italic">Jigsaw Rate Severity of Toxic Comments</em> (<a href="https://www.kaggle.com/c/jigsaw-toxic-severity-rating"><span class="url">https://www.kaggle.com/c/jigsaw-toxic-severity-rating</span></a>) or <em class="italic">Google QUEST Q&amp;A Labeling</em> (<a href="https://www.kaggle.com/c/google-quest-challenge"><span class="url">https://www.kaggle.com/c/google-quest-challenge</span></a>). In all of these cases, <code class="inlineCode">nlpaug</code> has been widely used – including in the winning solutions.</p>
+    </div>
+    <h1 id="_idParaDest-180" class="heading-1">Summary</h1>
+    <p class="normal">In this chapter, we discussed modeling for NLP competitions. We demonstrate both vintage and state-of-the-art methods applicable to a diverse range of problems appearing in Kaggle competitions. In addition, we touched upon the frequently ignored topic of text augmentation.</p>
+    <p class="normal">In the next chapter, we will discuss simulation competitions, a new class of contests that has been gaining popularity over the last few years.</p>
+    <h1 id="_idParaDest-181" class="heading-1">Join our book’s Discord space</h1>
+    <p class="normal">Join the book’s Discord workspace for a monthly <em class="italic">Ask me Anything</em> session with the authors: </p>
+    <p class="normal"><a href="https://packt.link/KaggleDiscord"><span class="url">https://packt.link/KaggleDiscord</span></a></p>
+    <p class="normal"><img src="../Images/QR_Code40480600921811704671.png" alt=""/></p>
+  </div>
+</body></html>
