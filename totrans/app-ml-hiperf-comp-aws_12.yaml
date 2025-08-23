@@ -755,10 +755,12 @@
   id: totrans-94
   prefs: []
   type: TYPE_NORMAL
+  zh: '当我们在Hugging Face估计器上调用`fit()`方法时，SageMaker将首先提供临时的计算环境，并将训练脚本和数据复制到计算环境中。然后它将启动训练，将训练好的模型保存到估计器类中提供的S3输出位置，最后，拆除所有资源，这样用户只需为训练任务运行的时间付费。 '
 - en: Note
   id: totrans-95
   prefs: []
   type: TYPE_NORMAL
+  zh: 注意
 - en: For more information on the SageMaker Hugging Face estimator, as well as how
     to leverage the SageMaker SDK to instantiate the estimator, please see the AWS
     documentation ([https://docs.aws.amazon.com/sagemaker/latest/dg/hugging-face.html](https://docs.aws.amazon.com/sagemaker/latest/dg/hugging-face.html)),
@@ -766,11 +768,14 @@
   id: totrans-96
   prefs: []
   type: TYPE_NORMAL
+  zh: 有关SageMaker Hugging Face估计器的更多信息，以及如何利用SageMaker SDK实例化估计器，请参阅AWS文档([https://docs.aws.amazon.com/sagemaker/latest/dg/hugging-face.html](https://docs.aws.amazon.com/sagemaker/latest/dg/hugging-face.html))和SageMaker
+    SDK文档([https://sagemaker.readthedocs.io/en/stable/frameworks/huggingface/sagemaker.huggingface.html#hugging-face-estimator](https://sagemaker.readthedocs.io/en/stable/frameworks/huggingface/sagemaker.huggingface.html#hugging-face-estimator))。
 - en: We will extend this basic configuration to fine-tune `prot_t5_xl_uniref50` with
     *11 billion parameters* using the distributed training features of SageMaker.
   id: totrans-97
   prefs: []
   type: TYPE_NORMAL
+  zh: 我们将扩展这个基本配置，使用SageMaker的分布式训练功能微调`prot_t5_xl_uniref50`，该模型具有*110亿参数*。
 - en: 'Before we do a deeper dive into the code, let’s first understand some of the
     concepts that we will leverage for training the model. Since it’s a big model,
     the first step is to get an idea of the size of the model, which will help us
@@ -783,32 +788,38 @@
   id: totrans-98
   prefs: []
   type: TYPE_NORMAL
+  zh: 在我们深入代码之前，让我们首先了解一些我们将用于训练模型的概念。由于这是一个大模型，第一步是了解模型的大小，这将帮助我们确定它是否可以适应单块GPU内存。SageMaker模型并行文档([https://docs.aws.amazon.com/sagemaker/latest/dg/model-parallel-intro.html](https://docs.aws.amazon.com/sagemaker/latest/dg/model-parallel-intro.html))提供了估计模型大小的好方法。对于使用**自动混合精度**（**AMP**）和**16位浮点数**（**FP16**）大小的**Adam优化器**的训练任务，我们可以使用以下分解来计算每参数所需的内存，大约为20字节：
 - en: An FP16 parameter ~ 16 bits or 2 bytes
   id: totrans-99
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 一个FP16参数 ~ 16位或2字节
 - en: An FP16 gradient ~ 16 bits or 2 bytes
   id: totrans-100
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 一个FP16梯度 ~ 16位或2字节
 - en: An FP32 optimizer state ~ 64 bits or 8 bytes based on the Adam optimizers
   id: totrans-101
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 一个基于Adam优化器的FP32优化器状态 ~ 64位或8字节
 - en: An FP32 copy of parameter ~ 32 bits or 4 bytes (needed for the **optimizer apply**
     (**OA**) operation)
   id: totrans-102
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 一个参数FP32副本 ~ 32位或4字节（用于**优化器应用**（**OA**）操作）
 - en: An FP32 copy of gradient ~ 32 bits or 4 bytes (needed for the OA operation)
   id: totrans-103
   prefs:
   - PREF_UL
   type: TYPE_NORMAL
+  zh: 一个梯度FP32副本 ~ 32位或4字节（用于OA操作）
 - en: Therefore, our model with 11 billion parameters will require more than 220 GB
     of memory, which is larger than the typical GPU memory currently available on
     a single GPU. Even if we are able to get such a machine with GPU memory greater
@@ -820,6 +831,7 @@
   id: totrans-104
   prefs: []
   type: TYPE_NORMAL
+  zh: 因此，我们这个拥有110亿参数的模型将需要超过220 GB的内存，这比目前单块GPU上可用的典型GPU内存要大。即使我们能够获得具有超过220 GB GPU内存的机器，这也不会具有成本效益，而且我们无法扩展我们的训练任务。在这里需要理解的一个另一个约束是批大小，因为我们至少需要一个数据批次在内存中才能开始训练。使用较小的批大小会降低GPU利用率并降低训练效率，因为模型可能无法收敛。
 - en: Hence, we will have to partition our model into multiple GPUs, and in order
     to increase the batch size, we will also need to shard the data. So, we will use
     a hybrid approach that will utilize both data parallel and model parallel approaches.
@@ -1001,6 +1013,7 @@
   id: totrans-127
   prefs: []
   type: TYPE_NORMAL
+  zh: 在我们的`train.py`脚本中，首先，我们需要导入`Trainer`模块，如下面的代码片段所示：
 - en: '[PRE9]'
   id: totrans-128
   prefs: []
@@ -1012,6 +1025,7 @@
   id: totrans-129
   prefs: []
   type: TYPE_NORMAL
+  zh: 由于我们正在训练一个基于T5的BERT模型（`prot_t5_xl_uniref50`），我们还需要从`transformers`库中导入`T5Tokenizer`和`T5ForConditionalGeneration`模块：
 - en: '[PRE10]'
   id: totrans-130
   prefs: []
@@ -1023,6 +1037,8 @@
   id: totrans-131
   prefs: []
   type: TYPE_NORMAL
+  zh: 下一步是将蛋白质序列转换为PyTorch DataLoader，并将它们加载进去。在获得`DataLoader`中的数据后，我们将提供`TrainingArguments`，如下面的代码片段所示，它将被`Trainer`
+    API使用：
 - en: '[PRE11]'
   id: totrans-132
   prefs: []
@@ -1040,11 +1056,14 @@
   id: totrans-133
   prefs: []
   type: TYPE_NORMAL
+  zh: 如您所见，`TrainingArguments`包含一系列超参数，例如epoch数量、学习率、权重衰减、评估策略等，这些参数将用于模型训练。有关`TrainingArguments`
+    API的不同超参数的详细信息，您可以参考此URL：[https://huggingface.co/docs/transformers/v4.24.0/en/main_classes/trainer#transformers.TrainingArguments](https://huggingface.co/docs/transformers/v4.24.0/en/main_classes/trainer#transformers.TrainingArguments)。确保在提供`TrainingArguments`时，`dataloader_drop_last`的值设置为`true`。这将确保批大小可以被微批次整除，并将`fp16`设置为`true`将使用自动混合精度进行模型训练，这也有助于减少内存占用，因为浮点16位需要2个字节来存储一个参数。
 - en: 'Now, we will define the `Trainer` API, which takes `TrainingArguments` and
     the training and validation datasets as input:'
   id: totrans-134
   prefs: []
   type: TYPE_NORMAL
+  zh: 现在，我们将定义`Trainer` API，它接受`TrainingArguments`以及训练和验证数据集作为输入：
 - en: '[PRE12]'
   id: totrans-135
   prefs: []
@@ -1056,6 +1075,7 @@
   id: totrans-136
   prefs: []
   type: TYPE_NORMAL
+  zh: 一旦定义了`Trainer` API，模型训练将通过`train()`方法启动，一旦训练完成，我们将使用`save_model()`方法将训练好的模型保存到指定的模型目录：
 - en: '[PRE13]'
   id: totrans-137
   prefs: []
@@ -1070,10 +1090,12 @@
   id: totrans-138
   prefs: []
   type: TYPE_NORMAL
+  zh: '`save_model()` API接受模型路径作为参数，该路径来自`SM_MODEL_DIR` SageMaker容器环境变量，并解析为`model_dir`变量。然后，存储在此路径中的模型工件将被复制到`HuggingFace`估计器中指定的S3路径，随后所有资源，如训练实例，都将被拆除，这样用户只需为训练作业的持续时间付费。'
 - en: Note
   id: totrans-139
   prefs: []
   type: TYPE_NORMAL
+  zh: 注意
 - en: We are training a very large model, `prot_t5_xl_uniref50`, with 11 billion parameters
     on a very big instance, `ml.g5.48xlarge`, which is an NVIDIA A10G tensor core
     machine with 8 GPUs and 768 GB of GPU memory. Although we are using model parallel,
@@ -1087,6 +1109,9 @@
   id: totrans-140
   prefs: []
   type: TYPE_NORMAL
+  zh: 我们正在训练一个非常大的模型`prot_t5_xl_uniref50`，在非常大的实例`ml.g5.48xlarge`上，该实例是一个具有8个GPU和768
+    GB GPU内存的NVIDIA A10G张量核心机器，具有110亿个参数。尽管我们使用了模型并行，但模型的训练将需要超过10个小时，您将为此承担费用。或者，您可以使用较小的模型，例如`prot_bert_bfd`，它大约有4.2亿个参数，并在蛋白质序列上预训练。由于它是一个相对较小的模型，可以适应单个GPU内存，因此您只能使用如[*第6章*](B18493_06.xhtml#_idTextAnchor116)*，*
+    *机器学习模型的分布式训练* *中描述的SageMaker分布式数据并行库。
 - en: 'Once the model is trained, you can deploy the model using the SageMaker `HuggingFaceModel`
     class, as explained in the *Applying ML to genomics* main section of this chapter,
     or simply use the `huggingface_estimator.deploy()` API, as shown in the following
