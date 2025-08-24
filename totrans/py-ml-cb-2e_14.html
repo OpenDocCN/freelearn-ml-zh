@@ -1,0 +1,1183 @@
+<html><head></head><body>
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Unsupervised Representation Learning</h1>
+                </header>
+            
+            <article>
+                
+<p>In this chapter, we will cover the following recipes:</p>
+<ul>
+<li>Using denoising autoencoders to detect fraudulent transactions</li>
+<li>Generating word embeddings using CBOW or skipgram representations</li>
+<li>Visualizing the MNIST dataset using PCA and t-SNE</li>
+<li>Using word vectors for Twitter sentiment analysis</li>
+<li>Implementing LDA with scikit-learn</li>
+<li>Using LDA to classify text documents</li>
+<li>Preparing data for LDA</li>
+</ul>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Technical requirements</h1>
+                </header>
+            
+            <article>
+                
+<p>To address the recipes in this chapter, you need the following files (available on GitHub):</p>
+<ul>
+<li><kbd><span>CreditCardFraud.py</span></kbd></li>
+<li><kbd>creditcard.csv</kbd></li>
+<li><kbd><span>WordEmbeddings.py</span></kbd></li>
+<li><kbd><span>MnistTSNE</span><span>.py</span></kbd></li>
+<li><kbd><span>TweetEmbeddings</span><span>.py</span></kbd></li>
+<li><kbd><span>Tweets.csv</span></kbd></li>
+<li><kbd><span>LDA</span><span>.py</span></kbd></li>
+<li><kbd>TopicModellingLDA.py</kbd></li>
+<li><kbd><span>PrepDataLDA</span><span>.py</span></kbd></li>
+</ul>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Introduction</h1>
+                </header>
+            
+            <article>
+                
+<p>In <a href="74eaa4cc-b9da-4cf4-9041-3ce42f998499.xhtml">Chapter 4</a>, <em>Clustering with Unsupervised Learning</em>, we have already addressed unsupervised learning. We said that unsupervised learning is a paradigm in machine learning where we build models without relying on labeled training data. Why return to this topic? In this case, we will discuss the problem of learning representations for data such as images, video, and the corpus of natural language, in an unsupervised way.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Using denoising autoencoders to detect fraudulent transactions</h1>
+                </header>
+            
+            <article>
+                
+<p>In <a href="74eaa4cc-b9da-4cf4-9041-3ce42f998499.xhtml">Chapter 4</a>, <em>Clustering with Unsupervised Learning</em>, we dealt with the topic of <strong>autoencoders</strong>. In the <em>Autoencoders to reconstruct handwritten digit images</em> recipe, there is a neural network whose purpose is to code its input into small dimensions, and the result obtained, to be able to reconstruct the input itself. The purpose of autoencoders is not simply to perform a sort of compression of the input or look for an approximation of the identity function; there are also techniques that allow us to direct the model (starting from a hidden layer of reduced dimensions) to give greater importance to some data properties.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Getting ready</h1>
+                </header>
+            
+            <article>
+                
+<p>In this recipe, we will train an autoencoder in unsupervised mode to detect anomalies in credit card transaction data. To do this, the credit card fraud detection dataset will be used. This is a dataset containing the anonymized credit card transactions labeled as fraudulent or genuine. Transactions made by credit cards in September 2013 by European cardholders are listed. This dataset presents 492 transactions labeled as frauds out of 284,807 transactions. The dataset is highly unbalanced, as the positive class (frauds) accounts for 0.172% of all transactions. The dataset is available on Kabble at the following URL: <a href="https://www.kaggle.com/mlg-ulb/creditcardfraud">https://www.kaggle.com/mlg-ulb/creditcardfraud</a>.</p>
+<p class="mce-root"/>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">How to do it…</h1>
+                </header>
+            
+            <article>
+                
+<p>Let's see how to use denoising autoencoders to detect fraudulent transactions:</p>
+<ol>
+<li>Create a new Python file, and import the following packages (the full code is in the <kbd>CreditCardFraud.py</kbd> file that's already provided to you):</li>
+</ol>
+<pre style="padding-left: 60px">import pandas as pd<br/>import numpy as np<br/>import matplotlib.pyplot as plt<br/>from sklearn.model_selection import train_test_split<br/>from keras.models import Model<br/>from keras.layers import Input, Dense<br/>from keras import regularizers</pre>
+<ol start="2">
+<li>To make the experiment reproducible, in the sense that it provides the same results with each reproduction, it is necessary to set the seed:</li>
+</ol>
+<pre style="padding-left: 60px">SetSeed = 1</pre>
+<ol start="3">
+<li>As already said, we will use the <span>credit card fraud detection dataset (</span><kbd>creditcard.csv</kbd>) that is already provided to you:</li>
+</ol>
+<pre style="padding-left: 60px">CreditCardData = pd.read_csv("creditcard.csv")</pre>
+<ol start="4">
+<li>Let's count the occurrences of the two classes (<span><kbd>fraud</kbd>= <kbd>1</kbd>; <kbd>normal</kbd>=<kbd>0</kbd></span>):</li>
+</ol>
+<pre style="padding-left: 60px">CountClasses = pd.value_counts(CreditCardData['Class'], sort = True)<br/>print(CountClasses)</pre>
+<p style="padding-left: 60px">The following results are returned:</p>
+<pre style="padding-left: 60px"><strong>0 284315</strong><br/><strong>1 492</strong></pre>
+<p style="padding-left: 60px">As anticipated, the dataset is highly unbalanced—the positive class (<kbd>frauds</kbd>) is <kbd>492</kbd> out of <kbd>284315</kbd>.</p>
+<ol start="5">
+<li>Among the available variables, the amount of the transactions (<kbd>Amount</kbd>) is the most interesting one. Let's calculate some statistics:</li>
+</ol>
+<pre style="padding-left: 60px">print(CreditCardData.Amount.describe())</pre>
+<p style="padding-left: 60px"><span>The following results are returned:</span></p>
+<pre style="padding-left: 60px"><strong>count 284807.000000</strong><br/><strong>mean      88.349619</strong><br/><strong>std      250.120109</strong><br/><strong>min        0.000000</strong><br/><strong>25%        5.600000</strong><br/><strong>50%       22.000000</strong><br/><strong>75%       77.165000</strong><br/><strong>max    25691.160000</strong></pre>
+<ol start="6">
+<li>As we can see, the values are very different with a high standard deviation. It is advisable to perform a scaling of the data. Remember, it is a good practice to rescale the data before training a machine learning algorithm. With rescaling, data units are eliminated, allowing you to compare data from different locations easily. To do this, we will use the <kbd>sklearn</kbd> <kbd>StandardScaler()</kbd> function. This function removes the mean and scales the values to unit variance:</li>
+</ol>
+<pre style="padding-left: 60px">from sklearn.preprocessing import StandardScaler<br/><br/>Data = CreditCardData.drop(['Time'], axis=1)<br/>Data['Amount'] = StandardScaler().fit_transform(Data['Amount'].values.reshape(-1, 1))<br/><br/>print(Data.Amount.describe())</pre>
+<p style="padding-left: 60px"><span>The following results are returned:</span></p>
+<pre style="padding-left: 60px"><strong>count   2.848070e+05</strong><br/><strong>mean    2.913952e-17</strong><br/><strong>std     1.000002e+00</strong><br/><strong>min    -3.532294e-01</strong><br/><strong>25%    -3.308401e-01</strong><br/><strong>50%    -2.652715e-01</strong><br/><strong>75%    -4.471707e-02</strong><br/><strong>max     1.023622e+02</strong></pre>
+<p style="padding-left: 60px">We have thus confirmed that now the data has <kbd>mean=0</kbd> and unit variance.</p>
+<ol start="7">
+<li>Now, we split the starting data into two sets: the training set (70%) and test set (30%). The training set will be used to train a classification model, and the test set will be used to test the model's performance:</li>
+</ol>
+<pre style="padding-left: 60px">XTrain, XTest = train_test_split(Data, test_size=0.3, random_state=SetSeed)<br/>XTrain = XTrain[XTrain.Class == 0]<br/>XTrain = XTrain.drop(['Class'], axis=1)<br/><br/>YTest = XTest['Class']<br/>XTest = XTest.drop(['Class'], axis=1)<br/><br/>XTrain = XTrain.values<br/>XTest = XTest.values </pre>
+<ol start="8">
+<li><span>We can build the</span> Keras <span>model as follows</span>:</li>
+</ol>
+<pre style="padding-left: 60px">InputDim = XTrain.shape[1]<br/><br/>InputModel = Input(shape=(InputDim,))<br/>EncodedLayer = Dense(16, activation='relu')(InputModel)<br/>DecodedLayer = Dense(InputDim, activation='sigmoid')(EncodedLayer)<br/>AutoencoderModel = Model(InputModel, DecodedLayer)<br/>AutoencoderModel.summary()</pre>
+<p style="padding-left: 60px"><span>The following shows the model architecture:</span></p>
+<p class="CDPAlignCenter CDPAlign"><img class="aligncenter size-full wp-image-1063 image-border" src="assets/655679f4-bb24-407d-b351-19b51b67eae3.png" style="width:36.25em;height:10.42em;"/></p>
+<ol start="9">
+<li><span>So, we have to configure the model for training. To do this, we will use the <kbd>compile()</kbd> </span><span>method, as follows:</span></li>
+</ol>
+<pre style="padding-left: 60px">NumEpoch = 100<br/>BatchSize = 32<br/>AutoencoderModel.compile(optimizer='adam', <br/>                        loss='mean_squared_error', <br/>                             metrics=['accuracy'])</pre>
+<ol start="10">
+<li><span>At this point, we can train the model</span>:</li>
+</ol>
+<pre style="padding-left: 60px">history = AutoencoderModel.fit(XTrain, XTrain,<br/>                    epochs=NumEpoch,<br/>                    batch_size=BatchSize,<br/>                    shuffle=True,<br/>                    validation_data=(XTest, XTest),<br/>                    verbose=1,<br/>                    ).history</pre>
+<p class="mce-root"/>
+<ol start="11">
+<li>Now, we can plot the loss history to evaluate the model convergence:</li>
+</ol>
+<pre>plt.plot(history['loss'])<br/>plt.plot(history['val_loss'])<br/>plt.title('model loss')<br/>plt.ylabel('loss')<br/>plt.xlabel('epoch')<br/>plt.legend(['train', 'test'], loc='upper right');</pre>
+<ol start="12">
+<li>At this point, we use the model to reconstruct the result of the transactions:</li>
+</ol>
+<pre style="padding-left: 60px">PredData = AutoencoderModel.predict(XTest)<br/>mse = np.mean(np.power(XTest - PredData, 2), axis=1)<br/>ErrorCreditCardData = pd.DataFrame({'Error': mse,<br/>                        'TrueClass': YTest})<br/>ErrorCreditCardData.describe()</pre>
+<p style="padding-left: 60px">To evaluate the quality of the prediction, we used the <strong>mean squared error</strong> (<strong>MSE</strong>) loss function. MSE measures the average of the squares of the errors—that is, the average squared difference between the estimated values and what is estimated. MSE is a measure of the quality of an estimator—it is always non-negative, and has values close to zero. So, we calculated some statistics related to the error and the real values. The following results were obtained:</p>
+<p class="CDPAlignCenter CDPAlign"><img class="aligncenter size-full wp-image-1065 image-border" src="assets/c90abb89-fcb9-4bbb-b4e0-b67aee64c4d2.png" style="width:17.50em;height:7.92em;"/></p>
+<ol start="13">
+<li>Now, we can compare the results of the classification to the actual values. The best way to do this is to use a <strong>confusion matrix</strong>. In a confusion matrix, we compare our results to real data. What's good about a confusion matrix is that it identifies the nature of the classification errors, as well as their quantities. In this matrix, the diagonal cells show the number of cases that were correctly classified; all the other cells show the misclassified cases. To calculate the confusion matrix, we can use the <kbd>confusion_matrix()</kbd> function that's contained in the <kbd>sklearn.metrics</kbd> package as follows:</li>
+</ol>
+<pre style="padding-left: 60px">from sklearn.metrics import confusion_matrix<br/><br/>threshold = 3.<br/>YPred = [1 if e &gt; threshold else 0 for e in ErrorCreditCardData.Error.values]<br/>ConfMatrix = confusion_matrix(ErrorCreditCardData.TrueClass, YPred)<br/>print(ConfMatrix)</pre>
+<p style="padding-left: 60px">The following confusion matrix is returned:</p>
+<pre style="padding-left: 60px"><strong>[[83641  1667]</strong><br/><strong> [ 28     107]]</strong></pre>
+<ol start="14">
+<li><span>Finall</span><span>y, we will calculate the accuracy of the model</span>:</li>
+</ol>
+<pre style="padding-left: 60px">from sklearn.metrics import accuracy_score<br/><br/>print(accuracy_score(ErrorCreditCardData.TrueClass, YPred))</pre>
+<p style="padding-left: 60px">The following accuracy is obtained: </p>
+<pre style="padding-left: 60px"><strong>0.9801622134054282</strong></pre>
+<p style="padding-left: 60px">The result looks great, but unfortunately the input dataset is highly unbalanced. If we evaluate the accuracy of fraudulent transactions only, this data is significantly reduced.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">How it works...</h1>
+                </header>
+            
+            <article>
+                
+<p>There are different types of autoencoders available:</p>
+<ul>
+<li><strong>Vanilla autoencoder</strong>: It is the simplest form, characterized by a three-layer network, that is, a neural network with only one hidden layer. Input and output are the same.</li>
+<li><strong>Multilayer autoencoder</strong>: If only one hidden layer is not enough, we can extend the autoencoder along the depth dimension. For example, three hidden layers are used, for better generalization, but we will also have to make the symmetric network using the intermediate layer.</li>
+<li><strong>Convolutional autoencoder</strong>: Three-dimensional vectors are used instead of one-dimensional vectors. The input image is sampled to obtain a latent representation, that is, a dimensional reduction, thus forcing the autoencoder to learn from a compressed version of the image.</li>
+<li><strong>Regularized autoencoder</strong>: Rather than limiting the model's capacity by maintaining a shallow encoder and decoder architecture, as well as a forced reduction, regularized autoencoders use a loss function to encourage the model to assume properties that go beyond the simple ability to copy the input to the output.</li>
+</ul>
+<p class="mce-root"/>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">There's more…</h1>
+                </header>
+            
+            <article>
+                
+<p>In practice, we find two different types:</p>
+<ul>
+<li><strong>Sparse autoencoder</strong>: This is usually used for classification. By training an autoencoder, the hidden units in the middle layer are activated too frequently. To avoid this, we need to lower their activation rate by limiting it to a fraction of the training data. This constraint is called a <strong>sparsity constraint</strong>, as each unit is activated only by a pre-defined type of input.</li>
+<li><strong>Denoising autoencoder</strong>: Rather than adding a penalty to the <kbd>loss</kbd> function, we can make the object change, adding noise to the input image and making the autoencoder learn to remove it autonomously. This means that the network will extract only the most relevant information, and learn from a robust representation of the data.</li>
+</ul>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">See also</h1>
+                </header>
+            
+            <article>
+                
+<ul>
+<li>Refer to the official documentation of the<span> Keras library: <a href="https://keras.io/">https://keras.io/</a></span></li>
+<li>Refer to <span><em>Autoencoders</em> (from Stanford University): <a href="http://ufldl.stanford.edu/tutorial/unsupervised/Autoencoders/">http://ufldl.stanford.edu/tutorial/unsupervised/Autoencoders/</a></span></li>
+</ul>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Generating word embeddings using CBOW and skipgram representations</h1>
+                </header>
+            
+            <article>
+                
+<p>In <a href="fc31e304-3301-4ebf-80e4-404ac6e26606.xhtml">Chapter 7</a>, <em>Analyzing Text Data,</em> we already dealt with this topic. In the <em>Word2Vec using gensim</em> recipe, we used the <kbd>gensim</kbd> library to <span>build a</span><span> word2vec model</span><span>. Now, we will deepen the topic. </span><strong>Word embedding</strong><span> allows the computer to memorize both semantic and syntactic information of words starting from an unknown corpus and constructs a vector space in which the vectors of words are closer if the words occur in the same linguistic contexts, that is, if they are recognized as semantically more similar. </span><strong>Word2vec</strong><span> is a set of templates that are used to produce word embedding. </span></p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Getting ready</h1>
+                </header>
+            
+            <article>
+                
+<p>In this recipe, we will<span> use the <kbd>gensim</kbd> library to generate word embeddings. We will also analyze two techniques to do this: CBOW and skipgram representations. </span></p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">How to do it…</h1>
+                </header>
+            
+            <article>
+                
+<p>Let's see how to generate word embeddings using CBOW and skipgram representations:</p>
+<ol>
+<li>Create a new Python file, and import the following packages (the full code is in the <kbd>WordEmbeddings.py</kbd> file that's already provided to you):</li>
+</ol>
+<pre style="padding-left: 60px">import gensim</pre>
+<ol start="2">
+<li>Let's define the training data:</li>
+</ol>
+<pre style="padding-left: 60px">sentences = [['my', 'first', 'book', 'with', 'Packt', 'is', 'on','Matlab'],<br/>      ['my', 'second', 'book', 'with', 'Packt', 'is', 'on','R'],<br/>      ['my', 'third', 'book', 'with', 'Packt', 'is', 'on','Python'],<br/>      ['one', 'more', 'book'],<br/>      ['is', 'on', 'Python', 'too']]</pre>
+<ol start="3">
+<li>Now, we can train the first model:</li>
+</ol>
+<pre style="padding-left: 60px">Model1 = gensim.models.Word2Vec(sentences, min_count=1, sg=0)</pre>
+<p>Three arguments are used:</p>
+<ul>
+<li><kbd>sentences</kbd>: The training data</li>
+<li><kbd>min_count=1</kbd>: The minimum count of words to consider when training the model</li>
+<li><kbd>sg=0</kbd>: The training algorithm, CBOW (0) or skip gram (1)</li>
+</ul>
+<ol start="4">
+<li>Let's print a summary of the model:</li>
+</ol>
+<pre style="padding-left: 60px">print(Model1)</pre>
+<p style="padding-left: 60px">The following result is returned:</p>
+<pre style="padding-left: 60px"><strong>Word2Vec(vocab=15, size=100, alpha=0.025)</strong></pre>
+<ol start="5">
+<li><span>Let's list and then print a summary of the vocabulary</span>:</li>
+</ol>
+<pre style="padding-left: 60px">wordsM1 = list(Model1.wv.vocab)<br/>print(wordsM1)</pre>
+<p style="padding-left: 60px"><span>The following results are returned:</span></p>
+<pre style="padding-left: 60px"><strong>['my', 'first', 'book', 'with', 'Packt', 'is', 'on', 'Matlab', 'second', 'R', 'third', 'Python', 'one', 'more', 'too']</strong></pre>
+<ol start="6">
+<li><span>Finally, we will access the vector for one word (<kbd>book</kbd>):</span></li>
+</ol>
+<pre style="padding-left: 60px">print(Model1.wv['book'])</pre>
+<p style="padding-left: 60px"><span>The following results are returned:</span></p>
+<p class="CDPAlignCenter CDPAlign"><img class="aligncenter size-full wp-image-1066 image-border" src="assets/a70d17e4-d07f-41ec-beac-86b4b5208671.png" style="width:39.42em;height:26.75em;"/></p>
+<ol start="7">
+<li>To use the <kbd>skipgram</kbd> algorithm, we have to perform a similar procedure except we set the argument <kbd>sg=1</kbd>, as follows:</li>
+</ol>
+<pre style="padding-left: 60px">Model2 = gensim.models.Word2Vec(sentences, min_count=1, sg=1)</pre>
+<p class="mce-root"/>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">How it works...</h1>
+                </header>
+            
+            <article>
+                
+<p>Word2vec uses <strong>continuous bag-of-words</strong> (<strong>CBOW</strong>) and skipgram to word embeddings. In the CBOW algorithm, the model predicts the current word from a window of surrounding context words. Context word order does not influence prediction. In the skipgram algorithm, the model uses the current word to predict the surrounding window of context words.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">There's more…</h1>
+                </header>
+            
+            <article>
+                
+<p><span>According to authors, CBOW is and skip-gram is but does a better job for infrequent words.</span></p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">See also</h1>
+                </header>
+            
+            <article>
+                
+<ul>
+<li class="mce-root">Refer to the official documentation of the <kbd>gensim</kbd> library: <a href="https://radimrehurek.com/gensim/">https://radimrehurek.com/gensim/</a></li>
+<li><span>Refer to <em>Efficient Estimation of Word Representations in Vector Space</em> (by Tomas Mikolov and others): <a href="https://arxiv.org/abs/1301.3781">https://arxiv.org/abs/1301.3781</a></span></li>
+</ul>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Visualizing the MNIST dataset using PCA and t-SNE</h1>
+                </header>
+            
+            <article>
+                
+<p>In the case of datasets of important dimensions, the data is previously transformed into a reduced series of representation functions. This process of transforming the input data into a set of functionalities is called <strong>features extraction</strong>. This is because the extraction of the characteristics proceeds from an initial series of measured data and produces derived values that can keep the information contained in the original dataset, but discharged from the redundant data.</p>
+<p>In this way, the subsequent learning and generalization phases will be facilitated and, in some cases, this will lead to better interpretations. It is a process of extracting new features from the original features, thereby reducing the cost of feature measurement, which boosts classifier efficiency. If the features are carefully chosen, it is assumed that the features set will run the desired task with the reduced representation, instead of the full-sized input.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Getting ready</h1>
+                </header>
+            
+            <article>
+                
+<p>In this recipe, we will<span> use <strong>principal component analysis</strong> (<strong>PCA</strong>) and <strong>t-distributed Stochastic Neighbor Embedding methods</strong> (<strong>t-SNE</strong>) to perform a feature extraction procedure. In this way, we will be able to visualize how the different elements of a very large dataset, such as MNIST, are grouped together.</span></p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">How to do it…</h1>
+                </header>
+            
+            <article>
+                
+<p>Let's see how to visualize the MNIST dataset using PCA and t-SNE:</p>
+<ol>
+<li>Create a new Python file, and import the following packages (the full code is in the <kbd><span>MnistTSNE</span><span>.py</span></kbd> file that's already provided to you):</li>
+</ol>
+<pre style="padding-left: 60px">import numpy as np<br/>import matplotlib.pyplot as plt<br/>from keras.datasets import mnist</pre>
+<ol start="2">
+<li>To import the<span> </span><kbd>mnist</kbd><span> </span>dataset, the following code must be used:</li>
+</ol>
+<pre style="padding-left: 60px">(XTrain, YTrain), (XTest, YTest) = mnist.load_data()</pre>
+<p style="padding-left: 60px">The following tuples are returned:</p>
+<ul>
+<li><kbd>XTrain</kbd>, <kbd>XTest</kbd>: A <kbd>uint8</kbd> array of grayscale image data with the (<kbd>num_samples</kbd>, 28, 28) shape</li>
+<li><kbd>YTrain</kbd>, <kbd>YTest</kbd>: A <kbd>uint8</kbd> array of digit labels (integers in the range 0-9) with the (<kbd>num_samples</kbd>) shape</li>
+</ul>
+<ol start="3">
+<li>To reduce the dimensionality, we will flatten the 28 x 28 images into vectors of size 784:</li>
+</ol>
+<pre style="padding-left: 60px">XTrain = XTrain.reshape((len(XTrain), np.prod(XTrain.shape[1:])))<br/>XTest = XTest.reshape((len(XTest), np.prod(XTest.shape[1:])))</pre>
+<ol start="4">
+<li>We extract only a part of the data from this large dataset to obtain a better visualization (only 1,000 records):</li>
+</ol>
+<pre style="padding-left: 60px">from sklearn.utils import shuffle<br/>XTrain, YTrain = shuffle(XTrain, YTrain)<br/>XTrain, YTrain = XTrain[:1000], YTrain[:1000] </pre>
+<ol start="5">
+<li><span>Let's perform a <kbd>pca</kbd> analysis</span>:</li>
+</ol>
+<pre style="padding-left: 60px">from sklearn.decomposition import PCA<br/>pca = PCA(n_components=2)<br/>XPCATransformed = pca.fit_transform(XTrain)</pre>
+<ol start="6">
+<li><span>We display the data available in the new plan:</span></li>
+</ol>
+<pre style="padding-left: 60px">fig, plot = plt.subplots()<br/>fig.set_size_inches(70, 50)<br/>plt.prism()<br/>plot.scatter(XPCATransformed[:, 0], XPCATransformed[:, 1], c=YTrain)<br/>plot.legend()<br/>plot.set_xticks(())<br/>plot.set_yticks(())<br/>plt.tight_layout()</pre>
+<p style="padding-left: 60px"><span>The following results are returned:</span></p>
+<p class="CDPAlignCenter CDPAlign"><img class="aligncenter size-full wp-image-1068 image-border" src="assets/bf01e21e-ec24-414e-83b7-51ec58641e64.png" style="width:148.33em;height:75.25em;"/></p>
+<ol start="7">
+<li><span>At this point, we will repeat the procedure using the t-SNE method:</span></li>
+</ol>
+<pre style="padding-left: 60px">from sklearn.manifold import TSNE<br/>TSNEModel = TSNE(n_components=2)<br/>XTSNETransformed = TSNEModel.fit_transform(XTrain)</pre>
+<ol start="8">
+<li><span>We display the data available in the new plan:</span></li>
+</ol>
+<pre style="padding-left: 60px">fig, plot = plt.subplots()<br/>fig.set_size_inches(70, 50)<br/>plt.prism()<br/>plot.scatter(XTSNETransformed[:, 0], XTSNETransformed[:, 1], c=YTrain)<br/>plot.set_xticks(())<br/>plot.set_yticks(())<br/>plt.tight_layout()<br/>plt.show()</pre>
+<p class="mce-root"/>
+<p style="padding-left: 60px"><span>The following results are returned:</span></p>
+<p class="CDPAlignCenter CDPAlign"><img class="aligncenter size-full wp-image-1069 image-border" src="assets/fff99ad2-2180-4e93-bf40-c924903a3664.png" style="width:43.50em;height:22.17em;"/></p>
+<p style="padding-left: 60px">Comparing the two results obtained, it is clear that the second method allows us to identify the groups representing the different digits in more detail.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">How it works...</h1>
+                </header>
+            
+            <article>
+                
+<p>PCA<span> </span>creates a new set of variables that are principal components. Each main component is a linear combination of the original variables. All principal components are orthogonal to one another, so there is no redundant information. The principal components as a whole constitute an orthogonal basis for the data space. The goal of PCA is to explain the maximum amount of variance with the least number of principal components. PCA is a form of multidimensional scaling. It transforms variables into a lower-dimensional space that retains the maximum details regarding the variables. A principal component is therefore a combination of the original variables after a linear transformation.</p>
+<p>t-SNE is a dimensionality reduction algorithm developed by Geoffrey Hinton and Laurens van der Maaten, widely used as an automatic learning tool in many research fields. It is a non-linear dimension reduction technique that lends itself particularly to the embedding of high-dimensional datasets in a two- or three-dimensional space, in which they can be visualized by means of a dispersion plot. The algorithm models the points so that nearby objects in the original space are close together with reduced dimensionality, and distant objects are far away, trying to preserve the local structure.</p>
+<p class="mce-root"/>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">There's more…</h1>
+                </header>
+            
+            <article>
+                
+<p><span>A t-SNE algorithm is divided into two main phases. In the first phase, a probability distribution is constructed so that each pair of points in the original high-dimensional space associates a high probability value if the two points are similar, and low if they are dissimilar. Then, a second analogous probability distribution is defined in the small-sized space. The algorithm then minimizes the divergence of Kullback–Leibler of the two distributions by descending the gradient, reorganizing the points in the small-sized space.</span></p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">See also</h1>
+                </header>
+            
+            <article>
+                
+<ul>
+<li class="mce-root">Refer to the official documentation of the <kbd>sklearn.decomposition.PCA</kbd> function: <a href="https://scikit-learn.org/stable/modules/generated/sklearn.decomposition.PCA.html">https://scikit-learn.org/stable/modules/generated/sklearn.decomposition.PCA.html</a></li>
+<li class="mce-root"><span>Official documentation of the</span><span> </span><kbd>sklearn.manifold.TSNE</kbd> function: <a href="https://scikit-learn.org/stable/modules/generated/sklearn.manifold.TSNE.html">https://scikit-learn.org/stable/modules/generated/sklearn.manifold.TSNE.htm</a></li>
+</ul>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Using word embedding for Twitter sentiment analysis</h1>
+                </header>
+            
+            <article>
+                
+<p>In <a href="fc31e304-3301-4ebf-80e4-404ac6e26606.xhtml">Chapter 7</a>, <em>Analyzing Text Data</em>, we have already dealt with sentiment analysis. In <em>Analyzing the sentiment of a sentence</em> recipe, we have analyzed the sentiment of a sentence using a Naive Bayes classifier starting from the data contained in the <kbd>movie_reviews</kbd> corpus. On that occasion, we said that sentiment analysis is one of the most popular applications of NLP. <em>Sentiment analysis</em> refers to the process of determining whether a given piece of text is positive or negative. In some variations, we consider "neutral" as a third option. </p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Getting ready</h1>
+                </header>
+            
+            <article>
+                
+<p>In this recipe, we will<span> use the word embedding method to analyze the sentiment of Twitter posts by customers of some US airlines. The Twitter data was classified based on the opinions of some contributors. They were asked to first classify positive, negative, and neutral tweets, followed by categorizing negative ones. The dataset is available at the following link: <a href="https://www.kaggle.com/crowdflower/twitter-airline-sentiment">https://www.kaggle.com/crowdflower/twitter-airline-sentiment</a>.</span></p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">How to do it…</h1>
+                </header>
+            
+            <article>
+                
+<p>Let's see how to use word embedding for Twitter sentiment analysis:</p>
+<ol>
+<li>Create a new Python file, and import the following packages (the full code is in the <kbd><span>TweetEmbeddings</span><span>.py</span></kbd> file that's already provided to you):</li>
+</ol>
+<pre style="padding-left: 60px">import pandas as pd<br/>import numpy as np<br/>import matplotlib.pyplot as plt<br/>from sklearn.model_selection import train_test_split<br/>from keras.preprocessing.text import Tokenizer<br/>from keras.preprocessing.sequence import pad_sequences<br/>from keras.utils.np_utils import to_categorical<br/>from sklearn.preprocessing import LabelEncoder<br/>from keras import models<br/>from keras import layers</pre>
+<ol start="2">
+<li>To import the<span> </span><kbd>Tweets</kbd><span> </span>dataset (the <kbd>Tweets.csv</kbd> <span>file that's already provided to you</span>), the following code must be used:</li>
+</ol>
+<pre style="padding-left: 60px">TweetData = pd.read_csv('Tweets.csv')<br/>TweetData = TweetData.reindex(np.random.permutation(TweetData.index))<br/>TweetData = TweetData[['text', 'airline_sentiment']]</pre>
+<p style="padding-left: 60px">Only two columns are extracted: </p>
+<ul>
+<li><kbd>text</kbd>: <span>Twitter posts</span></li>
+<li><kbd>airline_sentiment</kbd>: <span>Positive, neutral, or negative classification</span></li>
+</ul>
+<ol start="3">
+<li>Now, we split the starting data into two sets: the training set (70%) and test set (30%). The training set will be used to train a classification model, and the test set will be used to test the model's performance:</li>
+</ol>
+<pre style="padding-left: 60px">XTrain, XTest, YTrain, YTest = train_test_split(TweetData.text, TweetData.airline_sentiment, test_size=0.3, random_state=11)</pre>
+<ol start="4">
+<li>Now, we will convert words to numbers:</li>
+</ol>
+<pre style="padding-left: 60px">TkData = Tokenizer(num_words=1000,<br/>                 filters='!"#$%&amp;()*+,-./:;&lt;=&gt;?@[\]^_`{"}~\t\n',lower=True, split=" ")<br/>TkData.fit_on_texts(XTrain)<br/>XTrainSeq = TkData.texts_to_sequences(XTrain)<br/>XTestSeq = TkData.texts_to_sequences(XTest)</pre>
+<p style="padding-left: 60px">To do this and tokenize the <kbd>XTrain</kbd> dataset <kbd>Tokenizer</kbd>, the <kbd>fit_on_texts</kbd> and <kbd>texts_to_sequences</kbd> methods were used.</p>
+<ol start="5">
+<li>To transform the input data into a format compatible with Keras, <kbd>pad_sequences</kbd> models will be used. This method transforms a list of sequences (lists of scalars) into a 2D NumPy array, as follows:</li>
+</ol>
+<pre style="padding-left: 60px">XTrainSeqTrunc = pad_sequences(XTrainSeq, maxlen=24)<br/>XTestSeqTrunc = pad_sequences(XTestSeq, maxlen=24)</pre>
+<ol start="6">
+<li><span>So, we will convert the target classes to numbers:</span></li>
+</ol>
+<pre style="padding-left: 60px">LabelEnc = LabelEncoder()<br/>YTrainLabelEnc = LabelEnc.fit_transform(YTrain)<br/>YTestLabelEnc = LabelEnc.transform(YTest)<br/>YTrainLabelEncCat = to_categorical(YTrainLabelEnc)<br/>YTestLabelEncCat = to_categorical(YTestLabelEnc)</pre>
+<ol start="7">
+<li>Now, we will build the Keras model:</li>
+</ol>
+<pre style="padding-left: 60px">EmbModel = models.Sequential()<br/>EmbModel.add(layers.Embedding(1000, 8, input_length=24))<br/>EmbModel.add(layers.Flatten())<br/>EmbModel.add(layers.Dense(3, activation='softmax'))</pre>
+<p style="padding-left: 60px">The embedding layer takes as input a 2D tensor with shape (<kbd>batch_size</kbd>, <kbd>sequence_length</kbd>), where each entry is a sequence of integers. A 3D tensor with the shape (<kbd>batch_size</kbd>, <kbd>sequence_length</kbd>, and <kbd>output_dim</kbd>) is returned.</p>
+<ol start="8">
+<li>Now, we will compile and fit the model created:</li>
+</ol>
+<pre style="padding-left: 60px">EmbModel.compile(optimizer='rmsprop'<br/>                 , loss='categorical_crossentropy'<br/>                 , metrics=['accuracy'])<br/> <br/>EmbHistory = EmbModel.fit(XTrainSeqTrunc<br/>                 , YTrainLabelEncCat<br/>                 , epochs=100<br/>                 , batch_size=512<br/>                 , validation_data=(XTestSeqTrunc, YTestLabelEncCat)<br/>                 , verbose=1)</pre>
+<ol start="9">
+<li>To evaluate the model's performance, let's print the accuracy:</li>
+</ol>
+<pre style="padding-left: 60px">print('Train Accuracy: ', EmbHistory.history['acc'][-1])<br/>print('Validation Accuracy: ', EmbHistory.history['val_acc'][-1])</pre>
+<p class="mce-root"/>
+<p style="padding-left: 60px"><span>The following results are returned:</span></p>
+<pre style="padding-left: 60px"><strong>Train Accuracy: 0.9295472287275566</strong><br/><strong>Validation Accuracy: 0.7625227688874486</strong></pre>
+<ol start="10">
+<li>Finally, we will plot the model history: </li>
+</ol>
+<pre style="padding-left: 60px">plt.plot(EmbHistory.history['acc'])<br/>plt.plot(EmbHistory.history['val_acc'])<br/>plt.title('model accuracy')<br/>plt.ylabel('accuracy')<br/>plt.xlabel('epoch')<br/>plt.legend(['train', 'Validation'], loc='upper left')<br/>plt.show()</pre>
+<p style="padding-left: 60px">The following diagram is returned:</p>
+<p class="CDPAlignCenter CDPAlign"><img class="aligncenter size-full wp-image-1070 image-border" src="assets/cd725421-9e17-46be-b82d-68c280a9048e.png" style="width:36.42em;height:28.25em;"/></p>
+<p style="padding-left: 60px">Analyzing the progress of the validation loss, we realize that the model is overfitting. To handle orverfitting, as we learned in the <span><em>Building a ridge regressor</em> recipe in </span><a href="f552bbc7-5e56-41b8-8e8d-915cc1bd53ab.xhtml">Chapter 1</a>, <em>The Realm of Supervised Learning</em>, we need to use a regularization method.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">How it works...</h1>
+                </header>
+            
+            <article>
+                
+<p>The term <strong>sentiment analysis</strong> refers to the use of NLP techniques, text analysis, and computational linguistics to identify and extract subjective information in written or spoken text sources. Sentiment analysis can be tackled through different approaches. The most commonly used can be grouped into four macro-categories (<em>A Study and Comparison of</em> <em>Sentiment Analysis Methods for Reputation Evaluation</em> by Collomb A, Costea C, Joyeux D, Hasan O, and Brunie L, 2014):</p>
+<ul>
+<li><strong>Lexicon-based methods</strong>: These detect emotional keywords, and assign arbitrary words affinity likely to represent particular emotions.</li>
+<li><strong>Rule-based methods</strong>: These classify texts using emotional categories, based on the presence of unambiguous emotional words, such as <em>happy</em>, <em>sad</em>, and <em>bored</em>.</li>
+<li><strong>Statistical methods</strong>: Here, we try to identify the owner of a sentiment, that is, who the subject is, and the objective, or the object to which the sentiment is felt. To measure opinion in context and find the characteristic that was judged, we check the grammatical relations between the words in the text. This is obtained through a thorough scan of the text.</li>
+<li><strong>Machine learning methods</strong>: These use different learning algorithms to determine sentiment by having a dataset classified (supervised methods). The learning process is not immediate; in fact, models have to be built that associate a polarity to different types of comments and, if necessary, a topic for analysis purposes.</li>
+</ul>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">There's more…</h1>
+                </header>
+            
+            <article>
+                
+<p><span>The </span><kbd>regularization</kbd><span> methods involve modifying the performance function, normally selected as the sum of the squares of regression errors on the training set. When a large number of variables are available, the least square estimates of a linear model often have a low bias but a high variance with respect to models with fewer variables. Under these conditions, there is an overfitting problem. To improve precision prediction by allowing greater bias but a small variance, we can use variable selection methods and dimensionality reduction, but these methods may be unattractive for computational burdens in the first case, or provide a difficult interpretation in the other case.</span></p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">See also</h1>
+                </header>
+            
+            <article>
+                
+<ul>
+<li>Refer to the official documentation of<span> the Keras library</span>:<span> <a href="https://keras.io/">https://keras.io/</a></span></li>
+<li class="mce-root">Refer to<em> Sentiment Analysis</em> (from Stanford University):<span> </span><a href="https://web.stanford.edu/class/cs124/lec/sentiment.pdf">https://web.stanford.edu/class/cs124/lec/sentiment.pdf</a></li>
+</ul>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Implementing LDA with scikit-learn</h1>
+                </header>
+            
+            <article>
+                
+<p><strong>Latent Dirichlet allocation</strong> (<strong>LDA</strong>) is a generative model, used in the study of natural language, which allows you to extract arguments from a set of source documents and provide a logical explanation on the similarity of individual parts of documents. Each document is considered as a set of words that, when combined, form one or more subsets of latent topics. Each topic is characterized by a particular distribution of terms.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Getting ready</h1>
+                </header>
+            
+            <article>
+                
+<p>In this recipe, we will<span> use the <kbd>sklearn.decomposition.LatentDirichletAllocation</kbd> function to produce a feature matrix of token counts, similar to what the <kbd>CountVectorizer</kbd> function (just used in the <em>Building a bag-of-words model</em> recipe of</span> <a href="fc31e304-3301-4ebf-80e4-404ac6e26606.xhtml">Chapter 7</a>, <span><em>Analyzing Text Data</em>) would produce on the text.</span></p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">How to do it…</h1>
+                </header>
+            
+            <article>
+                
+<p>Let's see how to implement LDA with scikit-learn:</p>
+<ol>
+<li>Create a new Python file, and import the following packages (the full code is in the<span> </span><kbd><span>LDA</span><span>.py</span></kbd> file that's already provided to you):</li>
+</ol>
+<pre style="padding-left: 60px">from sklearn.decomposition import LatentDirichletAllocation<br/>from sklearn.datasets import make_multilabel_classification</pre>
+<ol start="2">
+<li>To produce the input data, we will use the <kbd>sklearn.datasets.make_multilabel_classification</kbd> function. This function generates a random multilabel classification problem, as follows:</li>
+</ol>
+<pre style="padding-left: 60px">X, Y = make_multilabel_classification(n_samples=100, n_features=20, n_classes=5, n_labels=2, random_state=1)</pre>
+<p style="padding-left: 60px">The following data is returned:</p>
+<ul>
+<li><kbd>X</kbd>: The generated samples that is an array of shape [<kbd>n_samples</kbd>, <kbd>n_features</kbd>]</li>
+<li><kbd>Y</kbd>: The label sets that is an array or sparse CSR matrix of shape [<kbd>n_samples</kbd>, <kbd>n_classes</kbd>]</li>
+</ul>
+<p style="padding-left: 60px">In our case, the <kbd>Y</kbd><span> variable</span> will not serve us, as we will use an unsupervised method that, as we know, does not require prior knowledge of the data label.</p>
+<ol start="3">
+<li>Now, we can build the <span><kbd>LatentDirichletAllocation()</kbd> model (with an online variational Bayes algorithm)</span>:</li>
+</ol>
+<pre style="padding-left: 60px">LDAModel = LatentDirichletAllocation(n_components=5, random_state=1)</pre>
+<p style="padding-left: 60px">Only two parameters are passed: </p>
+<ul>
+<li><kbd>n_components=5</kbd>: This is the number of topics, <kbd>5</kbd>, because we used an input dataset built on the basis of five groups.</li>
+<li><kbd>random_state=1</kbd>: This is the seed used by the random number generator.</li>
+</ul>
+<ol start="4">
+<li>Now, we will train the model for the data, <kbd>X</kbd>, with a variational Bayes method:</li>
+</ol>
+<pre style="padding-left: 60px">LDAModel.fit(X) </pre>
+<ol start="5">
+<li>Finally, we will get topics for the last 10 <span>samples </span>of the <kbd>X</kbd> dataset:</li>
+</ol>
+<pre style="padding-left: 60px">print(LDAModel.transform(X[-10:]))</pre>
+<p style="padding-left: 60px"><span>The following results are returned:</span></p>
+<p class="CDPAlignCenter CDPAlign"><img class="aligncenter size-full wp-image-1071 image-border" src="assets/0753c1cd-e12b-4272-a2c0-d2c1d700c891.png" style="width:32.75em;height:9.58em;"/></p>
+<p style="padding-left: 60px">For each example provided as input, a sequence of five values is returned representing the probabilities that the topic belongs to that group. Obviously, the value closest to 1 represents the best probability.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">How it works...</h1>
+                </header>
+            
+            <article>
+                
+<p>The generative process of the LDA algorithm is based on the analysis of the data contained in the text. Word combinations are considered random variables. The LDA algorithm can be executed in the following ways:</p>
+<ul>
+<li class="mce-root">A word distribution is associated with each topic</li>
+<li class="mce-root">Each document is found in a topic distribution</li>
+<li class="mce-root">For each word in the document, verify its attribution to a document topic and to a word distribution of the topic</li>
+</ul>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">There's more…</h1>
+                </header>
+            
+            <article>
+                
+<p>Depending on the type of inference, the LDA algorithm allows us to reach a certain level of effectiveness and cost (efficiency) in terms of temporal and spatial complexity. The LDA model was presented for the first time in 2003 in a paper published by David Blei, Andrew Ng, and Michael Jordan.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">See also</h1>
+                </header>
+            
+            <article>
+                
+<ul>
+<li>Refer to the official documentation of the <kbd>sklearn.decomposition.LatentDirichletAllocation</kbd> function: <a href="https://scikit-learn.org/stable/modules/generated/sklearn.decomposition.LatentDirichletAllocation.html">https://scikit-learn.org/stable/modules/generated/sklearn.decomposition.LatentDirichletAllocation.html</a></li>
+<li>Refer to <em>Latent Dirichlet Allocation</em> (by David Blei, Andrew Ng, and Michael Jordan): <a href="http://www.jmlr.org/papers/volume3/blei03a/blei03a.pdf">http://www.jmlr.org/papers/volume3/blei03a/blei03a.pdf</a></li>
+<li>Refer to <a href="fc31e304-3301-4ebf-80e4-404ac6e26606.xhtml">Chapter 7</a>, <em>Analyzing Text Data</em></li>
+</ul>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Using LDA to classify text documents</h1>
+                </header>
+            
+            <article>
+                
+<p><span>LDA is</span> a natural language analysis model that allows to understand the semantic meaning of the text by analyzing the similarity between the distribution of the terms of the document with that of a specific topic (topic) or of an entity. More recently, LDA has gained notoriety even in semantic SEO as a possible ranking factor for the Google search engine.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Getting ready</h1>
+                </header>
+            
+            <article>
+                
+<p>In this recipe, we will<span> use the <kbd>sklearn.decomposition.LatentDirichletAllocation</kbd> function to perform a topic modeling analysis.</span></p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">How to do it…</h1>
+                </header>
+            
+            <article>
+                
+<p>Let's see how to use LDA to classify text documents:</p>
+<ol>
+<li>Create a new Python file, and import the following packages (the full code is in the<span> </span><kbd>TopicModellingLDA.py</kbd> file that's already provided to you):</li>
+</ol>
+<pre style="padding-left: 60px">from sklearn.feature_extraction.text import CountVectorizer<br/>from sklearn.decomposition import LatentDirichletAllocation<br/>from sklearn.datasets import fetch_20newsgroups</pre>
+<ol start="2">
+<li>To import the data, we will use the <kbd>fetch_20newsgroups</kbd> dataset from the <kbd>sklearn</kbd> library:</li>
+</ol>
+<pre style="padding-left: 60px">NGData = fetch_20newsgroups(shuffle=True, random_state=7,<br/>                             remove=('headers', 'footers', 'quotes'))</pre>
+<p style="padding-left: 60px">This is a collection of about 20,000 newsgroup documents, divided into 20 different newsgroups. The dataset is particularly useful for dealing with text classification problems.</p>
+<ol start="3">
+<li>Now, we will print the name of the newsgroup available:</li>
+</ol>
+<pre style="padding-left: 60px">print(list(NGData.target_names))</pre>
+<p style="padding-left: 60px">The following results are returned:</p>
+<pre style="padding-left: 60px"><strong>['alt.atheism', 'comp.graphics', 'comp.os.ms-windows.misc', 'comp.sys.ibm.pc.hardware', 'comp.sys.mac.hardware', 'comp.windows.x', 'misc.forsale', 'rec.autos', 'rec.motorcycles', 'rec.sport.baseball', 'rec.sport.hockey', 'sci.crypt', 'sci.electronics', 'sci.med', 'sci.space', 'soc.religion.christian', 'talk.politics.guns', 'talk.politics.mideast', 'talk.politics.misc', 'talk.religion.misc']</strong></pre>
+<ol start="4">
+<li>There are 11,314 samples in the data. We will extract only 2,000:</li>
+</ol>
+<pre style="padding-left: 60px">NGData = NGData.data[:2000]</pre>
+<ol start="5">
+<li>Now, we will extract a document term matrix. This is basically a matrix that counts the number of occurrences of each word in the document. So, we will define the object, and extract the document term matrix:</li>
+</ol>
+<pre style="padding-left: 60px">NGDataVect = CountVectorizer(max_df=0.93, min_df=2,<br/>                                max_features=1000,<br/>                                stop_words='english')<br/><br/>NGDataVectModel = NGDataVect.fit_transform(NGData)</pre>
+<ol start="6">
+<li>Now, we can build the<span> </span><span>LDA model (with an online variational Bayes algorithm)</span>:</li>
+</ol>
+<pre style="padding-left: 60px">LDAModel = LatentDirichletAllocation(n_components=10, max_iter=5,<br/>                                learning_method='online',<br/>                                learning_offset=50.,<br/>                                random_state=0)</pre>
+<ol start="7">
+<li><span>We will train the model for the data <kbd>NGDataVectModel</kbd> with a variational Bayes method</span>:</li>
+</ol>
+<pre style="padding-left: 60px">LDAModel.fit(NGDataVectModel)</pre>
+<ol start="8">
+<li>Finally, we will print the topic extracted:</li>
+</ol>
+<pre style="padding-left: 60px">NGDataVectModelFeatureNames = NGDataVect.get_feature_names()<br/><br/>for topic_idx, topic in enumerate(LDAModel.components_):<br/>     message = "Topic #%d: " % topic_idx<br/>     message += " ".join([NGDataVectModelFeatureNames[i]<br/>     for i in topic.argsort()[:-20 - 1:-1]])<br/>     print(message)</pre>
+<p style="padding-left: 60px">The following results are returned:</p>
+<p class="mce-root CDPAlignCenter CDPAlign"><img class="aligncenter size-full wp-image-1072 image-border" src="assets/302f85f8-f61e-4d2c-9594-863a60d0c01b.png" style="width:43.58em;height:16.17em;"/></p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">How it works...</h1>
+                </header>
+            
+            <article>
+                
+<p><strong>Topic modeling</strong> <span>refers to the process of identifying hidden patterns in text data. The goal is to uncover some hidden thematic structure in a collection of documents. This will help us organize our documents in a better way so that we can use them for analysis. This is an active area of research in NLP.</span></p>
+<p>The LDA analysis automatically allows to go back to the topic of the phrases by the association of co-occurrences with a reference <strong>knowledge base</strong> (<strong>KB</strong>), without having to interpret the meaning of the sentences.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">There's more…</h1>
+                </header>
+            
+            <article>
+                
+<p>Here, <strong>de Finetti's theorem</strong> establishes that any collection of changeable random variables is represented as a mixture of distributions, so if you want to have an exchangeable representation of words and documents, it is necessary to consider mixtures that capture the exchangeability of both. At the base of this methodology of thought lie the roots of the LDA model.</p>
+<p class="mce-root"/>
+<p class="mce-root"/>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">See also</h1>
+                </header>
+            
+            <article>
+                
+<ul>
+<li>Refer to the official documentation of the <kbd>sklearn.decomposition.LatentDirichletAllocation</kbd> function: <a href="https://scikit-learn.org/stable/modules/generated/sklearn.decomposition.LatentDirichletAllocation.html">https://scikit-learn.org/stable/modules/generated/sklearn.decomposition.LatentDirichletAllocation.html</a></li>
+<li>Refer to <a href="fc31e304-3301-4ebf-80e4-404ac6e26606.xhtml">Chapter 7</a><span>, </span><span><em>Analyzing Text Data</em></span></li>
+<li>Refer to <em>Exchangeability and de Finetti’s Theorem</em> (from the University of Oxford): <a href="http://www.stats.ox.ac.uk/~steffen/teaching/grad/definetti.pdf">http://www.stats.ox.ac.uk/~steffen/teaching/grad/definetti.pdf</a></li>
+</ul>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Preparing data for LDA</h1>
+                </header>
+            
+            <article>
+                
+<p>In the previous recipe, <em>Using LDA to classify text documents</em>, we have seen how to use the LDA algorithm for topic modeling. We have seen that, before constructing the algorithm, the dataset must be appropriately processed so as to prepare the data in a format compatible with the input provided by the LDA model. In this recipe, we will analyze in detail these procedures.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Getting ready</h1>
+                </header>
+            
+            <article>
+                
+<p>In this recipe, we will analyze the procedures necessary to transform the data contained in a specific dataset. This data will then be used as input for an algorithm based on the LDA method.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">How to do it...</h1>
+                </header>
+            
+            <article>
+                
+<p>Let's see how to prepare data for LDA:</p>
+<ol>
+<li>Create a new Python file, and import the following packages (t<span>he full code is in the</span> <kbd><span>PrepDataLDA</span><span>.py</span></kbd><span> file that's already provided to you</span>):</li>
+</ol>
+<pre style="padding-left: 60px">from nltk.tokenize import RegexpTokenizer<br/>from stop_words import get_stop_words<br/>from nltk.stem.porter import PorterStemmer<br/>from gensim import corpora, models</pre>
+<p class="mce-root"/>
+<ol start="2">
+<li>We define a series of sentences from which we want to extract the topics:</li>
+</ol>
+<pre style="padding-left: 60px">Doc1 = "Some doctors say that pizza is good for your health."<br/>Doc2 = "The pizza is good to eat, my sister likes to eat a good pizza, but not to my brother."<br/>Doc3 = "Doctors suggest that walking can cause a decrease in blood pressure."<br/>Doc4 = "My brother likes to walk, but my sister don't like to walk."<br/>Doc5 = "When my sister is forced to walk for a long time she feels an increase in blood pressure."<br/>Doc6 = "When my brother eats pizza, he has health problems."</pre>
+<p style="padding-left: 60px">In the sentences we have just defined, there are topics that are repeated with different meanings. It is not easy to derive a link between them.</p>
+<ol start="3">
+<li>We insert these sentences into a list:</li>
+</ol>
+<pre style="padding-left: 60px">DocList = [Doc1, Doc2, Doc3, Doc4, Doc5, Doc6]</pre>
+<ol start="4">
+<li>We set the elements that we will use in the transformation procedure:</li>
+</ol>
+<pre style="padding-left: 60px" class="mce-root">Tokenizer = RegexpTokenizer(r'\w+')<br/>EnStop = get_stop_words('en')<br/>PStemmer = PorterStemmer()<br/>Texts = []</pre>
+<ol start="5">
+<li>To perform the transformation on all the phrases, it is necessary to set a loop that just goes through the list:</li>
+</ol>
+<pre style="padding-left: 60px">for i in DocList:</pre>
+<ol start="6">
+<li>Now, we can start preparing the data. <strong>Tokenization</strong> is the process of dividing text into a set of meaningful pieces. These pieces are called <strong>tokens</strong>. For example, we can divide a chunk of text into words, or we can divide it into sentences. Let's start with sentence tokenization:</li>
+</ol>
+<pre style="padding-left: 60px">    raw = i.lower()<br/>    Tokens = Tokenizer.tokenize(raw)</pre>
+<ol start="7">
+<li>Let's move on to the removal of meaningless words. There are some words in typical English sentences that do not take on significant significance for the construction of a topic model. For example, conjunctions and articles do not help identify topics. These terms are called <strong>stop words</strong> and must be removed from our token list. These terms (stop words) change according to the context in which we operate. Let's remove the stop words:</li>
+</ol>
+<pre>    StoppedTokens = [i for i in Tokens if not i in EnStop]</pre>
+<ol start="8">
+<li>The last phase of data preparation concerns the stemming. The goal of stemming is to reduce these different forms into a common base form. This uses a heuristic process to cut off the ends of words to extract the base form. Let's make the stemming:</li>
+</ol>
+<pre style="padding-left: 60px">StemmedTokens = [PStemmer.stem(i) for i in StoppedTokens]</pre>
+<ol start="9">
+<li>We just have to add the element obtained to the text list:</li>
+</ol>
+<pre style="padding-left: 60px">Texts.append(StemmedTokens)</pre>
+<ol start="10">
+<li class="mce-root">At this point, we have to turn our token list into a dictionary:</li>
+</ol>
+<pre style="padding-left: 60px" class="mce-root">Dictionary = corpora.Dictionary(Texts)</pre>
+<ol start="11">
+<li>So, let's build a document term matrix using tokenized documents:</li>
+</ol>
+<pre style="padding-left: 60px">CorpusMat = [Dictionary.doc2bow(text) for text in Texts]</pre>
+<ol start="12">
+<li>Finally, we build an LDA model and print the topics extracted:</li>
+</ol>
+<pre style="padding-left: 60px">LDAModel = models.ldamodel.LdaModel(CorpusMat, num_topics=3, id2word = Dictionary, passes=20)<br/>print(LDAModel.print_topics(num_topics=3, num_words=3))</pre>
+<p style="padding-left: 60px"><span>The following results are returned:</span></p>
+<pre style="padding-left: 60px"><strong>[(0, '0.079*"walk" + 0.079*"blood" + 0.079*"pressur"'), </strong><br/><strong> (1, '0.120*"like" + 0.119*"eat" + 0.119*"brother"'), </strong><br/><strong> (2, '0.101*"doctor" + 0.099*"health" + 0.070*"pizza"')]</strong></pre>
+<p class="mce-root"/>
+<p class="mce-root"/>
+<p class="mce-root"/>
+<p class="mce-root"/>
+<p class="mceNonEditable"/>
+<p class="mceNonEditable"/>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">How it works...</h1>
+                </header>
+            
+            <article>
+                
+<p>Data preparation is essential for the creation of a topic model. The preparation of the data goes through the following procedures:</p>
+<ul>
+<li class="mce-root"><strong>Tokenization</strong>: The conversion of a document into its atomic elements</li>
+<li class="mce-root"><strong>Stop words</strong>: Removes meaningless words</li>
+<li class="mce-root"><strong>Stemming</strong>: The fusion of equivalent words in meaning</li>
+</ul>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">There's more…</h1>
+                </header>
+            
+            <article>
+                
+<p class="mce-root">Data preparation depends on the type of text we are processing. In some cases, it is necessary to carry out further operations before submitting the data to the LDA algorithm. For example, punctuation removal can be one of them, as well as the removal of special characters.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">See also</h1>
+                </header>
+            
+            <article>
+                
+<ul>
+<li>Refer to <em>Tokenization</em> (from the NLP group at Stanford University):<span> </span><a href="https://nlp.stanford.edu/IR-book/html/htmledition/tokenization-1.html">https://nlp.stanford.edu/IR-book/html/htmledition/tokenization-1.html</a></li>
+<li>Refer to <em>Stemming and lemmatization</em> (from Stanford University): <a href="https://nlp.stanford.edu/IR-book/html/htmledition/stemming-and-lemmatization-1.html">https://nlp.stanford.edu/IR-book/html/htmledition/stemming-and-lemmatization-1.html</a></li>
+<li>Refer to <em>Dropping common terms: stop words</em> (from Stanford University): <a href="https://nlp.stanford.edu/IR-book/html/htmledition/dropping-common-terms-stop-words-1.html">https://nlp.stanford.edu/IR-book/html/htmledition/dropping-common-terms-stop-words-1.html</a></li>
+</ul>
+
+
+            </article>
+
+            
+        </section>
+    </body></html>
