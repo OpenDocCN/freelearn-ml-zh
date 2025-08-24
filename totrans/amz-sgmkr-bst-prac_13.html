@@ -1,0 +1,196 @@
+<html><head></head><body>
+		<div id="_idContainer120">
+			<h1 id="_idParaDest-145"><a id="_idTextAnchor179"/>Chapter 10: Optimizing Model Hosting and Inference Costs</h1>
+			<p>The introduction of more powerful computers (notably with <strong class="bold">graphical processing units</strong>, or <strong class="bold">GPUs</strong>) and powerful <strong class="bold">machine learning</strong> (<strong class="bold">ML</strong>) frameworks such as TensorFlow has resulted in a generational leap in ML capabilities. As ML practitioners, our purview now includes optimizing the use of these new capabilities to maximize the value we get for the time and money we spend.</p>
+			<p>In this chapter, you'll learn how to use multiple deployment strategies to meet your training and inference requirements. You'll learn when to get and store inferences in advance versus getting them on demand, how to scale inference services to meet fluctuating demand, and how to use multiple models for model testing.  </p>
+			<p>In this chapter, we will cover the following topics:</p>
+			<ul>
+				<li>Real-time inference versus batch inference</li>
+				<li>Deploying multiple models behind a single inference endpoint</li>
+				<li>Scaling inference endpoints to meet inference traffic demands</li>
+				<li>Using Elastic Inference for deep learning models</li>
+				<li>Optimizing models with SageMaker Neo</li>
+			</ul>
+			<h1 id="_idParaDest-146"><a id="_idTextAnchor180"/>Technical requirements</h1>
+			<p>You will need an AWS account to run the examples included in this chapter. If you have not set up the data science environment yet, please refer to <a href="B17249_02_Final_JM_ePub.xhtml#_idTextAnchor039"><em class="italic">Chapter 2</em></a><em class="italic">, Data Science Environments</em>, which walks you through the setup process.</p>
+			<p>The code examples included in the book are available on GitHub at <a href="https://github.com/PacktPublishing/Amazon-SageMaker-Best-Practices/tree/main/Chapter10">https://github.com/PacktPublishing/Amazon-SageMaker-Best-Practices/tree/main/Chapter10</a>. You will need to install a Git client to access them (<a href="https://git-scm.com/">https://git-scm.com/</a>).</p>
+			<p>The code for this chapter is in the <strong class="source-inline">CH10</strong> folder of the GitHub repository.</p>
+			<h1 id="_idParaDest-147"><a id="_idTextAnchor181"/>Real-time inference versus batch inference</h1>
+			<p>SageMaker provides two ways to obtain inferences:</p>
+			<ul>
+				<li><strong class="bold">Real-time inference</strong> lets <a id="_idIndexMarker415"/>you get a single inference per request, or a <a id="_idIndexMarker416"/>small number of inferences, with very low latency from a live inference endpoint.</li>
+				<li><strong class="bold">Batch inference</strong> lets you <a id="_idIndexMarker417"/>get a large number of inferences from a <a id="_idIndexMarker418"/>batch processing job.</li>
+			</ul>
+			<p>Batch inference is more efficient and more cost-effective. Use it whenever your inference requirements allow. We'll explore batch inference first, and then pivot to real-time inferen<a id="_idTextAnchor182"/>ce.</p>
+			<h2 id="_idParaDest-148"><a id="_idTextAnchor183"/>Batch inference</h2>
+			<p>In many cases, we <a id="_idIndexMarker419"/>can make inferences in advance and store them for later use. For example, if you want to generate product recommendations for users on an e-commerce site, those recommendations may be based on the users' prior<a id="_idIndexMarker420"/> purchases and which products you want to promote the next day. You can generate the recommendations nightly and store them for your e-commerce site to call up when the users browse the site.</p>
+			<p>There are several options for storing batch inferences. Amazon DynamoDB is a common choice for several reasons, such as the following:</p>
+			<ul>
+				<li>It is fast. You can look up single values within a few milliseconds.</li>
+				<li>It is scalable. You can store millions of values at a low cost.</li>
+				<li>The best access pattern for DynamoDB is looking up values by a high-cardinality primary key. This fits well with many inference usage patterns, for example, when we want to look up a stored recommendation for an individual user.</li>
+			</ul>
+			<p>You can use other data stores, including DocumentDB and Aurora, depending on your access patterns.</p>
+			<p>In the <strong class="source-inline">CH10</strong> folder of the GitHub repository, you'll find the <strong class="source-inline">optimize.ipynb</strong> notebook. The <em class="italic">Real-time and Batch Inference</em> section of this repository walks you through performing both<a id="_idIndexMarker421"/> batch and real-time inference using a simple<a id="_idIndexMarker422"/> XGBoost model. The following code lets you run a batch inference job:</p>
+			<p class="source-code">batch_input = "s3://{}/{}/{}/".format(s3_bucket, s3_prefix, 'test')</p>
+			<p class="source-code">batch_output = "s3://{}/{}/{}/".format(s3_bucket, "xgboost-sample", 'xform')</p>
+			<p class="source-code">transformer = estimator.transformer(instance_count=1, </p>
+			<p class="source-code">instance_type='ml.m5.4xlarge', output_path=batch_output, max_payload=3)</p>
+			<p class="source-code">transformer.transform(data=batch_input, data_type='S3Prefix', </p>
+			<p class="source-code">content_type=content_type, split_type='Line')</p>
+			<p>This job takes approximately 3 minutes <a id="_idTextAnchor184"/>to run.</p>
+			<h2 id="_idParaDest-149"><a id="_idTextAnchor185"/>Real-time inference</h2>
+			<p>When you deploy a <a id="_idIndexMarker423"/>SageMaker model to a real-time inference endpoint, SageMaker<a id="_idIndexMarker424"/> deploys the model artifact and your inference code (packaged in a Docker image) to one or more inference instances. You now have a live API endpoint for inference, and you can invoke it from other software services on demand.  </p>
+			<p>You pay for the inference endpoints (instances) as long as they are running. Use real-time inference in the following situations:</p>
+			<ul>
+				<li>The inferences are dependent on <em class="italic">context</em>. For example, if you want to recommend a video to watch, the inference may depend on the show your user just finished. If you have a large video catalog, you can't generate all the possible permutations of recommendations in advance.  </li>
+				<li>You may need to provide inferences for <em class="italic">new events</em>. For example, if you are trying to classify a credit card transaction as fraudulent or not, you need to wait until your user actually attempts a transaction.</li>
+			</ul>
+			<p>The following code <a id="_idIndexMarker425"/>deploys an<a id="_idIndexMarker426"/> inference endpoint:</p>
+			<p class="source-code">from sagemaker.deserializers import JSONDeserializer</p>
+			<p class="source-code">from sagemaker.serializers import CSVSerializer</p>
+			<p class="source-code">predictor = estimator.deploy(initial_instance_count=1,</p>
+			<p class="source-code">                            instance_type='ml.m5.2xlarge',</p>
+			<p class="source-code">                            serializer=CSVSerializer(),</p>
+			<p class="source-code">                            deserializer=JSONDeserializer()</p>
+			<p class="source-code">                             )</p>
+			<p>Once the endpoint is live, we can obtain inferences using the endpoint we just deployed:</p>
+			<p class="source-code">result = predictor.predict(csv_payload)</p>
+			<p class="source-code">print(result)</p>
+			<p>Using our simple XGBoost model, an inference takes approximately 30 milliseconds t<a id="_idTextAnchor186"/>o complete.</p>
+			<h2 id="_idParaDest-150"><a id="_idTextAnchor187"/>Cost comparison</h2>
+			<p>Consider a scenario where<a id="_idIndexMarker427"/> we want to predict the measurements for the next day for all of our weather stations and make them available for lookup on an interactive website. We have approximately 11,000 unique stations and 7 different parameters to predict for each station.  </p>
+			<p>With a real-time endpoint using the <strong class="source-inline">ml.m5.2xlarge</strong> instance type, we pay $0.538 per hour, or approximately $387 per month. With batch inference, we pay $1.075 per hour for an <strong class="source-inline">ml.m5.4xlarge</strong> instance. The job takes 3 minutes to run per day, or 90 minutes per month. That's about $1.61.</p>
+			<p>The batch inference approach is typically much more cost-effective if you do not need context-sensitive real-time predictions. Serving predictions out of a NoSQL database is a be<a id="_idTextAnchor188"/>tter option.</p>
+			<h1 id="_idParaDest-151"><a id="_idTextAnchor189"/>Deploying multiple models behind a single inference endpoint</h1>
+			<p>A <a id="_idIndexMarker428"/>SageMaker inference endpoint is a logical entity that actually holds a load balancer and one or more instances of your inference container. You can deploy either multiple versions of the same model or entirely different models behind a single endpoint. In this section, we'll look at these t<a id="_idTextAnchor190"/>wo use cases.</p>
+			<h2 id="_idParaDest-152"><a id="_idTextAnchor191"/>Multiple versions of the same model</h2>
+			<p>A SageMaker<a id="_idIndexMarker429"/> endpoint lets you host multiple models that serve different percentages of traffic for incoming requests. That capability supports common <strong class="bold">continuous integration</strong> (<strong class="bold">CI</strong>)/<strong class="bold">continuous delivery</strong> (<strong class="bold">CD</strong>) practices<a id="_idIndexMarker430"/> such as canary and blue/green deployments. While these practices are similar, they have slightly different purposes, as explained here:</p>
+			<ul>
+				<li>A <strong class="bold">canary deployment</strong> means <a id="_idIndexMarker431"/>that you let the new version of a model host a small percentage of traffic that lets you test a new version of the model on a subset of traffic until you are satisfied that it is working well.</li>
+				<li>A <strong class="bold">blue/green deployment</strong> means that <a id="_idIndexMarker432"/>you run two versions of the model at the same time, keeping an older version around for quick failover if a problem occurs in the new version.</li>
+			</ul>
+			<p>In practice, these are variations on a theme. In SageMaker, you designate how much traffic each model variant handles. For canary deployments, you'd start with a small fraction (usually 1-5%) for the new model versions. For blue/green deployments, you'd use 100% for the new version but flip back to 0% if a problem occurs.</p>
+			<p>There are other ways to accomplish these deployment modes. For example, you can use two inference endpoints and handle traffic shaping using DNS (Route 53), a load balancer, or Global Accelerator. But managing the traffic through SageMaker simplifies your operational burden and reduces cost, as you don't have to have two endpoints running.</p>
+			<p>In the <em class="italic">A/B Testing</em> section of the notebook, we'll create another version of the model and create a new<a id="_idIndexMarker433"/> endpoint that uses both models:</p>
+			<ol>
+				<li>We'll start by training another version of the model with a hyperparameter change (maximum tree depth of <strong class="source-inline">10</strong> instead of <strong class="source-inline">5</strong>), as follows:<p class="source-code">hyperparameters_v2 = {</p><p class="source-code">        "max_depth":"10",</p><p class="source-code">        "eta":"0.2",</p><p class="source-code">        "gamma":"4",</p><p class="source-code">        "min_child_weight":"6",</p><p class="source-code">        "subsample":"0.7",</p><p class="source-code">        "objective":"reg:squarederror",</p><p class="source-code">        "num_round":"5"}</p><p class="source-code">estimator_v2 = \ sagemaker.estimator.Estimator(image_uri=xgboost_container, </p><p class="source-code">                    hyperparameters=hyperparameters,</p><p class="source-code">                    role=sagemaker.get_execution_role(),</p><p class="source-code">                    instance_count=1, </p><p class="source-code">                    instance_type='ml.m5.12xlarge', </p><p class="source-code">                    volume_size=200, # 5 GB </p><p class="source-code">                    output_path=output_path)</p><p class="source-code">predictor_v2 = estimator_v2.deploy(initial_instance_count=1,</p><p class="source-code">                           instance_type='ml.m5.2xlarge',</p><p class="source-code">                            serializer=CSVSerializer(),</p><p class="source-code">                          deserializer=JSONDeserializer()</p><p class="source-code">                             )</p></li>
+				<li>Next, we define <a id="_idIndexMarker434"/>endpoint variants for each model version. The most important parameter here is <strong class="source-inline">initial_weight</strong>, which specifies how much traffic should go to each model version. By setting both versions to <strong class="source-inline">1</strong>, the traffic will split evenly between them. For an A/B test, you might start with weights of <strong class="source-inline">20</strong> for the existing version and <strong class="source-inline">1</strong> for the new version:<p class="source-code">model1 = predictor._model_names[0]</p><p class="source-code">model2 = predictor_v2._model_names[0]</p><p class="source-code">from sagemaker.session import production_variant</p><p class="source-code">variant1 = production_variant(model_name=model1,</p><p class="source-code">                            instance_type="ml.m5.xlarge",</p><p class="source-code">                              initial_instance_count=1,</p><p class="source-code">                              variant_name='Variant1',</p><p class="source-code">                              initial_weight=1)</p><p class="source-code">variant2 = production_variant(model_name=model2,</p><p class="source-code">                            instance_type="ml.m5.xlarge",</p><p class="source-code">                              initial_instance_count=1,</p><p class="source-code">                              variant_name='Variant2',</p><p class="source-code">                              initial_weight=1)</p></li>
+				<li>Now, we deploy a new model using the following two model variants:<p class="source-code">from sagemaker.session import Session</p><p class="source-code">smsession = Session()</p><p class="source-code">smsession.endpoint_from_production_variants(</p><p class="source-code">    name='mmendpoint',</p><p class="source-code">    production_variants=[variant1, variant2]</p><p class="source-code">)</p></li>
+				<li>Finally, we <a id="_idIndexMarker435"/>can test the new endpoint:<p class="source-code">from sagemaker.deserializers import JSONDeserializer</p><p class="source-code">from sagemaker.serializers import CSVSerializer</p><p class="source-code">import boto3</p><p class="source-code">from botocore.response import StreamingBody</p><p class="source-code">smrt = boto3.Session().client("sagemaker-runtime")</p><p class="source-code">for tl in t_lines[0:50]:</p><p class="source-code">    result = smrt.invoke_endpoint(EndpointName='mmendpoint',</p><p class="source-code">         ContentType="text/csv", Body=tl.strip())</p><p class="source-code">    rbody = StreamingBody( \</p><p class="source-code">raw_stream=result['Body'], \</p><p class="source-code">content_length= \</p><p class="source-code">int(result['ResponseMetadata']['HTTPHeaders']['content-length']))</p><p class="source-code">    print(f"Result from {result['InvokedProductionVariant']} = " + \</p><p class="source-code">f"{rbody.read().decode('utf-8')}")</p><p>You'll see <a id="_idIndexMarker436"/>output that looks like this:</p><p class="source-code">Result from Variant2 = 0.16384175419807434</p><p class="source-code">Result from Variant1 = 0.16383948922157288</p><p class="source-code">Result from Variant1 = 0.16383948922157288</p><p class="source-code">Result from Variant2 = 0.16384175419807434</p><p class="source-code">Result from Variant1 = 0.16384175419807434</p><p class="source-code">Result from Variant2 = 0.16384661197662354</p></li>
+			</ol>
+			<p>Notice that the traffic is flipping between the two versions of the model according to the weights we specified. In a production use case, you should automate the model endpoint update in your CI/CD or ML<a id="_idTextAnchor192"/>Ops automation tools.</p>
+			<h2 id="_idParaDest-153"><a id="_idTextAnchor193"/>Multiple models</h2>
+			<p>In other cases, you<a id="_idIndexMarker437"/> may need to run entirely different models. For example, perhaps you want one model to serve weather inferences for the United States and another model to serve weather inferences for Germany. You can build models that are sensitive to differences between these two countries. You can host both models behind the same endpoint and direct traffic to them based on the incoming request.  </p>
+			<p>Or, for an A/B test, you might want to control which traffic goes to your new model version rather than letting a load balancer perform random weighted distribution. If you have an application server that identifies which consumers should use the new model version, you can direct that traffic to a specific model behind an inference endpoint.</p>
+			<p>In the <em class="italic">Multiple models in a single endpoint</em> notebook section, we'll walk through an example of creating models optimized for different air quality parameters. When we want a prediction, we specify which type of parameter we want, and the endpoint directs our request to the appropriate model. This use case is quite realistic; it may turn out that it's difficult to predict both particulate matter (<strong class="source-inline">PM25</strong>) and ozone (<strong class="source-inline">O3</strong>) using the same model:</p>
+			<ol>
+				<li value="1">First, we're going to prepare new datasets that only contain data for a single parameter by creating a Spark processing job:<p class="source-code">spark_processor.run(</p><p class="source-code">    submit_app="scripts/preprocess_param.py",</p><p class="source-code">    submit_jars=["s3://crawler-public/json/serde/json-serde.jar"],</p><p class="source-code">    arguments=['--s3_input_bucket', s3_bucket,</p><p class="source-code">              '--s3_input_key_prefix', s3_prefix_parquet,</p><p class="source-code">               '--s3_output_bucket', s3_bucket,</p><p class="source-code">               '--s3_output_key_prefix', f"{s3_output_prefix}/o3",</p><p class="source-code">               '--parameter', 'o3',],</p><p class="source-code">    spark_event_logs_s3_uri="s3://{}/{}/spark_event_logs".format(s3_bucket, 'sparklogs'),</p><p class="source-code">    logs=True,</p><p class="source-code">    configuration=configuration</p><p class="source-code">)</p><p>We'll repeat the preceding step for <strong class="source-inline">PM25</strong> and <strong class="source-inline">O3</strong>.</p></li>
+				<li>Now, we will <a id="_idIndexMarker438"/>train new XGBoost models against the single-parameter training sets, as follows:<p class="source-code">estimator_o3 = sagemaker.estimator.Estimator(image_uri=xgboost_container, </p><p class="source-code">                    hyperparameters=hyperparameters,</p><p class="source-code">                    role=sagemaker.get_execution_role(),</p><p class="source-code">                    instance_count=1, </p><p class="source-code">                    instance_type='ml.m5.12xlarge', </p><p class="source-code">                    volume_size=200,  </p><p class="source-code">                    output_path=output_path)</p><p class="source-code">content_type = "csv"</p><p class="source-code">train_input = TrainingInput("s3://{}/{}/{}/{}/".format(s3_bucket, s3_output_prefix, 'o3', 'train'), content_type=content_type)</p><p class="source-code">validation_input = TrainingInput("s3://{}/{}/{}/{}/".format(s3_bucket, s3_output_prefix, 'o3', 'validation'), content_type=content_type)</p><p class="source-code"># execute the XGBoost training job</p><p class="source-code">estimator_o3.fit({'train': train_input, 'validation': validation_input})</p></li>
+				<li>Next, we define<a id="_idIndexMarker439"/> the multi-model class:<p class="source-code">model = estimator_o3.create_model(role=sagemaker.get_execution_role(), image_uri=xgboost_container)</p><p class="source-code">from sagemaker.multidatamodel import MultiDataModel</p><p class="source-code">model_data_prefix = f's3://{s3_bucket}/{m_prefix}/mma/'</p><p class="source-code">model_name = 'xgboost-mma'</p><p class="source-code">mme = MultiDataModel(name=model_name,</p><p class="source-code">                     model_data_prefix=model_data_prefix,</p><p class="source-code">                     model=model) </p></li>
+				<li>Next, we deploy the multi-model endpoint:<p class="source-code">predictor = mme.deploy(initial_instance_count=1,</p><p class="source-code">                       instance_type='ml.m5.2xlarge',</p><p class="source-code">                       endpoint_name=model_name,</p><p class="source-code">                      serializer=CSVSerializer(),</p><p class="source-code">                    deserializer=JSONDeserializer())</p></li>
+				<li>At this point, the endpoint does not actually have any models behind it. We need to add<a id="_idIndexMarker440"/> them next:<p class="source-code">for est in [estimator_o3, estimator_pm25]:</p><p class="source-code">    artifact_path = \ est.latest_training_job.describe()['ModelArtifacts']['S3ModelArtifacts']</p><p class="source-code">    m_name = artifact_path.split('/')[4]+'.tar.gz'</p><p class="source-code">    </p><p class="source-code">    # This is copying over the model artifact to the S3 location for the MME.</p><p class="source-code">    mme.add_model(model_data_source=artifact_path, model_data_path=m_name)</p><p class="source-code">    </p><p class="source-code">list(mme.list_models())</p></li>
+				<li>We're ready to test the endpoint. Download two test files, one for each parameter:<p class="source-code">s3.download_file(s3_bucket, f"{s3_output_prefix}/pm25/test/part-00120-81a51ddd-c8b5-47d0-9431-0a5da6158754-c000.csv", 'pm25.csv')</p><p class="source-code">s3.download_file(s3_bucket, f"{s3_output_prefix}/o3/test/part-00214-ae1a5b74-e187-4b62-ae4a-385afcbaa766-c000.csv", 'o3.csv')</p></li>
+				<li>Read the files and get inferences, specifying which model we want to use:<p class="source-code">with open('pm25.csv', 'r') as TF:</p><p class="source-code">    pm_lines = TF.readlines()</p><p class="source-code">with open('o3.csv', 'r') as TF:</p><p class="source-code">    o_lines = TF.readlines()</p><p class="source-code">for tl in pm_lines[0:5]:</p><p class="source-code">    result = predictor.predict(data = tl.strip(), target_model='pm25.tar.gz')</p><p class="source-code">    print(result)</p><p class="source-code">for tl in o_lines[0:5]:</p><p class="source-code">    result = predictor.predict(data = tl.strip(), target_model='o3.tar.gz')</p><p class="source-code">    print(result)</p></li>
+			</ol>
+			<p>Now that we've <a id="_idIndexMarker441"/>seen how to deploy multiple models for testing or other purposes, let's turn to handling fl<a id="_idTextAnchor194"/>uctuating traffic demands.</p>
+			<h1 id="_idParaDest-154"><a id="_idTextAnchor195"/>Scaling inference endpoints to meet inference traffic demands</h1>
+			<p>When we need a real-time <a id="_idIndexMarker442"/>inference endpoint, the processing power requirements may vary based on incoming traffic. For example, if we are providing air quality inferences for a mobile application, usage will likely fluctuate based on time of day. If we provision the inference endpoint for peak load, we will pay too much during off-peak times. If we provision the inference endpoint for a smaller load, we may hit performance bottlenecks during peak times. We can use inference endpoint auto-scaling to adjust capacity to demand.</p>
+			<p>There are two <a id="_idIndexMarker443"/>types of scaling, vertical and horizontal. <strong class="bold">Vertical scaling</strong> means that we adjust the size of an individual endpoint instance. <strong class="bold">Horizontal scaling</strong> means that we adjust the number of endpoint instances. We prefer horizontal scaling<a id="_idIndexMarker444"/> as it results in less disruption for end users; a load balancer can redistribute traffic without having an impact on end users.</p>
+			<p>There are four steps to<a id="_idIndexMarker445"/> configure autoscaling for a SageMaker inference endpoint:</p>
+			<ul>
+				<li>Set the minimum and maximum number of instances.</li>
+				<li>Choose a scaling metric.</li>
+				<li>Set the scaling policy.</li>
+				<li>Set the cooldown period.</li>
+			</ul>
+			<p>Although you can set up autoscaling automatically using the API, in this section, we'll go through the steps in the console. To begin, go to the <strong class="bold">Endpoints</strong> section of the SageMaker console, as shown in the following screenshot:</p>
+			<div>
+				<div id="_idContainer113" class="IMG---Figure">
+					<img src="image/B17249_10_01.jpg" alt="Figure 10.1 – Endpoints listed in the SageMaker console&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 10.1 – Endpoints listed in the SageMaker console</p>
+			<p>Select one of your endpoints, and in the section called <strong class="bold">Endpoint runtime settings</strong>, choose <strong class="bold">Configure auto scaling</strong>:</p>
+			<div>
+				<div id="_idContainer114" class="IMG---Figure">
+					<img src="image/B17249_10_02.jpg" alt="Figure 10.2 – Endpoint runtime settings&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 10.2 – Endpoint runtime settings</p>
+			<p>Now, let's walk through the more detailed <a id="_idTextAnchor196"/>inference endpoint settings.</p>
+			<h2 id="_idParaDest-155"><a id="_idTextAnchor197"/>Setting the minimum and maximum capacity</h2>
+			<p>You can set <a id="_idIndexMarker446"/>boundaries on the minimum and maximum number of instances an endpoint can use. These boundaries let you protect against surges in demand that will result in unexpected costs. If you anticipate periodic spikes, build a circuit breaker into your application to shed load before it hits the inference endpoint. The following screenshot shows these settings in the console:</p>
+			<div>
+				<div id="_idContainer115" class="IMG---Figure">
+					<img src="image/B17249_10_03.jpg" alt="Figure 10.3 – Setting minimum and maximum capacity&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 10.3 – Setting minimum and maximum capacity</p>
+			<p>If your load is <a id="_idIndexMarker447"/>highly variable, you can start with a small instance type and scale up aggressively. This prevents you from paying for a larger instance typ<a id="_idTextAnchor198"/>e that you don't always need.</p>
+			<h2 id="_idParaDest-156"><a id="_idTextAnchor199"/>Choosing a scaling metric</h2>
+			<p>We need to decide <a id="_idIndexMarker448"/>when to trigger a scaling action. We do that by specifying a CloudWatch metric. By default, SageMaker provides two useful metrics:</p>
+			<ul>
+				<li><strong class="source-inline">InvocationsPerInstance</strong> reports the number of inference requests sent to each endpoint instance over some time period.</li>
+				<li><strong class="source-inline">ModelLatency</strong> is the time in microseconds to respond to inference requests.</li>
+			</ul>
+			<p>We recommend <strong class="source-inline">ModelLatency</strong> as a metric for autoscaling, as it reports on the end user experience. Setting the <a id="_idIndexMarker449"/>actual value for the metric will depend on your requirements and some observation of endpoint performance over time. For example, you may find that latency over 100 milliseconds results in a degraded user experience if the inference result passes through several other services that add their own latency before t<a id="_idTextAnchor200"/>he result reaches the end user.</p>
+			<h2 id="_idParaDest-157"><a id="_idTextAnchor201"/>Setting the scaling policy</h2>
+			<p>You can choose<a id="_idIndexMarker450"/> between <strong class="bold">target tracking</strong> and <strong class="bold">step scaling</strong>. Target tracking policies are more useful and try to adjust capacity to keep some target metric within a given boundary. Step scaling policies are more advanced and increas<a id="_idTextAnchor202"/>e capacity in incremental steps.</p>
+			<h2 id="_idParaDest-158"><a id="_idTextAnchor203"/>Setting the cooldown period </h2>
+			<p>The <strong class="bold">cooldown period</strong> is how <a id="_idIndexMarker451"/>long the endpoint will wait after one scaling action before starting another scaling action. If you let the endpoint respond instantaneously, you'd end up scaling too often. As a general rule, scale up aggressively and scale down conservatively.  </p>
+			<p>The following screenshot shows how to configure the target metric value and cooldown period if you use the default scaling policy:</p>
+			<div>
+				<div id="_idContainer116" class="IMG---Figure">
+					<img src="image/B17249_10_04.jpg" alt="Figure 10.4 – Setting a target metric value and cooldown period&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 10.4 – Setting a target metric value and cooldown period</p>
+			<p>Next, let's look at another optimization tec<a id="_idTextAnchor204"/>hnique for deep learning models.</p>
+			<h1 id="_idParaDest-159"><a id="_idTextAnchor205"/>Using Elastic Inference for deep learning models</h1>
+			<p>If you examine the<a id="_idIndexMarker452"/> overall cost of ML, you may<a id="_idIndexMarker453"/> be surprised to see that the bulk of your monthly cost comes from real-time inference endpoints. Training jobs, while potentially resource-intensive, run for some time and then terminate. Managed notebook instances can be shut down during off hours. But inference endpoints run 24 hours a day, 7 days a week. If you are using a deep learning model, inference endpoint costs become more pronounced, as instances with dedicated GPU capacity are more expensive than other comparable instances.</p>
+			<p>When you obtain inferences from a deep learning model, you do not need as much GPU capacity as you need during training. <strong class="bold">Elastic Inference</strong> lets you attach fractional GPU capacity to regular EC2<a id="_idIndexMarker454"/> instances or <strong class="bold">Elastic Container Service</strong> (<strong class="bold">ECS</strong>) containers. As a result, you can get deep learning inferences quickly at a reduced cost. </p>
+			<p>The <em class="italic">Elastic Inference</em> section<a id="_idIndexMarker455"/> in the notebook shows<a id="_idIndexMarker456"/> how to attach an Elastic Inference accelerator to an endpoint, as you can see in the following code block:</p>
+			<p class="source-code">predictor_ei = predictor.deploy(initial_instance_count = 1, instance_type = 'ml.m5.xlarge', </p>
+			<p class="source-code">                    serializer=CSVSerializer(),</p>
+			<p class="source-code">                    deserializer=JSONDeserializer(),</p>
+			<p class="source-code">                    accelerator_type='ml.eia2.medium')</p>
+			<p>Consider a case where we need some GPU capacity for inference. Let's consider three options for the instance type and compare the cost. Assume that we run the endpoint for 720 hours per month. The next table compares the monthly cost for different inference options, using published prices at the time of writing:</p>
+			<div>
+				<div id="_idContainer117" class="IMG---Figure">
+					<img src="image/B17249_10_05.jpg" alt="Figure 10.5 – Inference cost comparison&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 10.5 – Inference cost comparison</p>
+			<p>You'll need to look <a id="_idIndexMarker457"/>at your specific use case and<a id="_idIndexMarker458"/> figure out the best combination of RAM, CPU, network throughput, and GPU capacity that meets your performance requirements at the lowest cost. If your inferences are entirely GPU-bound, the Inferentia instance will probably give you the best price-performance balance. If you need more traditional compute resources with some GPU, the P2/P3 family will work well. If you need very little overall capacity, Elastic Inference provides the cheapest GPU option.</p>
+			<p>In the next section, we'll cover one more optimization technique for models deployed to specific hardware<a id="_idTextAnchor206"/>.</p>
+			<h1 id="_idParaDest-160"><a id="_idTextAnchor207"/>Optimizing models with SageMaker Neo</h1>
+			<p>In the <a id="_idIndexMarker459"/>previous section, we saw how Elastic Inference<a id="_idIndexMarker460"/> can reduce inference costs for deep learning models. Similarly, SageMaker Neo lets you improve inference performance and reduce costs by compiling trained ML models for better performance on specific platforms. While that will help in general, it's particularly effective when you are trying to run inference on low-powered edge devices.  </p>
+			<p>In order to use SageMaker Neo, you simply start a compilation job with a trained model in a supported framework. When the compilation job completes, you can deploy the artifact to a SageMaker endpoint or to an edge device using the <em class="italic">Greengrass</em> IoT platform.</p>
+			<p>The <em class="italic">Model optimization with SageMaker Neo</em> section in the notebook demonstrates how to compile our XGBoost model for use on a hosted endpoint:</p>
+			<ol>
+				<li value="1">First, we need to get the length (number of features) of an input record:<p class="source-code">ncols = len(t_lines[0].split(','))</p></li>
+				<li>Now, we'll<a id="_idIndexMarker461"/> compile one of our trained <a id="_idIndexMarker462"/>models. We need to specify the target platform, which in this case is just a standard <strong class="source-inline">ml_m5</strong> family:<p class="source-code">import sagemaker</p><p class="source-code">from sagemaker.model import Model</p><p class="source-code">n_prefix = 'xgboost-sample-neo'</p><p class="source-code">n_output_path = 's3://{}/{}/{}/output'.format(s3_bucket, n_prefix, 'xgboost-neo')</p><p class="source-code">m1 = Model(xgboost_container,model_data=estimator\    .latest_training_job.describe()['ModelArtifacts']['S3ModelArtifacts'], </p><p class="source-code">           role=sagemaker.get_execution_role())</p><p class="source-code">neo_model = m1.compile('ml_m5', </p><p class="source-code">           {'data':[1, ncols]}, </p><p class="source-code">           n_output_path, </p><p class="source-code">           sagemaker.get_execution_role(), </p><p class="source-code">           framework='xgboost', </p><p class="source-code">           framework_version='latest',</p><p class="source-code">           job_name = 'neojob')</p></li>
+				<li>Once the compilation job finishes, we can deploy the compiled model as follows:<p class="source-code">neo_predictor = neo_model.deploy(initial_instance_count = 1, instance_type = 'ml.m5.xlarge', </p><p class="source-code">                    serializer=CSVSerializer(),</p><p class="source-code">                    deserializer=JSONDeserializer(),</p><p class="source-code">                    endpoint_name='neo_endpoint')</p></li>
+				<li>Let's test the<a id="_idIndexMarker463"/> endpoint to see whether we <a id="_idIndexMarker464"/>see a speed-up:<p class="source-code">for tl in t_lines[0:5]:</p><p class="source-code">    result = smrt.invoke_endpoint(EndpointName='neo_endpoint',</p><p class="source-code">                    ContentType="text/csv",</p><p class="source-code">                    Body=tl.strip())</p><p class="source-code">    rbody = \ StreamingBody(raw_stream=result['Body'],content_length=int(result['ResponseMetadata']['HTTPHeaders']['content-length']))</p><p class="source-code">    print(f"Result from {result['InvokedProductionVariant']} = {rbody.read().decode('utf-8')}")</p></li>
+			</ol>
+			<p>After sending in a few invocation requests, let's check the CloudWatch metrics. Back in the console page for the compiled endpoint, click on <strong class="bold">View invocation metrics</strong> in the <strong class="bold">Monitor</strong> section, as shown in the following screenshot:</p>
+			<div>
+				<div id="_idContainer118" class="IMG---Figure">
+					<img src="image/B17249_10_06.jpg" alt="Figure 10.6 – The Monitor section of the endpoint console&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 10.6 – The Monitor section of the endpoint console</p>
+			<p>You'll now see the<a id="_idIndexMarker465"/> CloudWatch metrics console, as<a id="_idIndexMarker466"/> seen in the following screenshot. Here, choose the <strong class="bold">ModelLatency</strong> and <strong class="bold">OverheadLatency</strong> metrics:</p>
+			<div>
+				<div id="_idContainer119" class="IMG---Figure">
+					<img src="image/B17249_10_07.jpg" alt="Figure 10.7 – CloudWatch metrics console&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 10.7 – CloudWatch metrics console</p>
+			<p>The model latency<a id="_idIndexMarker467"/> in my simple tests showed 10<a id="_idIndexMarker468"/> milliseconds for a regular XGBoost endpoint and went down to 9 milliseconds after compiling with Neo. The impact of a compiled model will be much more significant if you are using a deep learning model on a lower-powere<a id="_idTextAnchor208"/>d device.</p>
+			<h1 id="_idParaDest-161"><a id="_idTextAnchor209"/>Summary</h1>
+			<p>In this chapter, we looked at several ways to improve inference performance and reduce inference cost. These methods include using batch inference where possible, deploying several models behind a single inference endpoint to reduce costs and help with advanced canary or blue/green deployments, scaling inference endpoints to meet demand, and using Elastic Inference and SageMaker Neo to provide better inference performance at a lower cost.</p>
+			<p>In the next chapter, we'll discuss monitoring and other important operational aspects of ML.</p>
+		</div>
+	</body></html>
