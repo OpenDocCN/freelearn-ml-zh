@@ -1,0 +1,814 @@
+<html><head></head><body>
+		<div id="_idContainer075">
+			<h1 id="_idParaDest-82"><em class="italic"><a id="_idTextAnchor082"/>Chapter 5</em>: Advanced Model Building – Part I</h1>
+			<p>In this chapter, we begin the transition from basic to advanced model building through the introduction of the nuanced issues and choices that a data scientist considers when building enterprise-grade models. We will discuss data splitting options, compare modeling algorithms, present a two-stage grid-search strategy for hyperparameter optimization, introduce H2O AutoML for automatically fitting multiple algorithms to data, and further investigate feature engineering tactics to extract as much information as possible from the data. We will introduce H2O Flow, a menu-based UI that is included with H2O, which is useful for monitoring the health of the H2O cluster and enables interactive data and model investigations.</p>
+			<p>Throughout the entire process, we will illustrate these advanced model-building concepts using the Lending Club problem that was introduced in <a href="B16721_03_Final_SK_ePub.xhtml#_idTextAnchor042"><em class="italic">Chapter 3</em></a>, <em class="italic">Fundamental Workflow – Data to Deployable Model</em>. By the end of this chapter, you will be able to build an enterprise-scale, optimized predictive model using one or more supervised learning algorithms available within H2O. After that, all that is left is to review the model and deploy it into production.</p>
+			<p>In this chapter, we will cover the following main topics:</p>
+			<ul>
+				<li>Splitting data for validation or cross-validation and testing</li>
+				<li>Algorithm considerations </li>
+				<li>Model optimization with grid search</li>
+				<li>H2O AutoML</li>
+				<li>Feature engineering options</li>
+				<li>Leveraging H2O Flow to enhance your IDE workflow</li>
+				<li>Putting it all together – algorithms, feature engineering, grid search, and AutoML </li>
+			</ul>
+			<h1 id="_idParaDest-83"><a id="_idTextAnchor083"/>Technical requirements</h1>
+			<p>We are introducing the code and datasets in this chapter for the first time. At this point, if you have not set up your H2O environment, please refer to <a href="B16721_Appendix_Final_SK_ePub.xhtml#_idTextAnchor268"><em class="italic">Appendix</em></a><em class="italic"> – Alternative Methods to Launch H2O Clusters,</em> to do so.  </p>
+			<h1 id="_idParaDest-84"><a id="_idTextAnchor084"/>Splitting data for validation or cross-validation and testing</h1>
+			<p>Splitting data into training, validation, and test sets is the accepted<a id="_idIndexMarker227"/> standard for model building<a id="_idIndexMarker228"/> when the size of the data is sufficiently large. The idea <a id="_idIndexMarker229"/>behind validation is simple: most algorithms naturally overfit on training data. Here, overfitting means that some of what is being modeled are actual idiosyncrasies of that specific dataset (for instance, noise) rather than representative of the population as a whole. So, how do you correct this? Well, you can<a id="_idIndexMarker230"/> do it by creating a holdout sample, called a validation set, which is scored against during the model-building process to determine whether what is being modeled is a signal or noise. This enables things such as hyperparameter tuning, model regularization, early stopping, and more.   </p>
+			<p>The test dataset is an additional holdout that is used at the end of model building to determine true model performance. Having holdout test data is critical for any model build. In fact, it is so critical that you should neither trust nor deploy a model that has not been measured against a test dataset. </p>
+			<p>An alternative to the train-validate-test split is to use a train-test split with k-fold cross-validation<a id="_idIndexMarker231"/> on the training data. Here is how that works:</p>
+			<ol>
+				<li>Split the training data into k-folds, where, in our example, k is 5. </li>
+				<li>Fit a model with one of the folds playing the role of validation data and the other four folds being combined into training data. </li>
+				<li>Repeat this so that each fold is used as validation once. </li>
+			</ol>
+			<p>This yields five models, each validated on a different subset of the data. </p>
+			<p>The following diagram illustrates this concept nicely:</p>
+			<div>
+				<div id="_idContainer029" class="IMG---Figure">
+					<img src="image/Figure_5.1_B16721.jpg" alt="Figure 5.1 – Illustration of 5-fold cross-validation&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption"> </p>
+			<p class="figure-caption">Figure 5.1 – Illustration of 5-fold cross-validation</p>
+			<p>The k-fold cross-validation approach<a id="_idIndexMarker232"/> was originally developed for small data to allow the model to see more data in training. This comes at the cost of higher computational expenses. For many data scientists, k-fold cross-validation is used regardless of the data size.</p>
+			<p class="callout-heading">Model Overfitting and Data Splitting</p>
+			<p class="callout">The concept of model overfitting<a id="_idIndexMarker233"/> is critical. By definition, overfit models do not generalize<a id="_idIndexMarker234"/> well. If you are using a train-validate-test approach and building many models on the same validation set, it is likely that the leading model is overfit on the validation data. This likelihood increases as the number of models increases. Measuring the leading models against a holdout test set is the best indication of actual performance after deployment.</p>
+			<p class="callout">We can minimize any overfit-to-validation issues by ensuring each model is built on its own randomly selected train-validate partition. This could occur naturally in k-fold cross-validation if each model is built on a different partitioning of data. </p>
+			<p class="callout">An interesting thing happens with data science competitions that have multiple entries (in the hundreds or thousands) that are tested against a blind holdout test dataset. It has been shown that leading models commonly overfit on the test data. So, what should you do in such a situation? The obvious answer is to have an additional holdout set, such as a meta-test set, that can<a id="_idIndexMarker235"/> be used to fairly evaluate how well these models would generalize<a id="_idIndexMarker236"/> after deployment.</p>
+			<p>In the next section, we will demonstrate both approaches using the Lending Club dataset. The following code begins in the <em class="italic">Model training</em> section of <a href="B16721_03_Final_SK_ePub.xhtml#_idTextAnchor042"><em class="italic">Chapter 3</em></a>, <em class="italic">Fundamental Workflow – Data to Deployable Model</em>, specifically in <em class="italic">step 3</em> of <em class="italic">Fundamental Workflow</em>. </p>
+			<h2 id="_idParaDest-85"><a id="_idTextAnchor085"/>Train, validate, and test set splits</h2>
+			<p>We split the data into three parts: 60% for training, 20% for validation, and 20% for final<a id="_idIndexMarker237"/> testing, as <a id="_idIndexMarker238"/>shown in the following<a id="_idIndexMarker239"/> code block:</p>
+			<pre class="source-code">train, valid, test = loans.split_frame(</pre>
+			<pre class="source-code">    seed = 25,</pre>
+			<pre class="source-code">    ratios = [0.6, 0.2],</pre>
+			<pre class="source-code">    destination_frames = ["train", "valid", "test"]</pre>
+			<pre class="source-code">) </pre>
+			<p>The preceding code is straightforward. Optionally, we set <strong class="source-inline">seed</strong> for the reproducibility of the data splits. The <strong class="source-inline">ratios</strong> parameter only requires the training and validation proportions, and the test split is obtained by subtraction from one. The <strong class="source-inline">destination_frames</strong> option allows us to name the resulting data objects, which is not required but will make their identification in H2O Flow easier.</p>
+			<h2 id="_idParaDest-86"><a id="_idTextAnchor086"/>Train and test splits for k-fold cross-validation</h2>
+			<p>We could also split the data<a id="_idIndexMarker240"/> into two parts: 80% for training<a id="_idIndexMarker241"/> and 20% for testing. This can be done using a k-fold cross-validation approach, as the following code demonstrates:</p>
+			<pre class="source-code">train_cv, test_cv = loans.split_frame(</pre>
+			<pre class="source-code">    seed = 25,</pre>
+			<pre class="source-code">    ratios = [0.8],</pre>
+			<pre class="source-code">    destination_frames = ["train_cv", "test_cv"]</pre>
+			<pre class="source-code">) </pre>
+			<p class="callout-heading">How to Set a Seed</p>
+			<p class="callout">Random numbers in current <a id="_idIndexMarker242"/>computing are not random at all, but deterministic. <strong class="bold">Pseudo</strong>-<strong class="bold">random number generators</strong> (<strong class="bold">PRNGs</strong>) are complicated mathematical functions that return a fixed sequence of values given a specific seed. If the seed is omitted, the computer will set the seed automatically – typically, from the system clock. This seed value is often reported in logs. Setting the seed in code allows the analysis to be explicitly reproducible.</p>
+			<p>Next, we will turn<a id="_idIndexMarker243"/> our attention to choosing a modeling<a id="_idIndexMarker244"/> algorithm.</p>
+			<h1 id="_idParaDest-87"><a id="_idTextAnchor087"/>Algorithm considerations</h1>
+			<p>In this section, we will address<a id="_idIndexMarker245"/> the question of how a data scientist should decide which of the many machine learning and statistical algorithms should be chosen to solve a particular problem. We assume some prior familiarity with statistical and machine learning models such as logistic regression, decision trees, random forests, and gradient boosting models. </p>
+			<p>As outlined in <a href="B16721_04_Final_SK_ePub.xhtml#_idTextAnchor064"><em class="italic">Chapter 4</em></a>, <em class="italic">H2O Model Building at Scale – Capability Articulation</em> H2O provides multiple supervised and unsupervised learning algorithms that can be used to build models. For example, in the case of a binary classification<a id="_idIndexMarker246"/> problem, a data scientist<a id="_idIndexMarker247"/> could choose<a id="_idIndexMarker248"/> a parametric GLM<a id="_idIndexMarker249"/> model (logistic regression); semiparametric<a id="_idIndexMarker250"/> GAM; nonparametric<a id="_idIndexMarker251"/> tree-based<a id="_idIndexMarker252"/> approaches such as <strong class="bold">Random Forest</strong>, <strong class="bold">GBM</strong>, <strong class="bold">XGBoost</strong>, or <strong class="bold">RuleFit</strong>; models from the machine learning community such as <strong class="bold">Support Vector Machines</strong> (<strong class="bold">SVMs</strong>) or <strong class="bold">Deep Learning Neural Networks</strong>; or the simple <strong class="bold">Naïve Bayes Classifier</strong>. To complicate things even further, any subset<a id="_idIndexMarker253"/> of these algorithms could be combined into one predictive model using <strong class="bold">Stacked Ensembles</strong> (which is a method for combining multiple highly predictive models into a single model; we will discuss this in the <em class="italic">H2O AutoML</em> section). So, what is a data scientist to do?</p>
+			<p class="callout-heading">A Note on RuleFit</p>
+			<p class="callout">The RuleFit algorithm<a id="_idIndexMarker254"/> is actually a penalized linear model. Here, we list it with tree-based models because the rules are extracted from a large population of randomly created decision trees. Rule selection and model regularization occur via LASSO. The intent is to combine the interpretability of linear models and explicit rules with the flexibility and predictive power of tree-based methods. </p>
+			<p>If the only criterion for model selection<a id="_idIndexMarker255"/> is pure predictive power, a data scientist could simply try everything and pick the model that performs best on a test dataset. Let's call this the <em class="italic">Kaggle solution</em>, named after the popular Kaggle<a id="_idIndexMarker256"/> data science competitions. Kaggle competitions result in algorithms and modeling approaches being pressure tested over multiple problems and datasets. Insights discovered during these competitions have found their way into real-world data science practices. </p>
+			<p>However, in an enterprise setting, it is rare for predictive power to be the only consideration for algorithm selection. Model transparency could be another. As an oversimplification, parametric models that are inherently interpretable (GLM) might be less predictive than nonparametric models. Nonparametric models such as random forest, GBM, XGBoost, and deep learning neural networks are black boxes that are difficult to interpret but frequently produce superior predictions. (Note that the GAM and RuleFit algorithms combine model transparency with predictions that often rival black-box methods.) </p>
+			<p>In addition to pure modeling criteria, there are business and implementation considerations that come into play in modeling and deployment decisions. We will cover these, in more detail, in the later chapters.</p>
+			<p>In the remaining part of this section, we will give a high-level overview of decision trees, random forest, and gradient boosting models. We will illustrate the Lending Club data while concentrating on two specific boosting implementations: H2O GBM and XGBoost. </p>
+			<p class="callout-heading">Algorithm Popularity in the Industry</p>
+			<p class="callout">Our collective experience of working with scores of customers spanning multiple industries leads to the following general observations. First, classification problems are more prevalent than regression problems by a wide margin. Second, when choosing an algorithm, the gold standard for interpretable classification problems remains logistic regression (GLM). The most frequent nonparametric algorithm choice is some form of gradient boosting, currently the GBM, XGBoost, or LightGBM implementations. The popularity of gradient boosting has been helped by its frequent appearance (either alone or in an ensemble) high<a id="_idIndexMarker257"/> up on the Kaggle leaderboards.</p>
+			<h2 id="_idParaDest-88"><a id="_idTextAnchor088"/>An introduction to decision trees</h2>
+			<p>At the heart of every random forest<a id="_idIndexMarker258"/> or GBM implementation is the concept of a decision tree. A decision tree can be used for either <em class="italic">classification</em>, where observations are assigned to discrete groups, or <em class="italic">regression</em>, where observations are a numerical outcome.</p>
+			<p>Observation assignment is made through <em class="italic">conditional control statements</em> that form a tree-like<a id="_idIndexMarker259"/> structure. The general decision tree algorithm can be described as follows:</p>
+			<ol>
+				<li value="1">Search through all the candidate predictors, identifying the variable split that yields the greatest predictive power.</li>
+				<li>For each newly created branch, repeat the variable splitting process from <em class="italic">step 1</em>. </li>
+				<li>Continue until the stopping criteria are met.</li>
+			</ol>
+			<p>The functions used for splitting include information entropy and the Gini coefficient. Let's illustrate them using entropy. In information theory, the entropy of a random variable is the average level of uncertainty in the variable's outcomes. A pure or homogeneous classification tree node will have an entropy of zero. At each candidate split, we calculate the entropy and choose the split with the lowest entropy. </p>
+			<p>Conceptually, we could continue splitting until all nodes are pure, but that would yield an extremely overfit tree. Instead, we utilize stopping criteria such as the following:</p>
+			<ul>
+				<li>The minimum number of observations that is needed at each node after splitting</li>
+				<li>The reduction in entropy is not enough based on a selected cutoff value</li>
+				<li>The maximum depth of the tree</li>
+			</ul>
+			<p>To illustrate, let's suppose we are building a decision tree to model the probability of surviving<a id="_idIndexMarker260"/> the sinking of the Titanic in 1912. Our data includes name, gender, age, the class of passage booked, the price of the tickets, the location of the cabin or berth, the city where the passenger boarded, any traveling companions, and more. The resulting decision tree can be found in the diagram that follows. </p>
+			<p>The first split increases the predictive power the most (by reducing entropy the most):</p>
+			<ul>
+				<li>Is the subject Male? If yes, the next split is created by the <strong class="source-inline">Age &lt; 18</strong> rule. </li>
+				<li>For males older than 18, the survival probability for this terminal or <em class="italic">leaf</em> node is 17%. </li>
+				<li>For males under 18, one more split is needed: <strong class="source-inline">3rd Class</strong>. </li>
+				<li>For males in the 3rd class who are under 18, the survival probability is 14%. </li>
+				<li>For males in the 1st and 2nd classes who are under 18, the survival probability is 44%. </li>
+				<li>The tree on the <strong class="source-inline">Male=Yes</strong> branch stops splitting at these leaf nodes because one or more stopping criteria have been met. </li>
+			</ul>
+			<p>A similar process for the <strong class="source-inline">Male=No</strong> branch proceeds. Note that according to this model, non-<strong class="source-inline">3rd Class</strong> females have a survival probability of 95%. For <strong class="source-inline">3rd Class</strong> female passengers, survival probabilities depend on where they boarded, resulting in either a 38% or 70% survival probability leaf node. The decision tree model supports the <em class="italic">women and children first</em> ethos for emergencies at sea:</p>
+			<div>
+				<div id="_idContainer030" class="IMG---Figure">
+					<img src="image/Figure_5.2_B16721.jpg" alt="Figure 5.2 – A decision tree modeling the survival probabilities on the Titanic&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.2 – A decision tree modeling the survival probabilities on the Titanic</p>
+			<p>Decision trees have some clear advantages. Their layout is simple to comprehend, and their interpretation, as we have just demonstrated, is straightforward. The algorithm trains<a id="_idIndexMarker261"/> and scores quickly. Decision trees are robust when it comes to nonlinear relationships, feature distributions, correlated features, and missing values. On the other hand, they do not model linear relationships efficiently. They have high variance, meaning, in part, that trees are easily overfitted. Perhaps their greatest drawback is that individual decision trees don't predict particularly well, which is an issue that was first raised by the original developers of the decision tree methodology.</p>
+			<p>To remedy the poor predictive properties of decision trees, algorithms based on ensembles of individual trees have been developed. In general, the objective of ensemble methods is to create a <em class="italic">strong learner</em> by combining information across multiple <em class="italic">weak learners</em> (in our case, decision trees). The adaptation of two ensemble methods, bagging and boosting, to trees has resulted in random forest and gradient boosting algorithms, respectively. We will review each of these ensemble methods and their implementations in H2O next.</p>
+			<h2 id="_idParaDest-89"><a id="_idTextAnchor089"/>Random forests</h2>
+			<p><strong class="bold">Bagging</strong> (which is short for <em class="italic">bootstrap aggregating</em>) is an ensemble<a id="_idIndexMarker262"/> method that fits models to bootstrapped<a id="_idIndexMarker263"/> samples of the data and averages across them. <strong class="bold">Bootstrapping</strong> is a resampling method that samples from the data<a id="_idIndexMarker264"/> rows with replacement. This creates randomness in the row (or observation) space. Random forest is a bagging method for decision trees that adds randomness to the column (or variable) space. </p>
+			<p>The random forest algorithm can be described as follows:</p>
+			<ol>
+				<li value="1">Build a deep tree based on randomly selected rows of the data.</li>
+				<li>At each split, only evaluate a random subset of variables to split on.</li>
+				<li>Repeat this many times, creating a <em class="italic">forest</em> as a collection of all the trees.</li>
+				<li>Get the average across all trees in the forest.</li>
+			</ol>
+			<p>H2O includes two implementations of random forest, <strong class="bold">Distributed Random Forest</strong> (<strong class="bold">DRF</strong>) and <strong class="bold">Extremely Randomized Trees</strong> (<strong class="bold">XRT</strong>). In the following sections, we will summarize these algorithms.</p>
+			<h3>Distributed Random Forest (DRF)</h3>
+			<p>DRF is the default random<a id="_idIndexMarker265"/> forest implementation in H2O. The highlights<a id="_idIndexMarker266"/> of this algorithm are listed as follows:</p>
+			<ul>
+				<li>Each tree in a DRF is built in parallel.</li>
+				<li>The splitting rule is created by choosing the most discriminative threshold among a random subset of candidate features.</li>
+			</ul>
+			<h3>Extremely Randomized Trees (XRT)</h3>
+			<p>The XRT algorithm adds additional<a id="_idIndexMarker267"/> randomness to the splitting-rule<a id="_idIndexMarker268"/> process. This has the effect of reducing model variance at the cost of (slightly) increased bias. XRT is enabled by setting <strong class="source-inline">histogram_type="Random"</strong>:</p>
+			<ul>
+				<li>Each tree in an XRT is built in parallel.</li>
+				<li>Rather than finding the most discriminative threshold, this algorithm will create thresholds at random for each candidate variable. The best of this set is picked as the splitting rule.</li>
+			</ul>
+			<p>The hyperparameters for both<a id="_idIndexMarker269"/> random forest implementations<a id="_idIndexMarker270"/> are shared.</p>
+			<h3>Random forest hyperparameters</h3>
+			<p>The random forest methods<a id="_idIndexMarker271"/> in H2O require the following hyperparameters:</p>
+			<ul>
+				<li>The number of trees to be built, <strong class="source-inline">ntrees</strong> (this defaults to 50).</li>
+				<li>The maximum tree depth, <strong class="source-inline">max_depth</strong> (this defaults to 20). Note that too large a value can result in overfitting.</li>
+				<li>The minimum number of observations per leaf, <strong class="source-inline">min_rows</strong> (this defaults to 1).</li>
+			</ul>
+			<p>Additional hyperparameters<a id="_idIndexMarker272"/> are available for tuning the random forest model. You can find them at <a href="https://docs.h2o.ai/h2o/latest-stable/h2o-docs/data-science/drf.html">https://docs.h2o.ai/h2o/latest-stable/h2o-docs/data-science/drf.html</a>. A grid search can aid the process of hyperparameter selection and model optimization.</p>
+			<h2 id="_idParaDest-90"><a id="_idTextAnchor090"/>Gradient boosting</h2>
+			<p>Boosting is an ensemble<a id="_idIndexMarker273"/> method that combines models sequentially, with each new model built on the residuals of the previous model. Boosted trees are based on a sequence of relatively shallow decision trees.</p>
+			<p>The boosted trees algorithm<a id="_idIndexMarker274"/> can be described as follows:</p>
+			<ol>
+				<li value="1">Start by building a shallow decision tree.</li>
+				<li>Fit a shallow decision tree to the residuals of the previous tree.</li>
+				<li>Multiply the residual tree by a shrinkage parameter (or the learning rate).</li>
+				<li>Repeat <em class="italic">steps 2</em> and <em class="italic">3</em> until the stopping criteria are met.</li>
+			</ol>
+			<p>Building on the residuals<a id="_idIndexMarker275"/> makes the algorithm concentrate on areas where the model is not predicting well. The process is illustrated in the following diagram:</p>
+			<div>
+				<div id="_idContainer031" class="IMG---Figure">
+					<img src="image/Figure_5.3_B16721.jpg" alt="Figure 5.3 – The H2O GBM algorithm&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.3 – The H2O GBM algorithm</p>
+			<p>The GBM approach results in highly predictive models, but care must be taken to avoid overfitting. H2O includes two versions of gradient boosting: H2O GBM and XGBoost. In the following sections, we will summarize these algorithms.</p>
+			<h3>H2O GBM</h3>
+			<p>The H2O GBM implementation<a id="_idIndexMarker276"/> follows the original algorithm, as described in the book, <em class="italic">The Elements of Statistical Learning by</em> <em class="italic">Jerome H. Friedman, Robert Tibshirani, and Trevor Hastie</em>, with modifications to improve performance on large and complex data. We can summarize this as follows:</p>
+			<ul>
+				<li>Each tree in a GBM is built in parallel.</li>
+				<li>Categorical variables can be split into groups instead of just using Boolean splits.</li>
+				<li>Shared histograms are used to calculate cut points.</li>
+				<li>H2O uses a greedy search of histogram bins, optimizing the improvement in squared error.</li>
+			</ul>
+			<p>One important advantage<a id="_idIndexMarker277"/> of this implementation is that H2O GBM naturally handles high-cardinality categorical variables (that is, categorical variables with a lot of categories). </p>
+			<h3>XGBoost</h3>
+			<p>XGBoost is very similar to classic<a id="_idIndexMarker278"/> GBM, with the main difference being the inclusion of a penalty term for the number of variables. Mathematically, this means it contains regularization terms in the cost function. Trees are grown in <em class="italic">breadth</em> rather than <em class="italic">depth</em>.</p>
+			<p>Another popular GBM approach is LightGBM. The LightGBM algorithm builds trees as deep as necessary by repeatedly splitting the one leaf that gives the biggest gain. Unlike XGBoost, trees are grown in <em class="italic">depth</em> rather than <em class="italic">breadth</em>. In theory, LightGBM is optimized for sparse data. While H2O does not implement LightGBM directly, it provides a method for emulating<a id="_idIndexMarker279"/> the LightGBM approach using a set of options within XGBoost (such as setting <strong class="source-inline">tree_method="hist"</strong> and <strong class="source-inline">grow_policy="lossguide"</strong>). For more details, please refer to <a href="https://docs.h2o.ai/h2o/latest-stable/h2o-docs/data-science/xgboost.html">https://docs.h2o.ai/h2o/latest-stable/h2o-docs/data-science/xgboost.html</a>.</p>
+			<h3>Boosting hyperparameters</h3>
+			<p>All boosting methods in H2O require<a id="_idIndexMarker280"/> the following hyperparameters:</p>
+			<ul>
+				<li>The number of trees to be built, <strong class="source-inline">ntrees</strong> (the default is 50).</li>
+				<li>The maximum tree depth, <strong class="source-inline">max_depth</strong> (the default is 6).</li>
+				<li>The shrinkage parameter or learning rate, <strong class="source-inline">learn_rate</strong> (the default is 0.3).</li>
+			</ul>
+			<p>Simply adding trees to boosting approaches without further restrictions can lead to overfitting. A grid search can aid in the process of hyperparameter tuning. Additional hyperparameters for boosting will be introduced in the <em class="italic">Model optimization with grid search</em> section.</p>
+			<h2 id="_idParaDest-91"><a id="_idTextAnchor091"/>Baseline model training</h2>
+			<p>Returning to the Lending Club data, now we are ready<a id="_idIndexMarker281"/> to build baseline models for each algorithm we are considering. By baseline, we mean models that have been fitted with settings at reasonable or default values. This will be the starting point in model optimization.</p>
+			<p>As discussed in <a href="B16721_03_Final_SK_ePub.xhtml#_idTextAnchor042"><em class="italic">Chapter 3</em></a>, <em class="italic">Fundamental Workflow – Data to Deployable Model</em>, we start with the <strong class="source-inline">bad_loan</strong> response and the same set of predictors for all models:</p>
+			<pre class="source-code">response = "bad_loan"</pre>
+			<pre class="source-code">omit = ["issue_d", response]</pre>
+			<pre class="source-code">predictors = list(set(loans.columns) - set(omit)) </pre>
+			<p>In the preceding code, we remove the <strong class="source-inline">bad_loan</strong> response variable and the <strong class="source-inline">issue_d</strong> raw date variable from the predictors. Recall that <strong class="source-inline">issue_d</strong> was used to create two features, <strong class="source-inline">issue_d_month</strong> and <strong class="source-inline">issue_d_year</strong>, which are included in the predictors.</p>
+			<p>Next, we fit a baseline H2O GBM model using a train-validate-test split, followed by a baseline XGBoost model using 5-fold cross-validation. </p>
+			<h3>Baseline GBM train-validate-test model</h3>
+			<p>The first model we fit<a id="_idIndexMarker282"/> is a default H2O GBM, trained on the 60%–20% training-validation split with the following default settings:</p>
+			<pre class="source-code">from h2o.estimators.gbm import H2OGradientBoostingEstimator</pre>
+			<pre class="source-code">gbm = H2OGradientBoostingEstimator(seed = 25)</pre>
+			<pre class="source-code">gbm.train(x = predictors,</pre>
+			<pre class="source-code">          y = response,</pre>
+			<pre class="source-code">          training_frame = train,</pre>
+			<pre class="source-code">          validation_frame = valid,</pre>
+			<pre class="source-code">          model_id = "gbm_baseline")</pre>
+			<p>Here, the <strong class="source-inline">model_id</strong> parameter in the <strong class="source-inline">gbm.train</strong> command is optional and used to label the model object for identification in H2O Flow.</p>
+			<p>We will investigate model diagnostics<a id="_idIndexMarker283"/> and explainability, in greater depth, in <a href="B16721_07_Final_SK_ePub.xhtml#_idTextAnchor127"><em class="italic">Chapter 7</em></a>,<em class="italic"> Understanding ML Models</em>. Here, we are only using a couple of those commands to aid in comparing the gradient boosting algorithms. To begin with, we visualize the performance of the baseline GBM model across all splits using the <strong class="source-inline">model_performance</strong> method:</p>
+			<pre class="source-code">%matplotlib inline</pre>
+			<pre class="source-code">gbm.model_performance(train).plot()</pre>
+			<p>The <strong class="source-inline">%matplotlib</strong> command allows figures to be displayed in a Jupyter notebook. This is only required once and is not needed outside of Jupyter. The first ROC curve is for the train split:</p>
+			<div>
+				<div id="_idContainer032" class="IMG---Figure">
+					<img src="image/Figure_5.4_B16721.jpg" alt="Figure 5.4 – The ROC curve for the GBM train split&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.4 – The ROC curve for the GBM train split</p>
+			<p>The second ROC curve for the validation split uses similar code:</p>
+			<pre class="source-code">gbm.model_performance(valid).plot()</pre>
+			<p>This will produce the following output:</p>
+			<div>
+				<div id="_idContainer033" class="IMG---Figure">
+					<img src="image/Figure_5.5_B16721.jpg" alt="Figure 5.5 – The ROC curve for the GBM validation split&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.5 – The ROC curve for the GBM validation split</p>
+			<p>The ROC curve<a id="_idIndexMarker284"/> for the test split uses similar code:</p>
+			<pre class="source-code">gbm.model_performance(test).plot()</pre>
+			<p>This will produce the following output:</p>
+			<div>
+				<div id="_idContainer034" class="IMG---Figure">
+					<img src="image/Figure_5.6_B16721.jpg" alt="Figure 5.6 – The ROC curve for the GBM test split&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.6 – The ROC curve for the GBM test split</p>
+			<p>To extract the AUC for these splits, we enter the following:</p>
+			<pre class="source-code">print(gbm.model_performance(train).auc(),</pre>
+			<pre class="source-code">      gbm.model_performance(valid).auc(),</pre>
+			<pre class="source-code">      gbm.model_performance(test).auc())</pre>
+			<p>The code block<a id="_idIndexMarker285"/> and results, as produced in the Jupyter notebook, are shown here:</p>
+			<div>
+				<div id="_idContainer035" class="IMG---Figure">
+					<img src="image/Figure_5.7_B16721.jpg" alt="Figure 5.7 – The GBM model performance results from the Jupyter notebook&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.7 – The GBM model performance results from the Jupyter notebook</p>
+			<p>Additionally, the train and validation performance values are stored in the model object:</p>
+			<pre class="source-code">gbm.auc(train = True, valid = True)</pre>
+			<p>This will return a dictionary, as follows:</p>
+			<div>
+				<div id="_idContainer036" class="IMG---Figure">
+					<img src="image/Figure_5.8_B16721.jpg" alt="Figure 5.8 – AUC from the GBM model object in the Jupyter notebook&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.8 – AUC from the GBM model object in the Jupyter notebook</p>
+			<p>These results show that the baseline GBM model is overfitting on the training data. This is not a surprise.</p>
+			<p>Let's take a quick look at model interpretation, which we will cover in more depth in <a href="B16721_07_Final_SK_ePub.xhtml#_idTextAnchor127"><em class="italic">Chapter 7</em></a>, <em class="italic">Understanding ML Models</em>. The variable importance plot ranks variables in terms of relative importance in predicting bad loans. Relative importance for a variable is determined by checking whether that variable was used to split on and calculating the decrease in squared error across all trees.</p>
+			<p>Here is the code to produce a variable importance plot: </p>
+			<pre class="source-code">gbm.varimp_plot(20)</pre>
+			<p>The generated plot is as follows:</p>
+			<div>
+				<div id="_idContainer037" class="IMG---Figure">
+					<img src="image/Figure_5.9_B16721.jpg" alt="Figure 5.9 – The baseline GBM variable importance plot&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.9 – The baseline GBM variable importance plot</p>
+			<p>The resulting variable<a id="_idIndexMarker286"/> importance plot, as shown in <em class="italic">Figure 5.9</em>, shows that the address state, which is a high-cardinality categorical variable with 50 levels corresponding to the states in the United States, is by far the most important variable.</p>
+			<h3>Baseline XGBoost cross-validated model</h3>
+			<p>Let's build our baseline XGBoost model using 5-fold cross-validation<a id="_idIndexMarker287"/> and the train-test split: </p>
+			<pre class="source-code">from h2o.estimators import H2OXGBoostEstimator</pre>
+			<pre class="source-code">xgb = H2OXGBoostEstimator(nfolds = 5, seed = 25)</pre>
+			<pre class="source-code">xgb.train(x = predictors,</pre>
+			<pre class="source-code">          y = response,</pre>
+			<pre class="source-code">          training_frame = train_cv,</pre>
+			<pre class="source-code">          model_id = "xgb")</pre>
+			<p>In the preceding code, <strong class="source-inline">nfolds</strong> sets the number of folds, <strong class="source-inline">seed</strong> is optional and included here for instructional purposes, and <strong class="source-inline">model_id</strong> is an optional identifier for use in H2O Flow.</p>
+			<p>We can get AUC for the train and cross-validation sets directly from the model object:</p>
+			<pre class="source-code">xgb.auc(train = True, xval = True)</pre>
+			<p>This yields the following result:</p>
+			<div>
+				<div id="_idContainer038" class="IMG---Figure">
+					<img src="image/Figure_5.10_B16721.jpg" alt="Figure 5.10 – The XGBoost model train and cross-validation performance results&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.10 – The XGBoost model train and cross-validation performance results</p>
+			<p>The test set AUC requires<a id="_idIndexMarker288"/> that we include the test data to be scored against:</p>
+			<pre class="source-code">xgb.model_performance(test_cv).auc()</pre>
+			<p>This results in the following output:</p>
+			<div>
+				<div id="_idContainer039" class="IMG---Figure">
+					<img src="image/Figure_5.11_B16721.jpg" alt="Figure 5.11 – The XGBoost model test performance results from the Jupyter notebook&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.11 – The XGBoost model test performance results from the Jupyter notebook</p>
+			<p>We can easily combine these results into a single dictionary using a little Python code:</p>
+			<pre class="source-code">perf = xgb.auc(train = True, xval = True)</pre>
+			<pre class="source-code">perf["test"] = xgb.model_performance(test_cv).auc()</pre>
+			<pre class="source-code">perf</pre>
+			<p>This Python code block produces the following:</p>
+			<div>
+				<div id="_idContainer040" class="IMG---Figure">
+					<img src="image/Figure_5.12_B16721.jpg" alt="Figure 5.12 – XGBoost model performance as a dictionary&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.12 – XGBoost model performance as a dictionary</p>
+			<p>Again, the AUC values<a id="_idIndexMarker289"/> confirm that the baseline model is overfit on the training data and is far too optimistic. The fact that the cross-validation and test AUC values are in the same ballpark is comforting, as it means the cross-validation procedure is more accurately reflecting what you might see in the out-of-sample test data. This is an important check and might not always be the case, especially when the training and test splits cover different time periods. Next, let's consider a variable importance plot for the baseline XGBoost model:</p>
+			<pre class="source-code">xgb.varimp_plot(20)</pre>
+			<p>The results are as follows:</p>
+			<div>
+				<div id="_idContainer041" class="IMG---Figure">
+					<img src="image/Figure_5.13_B16721.jpg" alt="Figure 5.13 – A baseline XGBoost variable importance plot&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.13 – A baseline XGBoost variable importance plot</p>
+			<p>A comparison of the variable <a id="_idIndexMarker290"/>importance plots for the GBM and XGBoost baseline models demonstrates some of the differences between these two boosting algorithms. Additionally, it introduces us to a more nuanced discussion of how to choose an algorithm given the multiple options under consideration.</p>
+			<p>Notice that the most important variable in the H2O GBM model is <strong class="source-inline">addr_state</strong>, a high-cardinality categorical variable (with approximately 50 levels corresponding to the states in the United States). XGBoost defaults to the one-hot encoding of categorical variable levels. One-hot encoding represents each level of a categorical variable with a numeric variable containing 1 for the rows in that level and 0 otherwise. The one-hot encoding of a categorical variable with 50 levels such as <strong class="source-inline">addr_state</strong> results in 50 new, relatively sparse variables corresponding to each state. In the XGBoost variable importance plot, states appear individually and far lower in importance, such as <strong class="source-inline">addr_state_FL</strong>, <strong class="source-inline">addr_state_CA</strong>, and <strong class="source-inline">addr_state_NV</strong> in the previous plot.</p>
+			<p>A data scientist could always address this issue with feature engineering approaches such as target encoding. Target encoding, which we will revisit in more detail later, is a method for replacing levels of categorical variables with representative numeric values. If target encoding is implemented, then the choice between XGBoost and H2O GBM might come down to pure performance. On the other hand, if target encoding is not an option, then H2O GBM should be the boosting algorithm choice.</p>
+			<p>In other words, XGBoost requires target encoding, while H2O GBM gives the data scientist the option of modeling the high-cardinality categorical variables directly or by using a target-encoded version of those variables. This is a nice illustration of the interaction between algorithms, feature engineering choices, and potentially other factors such as business, compliance, or regulatory considerations. </p>
+			<p>Next, we will turn our<a id="_idIndexMarker291"/> attention to improving our baseline models by using grid search to find the hyperparameter settings for model optimization.</p>
+			<h1 id="_idParaDest-92"><a id="_idTextAnchor092"/>Model optimization with grid search</h1>
+			<p>Choosing an algorithm for building<a id="_idIndexMarker292"/> a predictive model is not enough. Many algorithms<a id="_idIndexMarker293"/> have hyperparameters whose values have a direct impact on the predictive power of the model. So, how do you choose values for your hyperparameters? </p>
+			<p>A brute-force method would create a grid of all possible values and search over them. This approach is computationally expensive, takes an inordinate amount of time, and ultimately, yields results that are not much better than what we could achieve by other means. We have outlined a strategy for grid search that has proved effective in building optimized models while running in a reasonable amount of time.</p>
+			<p>The general strategy<a id="_idIndexMarker294"/> entails, first, tuning a few key parameters using a <strong class="bold">Cartesian</strong> grid search. These key parameters are those we expect to have the biggest impact on the results. Then, we fine-tune other parameters using a random grid search. This two-stage approach allows us to hone in on the computationally expensive parameters first. </p>
+			<p>From our experience with gradient boosting methods across many datasets from many domains, our strategy follows these principles:</p>
+			<ol>
+				<li value="1">The optimal value for maximum allowed tree depth (<strong class="source-inline">max_depth</strong>) is heavily data- and problem-specific. Deeper trees, especially at depths greater than 10, can take significantly longer to train. In the interest of time, it is a good idea to, first, narrow the approximate depth down to a small range of values.</li>
+				<li>We increase the number of trees (<strong class="source-inline">ntrees</strong>) until the validation set error starts increasing.</li>
+				<li>Very low learning rates (<strong class="source-inline">learn_rate</strong>) are universally recommended. This generally yields<a id="_idIndexMarker295"/> better accuracy but requires more trees and additional<a id="_idIndexMarker296"/> computation time. A clever alternative is to start with a relatively high learning rate (say 0.05 or 0.02) and iteratively shrink it by using <strong class="source-inline">learn_rate_annealing</strong>. For example, setting <strong class="source-inline">learn_rate=0.02</strong> and <strong class="source-inline">learn_rate_annealing=0.995</strong> speeds up convergence significantly without sacrificing much accuracy. This is very useful for hyperparameter searches. For even faster scans, values of 0.05 and 0.99 can be tried instead.</li>
+				<li>Sampling rows and columns using <strong class="source-inline">sample_rate</strong> and <strong class="source-inline">col_sample_rate</strong>, respectively, reduces the validation and test set error rates and improves generalization. A good starting point for most datasets is between 70% and 80% sampling on both rows and columns (rates of between 0.7 and 0.8). Optionally, the column sampling rate per tree parameter (<strong class="source-inline">col_sample_rate_per_tree</strong>) can be set. It is multiplicative with <strong class="source-inline">col_sample_rate</strong>. For example, setting both parameters to 0.9 results in an overall 81% of columns being considered for the split. </li>
+				<li>Early stopping using <strong class="source-inline">stopping_rounds</strong>, <strong class="source-inline">stopping_metric</strong>, and <strong class="source-inline">stopping_tolerance</strong> can make grid search more efficient. For our needs, we can use 5, AUC, and 1e-4 as good starting points. This means that if the validation AUC doesn't improve by more than 0.0001 after 5 iterations, the computation will end.</li>
+				<li>To improve the predictive accuracy of highly imbalanced classification datasets, the <strong class="source-inline">sample_rate_per_class</strong> parameter can be set. This implements stratified row sampling based on the specific response class. The parameter values are entered as an array of ratios, one per response class, in lexicographic order. </li>
+				<li>Most of the other options only have a relatively small impact on model performance. That said, they might be worth tuning with a random hyperparameter search.</li>
+			</ol>
+			<p>Next, we will build<a id="_idIndexMarker297"/> an optimized H2O GBM model for the Lending Club data<a id="_idIndexMarker298"/> and compare the results with the baseline model.</p>
+			<h2 id="_idParaDest-93"><a id="_idTextAnchor093"/>Step 1 – a Cartesian grid search to focus on the best tree depth</h2>
+			<p>The optimal <strong class="source-inline">max_depth</strong> parameter value<a id="_idIndexMarker299"/> is very specific to the use case and data<a id="_idIndexMarker300"/> being modeled. Additionally, it has a profound impact on the model training time. In other words, large tree-depth values require significantly more computation than smaller values. First, we will focus on good candidate <strong class="source-inline">max_depth</strong> values using a quick Cartesian grid search.</p>
+			<p>Here, we use early stopping in conjunction with learning rate annealing to speed up convergence and efficiently tune the <strong class="source-inline">max_depth</strong> parameter:</p>
+			<ol>
+				<li value="1">We start by defining the hyperparameters:<p class="source-code">from h2o.grid.grid_search import H2OGridSearch</p><p class="source-code">hyperparams = {</p><p class="source-code">    "max_depth": list(range(2, 14, 2)) </p><p class="source-code">}</p></li>
+				<li>We follow our strategy by defining an excessive number of trees with early stopping enabled. We use learning rate annealing, as shown in the following code block, to shrink the <strong class="source-inline">learn_rate</strong> and sample 80% of the rows and columns. Also, we score every 10 trees in order to make the early stopping reproducible. For model builds with large amounts of data, we might want to score every 100 or 1,000 trees:<p class="source-code">gbm_grid = H2OGradientBoostingEstimator(</p><p class="source-code">    ntrees = 10000,</p><p class="source-code">    stopping_metric = "AUC",</p><p class="source-code">    stopping_rounds = 5,</p><p class="source-code">    stopping_tolerance = 1e-4,</p><p class="source-code">    learn_rate = 0.05,</p><p class="source-code">    learn_rate_annealing = 0.99,</p><p class="source-code">    sample_rate = 0.8,</p><p class="source-code">    col_sample_rate = 0.8,</p><p class="source-code">    score_tree_interval = 10,</p><p class="source-code">    seed = 25</p><p class="source-code">)</p><p class="callout-heading">Setting the score_tree_interval Parameter</p><p class="callout">Scoring trees during a model grid<a id="_idIndexMarker301"/> search is essentially a waste of compute resources, as it requires more time to arrive at an optimum solution. However, it is required to make the early stopping process reproducible. We want to set the value high enough to ensure reproducibility but also not waste compute cycles. This is, largely, data- and problem-specific. The value of 10 that we used earlier is perhaps too aggressive even for this problem; 100 might have been more appropriate.</p></li>
+				<li>Now we define<a id="_idIndexMarker302"/> the grid and set the search <a id="_idIndexMarker303"/>criteria to Cartesian:<p class="source-code">grid = H2OGridSearch(</p><p class="source-code">    gbm_grid,</p><p class="source-code">    hyperparams,</p><p class="source-code">    grid_id = "gbm_depth_grid",</p><p class="source-code">    search_criteria = {"strategy": "Cartesian"}</p><p class="source-code">)</p></li>
+				<li>Then, we fit the grid, as shown in the following code block:<p class="source-code">grid.train(x = predictors,</p><p class="source-code">           y = response,</p><p class="source-code">           training_frame = train,</p><p class="source-code">           validation_frame = valid)</p></li>
+				<li>To display the grid search<a id="_idIndexMarker304"/> results based on descending<a id="_idIndexMarker305"/> values of AUC, we use the following code:<p class="source-code">sorted_grid = grid.get_grid(</p><p class="source-code">    sort_by = "auc", decreasing = True)</p><p class="source-code">print(sorted_grid)</p></li>
+			</ol>
+			<p>This results in the following:</p>
+			<div>
+				<div id="_idContainer042" class="IMG---Figure">
+					<img src="image/Figure_5.14_B16721.jpg" alt="Figure 5.14 – Tuning the maximum tree depth parameter value&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.14 – Tuning the maximum tree depth parameter value</p>
+			<p>For this data and the H2O GBM algorithm, the <strong class="source-inline">max_depth</strong> values of 2 to 6 appear to give the best results. Next, we will<a id="_idIndexMarker306"/> search in the range of 2 to 6 and tune<a id="_idIndexMarker307"/> any additional parameters.</p>
+			<h2 id="_idParaDest-94"><a id="_idTextAnchor094"/>Step 2 – a random grid search to tune other parameters</h2>
+			<p>Now that we have focused <a id="_idIndexMarker308"/>on a good range for the maximum tree depth, we can<a id="_idIndexMarker309"/> set up our tuning hyperparameters as follows:</p>
+			<pre class="source-code">hyperparams_tune = {</pre>
+			<pre class="source-code">    "max_depth" : list(range(2, 6, 1)),</pre>
+			<pre class="source-code">    "sample_rate" : [x/100. for x in range(20,101)],</pre>
+			<pre class="source-code">    "col_sample_rate" : [x/100. for x in range(20,101)],</pre>
+			<pre class="source-code">    "min_split_improvement": [0, 1e-8, 1e-6, 1e-4]</pre>
+			<pre class="source-code">}</pre>
+			<p>The <strong class="source-inline">min_split_improvement</strong> parameter attempts to reduce overfitting in the GBM and XGBoost models by demanding that each split does not lead to worse error measures. We will try four different settings of that parameter.</p>
+			<p>In the following search criteria, we limit our runtime to 5 minutes for illustrative purposes. Additionally, we limit the number of models built to 10. Depending on your use case, you might want to increase the runtime substantially or just exclude these options altogether: </p>
+			<pre class="source-code">search_criteria_tune = {</pre>
+			<pre class="source-code">    "strategy" : "RandomDiscrete",</pre>
+			<pre class="source-code">    "max_runtime_secs" : 300,</pre>
+			<pre class="source-code">    "max_models" : 10, </pre>
+			<pre class="source-code">    "stopping_rounds" : 5,</pre>
+			<pre class="source-code">    "stopping_metric" : "AUC",</pre>
+			<pre class="source-code">    "stopping_tolerance" : 1e-3</pre>
+			<pre class="source-code">}</pre>
+			<p>Also, we set up our final grid parameters:</p>
+			<pre class="source-code">gbm_final_grid = H2OGradientBoostingEstimator(</pre>
+			<pre class="source-code">    ntrees = 10000,</pre>
+			<pre class="source-code">    learn_rate = 0.05,</pre>
+			<pre class="source-code">    learn_rate_annealing = 0.99,</pre>
+			<pre class="source-code">    score_tree_interval = 10,</pre>
+			<pre class="source-code">    seed = 12345</pre>
+			<pre class="source-code">)</pre>
+			<p>And we fit our final grid, as shown<a id="_idIndexMarker310"/> in the following<a id="_idIndexMarker311"/> code block:</p>
+			<pre class="source-code">final_grid = H2OGridSearch(</pre>
+			<pre class="source-code">    gbm_final_grid,</pre>
+			<pre class="source-code">    hyper_params = hyperparams_tune,</pre>
+			<pre class="source-code">    grid_id = "gbm_final_grid",</pre>
+			<pre class="source-code">    search_criteria = search_criteria_tune)</pre>
+			<p class="callout-heading">Further Documentation</p>
+			<p class="callout">There are several additional hyperparameters<a id="_idIndexMarker312"/> available that are listed in the H2O documentation at <a href="http://docs.h2o.ai/h2o/latest-stable/h2o-docs/parameters.html">http://docs.h2o.ai/h2o/latest-stable/h2o-docs/parameters.html</a>.</p>
+			<p class="callout">Further details on grid search <a id="_idIndexMarker313"/>can be found at <a href="http://docs.h2o.ai/h2o/latest-stable/h2o-docs/grid-search.html#grid-search-in-python">http://docs.h2o.ai/h2o/latest-stable/h2o-docs/grid-search.html#grid-search-in-python</a>.</p>
+			<p>Now we train the model. Note that the <strong class="source-inline">max_runtime_secs</strong> setting, as follows, overrides the value set in <strong class="source-inline">search_criteria_tune</strong>:</p>
+			<pre class="source-code">final_grid.train(</pre>
+			<pre class="source-code">    x = predictors,</pre>
+			<pre class="source-code">    y = response,</pre>
+			<pre class="source-code">    max_runtime_secs = 180,</pre>
+			<pre class="source-code">    training_frame = train,</pre>
+			<pre class="source-code">    validation_frame = valid</pre>
+			<pre class="source-code">)</pre>
+			<p>After 3 minutes or less, we look<a id="_idIndexMarker314"/> at the results of our grid<a id="_idIndexMarker315"/> search sorted by <strong class="source-inline">AUC</strong>:</p>
+			<pre class="source-code">grid = final_grid.get_grid(sort_by = "auc", </pre>
+			<pre class="source-code">                           decreasing = True)</pre>
+			<pre class="source-code">grid</pre>
+			<p>The output is as follows:</p>
+			<div>
+				<div id="_idContainer043" class="IMG---Figure">
+					<img src="image/Figure_5.15_B16721.jpg" alt="Figure 5.15 – The grid search results for GBM model optimization&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.15 – The grid search results for GBM model optimization</p>
+			<p class="callout-heading">Optimization Strategy Results</p>
+			<p class="callout">This exercise shows the importance of hyperparameter tuning. Although we constrained this optimization by only searching for 3 minutes and producing 10 models, 9 out of 10 outperformed the baseline GBM model with default values.</p>
+			<p>We can easily select the best model based on the previous leaderboard and extract its AUC performance values:</p>
+			<pre class="source-code">best_gbm = grid.models[0]</pre>
+			<pre class="source-code">perf = best_gbm.auc(train = True, valid = True)</pre>
+			<pre class="source-code">perf["test"] = best_gbm.model_performance(test).auc()</pre>
+			<pre class="source-code">perf</pre>
+			<p>This Python code block<a id="_idIndexMarker316"/> produces the<a id="_idIndexMarker317"/> following:</p>
+			<div>
+				<div id="_idContainer044" class="IMG---Figure">
+					<img src="image/Figure_5.16_B16721.jpg" alt="Figure 5.16 – The performance of the best optimized GBM model from the grid search&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.16 – The performance of the best optimized GBM model from the grid search</p>
+			<p>Our grid search strategy is a tremendous way to fine-tune the hyperparameters of a machine learning model. Next, we will explore AutoML in H2O.</p>
+			<h1 id="_idParaDest-95"><a id="_idTextAnchor095"/>H2O AutoML</h1>
+			<p>The most efficient method<a id="_idIndexMarker318"/> of model building and tuning utilizes H2O AutoML. AutoML builds models from multiple algorithms while implementing appropriate<a id="_idIndexMarker319"/> grid search and model optimization based on the model type. The user can specify constraints such as compute time limits or limits on the number of models created. </p>
+			<p>Some features of AutoML include<a id="_idIndexMarker320"/> the following:</p>
+			<ul>
+				<li>AutoML trains a random grid of GLMs, GBMs, and DNNs using a carefully chosen hyperparameter space.</li>
+				<li>Individual models are tuned using a validation set or with cross-validation.</li>
+				<li>Two stacked ensemble models are trained by default: <em class="italic">All Models</em> and a lightweight <em class="italic">Best of Family</em> ensemble.</li>
+				<li>AutoML returns a sorted<a id="_idIndexMarker321"/> leaderboard of all models.</li>
+				<li>Any model can be easily promoted to production.</li>
+			</ul>
+			<p><strong class="bold">Stacked ensembles</strong> are highly predictive models that usually<a id="_idIndexMarker322"/> appear at the top of leaderboards. Similar to the other ensemble approaches that we introduced earlier (such as bagging and boosting), we stack works by combining information from multiple predictive models into one. Unlike bagging and boosting, which rely on weak learners as the component models, stacking works by optimally combining a diverse set of strongly predictive models. The <em class="italic">All Models</em> stacked ensemble is created by combining the entire list of models investigated in an AutoML run. The <em class="italic">Best of Family</em> ensemble contains, at most, six component models. Its performance is usually comparable<a id="_idIndexMarker323"/> to the All Models ensemble, but being less complex, it is typically better suited for production. (For more information on stacked ensembles, see <a href="https://docs.h2o.ai/h2o/latest-stable/h2o-docs/data-science/stacked-ensembles.html">https://docs.h2o.ai/h2o/latest-stable/h2o-docs/data-science/stacked-ensembles.html</a>).</p>
+			<p>Training models using AutoML is relatively<a id="_idIndexMarker324"/> straightforward:</p>
+			<pre class="source-code">from h2o.automl import H2OAutoML</pre>
+			<pre class="source-code">aml = H2OAutoML(max_models = 10,</pre>
+			<pre class="source-code">                max_runtime_secs_per_model = 60,</pre>
+			<pre class="source-code">                exclude_algos = ["DeepLearning"],</pre>
+			<pre class="source-code">                seed = 25)</pre>
+			<pre class="source-code">aml.train(x = predictors, </pre>
+			<pre class="source-code">          y = response, </pre>
+			<pre class="source-code">          training_frame = train_cv)</pre>
+			<p class="callout-heading">The AutoML Runtime Parameter Choices</p>
+			<p class="callout">Our values for the <strong class="source-inline">max_runtime_secs_per_model</strong> and <strong class="source-inline">max_models</strong> parameters allow us to quickly<a id="_idIndexMarker325"/> screen multiple model types while restricting overall runtime. This is neither optimal nor recommended and is used in tutorial or classroom settings to demonstrate AutoML. Instead, you can set the overall <strong class="source-inline">max_runtime_secs</strong> parameter to an explicit value. The default is 3,600 (that is, 1 hour).</p>
+			<p>H2O AutoML trains<a id="_idIndexMarker326"/> the following algorithms (in order): </p>
+			<ul>
+				<li>Three XGBoost GBMs</li>
+				<li>A grid of GLMs </li>
+				<li>A DRF </li>
+				<li>Five H2O GBMs </li>
+				<li>A deep neural net </li>
+				<li>An extremely randomized forest</li>
+				<li>Random grids of XGBoost GBMs, H2O GBMs, and deep neural nets</li>
+				<li>Two stacked ensemble models</li>
+			</ul>
+			<p>If there is not enough time to complete all of these algorithms, some can be omitted from the leaderboard. </p>
+			<h2 id="_idParaDest-96"><a id="_idTextAnchor096"/>The AutoML leaderboard</h2>
+			<p>The AutoML object contains<a id="_idIndexMarker327"/> a leaderboard of models along with their cross-validated model<a id="_idIndexMarker328"/> performance. You can create a leaderboard for a specific dataset by specifying the <strong class="source-inline">leaderboard_frame</strong> argument.</p>
+			<p>The models are ranked by a metric whose default is based on the problem type: </p>
+			<ul>
+				<li>For regression, this is deviance. </li>
+				<li>For binary classification, AUC is the default metric. </li>
+				<li>For multiclass classification, we use the mean per-class error. </li>
+				<li>Additional metrics such as Logloss<a id="_idIndexMarker329"/> are provided for convenience. </li>
+			</ul>
+			<p>Next, we print out the leaderboard:</p>
+			<pre class="source-code">print(aml.leaderboard)</pre>
+			<div>
+				<div id="_idContainer045" class="IMG---Figure">
+					<img src="image/Figure_5.17_B16721.jpg" alt="Figure 5.17 – The AutoML leaderboard&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.17 – The AutoML leaderboard</p>
+			<p>As expected, the stacked ensemble<a id="_idIndexMarker330"/> models outperform all the individual models on the leaderboard. Any of these models can be selected for further investigation and potential deployment. Next, we will show you how to select the top model.</p>
+			<h3>Examining the top model</h3>
+			<p>The <strong class="source-inline">aml.leader</strong> object contains the best model<a id="_idIndexMarker331"/> from the leaderboard, including details for both training and cross-validated data. We use the following code to print the AUC values for training, cross-validation, and testing data for the best model:</p>
+			<pre class="source-code">best = aml.leader</pre>
+			<pre class="source-code">perf = best.auc(train = True, xval = True)</pre>
+			<pre class="source-code">perf["test"] = best.model_performance(test_cv).auc()</pre>
+			<pre class="source-code">perf</pre>
+			<p>The resulting<a id="_idIndexMarker332"/> values are as follows:</p>
+			<div>
+				<div id="_idContainer046" class="IMG---Figure">
+					<img src="image/Figure_5.18_B16721.jpg" alt="Figure 5.18 – The performance of the best model from the AutoML leaderboard&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.18 – The performance of the best model from the AutoML leaderboard</p>
+			<h3>Examining a selected model</h3>
+			<p>In practice, the leading model<a id="_idIndexMarker333"/> might not be the one you end up putting into production. As alluded to earlier, other considerations such as the modeling type, regulatory or compliance requirements, internal business preferences, and the likelihood of model approval could play a role in determining which model to use.  </p>
+			<p class="callout-heading">Other Reasons to Use a Leaderboard</p>
+			<p class="callout">The most obvious reason<a id="_idIndexMarker334"/> for using AutoML and exploring its leaderboard is to find the top model and put that into production. As mentioned earlier, that might not be allowed. Let's consider a scenario where I am only able to put a GLM into production. So, why bother fitting other models using AutoML? One answer is that the best model gives me a practical ceiling that I can also report. <em class="italic">GLM has an AUC of 0.69905, while the best possible model yielded 0.71336</em>. </p>
+			<p class="callout">In a business context, I should always be able to translate performance differences into terms of cost reduction or increased profit. In other words, the AUC difference translated into dollars and cents is "the cost of doing business" or "how much money is being left on the table" by using the selected model instead of the best. </p>
+			<p>Here, we demonstrate how to select any model from the leaderboard. The top individual (non-ensemble) model is in third position. We select this model with the following code and examine its performance in terms of AUC:</p>
+			<pre class="source-code">select = h2o.get_model(aml.leaderboard[2, "model_id"])</pre>
+			<pre class="source-code">perf = select.auc(train = True, xval = True)</pre>
+			<pre class="source-code">perf["test"] = select.model_performance(test_cv).auc()</pre>
+			<pre class="source-code">perf</pre>
+			<p>This results in the following:</p>
+			<div>
+				<div id="_idContainer047" class="IMG---Figure">
+					<img src="image/Figure_5.19_B16721.jpg" alt="Figure 5.19 – The performance of the selected model from the AutoML leaderboard&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.19 – The performance of the selected model from the AutoML leaderboard</p>
+			<p>Once a model object<a id="_idIndexMarker335"/> has been selected via AutoML, all the model diagnostics and explainability procedures, which we will cover in <a href="B16721_07_Final_SK_ePub.xhtml#_idTextAnchor127"><em class="italic">Chapter 7</em></a>, <em class="italic">Understanding ML Models</em>, will be available.</p>
+			<h1 id="_idParaDest-97"><a id="_idTextAnchor097"/>Feature engineering options</h1>
+			<p>In this section, we will demonstrate how feature engineering<a id="_idIndexMarker336"/> can lead to better predictive models. Second only to data cleaning, typically, feature engineering is the most time-consuming of all tasks involved in the modeling process. It can also be the "secret sauce" that makes for a great predictive model. </p>
+			<p>So, what does feature engineering mean? Put simply, it is how to extract information from raw data into a form that is both usable by the modeling algorithm and interpretable for the problem at hand. For example, a date or date-time object might be represented in data as a string or a number (for example, Unix time is the number of seconds since 00:00:00 UTC on January 1, 1970). Presented with such features, an algorithm is liable to treat dates as levels of a categorical variable or a continuous numeric value. Neither of these forms is very helpful. However, embedded in this raw data is information about not only the day, the month, and the year, but the day of the week, the weekend or weekday, seasons, holidays, and more. If the object contains time, then you could also produce the hour of the day, the time of day (for example, morning, afternoon, evening, or night), and more.</p>
+			<p>Which features to create<a id="_idIndexMarker337"/> depends largely on the use case. Even in the best of circumstances, most engineered features may not be selected by a model algorithm. Subject-matter expertise and an understanding of the context of the problem play a major role in engineering good features. For example, the debt-to-income ratio used in lending divides how much a customer owes per month by their monthly income. This engineered feature has proven so predictive in risk modeling that it has been given its own name and abbreviation, DTI.  </p>
+			<p class="callout-heading">Subject-Matter Expertise and Feature Engineering</p>
+			<p class="callout">One of our colleagues, an accomplished data scientist, multiple Kaggle grandmaster, and a Ph.D., once commented that he did not enjoy FinTech data science competitions because "there is more Fin than Tech in them." By this, he meant, at least in part, that those problems put a premium on subject-matter insights that he had no experience of. </p>
+			<p>Another great example of feature engineering is <strong class="bold">natural language processing</strong> (<strong class="bold">NLP</strong>) in the context of predictive modeling. NLP<a id="_idIndexMarker338"/> attempts to represent words, word meanings, and sentences as numeric values that can be incorporated naturally into machine learning algorithms. TF-IDF and word embeddings (word2vec) are two such approaches. We will cover these in more detail in the <em class="italic">Modeling in Sparkling Water</em> section of <a href="B16721_06_Final_SK_ePub.xhtml#_idTextAnchor106"><em class="italic">Chapter 6</em></a>, <em class="italic">Advanced Model Building – Part II</em>, and in the detailed Lending Club analysis within <a href="B16721_08_Final_SK_ePub.xhtml#_idTextAnchor137"><em class="italic">Chapter 8</em></a>, <em class="italic">Putting It All Together</em>.</p>
+			<p>In the remainder of this section, we will investigate target encoding in depth. Target encoding is one of the most common and impactful feature engineering options available. We <a id="_idIndexMarker339"/>will illustrate its use in the <strong class="bold">Lending Club model</strong>. In <a href="B16721_08_Final_SK_ePub.xhtml#_idTextAnchor137"><em class="italic">Chapter 8</em></a>, <em class="italic">Putting It All Together</em>, we will implement additional feature engineering recipes to improve the predictive model.</p>
+			<h2 id="_idParaDest-98"><a id="_idTextAnchor098"/>Target encoding</h2>
+			<p>Target encoding replaces categorical <a id="_idIndexMarker340"/>levels with a numeric value representing<a id="_idIndexMarker341"/> some function of the target variable, such as the mean. The following diagram illustrates mean target encoding:</p>
+			<div>
+				<div id="_idContainer048" class="IMG---Figure">
+					<img src="image/Figure_5.20_B16721.jpg" alt="Figure 5.20 – Mean target encoding&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.20 – Mean target encoding</p>
+			<p>The approach is simple: replace the categorical feature levels (<strong class="bold">A</strong>, <strong class="bold">B</strong>, and <strong class="bold">C</strong>) with their respective means (<strong class="bold">0.75</strong>, <strong class="bold">0.66</strong>, and <strong class="bold">1.00</strong>). </p>
+			<p>Target encoding<a id="_idIndexMarker342"/> is a clever idea and, in spirit, is analogous to the random effects<a id="_idIndexMarker343"/> found in statistical random and mixed effect models. In fact, for certain simple cases, you can prove that mean target encoding actually yields the empirical Bayes estimates of the random effects. What this means is that the intent behind target encoding is based on sound principles.</p>
+			<p>However, target encoding uses a function of the target as an input to predict the target. This is the very definition of data leakage. Data leakage leads to overly optimistic models that do not generalize well and are, at best, misleading in practice. H2O implements target encoding using carefully constructed cross-validation procedures. Essentially, this eliminates data leakage by calculating the target-encoded value for each row based on other folds of the data. </p>
+			<p class="callout-heading">Random Effects</p>
+			<p class="callout">The mathematical structure underlying the estimation<a id="_idIndexMarker344"/> of random effects in statistical models does not suffer from data leakage concerns in the same way that target encoding does. This is because the information in the target variable is partitioned, and the portion used to estimate the random effects is separate from the portion used to estimate the other model parameters. </p>
+			<p>We use the <strong class="bold">H2O-3 Target Encoding Estimator</strong> to replace categorical values<a id="_idIndexMarker345"/> with a mean of the target variable. We tune target encoding via the following:</p>
+			<ul>
+				<li>Setting <strong class="source-inline">data_leakage_handling</strong> to <strong class="source-inline">k-fold</strong> controls data leakage. </li>
+				<li>Adding random <strong class="source-inline">noise</strong> to the target average helps to prevent overfitting. </li>
+				<li>We adjust for categories with small group sizes through <strong class="source-inline">blending</strong>.</li>
+			</ul>
+			<p>Any categorical levels with fewer<a id="_idIndexMarker346"/> observations will result in an<a id="_idIndexMarker347"/> unreliable (high variance) target-encoded mean. A blended average consisting of a weighted average of the group's target value and the global target value can improve this estimate. By setting <strong class="source-inline">blending=True</strong>, the target mean will be weighted based on the sample size of the categorical level. </p>
+			<p>When blending is enabled, the <strong class="source-inline">smoothing</strong> parameter controls the rate of transition between the level's posterior probability and the prior probability (with a default value of 20). The <strong class="source-inline">inflection_point</strong> parameter represents half of the sample size for which we completely trust the estimate. The default value is 10.</p>
+			<h3>Target encoding the Lending Club data</h3>
+			<p>To determine whether a categorical variable<a id="_idIndexMarker348"/> would benefit<a id="_idIndexMarker349"/> from target encoding, first, create a table for the variable, which has been sorted from most frequent to least frequent. To do this efficiently, we will define a Python function:</p>
+			<pre class="source-code">import numpy as npdef sorted_table(colname, data = train_cv):</pre>
+			<pre class="source-code">    tbl = data[colname].table().as_data_frame()</pre>
+			<pre class="source-code">    tbl["Percent"] = np.round((100 * tbl["Count"]/data.nrows), 2)</pre>
+			<pre class="source-code">    tbl = tbl.sort_values(by = "Count", ascending = 0)</pre>
+			<pre class="source-code">    tbl = tbl.reset_index(drop = True)</pre>
+			<pre class="source-code">    return(tbl) </pre>
+			<p>Note that the preceding code requires<a id="_idIndexMarker350"/> the Python pandas package<a id="_idIndexMarker351"/> to be available since the <strong class="source-inline">as_data_frame</strong> call outputs the table in a pandas format.</p>
+			<p>First, consider the <strong class="source-inline">purpose</strong> variable, which records the purpose of the loan:</p>
+			<pre class="source-code">sorted_table("purpose")</pre>
+			<p>This returns the following:</p>
+			<div>
+				<div id="_idContainer049" class="IMG---Figure">
+					<img src="image/Figure_5.21_B16721.jpg" alt="Figure 5.21 – Levels of the purpose variable &#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.21 – Levels of the purpose variable </p>
+			<p>Note the high concentration of loans for debt consolidation (46%) and the sizable numbers for both credit cards (13%) and other (11%), with the remaining 30% captured among 11 other loan purposes. One option<a id="_idIndexMarker352"/> for this data would be to collapse the categories into fewer levels and leave the <strong class="source-inline">purpose</strong> variable as a categorical variable. This might make sense if the categories could be collapsed in a coherent manner. A better option uses mean target encoding to represent all levels without overfitting those with small percentages in the tail. Blending will also be enabled here, although the amount of smoothing it provides<a id="_idIndexMarker353"/> might not be impactful. The <strong class="source-inline">renewable_energy</strong> category has 75 observations, which, in most cases, is sufficient to reliably estimate a mean even though the percentage is very small.</p>
+			<p>A second variable to consider is <strong class="source-inline">addr_state</strong>:</p>
+			<pre class="source-code">sorted_table("addr_state")</pre>
+			<p>The first few rows are listed as follows:</p>
+			<div>
+				<div id="_idContainer050" class="IMG---Figure">
+					<img src="image/Figure_5.22_B16721.jpg" alt="Figure 5.22 – The top ten states by count&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.22 – The top ten states by count</p>
+			<p>And the last few rows are listed as follows:</p>
+			<div>
+				<div id="_idContainer051" class="IMG---Figure">
+					<img src="image/Figure_5.23_B16721.jpg" alt="Figure 5.23 – The last seven states by count&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.23 – The last seven states by count</p>
+			<p>High-cardinality categorical variables <a id="_idIndexMarker354"/>such as <strong class="source-inline">addr_state</strong> are prime candidates for target encoding. The distribution<a id="_idIndexMarker355"/> of records is also highly skewed, with the top 4 levels accounting for, approximately, 40% of the data. Blending will be especially important because the raw counts for states in the tail are extremely small:</p>
+			<ol>
+				<li value="1">Start by importing the target encoding estimator and specifying the columns to encode:<p class="source-code">from h2o.estimators import H2OTargetEncoderEstimator</p><p class="source-code">encoded_columns = ["purpose", "addr_state"]</p></li>
+				<li>The <strong class="source-inline">k_fold</strong> strategy requires a fold column, which is created as follows:<p class="source-code">train_cv["fold"] = train_cv.kfold_column(</p><p class="source-code">    n_folds=5, seed=25)</p></li>
+				<li>Train a target encoding model by setting the parameters:<p class="source-code">te = H2OTargetEncoderEstimator(</p><p class="source-code">    data_leakage_handling = "k_fold",</p><p class="source-code">    fold_column = "fold",</p><p class="source-code">    noise = 0.05,</p><p class="source-code">    blending = True,</p><p class="source-code">    inflection_point = 10,</p><p class="source-code">    smoothing = 20</p><p class="source-code">)</p></li>
+			</ol>
+			<p>Here is the training:</p>
+			<p class="source-code">te.train = (x = encoded_columns, y = response,</p>
+			<p class="source-code">    training_frame = train_cv)</p>
+			<ol>
+				<li value="4">Now, create a new target-encoded train and test set, explicitly setting the noise level on the test set to <strong class="source-inline">0</strong>:<p class="source-code">train_te = te.transform(frame = train_cv)</p><p class="source-code">test_te = te.transform(frame = test_cv, noise = 0.0)</p></li>
+				<li>Next, check the results<a id="_idIndexMarker356"/> of target encoding by looking at histograms<a id="_idIndexMarker357"/> of the target-encoded variables:<p class="source-code">train_te["purpose_te"].hist()</p></li>
+			</ol>
+			<p>This yields the following plot:</p>
+			<div>
+				<div id="_idContainer052" class="IMG---Figure">
+					<img src="image/Figure_5.24_B16721.jpg" alt="Figure 5.24 – The target-encoded loan purpose variable&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.24 – The target-encoded loan purpose variable</p>
+			<p>The following code produces a histogram for the <strong class="source-inline">addr_state_te</strong> variable:</p>
+			<p class="source-code">train_te["addr_state_te"].hist()</p>
+			<p> The output is as follows:</p>
+			<div>
+				<div id="_idContainer053" class="IMG---Figure">
+					<img src="image/Figure_5.25_B16721.jpg" alt="Figure 5.25 – The target-encoded address state variable&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.25 – The target-encoded address state variable</p>
+			<ol>
+				<li value="6">Add the target-encoded<a id="_idIndexMarker358"/> variables to the predictor<a id="_idIndexMarker359"/> list:<p class="source-code">predictors.extend(["addr_state_te", "purpose_te"])</p></li>
+				<li>Then, remove the source columns, using a list comprehension for efficiency:<p class="source-code">drop = ["addr_state", "purpose"]</p><p class="source-code">predictors = [x for x in predictors if x not in drop]</p></li>
+				<li>As we create other features, our predictor list will change. In order to keep track of these steps, it is wise to update a copy of the <strong class="source-inline">predictors</strong> list rather than the original:<p class="source-code">transformed = predictors.copy()</p></li>
+				<li>Additionally, we rename our datasets using the target-encoded values for convenience:<p class="source-code">train = train_te</p><p class="source-code">test = test_te</p><p class="callout-heading">How Much Should You Tune the Target Encoding Model?</p><p class="callout">Note that we used the same target<a id="_idIndexMarker360"/> encoding parameters for transforming two different variables. So, why not encode variables individually with custom parameter settings for each? In our situation, we did not need to. The only parameter values to vary are those that determine the amount of blending: <strong class="source-inline">inflection_point</strong> and <strong class="source-inline">smoothing</strong>. For the <strong class="source-inline">purpose</strong> variable, blending is not really needed because sample sizes are large enough to yield accurate means. On the other hand, the <strong class="source-inline">addr_state</strong> variable would greatly benefit from blending. Therefore, we set the parameters to values that are reasonable for <strong class="source-inline">addr_state</strong>. These will, essentially, be ignored by <strong class="source-inline">purpose</strong>. </p><p class="callout">In situations where the outputs of one model are inputs for another, always bear in mind that what matters is the effect that varying parameter settings in the input model have on the final model's predictions. </p></li>
+				<li>Let's refit our model<a id="_idIndexMarker361"/> with these new features using AutoML and print<a id="_idIndexMarker362"/> the leaderboard:<p class="source-code">check = H2OAutoML(max_models = 10,</p><p class="source-code">                  max_runtime_secs_per_model = 60,</p><p class="source-code">                  exclude_algos = ["DeepLearning"],</p><p class="source-code">                  seed = 25)</p><p class="source-code">check.train(x = transformed, </p><p class="source-code">            y = response, </p><p class="source-code">            training_frame = train)</p><p class="source-code">check.leaderboard</p></li>
+			</ol>
+			<p>This results in the following output:</p>
+			<div>
+				<div id="_idContainer054" class="IMG---Figure">
+					<img src="image/Figure_5.26_B16721.jpg" alt="Figure 5.26 – The AutoML leaderboard after target encoding&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.26 – The AutoML leaderboard after target encoding</p>
+			<p>The best individual (non-ensemble) model is a GBM, whose performance (<strong class="bold">0.704491</strong>) is only slightly<a id="_idIndexMarker363"/> better than the best GBM (<strong class="bold">0.703838</strong>) prior to target<a id="_idIndexMarker364"/> encoding. People often ask, is this tiny performance gain worth the effort of target encoding? That question misses the point entirely. Recall that H2O GBM naturally handles high-cardinality categorical variables well, so the fact that performance is equivalent should come as no surprise. </p>
+			<ol>
+				<li value="11">What is the right question to ask? Let's look at variable importance and compare the variables before and after target encoding:<p class="source-code">check_gbm = h2o.get_model(check.leaderboard[2, "model_id"])</p><p class="source-code">check_gbm.varimp_plot(15)</p></li>
+			</ol>
+			<p>Before target encoding, the high-cardinality variables are among the most important:</p>
+			<div>
+				<div id="_idContainer055" class="IMG---Figure">
+					<img src="image/Figure_5.27_B16721.jpg" alt="Figure 5.27 – Variable importance for the H2O GBM model before target encoding&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.27 – Variable importance for the H2O GBM model before target encoding</p>
+			<p>After target encoding, the importance<a id="_idIndexMarker365"/> of these categorical variables<a id="_idIndexMarker366"/> has changed:</p>
+			<div>
+				<div id="_idContainer056" class="IMG---Figure">
+					<img src="image/Figure_5.28_B16721.jpg" alt="Figure 5.28 – Variable importance for the H2O GBM model after target encoding&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.28 – Variable importance for the H2O GBM model after target encoding</p>
+			<p>The effect of target encoding<a id="_idIndexMarker367"/> for the GBM model has less to do with overall model<a id="_idIndexMarker368"/> performance than with the impact and interpretation of those variables. Target encoding <strong class="source-inline">purpose</strong> has only slightly changed its importance, from <em class="italic">third</em> place to <em class="italic">fifth</em> place. Target encoding <strong class="source-inline">addr_state</strong> has decreased its impact substantially, from <em class="italic">first </em>place to <em class="italic">seventh</em> place. This impact difference also leads to an interpretability difference. The former model primarily splits on state, in essence implying a different loan default model per state (with implications that might have to be explained to a regulator). In the latter model, the effect of the state is adjusted in a very similar manner to random effects in a statistical model.</p>
+			<p>The data scientist has the option of choosing which scenario makes the most sense for their situation. An additional benefit of target encoding <strong class="source-inline">addr_state</strong> is the blending feature, which, in production, will generalize better for states with low counts. </p>
+			<p>Select the best XGBoost target-encoded model from the leaderboard:</p>
+			<pre class="source-code">check_xgb = h2o.get_model(check.leaderboard[5, "model_id"])</pre>
+			<pre class="source-code">check_xgb.varimp_plot(15)</pre>
+			<p>This yields the following plot:</p>
+			<div>
+				<div id="_idContainer057" class="IMG---Figure">
+					<img src="image/Figure_5.29_B16721.jpg" alt="Figure 5.29 – The XGBoost model variable importance plot after target encoding&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.29 – The XGBoost model variable importance plot after target encoding</p>
+			<p>Both <strong class="source-inline">purpose</strong> and <strong class="source-inline">address_state</strong> have entered the top 10 in positions almost identical to the GBM model. Target encoding<a id="_idIndexMarker369"/> categorical variables is more important<a id="_idIndexMarker370"/> in XGBoost models than in GBM models. Other considerations being equal, some feature engineering steps may be influenced by the algorithm chosen.</p>
+			<h2 id="_idParaDest-99"><a id="_idTextAnchor099"/>Other feature engineering options</h2>
+			<p>There are multiple ways in which to categorize feature engineering options, and there are almost an infinite number of approaches<a id="_idIndexMarker371"/> you could take, depending on the problem. For some high-level categorizations, we can think of the following rough hierarchy:</p>
+			<ul>
+				<li>Algebraic<a id="_idIndexMarker372"/> transformers:<ol><li value="1">Add, subtract, multiply, or divide numeric columns to create new interaction features.</li><li>Use simple mathematical functions such as log, exp, power, roots, and trigonometric<a id="_idIndexMarker373"/> functions</li></ol></li>
+				<li>Cluster-based transformers: Use k-means<a id="_idIndexMarker374"/> or other unsupervised algorithms<a id="_idIndexMarker375"/> to create clusters. Then, do the following:<ol><li value="1">Measure the distance of a numeric observation to a specified cluster.</li><li>Consider each cluster as a level of a categorical variable and target encode to clusters.</li></ol></li>
+				<li>Numeric to categorical<a id="_idIndexMarker376"/> transformations: Often, binning into deciles or using histograms and then taking the mean within each bin produces good predictive features.</li>
+				<li>Categorical<a id="_idIndexMarker377"/> to numeric transformations:<ol><li value="1">One-hot or indicator value encoding.</li><li>Target encoding.</li><li>Numeric summary encoding: This is similar to target encoding except you are summarizing one of the numeric predictor columns rather than the target variable; for example, the mean temperature per state.</li><li><strong class="bold">Weight of evidence</strong>: This is only used for binary classification problems. The weight of evidence is the natural log of the ratio of successes over failures (good over bad and ones over zeros):</li></ol></li>
+			</ul>
+			<div>
+				<div id="_idContainer058" class="IMG---Figure">
+					<img src="image/B16721_05_001.jpg" alt=""/>
+				</div>
+			</div>
+			<ul>
+				<li>Dimension reduction transformations: Truncated eigenvalue or singular value decomposition. </li>
+			</ul>
+			<p>As a data scientist, you can combine multiples of these components into a reasonable feature for a particular problem<a id="_idIndexMarker378"/> at hand. We will revisit some of these recipes in our complete analysis of the Lending Club data, which can be found in <a href="B16721_08_Final_SK_ePub.xhtml#_idTextAnchor137"><em class="italic">Chapter 8</em></a>, <em class="italic">Putting It All Together</em>.</p>
+			<h1 id="_idParaDest-100"><a id="_idTextAnchor100"/>Leveraging H2O Flow to enhance your IDE workflow</h1>
+			<p>H2O Flow is a web-based UI available<a id="_idIndexMarker379"/> wherever an H2O cluster is running. Flow is interactive, allowing users<a id="_idIndexMarker380"/> to do everything including<a id="_idIndexMarker381"/> import data, build models, investigate models, and put models into production. While incredibly easy to use, our experience is that most data scientists (authors included) prefer coding in Python or R to menu-driven interactive interfaces. This section is written for those data scientists: why use Flow when I am a coder?</p>
+			<p>There are two main reasons: </p>
+			<ul>
+				<li><strong class="bold">Monitoring</strong> the state of the H2O cluster and the jobs that are being run</li>
+				<li><strong class="bold">Interactive investigation</strong> of the data, models, model diagnostics, and more where interactivity is an asset rather than an annoyance</li>
+			</ul>
+			<h3>Connecting to Flow</h3>
+			<p>By default, Flow is started<a id="_idIndexMarker382"/> on port 54321 of the H2O server as the cluster is launched (this port is configurable at startup). Enter <strong class="source-inline">Error! Hyperlink reference not valid.</strong> into your browser to open Flow. The Flow UI is straightforward and self-explanatory, with helpful instructions and videos:</p>
+			<div>
+				<div id="_idContainer059" class="IMG---Figure">
+					<img src="image/Figure_5.30_B16721.jpg" alt="Figure 5.30 – The H2O Flow UI&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.30 – The H2O Flow UI</p>
+			<p>First, let's consider Flow's<a id="_idIndexMarker383"/> monitoring capabilities.</p>
+			<h2 id="_idParaDest-101"><a id="_idTextAnchor101"/>Monitoring with Flow</h2>
+			<p>Under the <strong class="bold">Admin</strong> menu in Flow, the top<a id="_idIndexMarker384"/> three options are <strong class="bold">Jobs</strong>, <strong class="bold">Cluster Status</strong>, and <strong class="bold">Water Meter</strong>. These are central to the monitoring capabilities of Flow, and we will review each of them individually.</p>
+			<p>The Flow <strong class="bold">Admin</strong> menu is shown here:</p>
+			<div>
+				<div id="_idContainer060" class="IMG---Figure">
+					<img src="image/Figure_5.31_B16721.jpg" alt="Figure 5.31 – The monitoring options using the Flow Admin menu&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.31 – The monitoring options using the Flow Admin menu</p>
+			<p>We start by monitoring<a id="_idIndexMarker385"/> jobs.</p>
+			<h3>Monitoring jobs</h3>
+			<p>The <strong class="bold">Jobs</strong> option lists jobs<a id="_idIndexMarker386"/> for data frames, models, grid search, AutoML, and more<a id="_idIndexMarker387"/> as they launch, while they are running, and after completion. Clicking on the <strong class="bold">Refresh</strong> button will instruct the UI to continually update the jobs, which is especially useful when H2O is executing a grid search or AutoML run. Rather than using the menu, you can also enter <strong class="source-inline">getJobs</strong> in the Flow command line:</p>
+			<div>
+				<div id="_idContainer061" class="IMG---Figure">
+					<img src="image/Figure_5.32_B16721.jpg" alt="Figure 5.32 – Listing the job options using the Flow Admin menu&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.32 – Listing the job options using the Flow Admin menu</p>
+			<p>We continue by<a id="_idIndexMarker388"/> monitoring<a id="_idIndexMarker389"/> health.</p>
+			<h3>Monitoring H2O cluster health</h3>
+			<p>The <strong class="bold">Cluster Status</strong> option is available<a id="_idIndexMarker390"/> from the drop-down menu or the Flow command<a id="_idIndexMarker391"/> line using the <strong class="source-inline">getCloud</strong> command. This monitors the health of the cluster and is one of the first places to check whether H2O does not appear to be working correctly:</p>
+			<div>
+				<div id="_idContainer062" class="IMG---Figure">
+					<img src="image/Figure_5.33_B16721.jpg" alt="Figure 5.33 – Monitoring the cluster status using the Flow Admin menu&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.33 – Monitoring the cluster status using the Flow Admin menu</p>
+			<p>Next, we will monitor CPU usage.</p>
+			<h3>Monitoring CPU usage live</h3>
+			<p>The <strong class="bold">Water Meter</strong> tool is a useful monitor <a id="_idIndexMarker392"/>of CPU usage. It shows a bar per CPU<a id="_idIndexMarker393"/> with colors corresponding to the activity status of each CPU. Rather than watching a black progress bar grow across the cell of a Jupyter notebook, the Water Meter is much more informative. Also, it illustrates, in real time, how well a particular computation is distributed among the available compute resources: </p>
+			<div>
+				<div id="_idContainer063" class="IMG---Figure">
+					<img src="image/Figure_5.34_B16721.jpg" alt="Figure 5.34 – The H2O Flow Water Meter&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption"> </p>
+			<p class="figure-caption">Figure 5.34 – The H2O Flow Water Meter</p>
+			<p>We can also monitor grid search.</p>
+			<h3>Monitoring grid search</h3>
+			<p>H2O Flow allows you to interactively<a id="_idIndexMarker394"/> monitor individual model builds, but it is especially<a id="_idIndexMarker395"/> useful when executing multiple jobs like a grid search or AutoML creates. These can be monitored live upon launch and reviewed during runtime and after completion. </p>
+			<p>The first step in our grid search strategy was to evaluate model depth. While the model is running, we can open Flow and list jobs. The job named <strong class="source-inline">gbm_depth_grid</strong> is running. Clicking on the name opens the running job, allowing us to view more details or cancel the job. These actions are not readily available from within Python:</p>
+			<div>
+				<div id="_idContainer064" class="IMG---Figure">
+					<img src="image/Figure_5.35_B16721.jpg" alt="Figure 5.35 – Grid search job monitoring within Flow&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.35 – Grid search job monitoring within Flow</p>
+			<p>Selecting the <strong class="bold">View</strong> button<a id="_idIndexMarker396"/> at any<a id="_idIndexMarker397"/> time opens the grid:</p>
+			<div>
+				<div id="_idContainer065" class="IMG---Figure">
+					<img src="image/Figure_5.36_B16721.jpg" alt="Figure 5.36 – Grid search results within Flow&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.36 – Grid search results within Flow</p>
+			<p>The subsequent selection of any <a id="_idIndexMarker398"/>of the individual grid models opens<a id="_idIndexMarker399"/> an interactive model view, which we will discuss in more detail in the next section and in <a href="B16721_07_Final_SK_ePub.xhtml#_idTextAnchor127"><em class="italic">Chapter 7</em></a>, <em class="italic">Understanding ML Models</em>.</p>
+			<h3>Monitoring AutoML</h3>
+			<p>Monitoring AutoML jobs<a id="_idIndexMarker400"/> is similar. First, search for the AutoML build job <a id="_idIndexMarker401"/>in the job listings and select the model's name link:</p>
+			<div>
+				<div id="_idContainer066" class="IMG---Figure">
+					<img src="image/Figure_5.37_B16721.jpg" alt="Figure 5.37 – Selecting the AutoML build job&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.37 – Selecting the AutoML build job</p>
+			<p>Once the AutoML build is in process, you can monitor the progress live or click on <strong class="bold">View</strong> to watch the leaderboard as the models are built:</p>
+			<div>
+				<div id="_idContainer067" class="IMG---Figure">
+					<img src="image/Figure_5.38_B16721.jpg" alt="Figure 5.38 – Viewing the AutoML build job&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption"> </p>
+			<p class="figure-caption">Figure 5.38 – Viewing the AutoML build job</p>
+			<p class="callout-heading">Note: Flow is Great for Monitoring Leaderboards</p>
+			<p class="callout">The interactive leaderboard<a id="_idIndexMarker402"/> is a great way to monitor AutoML jobs in real time. This is especially true for AutoML runs that are not constrained to finish quickly but plan to run for multiple hours as models are built. Again, all that is available in Python is a progress bar that can seem very slow if you cannot see the actual work on the server (Figure 5.39).</p>
+			<div>
+				<div id="_idContainer068" class="IMG---Figure">
+					<img src="image/Figure_5.39_B16721.jpg" alt="Figure 5.39 – The AutoML leaderboard in Flow&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.39 – The AutoML leaderboard in Flow</p>
+			<p>The selection of any<a id="_idIndexMarker403"/> individual AutoML model opens<a id="_idIndexMarker404"/> an interactive model view.</p>
+			<h2 id="_idParaDest-102"><a id="_idTextAnchor102"/>Interactive investigations with Flow</h2>
+			<p>As we mentioned earlier, interactivity<a id="_idIndexMarker405"/> in Flow is quite useful for the live monitoring of running jobs. In addition, Flow makes exploring data before modeling and evaluating candidate models after model build more convenient than coding in Python. The only potential downside to menu-driven exploration is when reproducibility is at a premium and documentation of the whole modeling process is required. We will explore this topic in more detail when we discuss H2O AutoDoc capabilities in <a href="B16721_07_Final_SK_ePub.xhtml#_idTextAnchor127"><em class="italic">Chapter 7</em></a>, <em class="italic">Understanding ML Models</em>.</p>
+			<h3>Interactive data exploration in Flow</h3>
+			<p>Perform<a id="_idIndexMarker406"/> the following steps:</p>
+			<ol>
+				<li value="1">In the <strong class="bold">Data</strong> menu, select <strong class="bold">List All Frames</strong>: </li>
+			</ol>
+			<div>
+				<div id="_idContainer069" class="IMG---Figure">
+					<img src="image/Figure_5.40_B16721.jpg" alt="Figure 5.40 – Listing data frames in Flow&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.40 – Listing data frames in Flow</p>
+			<ol>
+				<li value="2">Click on the <strong class="bold">LendingClubClean.hex</strong> link to pull up<a id="_idIndexMarker407"/> the data summary: </li>
+			</ol>
+			<div>
+				<div id="_idContainer070" class="IMG---Figure">
+					<img src="image/Figure_5.41_B16721.jpg" alt="Figure 5.41 – The Lending Club data in Flow&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.41 – The Lending Club data in Flow</p>
+			<p>Clicking on the <strong class="source-inline">purpose</strong> column<a id="_idIndexMarker408"/> link produces a summary plot:</p>
+			<div>
+				<div id="_idContainer071" class="IMG---Figure">
+					<img src="image/Figure_5.42_B16721.jpg" alt="Figure 5.42 – The loan purpose data column in Flow&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.42 – The loan purpose data column in Flow</p>
+			<ol>
+				<li value="3">Next, clicking<a id="_idIndexMarker409"/> on <strong class="source-inline">Inspect</strong> and then <strong class="source-inline">domain</strong> will yield a summary table similar to the one that we created in Python:</li>
+			</ol>
+			<div>
+				<div id="_idContainer072" class="IMG---Figure">
+					<img src="image/Figure_5.43_B16721.jpg" alt="Figure 5.43 – A table of the loan purpose data in Flow&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.43 – A table of the loan purpose data in Flow</p>
+			<h3>Model exploration in Flow</h3>
+			<p>Selecting any model<a id="_idIndexMarker410"/> in Flow, whether <a id="_idIndexMarker411"/>through the <strong class="bold">List All Models</strong> option in the <strong class="bold">Model</strong> menu item, from a grid search, or the AutoML leaderboard, yields a model summary:</p>
+			<div>
+				<div id="_idContainer073" class="IMG---Figure">
+					<img src="image/Figure_5.44_B16721.jpg" alt="Figure 5.44 – A GBM model summary from AutoML in Flow&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption"> </p>
+			<p class="figure-caption">Figure 5.44 – A GBM model summary from AutoML in Flow</p>
+			<p>The layout of the model summary<a id="_idIndexMarker412"/> makes it very easy to explore. ROC curves<a id="_idIndexMarker413"/> and AUC values for training and validation sets are displayed by default. Variable importance plots are also readily available:</p>
+			<div>
+				<div id="_idContainer074" class="IMG---Figure">
+					<img src="image/Figure_5.45_B16721.jpg" alt="Figure 5.45 – GBM variable importance in Flow&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 5.45 – GBM variable importance in Flow</p>
+			<p>Generally, getting results immediately<a id="_idIndexMarker414"/> through the model summary is more convenient<a id="_idIndexMarker415"/> than doing the equivalent from the Python client.</p>
+			<p class="callout-heading">Best Practices in Flow</p>
+			<p class="callout">If you are coding<a id="_idIndexMarker416"/> in Python, we strongly suggest using Flow solely as a monitoring platform and read-only tool. That is the approach we use in our own work. Code should contain all the steps that import data, create features, fit models, deploy models, and more. This allows you to repeat any analysis and is a prerequisite for reproducibility. Code is often less convenient for investigative and interactive steps. Reserve those for Flow.</p>
+			<h1 id="_idParaDest-103"><a id="_idTextAnchor103"/>Putting it all together – algorithms, feature engineering, grid search, and AutoML</h1>
+			<p>The H2O AutoML implementation is simple yet powerful, so why would we ever need grid search? In fact, for a lot of real-world enterprise use cases, any of the top candidates in an AutoML leaderboard would be great models to put into production. This is especially true of the stacked ensemble models produced by AutoML.</p>
+			<p>However, our coverage of grid search was not just to satisfy intellectual curiosity. A more involved process, which we will outline next, uses AutoML followed by a customized grid search to discover and fine-tune model performance.</p>
+			<h2 id="_idParaDest-104"><a id="_idTextAnchor104"/>An enhanced AutoML procedure</h2>
+			<p>Here are the steps:</p>
+			<ol>
+				<li value="1">Start by running AutoML on your<a id="_idIndexMarker417"/> data to create a baseline leaderboard. You can investigate leading models, gain an understanding of the runtimes required to fit algorithms to your data, and more, which may inform future AutoML parameter choices and expectations.</li>
+				<li>The second stage is feature engineering. While developing new features, repeat AutoML runs as desired to check the impact of engineering and see what other insights might be gained from diagnostics. </li>
+				<li>After completion of the feature engineering stage, use AutoML to create a final leaderboard. </li>
+				<li>Choose a model from the leaderboard as a candidate for production. If you select an ensemble model, you are done. There is very little you can do to improve upon the performance of a stacked ensemble.</li>
+				<li>If you choose an individual model, say a GBM or DRF, use the parameters of that model as a guide for further grid searching, employing the general strategy outlined in this chapter. It is possible to further fine-tune a candidate model using additional grid search. </li>
+			</ol>
+			<p>This enhanced AutoML procedure might be overkill for a lot of problems. If you are in a business that has a practice of quickly building and deploying models, especially one that updates or replaces models frequently, then this approach might literally be more effort than it is worth. The advantages of a model built on recent data often outweigh the gains made by using these extra modeling steps. </p>
+			<p>However, if you are in an industry where the model review and due diligence process is long and involved, where the models that are put into production tend to stay in production for a long time, or you are working on a model that is high risk in any way (for example, one that directly<a id="_idIndexMarker418"/> impacts peoples' lives rather than just what ad they will see on a website), then this more involved procedure might well be worth the extra effort. We have used it successfully in multiple real-world use cases.</p>
+			<h1 id="_idParaDest-105"><a id="_idTextAnchor105"/>Summary</h1>
+			<p>In this chapter, we have considered different options for splitting data, explored, in some depth, powerful and popular algorithms such as gradient boosting and random forest, learned how to optimize model hyperparameters using a two-stage grid search strategy, utilized AutoML to efficiently fit multiple models, and further investigated options for feature engineering, including a deep dive into target encoding. Additionally, we saw how Flow can be used to monitor the H2O system and investigate data and models interactively. You now have most of the tools required to build effective enterprise-scale predictive models using the H2O platform.</p>
+			<p>However, we are not finished with our advanced modeling topics. In <a href="B16721_06_Final_SK_ePub.xhtml#_idTextAnchor106"><em class="italic">Chapter 6</em></a>, <em class="italic">Advanced Model Building – Part II</em>, we will discuss best practices for data acquisition, look in more depth at checkpointing and refitting models, and show you how to ensure reproducibility. Additionally, we will thoroughly consider two more hands-on examples: the first demonstrating Sparkling Water pipelines for efficiently integrating Spark capabilities with H2O modeling, and the second introducing isolation forests, an unsupervised learning algorithm for anomaly detection in H2O.</p>
+		</div>
+	</body></html>
