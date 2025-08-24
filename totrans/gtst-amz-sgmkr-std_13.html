@@ -1,0 +1,216 @@
+<html><head></head><body>
+		<div id="_idContainer135">
+			<h1 id="_idParaDest-135"><em class="italic"><a id="_idTextAnchor134"/>Chapter 10</em>: Monitoring ML Models in Production with SageMaker Model Monitor</h1>
+			<p>Having a model put into production for inferencing isn't the end of the <strong class="bold">machine learning</strong> (<strong class="bold">ML</strong>) life cycle. It is just the beginning of an important topic: how do we make sure the model is performing as it is designed to and as expected in real life? Monitoring how the model performs in production, especially on data that the model has never seen before, is made easy with SageMaker Studio. You will learn how to set up model monitoring for models deployed in SageMaker, detect data drift and performance drift, and visualize results in SageMaker Studio, so that you can let the system detect the degradation of your ML model automatically.</p>
+			<p>In this chapter, we will be learning about the following:</p>
+			<ul>
+				<li>Understanding drift in ML</li>
+				<li>Monitoring data and model performance drift in SageMaker Studio</li>
+				<li>Reviewing model monitoring results in SageMaker Studio</li>
+			</ul>
+			<h1 id="_idParaDest-136"><a id="_idTextAnchor135"/>Technical requirements</h1>
+			<p>For this chapter, you need to access the code in <a href="https://github.com/PacktPublishing/Getting-Started-with-Amazon-SageMaker-Studio/tree/main/chapter10">https://github.com/PacktPublishing/Getting-Started-with-Amazon-SageMaker-Studio/tree/main/chapter10</a>. </p>
+			<h1 id="_idParaDest-137"><a id="_idTextAnchor136"/>Understanding drift in ML</h1>
+			<p>An ML model in <a id="_idIndexMarker684"/>production needs to be carefully and continuously monitored for its performance. There is no guarantee that once the model is trained and evaluated, it will be performing at the same level in production as in the testing environment. Unlike a software application, where unit tests can be implemented to test out an application in all possible edge cases, it is rather hard to monitor and detect issues of an ML model. This is because ML models use probabilistic, statistical, and fuzzy logic to infer an outcome for each incoming data point, and the testing, meaning the model evaluation, is typically done without true prior knowledge of production data. The best a data scientist can do prior to production is to create training data from a sample <a id="_idIndexMarker685"/>that closely represents the real-world data, and evaluate the model with an out-of-sample strategy in order to get an unbiased idea of how the model would perform on unseen data. While in production, the incoming data is completely unseen by the model; how to evaluate live model performance, and how to take action on that evaluation, is a critical topic for the productionization of ML models. </p>
+			<p>Model performance <a id="_idIndexMarker686"/>can be monitored with two approaches. One that is more straightforward is to capture the ground truth for the unseen data and compare the prediction against the ground truth. The second approach is to compare the statistical distribution and characteristics of inference data against the training data as a proxy to determine whether the model is behaving in an expected way. </p>
+			<p>The first approach requires ground-truth determination after the prediction event takes place so that we can directly compute the same performance metrics that data scientists would use during model evaluation. However, in some use cases, a true outcome (ground truth) may lag behind the event by a long time or may even not be available at all.</p>
+			<p>The second approach lies in the premise that an ML model learns statistically and probabilistically from the training data and would behave differently when a new dataset from a different statistical distribution is provided. A model would return gibberish when <a id="_idIndexMarker687"/>data does not come from the same statistical distribution. This is called <strong class="bold">covariate drift</strong>. Therefore, detecting the covariate drift in data gives a more real-time estimate of how the model is going to perform. </p>
+			<p><strong class="bold">Amazon SageMaker Model Monitor</strong> is a feature in SageMaker that continuously monitors <a id="_idIndexMarker688"/>the quality of models hosted on SageMaker by setting up data capture, computing baseline statistics, and monitoring the drift from the traffic to your SageMaker endpoint on a schedule. SageMaker Model Monitor has four types of monitors: </p>
+			<ul>
+				<li><strong class="bold">Model quality monitor</strong>: Monitors the performance of a model by computing the accuracy <a id="_idIndexMarker689"/>from the predictions and the actual ground-truth labels</li>
+				<li><strong class="bold">Data quality monitor</strong>: Monitors data statistical characteristics of the inference <a id="_idIndexMarker690"/>data by comparing the characteristics to that of the baseline training data</li>
+				<li><strong class="bold">Model explainability monitor</strong>: Integrates with SageMaker Clarify to compute feature <a id="_idIndexMarker691"/>attribution, using the Shapley value, over time</li>
+				<li><strong class="bold">Model bias monitor</strong>: Integrates with SageMaker Clarify to monitor predictions <a id="_idIndexMarker692"/>for data and model prediction bias</li>
+			</ul>
+			<p>Once the model monitoring for an endpoint is set up, you can visualize the drift and any data issues over time in SageMaker Studio. Let's learn how to set up SageMaker Model Monitor in SageMaker Studio following an ML use case in this chapter. We will focus on model quality and data quality monitoring.</p>
+			<h1 id="_idParaDest-138"><a id="_idTextAnchor137"/>Monitoring data and performance drift in SageMaker Studio</h1>
+			<p>In this <a id="_idIndexMarker693"/>chapter, let's consider an ML scenario: we <a id="_idIndexMarker694"/>train an ML <a id="_idIndexMarker695"/>model and host it in an endpoint. We <a id="_idIndexMarker696"/>also create artificial inference traffic to the endpoint, with random perturbation injected into each data point. This is to introduce noise, missingness, and drift to the data. We then proceed to create a data quality monitor and a model quality monitor using SageMaker Model Monitor. We use a simple ML dataset, the abalone dataset from UCI (<a href="https://archive.ics.uci.edu/ml/datasets/abalone">https://archive.ics.uci.edu/ml/datasets/abalone</a>), for this demonstration. Using this dataset, we train a regression model to predict the number of rings, which is proportionate to the age of abalone. </p>
+			<h2 id="_idParaDest-139"><a id="_idTextAnchor138"/>Training and hosting a model</h2>
+			<p>We will <a id="_idIndexMarker697"/>follow the next steps to set up what we need <a id="_idIndexMarker698"/>prior to the model monitoring—getting data, training a model, hosting it, and creating traffic:</p>
+			<ol>
+				<li>Open the notebook in <strong class="source-inline">Getting-Started-with-Amazon-SageMaker-Studio/chapter10/01-train_host_predict.ipynb</strong> with the <strong class="bold">Python 3 (Data Science)</strong> kernel and the <strong class="bold">ml.t3.median</strong> instance.</li>
+				<li>Run the first three cells to set up the libraries and SageMaker session.</li>
+				<li>Read the data from the source and perform minimal processing, namely encoding the categorical variable, <strong class="source-inline">Sex</strong>, into integers so that we can later use the <strong class="source-inline">XGBoost</strong> algorithm to train. Also, we change the type of the target column Rings to float so that the values from ground truth and model prediction (regression) are consistently in float for the model monitor to compute.</li>
+				<li>Split the data randomly into training (80%), validation (10%), and test sets (10%). Then, save the data to the local drive for model inference and upload it to S3 for model training.</li>
+				<li>For model training, we use <strong class="source-inline">XGBoost</strong>, a SageMaker built-in algorithm, with the <strong class="source-inline">reg:squarederror</strong> objective for regression problems:<p class="source-code">image = image_uris.retrieve(region=region, </p><p class="source-code">                  framework='xgboost', version='1.3-1')</p><p class="source-code">xgb = sagemaker.estimator.Estimator(...)</p><p class="source-code">xgb.set_hyperparameters(objective='reg:squarederror', num_round=20)</p><p class="source-code">data_channels={'train': train_input, 'validation': val_input}</p><p class="source-code">xgb.fit(inputs=data_channels, ...)</p></li>
+			</ol>
+			<p>The training takes about 5 minutes.</p>
+			<ol>
+				<li value="6">After the model training is complete, we host the model with a SageMaker endpoint with <strong class="source-inline">xgb.deploy()</strong> just like we learned in <a href="B17447_07_ePub_RK.xhtml#_idTextAnchor099"><em class="italic">Chapter 7</em></a>, <em class="italic">Hosting ML Models in the Cloud: Best Practices</em>. However, by default, a SageMaker endpoint does not save a copy of the incoming inference data. In order to monitor the performance of the model and data drift, we need to instruct the endpoint to persist the incoming inference data. We use <strong class="source-inline">sagemaker.model_monitor.DataCaptureConfig</strong> to set up the data capture behind an endpoint for monitoring purposes:<p class="source-code">data_capture_config = DataCaptureConfig(enable_capture=True, </p><p class="source-code">           sampling_percentage=100,                                         </p><p class="source-code">           destination_s3_uri=s3_capture_upload_path)</p></li>
+			</ol>
+			<p>We specify an S3 bucket location in <strong class="source-inline">destination_s3_uri</strong>. <strong class="source-inline">sampling_percentage</strong> can be <strong class="source-inline">100</strong> (%) or lower depending on how much real-life traffic you expect. We need to make sure we capture a sample size large enough for any statistical comparison later on. If the model inference traffic is sparse, such as 100 inferences <a id="_idIndexMarker699"/>per hour, you may want to use 100% of the samples for model monitoring. If you have a high-rate-of-model-inference use case, you may be able to use a smaller percentage. </p>
+			<ol>
+				<li value="7">We can <a id="_idIndexMarker700"/>deploy the model to an endpoint with <strong class="source-inline">data_capture_config</strong>:<p class="source-code">predictor = xgb.deploy(...,</p><p class="source-code">               data_capture_config=data_capture_config)</p></li>
+				<li>Once the endpoint is ready, let's apply the regression model on the validation dataset in order to create a baseline dataset for the model quality monitoring. The baseline dataset should contain ground-truth and model prediction in two columns in a CSV file. We then upload the CSV to an S3 bucket location:<p class="source-code">pred=predictor.predict(df_val[columns_no_target].values)</p><p class="source-code">pred_f = [float(i) for i in pred[0]]</p><p class="source-code">df_val['Prediction']=pred_f</p><p class="source-code">model_quality_baseline_suffix = 'abalone/abalone_val_model_quality_baseline.csv'</p><p class="source-code">df_val[['Rings', 'Prediction']].to_csv(model_quality_baseline_suffix, index=False)</p><p class="source-code">model_quality_baseline_s3 = sagemaker.s3.S3Uploader.upload(</p><p class="source-code">        local_path=model_quality_baseline_suffix,</p><p class="source-code">        desired_s3_uri=desired_s3_uri,</p><p class="source-code">        sagemaker_session=sess)</p></li>
+			</ol>
+			<p>Next, we <a id="_idIndexMarker701"/>can make some predictions on the endpoint <a id="_idIndexMarker702"/>with the test dataset.</p>
+			<h2 id="_idParaDest-140"><a id="_idTextAnchor139"/>Creating inference traffic and ground truth</h2>
+			<p>To simulate real-life inference traffic, we take the test dataset and add random perturbation, such as random scaling and dropping features. We can anticipate that this simulates <a id="_idIndexMarker703"/>data drift and twists model performance. Then, we send the perturbed data to the endpoint for prediction and save the ground truth into an S3 bucket location. Please follow these steps in the same notebook:</p>
+			<ol>
+				<li value="1">Here, we have two functions to add random perturbation: <strong class="source-inline">add_randomness()</strong> and <strong class="source-inline">drop_randomly()</strong>. The former function randomly multiplies each feature value, except the <strong class="source-inline">Sex</strong> function, by a small factor, and randomly assigns a binary value to <strong class="source-inline">Sex</strong>. The latter function randomly drops a feature and fills it with <strong class="source-inline">NaN</strong> (not a number).</li>
+				<li>We also have the <strong class="source-inline">generate_load_and_ground_truth()</strong> function to read from each row of the test data, apply perturbation, call the endpoint for prediction, construct the ground truth in a dictionary, <strong class="source-inline">gt_data</strong>, and upload it to an S3 bucket as a JSON file. Notably, in order to make sure we establish correspondence between the inference data and the ground truth, we associate each pair with <strong class="source-inline">inference_id</strong>. This association will allow Model Monitor to merge the inference and ground truth for analysis:<p class="source-code">def generate_load_and_ground_truth():</p><p class="source-code">    gt_records=[]</p><p class="source-code">    for i, row in df_test.iterrows():</p><p class="source-code">        suffix = uuid.uuid1().hex</p><p class="source-code">        inference_id = f'{i}-{suffix}'</p><p class="source-code">        </p><p class="source-code">        gt = row['Rings']</p><p class="source-code">        data = row[columns_no_target].values</p><p class="source-code">        new_data = drop_random(add_randomness(data))</p><p class="source-code">        new_data = convert_nparray_to_string(new_data)</p><p class="source-code">        out = predictor.predict(data = new_data, </p><p class="source-code">                       inference_id = inference_id)</p><p class="source-code">        gt_data = {'groundTruthData': {</p><p class="source-code">                            'data': str(gt), </p><p class="source-code">                            'encoding': 'CSV',</p><p class="source-code">                        },</p><p class="source-code">                   'eventMetadata': {</p><p class="source-code">                            'eventId': inference_id,</p><p class="source-code">                        },</p><p class="source-code">                   'eventVersion': '0',</p><p class="source-code">                   }</p><p class="source-code">        gt_records.append(gt_data)</p><p class="source-code">    upload_ground_truth(gt_records, ground_truth_upload_path, datetime.utcnow()) </p></li>
+			</ol>
+			<p>We <a id="_idIndexMarker704"/>wrap this function in a <strong class="source-inline">while</strong> loop in the <strong class="source-inline">generate_load_and_ground_truth_forever()</strong> function so that we can generate persistent traffic using a threaded process until the notebook is shut down:</p>
+			<p class="source-code">def generate_load_and_ground_truth_forever():</p>
+			<p class="source-code">    while True:</p>
+			<p class="source-code">        generate_load_and_ground_truth()</p>
+			<p class="source-code">from threading import Thread</p>
+			<p class="source-code">thread = Thread(target=generate_load_and_ground_truth_forever)</p>
+			<p class="source-code">thread.start()</p>
+			<ol>
+				<li value="3">Lastly, before <a id="_idIndexMarker705"/>we set up our first model monitor, let's take a look how the inference traffic is captured:<p class="source-code">capture_file = get_obj_body(capture_files[-1])</p><p class="source-code">print(json.dumps(json.loads(capture_file.split('\n')[-2]), indent=2))</p><p class="source-code"><strong class="bold">{</strong></p><p class="source-code"><strong class="bold">  "captureData": {</strong></p><p class="source-code"><strong class="bold">    "endpointInput": {</strong></p><p class="source-code"><strong class="bold">      "observedContentType": "text/csv",</strong></p><p class="source-code"><strong class="bold">      "mode": "INPUT",</strong></p><p class="source-code"><strong class="bold">      "data": "1.0,0.54,0.42,0.14,0.805,0.369,0.1725,0.21",</strong></p><p class="source-code"><strong class="bold">      "encoding": "CSV"</strong></p><p class="source-code"><strong class="bold">    },</strong></p><p class="source-code"><strong class="bold">    "endpointOutput": {</strong></p><p class="source-code"><strong class="bold">      "observedContentType": "text/csv; charset=utf-8",</strong></p><p class="source-code"><strong class="bold">      "mode": "OUTPUT",</strong></p><p class="source-code"><strong class="bold">      "data": "9.223058700561523",</strong></p><p class="source-code"><strong class="bold">      "encoding": "CSV"</strong></p><p class="source-code"><strong class="bold">    }</strong></p><p class="source-code"><strong class="bold">  },</strong></p><p class="source-code"><strong class="bold">  "eventMetadata": {</strong></p><p class="source-code"><strong class="bold">    "eventId": "a9d22bac-094a-4610-8dde-689c6aa8189b",</strong></p><p class="source-code"><strong class="bold">    "inferenceId": "846-01234f26730011ecbb8b139195a02686",</strong></p><p class="source-code"><strong class="bold">    "inferenceTime": "2022-01-11T17:00:39Z"</strong></p><p class="source-code"><strong class="bold">  },</strong></p><p class="source-code"><strong class="bold">  "eventVersion": "0"</strong></p><p class="source-code"><strong class="bold">}</strong></p></li>
+			</ol>
+			<p>Note the <strong class="source-inline">captureData.endpointInput.data</strong> function has an entry of inference data through <strong class="source-inline">predictor.predict()</strong> with the unique inference ID in <strong class="source-inline">eventMetadata.</strong> <strong class="source-inline">inferenceId</strong>. The output from the model endpoint is in <strong class="source-inline">captureData.endpointOutput.data</strong>.</p>
+			<p>We have <a id="_idIndexMarker706"/>done all the prep work. We can now move on to creating the model monitors in SageMaker Studio.</p>
+			<h2 id="_idParaDest-141"><a id="_idTextAnchor140"/>Creating a data quality monitor</h2>
+			<p>A data <a id="_idIndexMarker707"/>quality monitor compares the statistics of the incoming inference data to that of a baseline dataset. You can set up a data quality monitor via the SageMaker Studio UI or SageMaker Python SDK. I will walk through the easy setup via the Studio UI:</p>
+			<ol>
+				<li value="1">Go to the <strong class="bold">Endpoints</strong> registry in the left sidebar and locate your newly hosted endpoint, as shown in <em class="italic">Figure 10.1</em>. Double-click the entry to open it in the main working area:</li>
+			</ol>
+			<div>
+				<div id="_idContainer121" class="IMG---Figure">
+					<img src="image/B17447_10_001.jpg" alt="Figure 10.1 – Opening the endpoint details page&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 10.1 – Opening the endpoint details page</p>
+			<ol>
+				<li value="2">Click <a id="_idIndexMarker708"/>the <strong class="bold">Data quality</strong> tab and then <strong class="bold">Create monitoring schedule</strong>, as shown in <em class="italic">Figure 10.2</em>:</li>
+			</ol>
+			<div>
+				<div id="_idContainer122" class="IMG---Figure">
+					<img src="image/B17447_10_002.jpg" alt="Figure 10.2 – Creating a data quality monitoring schedule on the endpoint details page&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 10.2 – Creating a data quality monitoring schedule on the endpoint details page</p>
+			<ol>
+				<li value="3">In the first step of the setup, as shown in <em class="italic">Figure 10.3</em>, we choose an IAM role that has <a id="_idIndexMarker709"/>access permission to read and write results to the bucket location we specify in the following pages. Let's choose <strong class="bold">Default SageMaker Role</strong> as it refers to the SageMaker execution role attached to the user profile. For <strong class="bold">Schedule expression</strong>, we can choose a <strong class="bold">Daily</strong> or <strong class="bold">Hourly</strong> schedule. Let's choose <strong class="bold">Hourly</strong>. For <strong class="bold">Stopping condition (Seconds)</strong>, we can limit the maximum runtime for the model monitoring job. We should give a number no larger than a full hour (<strong class="source-inline">3600</strong> seconds) so that a monitoring job does not bleed into the next hour. Toward the bottom of the page, we leave <strong class="bold">Enable metrics</strong> on so that the metrics computed by the model monitor get sent to Amazon CloudWatch too. This allows us to visualize and analyze the metrics in CloudWatch. Click <strong class="bold">Continue</strong>:</li>
+			</ol>
+			<div>
+				<div id="_idContainer123" class="IMG---Figure">
+					<img src="image/B17447_10_003.jpg" alt="Figure 10.3 – Data quality monitor setup step 1&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 10.3 – Data quality monitor setup step 1</p>
+			<ol>
+				<li value="4">In the <a id="_idIndexMarker710"/>second step, as shown in <em class="italic">Figure 10.4</em>, we configure the infrastructure and output location for the hourly monitoring job. The infrastructure subject to configure is the SageMaker Processing job that is going to be created every hour. We leave the compute instance—instance type, count, and disk volume size—as default. We then provide an output bucket location for the monitoring result and encryption and <a id="_idIndexMarker711"/>networking (VPC) options:</li>
+			</ol>
+			<div>
+				<div id="_idContainer124" class="IMG---Figure">
+					<img src="image/B17447_10_004.jpg" alt="Figure 10.4 – Data quality monitor setup step 2&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 10.4 – Data quality monitor setup step 2</p>
+			<ol>
+				<li value="5">In the third step, as shown in <em class="italic">Figure 10.5</em>, we configure the baseline computation. Right after a monitor is set up, a one-time SageMaker Processing job will be launched to compute the baseline statistics. Future recurring monitoring jobs would use the baseline statistics to judge whether drift has occurred. We provide <a id="_idIndexMarker712"/>the CSV file location in an S3 bucket to the baseline dataset S3 location. We uploaded the training data to the S3 bucket and the full path is in the <strong class="source-inline">train_data_s3</strong> variable. We provide an S3 output location to the baseline S3 output location. Because our training data CSV contains a feature name in the first row, we select <strong class="bold">CSV with header</strong> for <strong class="bold">Baseline dataset format</strong>. Lastly, we configure the compute instance for the one-time SageMaker Processing job. The default configuration that uses one <strong class="source-inline">ml.m5.xlarge</strong> instance with 1 GB of baseline volume is sufficient. Click <strong class="bold">Continue</strong>:</li>
+			</ol>
+			<div>
+				<div id="_idContainer125" class="IMG---Figure">
+					<img src="image/B17447_10_005.jpg" alt="Figure 10.5 – Data quality monitor setup step 3&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 10.5 – Data quality monitor setup step 3</p>
+			<ol>
+				<li value="6">In the final <strong class="bold">Additional Configuration</strong> page, you have an option to provide preprocessing and postprocessing scripts to the recurring monitoring job. You can customize the features and model output with your own scripts. This extension is not supported when you use a custom container for model monitoring. In our case, we use the built-in container from SageMaker. For more information about the preprocessing and postprocessing scripts, visit <a href="https://docs.aws.amazon.com/sagemaker/latest/dg/model-monitor-pre-and-post-processing.html">https://docs.aws.amazon.com/sagemaker/latest/dg/model-monitor-pre-and-post-processing.html</a>.</li>
+			</ol>
+			<p>If you go back to the <strong class="bold">ENDPOINT DETAILS</strong> page, under the <strong class="bold">Data quality</strong> tab, as shown in <em class="italic">Figure 10.2</em>, you can now see a new monitoring schedule with the <strong class="bold">Scheduled</strong> status. A baselining job is now being launched to compute various statistics from the baseline training dataset. After the baselining job is finished, the first hourly monitoring <a id="_idIndexMarker713"/>job will be launched as a SageMaker Processing job within 20 minutes at the top of an hour. The monitoring job computes the statistics from the inference data gathered during the hour and compares it against the baseline. We will review the monitoring result in the <em class="italic">Reviewing model monitoring results in SageMaker Studio</em> section later. </p>
+			<p>Now, let's move on to creating the model quality monitor to monitor the model performance.</p>
+			<h2 id="_idParaDest-142"><a id="_idTextAnchor141"/>Creating a model quality monitor</h2>
+			<p>Creating a <a id="_idIndexMarker714"/>model quality monitor follows a similar process compared to creating a data quality monitor, with additional emphasis on handling model prediction and ground-truth labels in S3. Let's follow the next steps to set up a model quality monitor to monitor the model performance over time:</p>
+			<ol>
+				<li value="7">On the <strong class="bold">Endpoint Details</strong> page of the same endpoint, go to the <strong class="bold">Model quality</strong> tab and click <strong class="bold">Create monitoring schedule</strong>, as shown in <em class="italic">Figure 10.6</em>:</li>
+			</ol>
+			<div>
+				<div id="_idContainer126" class="IMG---Figure">
+					<img src="image/B17447_10_006.jpg" alt="Figure 10.6 – Creating a model quality monitoring schedule on the endpoint details page&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 10.6 – Creating a model quality monitoring schedule on the endpoint details page</p>
+			<ol>
+				<li value="8">On the <a id="_idIndexMarker715"/>first page, <strong class="bold">Schedule</strong>, we choose an IAM role, scheduling frequency, and so on for the monitoring job, similar to <em class="italic">step 3</em> in the previous <em class="italic">Creating a data quality monitor section</em>.</li>
+				<li>On the second page, <strong class="bold">Monitoring Job Configuration</strong>, as shown in <em class="italic">Figure 10.7</em>, we configure the instance for the monitoring job and the input/output to a monitoring job:</li>
+			</ol>
+			<div>
+				<div id="_idContainer127" class="IMG---Figure">
+					<img src="image/B17447_10_007.jpg" alt="Figure 10.7 – Setting up input and output for the model quality monitor&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 10.7 – Setting up input and output for the model quality monitor</p>
+			<p>Input refers to both model prediction from the endpoint and the ground-truth files we are uploading in the notebook. In the <strong class="bold">Input/Output</strong> options, <strong class="bold">Time offset (hours)</strong> refers to hours allowed to wait for ground-truth labels to become available in S3. We know that typically, there is a delay between the prediction event occurring and the outcome of the event becoming available. This offset addresses that delay and allows Model Monitor to look out for the corresponding ground truth for a prediction event. Because we are generating the inference <a id="_idIndexMarker716"/>data and the ground-truth label at the same time from the notebook, we can safely use the default value—<strong class="source-inline">24</strong> hours. For <strong class="bold">Problem type</strong>, we choose <strong class="bold">Regression</strong> from the drop-down list as the model predicts the ring size and age of an abalone. In <strong class="bold">Inference attribute</strong> and <strong class="bold">Probability</strong>, we inform SageMaker how to interpret the model prediction from the endpoint. Depending on the output format, CSV or JSON, we would put in either the index location or JSON path, respectively. Because our model returns a regression value in CSV format and does not return a probability score, we would put <strong class="source-inline">0</strong> for <strong class="bold">Inference attribute</strong> to specify the first value being the model output, and leave <strong class="bold">Probability</strong> empty. </p>
+			<p class="callout-heading">Note</p>
+			<p class="callout">If the content type for your model is JSON/JSON Lines, you would specify a JSON path in <strong class="bold">Inference attribute</strong> and <strong class="bold">Probability</strong>. For example, when a model returns <strong class="source-inline">{prediction: {"predicted_label":1, "probability":0.68}}</strong>, you would specify <strong class="source-inline">"prediction.predicted_label"</strong> in <strong class="bold">Inference attribute</strong> while specifying <strong class="source-inline">"prediction.probability"</strong> in <strong class="bold">Probability</strong>.</p>
+			<p>For <strong class="bold">Groundtruth location</strong>, we use the S3 location where we uploaded the ground-truth labels. It's in the <strong class="source-inline">ground_truth_upload_path</strong> variable in the notebook. For <strong class="bold">S3 output location</strong>, we specify an S3 bucket location for Model Monitor to save the output. Lastly, you can optionally configure the encryption and VPC for the monitoring jobs. Click <strong class="bold">Continue</strong> to proceed.</p>
+			<ol>
+				<li value="10">On the third page, <strong class="bold">Baseline Configuration</strong>, as shown in <em class="italic">Figure 10.8</em>, we specify the baseline data for the baselining. We have created baseline data from the validation set. Let's provide the S3 location of the CSV file that is saved in the <strong class="source-inline">model_quality_baseline_s3</strong> variable in the notebook to the <strong class="bold">Baseline dataset S3 location</strong> field. For <strong class="bold">Baseline S3 output location</strong>, we provide an S3 location <a id="_idIndexMarker717"/>to save the baselining result. Choose <strong class="bold">CSV with header</strong> in <strong class="bold">Baseline dataset format</strong>. Leave the instance type and configuration as the default. </li>
+			</ol>
+			<p>This is to configure the SageMaker Processing job for the one-time baseline computation. In the last three fields, we put the corresponding CSV header names—<strong class="source-inline">Rings</strong> for <strong class="bold">Baseline groundtruth attribute</strong> and <strong class="source-inline">Prediction</strong> for <strong class="bold">Baseline inference attribute</strong>—and leave the field empty for <strong class="bold">Baseline probability</strong> because, again, our model does not produce probability. Click <strong class="bold">Continue</strong>:</p>
+			<div>
+				<div id="_idContainer128" class="IMG---Figure">
+					<img src="image/B17447_10_008.jpg" alt="Figure 10.8 – Configuring the baseline calculation for the model quality monitor&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 10.8 – Configuring the baseline calculation for the model quality monitor</p>
+			<ol>
+				<li value="11">In <strong class="bold">Additional Configuration</strong>, we can provide preprocessing and postprocessing scripts to the monitor like in the case of the data quality monitor. Let's skip this and proceed to complete the setup by clicking <strong class="bold">Enable model monitoring</strong>.</li>
+			</ol>
+			<p>Now, we have created the model quality monitor. You can see the monitoring schedule is in the <strong class="bold">Scheduled</strong> status under the <strong class="bold">Model quality</strong> tab on the <strong class="bold">ENDPOINT</strong> <strong class="bold">DETAILS</strong>page. Similar to the data quality monitor, a baseline processing job is launched <a id="_idIndexMarker718"/>to compute the baseline model performance using the baseline dataset. An hourly monitoring job will also be launched as a SageMaker Processing job within 20 minutes at the top of an hour in order to compute the model performance metrics from the inference data gathered during the hour and compare them against the baseline. We will review the monitoring results in the next section, <em class="italic">Reviewing model monitoring results in SageMaker Studio</em>.</p>
+			<h1 id="_idParaDest-143"><a id="_idTextAnchor142"/>Reviewing model monitoring results in SageMaker Studio</h1>
+			<p>SageMaker Model Monitor computes various statistics on the incoming inference data, compares <a id="_idIndexMarker719"/>them against the precomputed baseline statistics, and reports the results back to us in a specified S3 bucket, which you can visualize in SageMaker Studio.</p>
+			<p>For the <a id="_idIndexMarker720"/>data quality monitor, a SageMaker Model Monitor pre-built, default container, which is what we used, computes per-feature statistics on the baseline dataset and the inference data. The statistics include the mean, sum, standard deviation, min, and max. The data quality monitor also looks at data missingness and checks for the data type of the incoming inference data. You can find the full list at <a href="https://docs.aws.amazon.com/sagemaker/latest/dg/model-monitor-interpreting-statistics.html">https://docs.aws.amazon.com/sagemaker/latest/dg/model-monitor-interpreting-statistics.html</a>.</p>
+			<p>For the model quality monitor, SageMaker computes model performance metrics based on the ML problem type configured. For our regression example in this chapter, SageMaker's model <a id="_idIndexMarker721"/>quality monitor is computing the <strong class="bold">mean absolute error</strong> (<strong class="bold">MAE</strong>), <strong class="bold">mean squared error</strong> (<strong class="bold">MSE</strong>), <strong class="bold">root mean square error</strong> (<strong class="bold">RMSE</strong>), and <strong class="bold">R-squared</strong> (<strong class="bold">r2</strong>) values. You <a id="_idIndexMarker722"/>can find the full list of computed metrics for <a id="_idIndexMarker723"/>regression, binary classification, and multi-class <a id="_idIndexMarker724"/>classification problems <a id="_idIndexMarker725"/>at <a href="https://docs.aws.amazon.com/sagemaker/latest/dg/model-monitor-model-quality-metrics.html">https://docs.aws.amazon.com/sagemaker/latest/dg/model-monitor-model-quality-metrics.html</a>. </p>
+			<p>You can <a id="_idIndexMarker726"/>see a list of the monitoring <a id="_idIndexMarker727"/>jobs launched over time in the <strong class="bold">Monitoring job history</strong> tab on the <strong class="bold">ENDPOINT DETAILS</strong> page, as shown in <em class="italic">Figure 10.9</em>:</p>
+			<div>
+				<div id="_idContainer129" class="IMG---Figure">
+					<img src="image/B17447_10_009.jpg" alt="Figure 10.9 – Viewing a list of monitoring jobs. Double-clicking a row item takes you to the detail page of a particular job&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 10.9 – Viewing a list of monitoring jobs. Double-clicking a row item takes you to the detail page of a particular job</p>
+			<p>When you double-click a row item, you will be taken to the detail page of a particular monitoring job, as shown in <em class="italic">Figure 10.10</em>. Because we perturbed the data prior to sending it to the endpoint, the data contains irregularities, such as missingness. This is captured by the data quality monitor:</p>
+			<div>
+				<div id="_idContainer130" class="IMG---Figure">
+					<img src="image/B17447_10_010.jpg" alt="Figure 10.10 – Details of a data quality monitoring job and violations&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 10.10 – Details of a data quality monitoring job and violations</p>
+			<p>We can <a id="_idIndexMarker728"/>also open a model <a id="_idIndexMarker729"/>quality monitoring job to find out whether the model performs as expected. As shown in <em class="italic">Figure 10.11</em>, we can see that violations have been raised for all the metrics computed. We know it is going to happen because this is largely due to the perturbation we introduced to the data. SageMaker Model Monitor is able to detect such problems:</p>
+			<div>
+				<div id="_idContainer131" class="IMG---Figure">
+					<img src="image/B17447_10_011.jpg" alt="Figure 10.11 – Details of a model monitoring job and violations&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 10.11 – Details of a model monitoring job and violations</p>
+			<p>We can also create visualizations from the monitoring jobs. Let's follow the next steps to create a chart for the data quality monitor:</p>
+			<ol>
+				<li value="1">On the <strong class="bold">ENDPOINT DETAILS </strong>page, go to the <strong class="bold">Data quality</strong> tab and click on the <strong class="bold">Add chart</strong> button, as shown in <em class="italic">Figure 10.12</em>:</li>
+			</ol>
+			<div>
+				<div id="_idContainer132" class="IMG---Figure">
+					<img src="image/B17447_10_012.jpg" alt="Figure 10.12 – Adding a visualization for a data quality monitor&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 10.12 – Adding a visualization for a data quality monitor</p>
+			<ol>
+				<li value="2">A <a id="_idIndexMarker730"/>chart properties <a id="_idIndexMarker731"/>configuration sidebar will appear on the right side, as shown in <em class="italic">Figure 10.13</em>. We can create a chart by specifying the timeline, the statistics, and the feature we would like to plot. Depending on how long you've enabled the monitor, you can choose a time span to visualize. For example, I chose <strong class="bold">1 day</strong>, the <strong class="bold">Average</strong> statistic, and <strong class="bold">feature_baseline_drift_Length</strong> to see the average baseline drift <a id="_idIndexMarker732"/>measure on the <strong class="bold">Length</strong> feature in the past day:</li>
+			</ol>
+			<div>
+				<div id="_idContainer133" class="IMG---Figure">
+					<img src="image/B17447_10_013.jpg" alt="Figure 10.13 – Visualizing feature drift in SageMaker Studio&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 10.13 – Visualizing feature drift in SageMaker Studio</p>
+			<ol>
+				<li value="3">You <a id="_idIndexMarker733"/>can optionally add more charts by clicking the <strong class="bold">Add chart</strong> button.</li>
+				<li>Similarly, we can visualize the model performance using the <strong class="bold">mse</strong> metric over the last 24 hours, as shown in <em class="italic">Figure 10.14</em>:</li>
+			</ol>
+			<div>
+				<div id="_idContainer134" class="IMG---Figure">
+					<img src="image/B17447_10_014.jpg" alt="Figure 10.14 – Visualizing the mse regression metric in SageMaker Studio&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 10.14 – Visualizing the mse regression metric in SageMaker Studio</p>
+			<p class="callout-heading">Note</p>
+			<p class="callout">To save <a id="_idIndexMarker734"/>costs, when you <a id="_idIndexMarker735"/>complete the examples, make sure to uncomment and run the last cells in <strong class="source-inline">01-train_host_predict.ipynb</strong> to delete the monitoring schedules and the endpoint in order to stop incurring charges to your AWS account.</p>
+			<h1 id="_idParaDest-144"><a id="_idTextAnchor143"/>Summary</h1>
+			<p>In this chapter, we focused on data drift and model drift in ML and how to monitor them using SageMaker Model Monitor and SageMaker Studio. We demonstrated how we set up a data quality monitor and a model quality monitor in SageMaker Studio to continuously monitor the behavior of a model and the characteristics of the incoming data, in a scenario where a regression model is deployed in a SageMaker endpoint and continuous inference traffic is hitting the endpoint. We introduced some random perturbation to the inference traffic and used SageMaker Model Monitor to detect unwanted behavior of the model and data. With this example, you can also deploy SageMaker Model Monitor to your use case and provide visibility and a guardrail to your models in production.</p>
+			<p>In the next chapter, we will be learning how to operationalize an ML project with SageMaker Projects, Pipelines, and the model registry. We will be talking about an important trend in ML right now, that is, <strong class="bold">continuous integration/continuous delivery</strong> (<strong class="bold">CI/CD</strong>) and <strong class="bold">ML operations</strong> (<strong class="bold">MLOps</strong>). We will demonstrate how you can use SageMaker features, such as Projects, Pipelines, and the model registry, to make your ML project repeatable, reliable, and reusable, and have strong governance.</p>
+		</div>
+	</body></html>

@@ -1,0 +1,312 @@
+<html><head></head><body>
+		<div id="_idContainer066">
+			<h1 id="_idParaDest-64"><em class="italic"><a id="_idTextAnchor063"/>Chapter 4</em>: Building a Feature Repository with SageMaker Feature Store</h1>
+			<p>A feature store allows you to store features for <strong class="bold">machine learning</strong> (<strong class="bold">ML</strong>) training and inference. It serves as a central repository for teams collaborating on ML use cases to prevent duplicating and confusing efforts when creating features. Amazon SageMaker Feature Store makes storing and accessing training and inference data in the cloud easier, faster, and reproducible. With a SageMaker Feature Store instance built for your ML life cycle, you will be able to manage features, which are always evolving, and use them for training and inference with the confidence that you are using the right ones. You will also be able to collaborate with your colleagues more effectively by having a single source of truth when it comes to ML features.</p>
+			<p>In this chapter, we will be covering the following topics:</p>
+			<ul>
+				<li>Understanding the concept of a feature store</li>
+				<li>Getting started with SageMaker Feature Store</li>
+				<li>Accessing features from SageMaker Feature Store</li>
+			</ul>
+			<h1 id="_idParaDest-65"><a id="_idTextAnchor064"/>Technical requirements</h1>
+			<p>For this chapter, you need to access the code in <a href="https://github.com/PacktPublishing/Getting-Started-with-Amazon-SageMaker-Studio/tree/main/chapter04">https://github.com/PacktPublishing/Getting-Started-with-Amazon-SageMaker-Studio/tree/main/chapter04</a>. You need to make sure your IAM execution role has the <strong class="source-inline">AmazonSageMakerFeatureStoreAccess</strong> policy.</p>
+			<h1 id="_idParaDest-66"><a id="_idTextAnchor065"/>Understanding the concept of a feature store</h1>
+			<p>Consider the <a id="_idIndexMarker248"/>following scenario: you are a data scientist working on an ML project in the automotive industry with a fellow data scientist and a few data engineers. You are responsible for modeling vehicle fuel efficiency, while your fellow data scientist is responsible for modeling vehicle performance. Both of you are using data coming from car manufacturers that your company is working with that is preprocessed and stored in the cloud by the data engineers in the team as input to the models. </p>
+			<p>The data is stored in disparate sources, such as Amazon S3, Amazon <strong class="bold">Relational Database Service</strong> (<strong class="bold">RDS</strong>), and a data lake built on AWS, depending on the nature of the source data. You and your fellow data scientist have been reaching out separately to the data engineering team to get the data processed in certain ways that work best for your respective modeling exercises. You do not realize that your fellow data scientist's models actually share some common features, but a new set of features is created and maintained in both of your workspaces. </p>
+			<p>As the project goes on, the data engineering team is reporting that it has become a challenge to <a id="_idIndexMarker249"/>manage the constantly growing data and feature footprint. It is also cumbersome for you to track versions of features when there is a change in the data processing pipeline and/or the car manufacturers amend and update the catalogs. You find yourself in a constant struggle keeping track of what models are trained with what set or versions of features from a multitude of tables and files for your code and notebooks. </p>
+			<p>Here's a summary of the challenges that the team is facing:</p>
+			<ul>
+				<li>Data and features are not centrally stored, even though there is a central data engineering team.</li>
+				<li>The data scientists do not have visibility and knowledge of features that are created and used by each other; therefore, the default is to create your own. </li>
+				<li>Consequently, data and features are duplicated, burdening the data engineering team.</li>
+				<li>An update to the feature means another copy of data that someone needs to manage.</li>
+				<li>Model and data lineage are difficult to maintain over the iteration of the ML life cycle.</li>
+			</ul>
+			<p>A feature store is a relatively new concept in an ML life cycle that is purposefully designed to address the challenges observed in the preceding scenario. The goal of a feature store is to have a centralized store <em class="italic">for all features</em>, <em class="italic">for all models</em>, <em class="italic">for training and inference</em>, and <em class="italic">for all times</em>. <em class="italic">For all features</em> means that we want to have features from various sources to funnel into one central place and to be able to find them easily. <em class="italic">For all models</em> means that we want teams building various models to use the features from only one central place. <em class="italic">For training and inference</em> means that we want to retrieve the same features for training and for hosting purposes while meeting different runtime <a id="_idIndexMarker250"/>requirements in training and inference applications. <em class="italic">For all times</em> means that we want to keep versions of features for their entire lifetime, regardless of updates and changes in one single feature store, so that data scientists can access different versions of the features for different time slices.</p>
+			<p>Let's look at the key components and concepts in SageMaker Feature Store that make it possible.</p>
+			<h2 id="_idParaDest-67"><a id="_idTextAnchor066"/>Understanding an online store</h2>
+			<p>An online store <a id="_idIndexMarker251"/>is a feature storage option in SageMaker Feature Store that is designed to stay <em class="italic">online</em> at all times. <em class="italic">Online</em> means that the store should behave like an online application, one <a id="_idIndexMarker252"/>that responds to data read/write access requests immediately. <em class="italic">Immediately</em> can be subjective, but in technical terms, it means low response latency so that users do not feel the lapse. In addition to low latency, another aspect that makes the online store "online" is the high throughput of transactions that it can serve at the same time. Imagine hundreds of thousands of users visiting your application; you do not want to disappoint your awesome customers. You want your online application to be capable of handling traffic with high throughput and low latency.</p>
+			<p>Why do we need an online store that has low latency? In many ML use cases, the ML inference needs to respond to a user's action on the system <em class="italic">immediately</em> to provide the inference results back to the user. The inference process typically includes querying features for a particular data point and sending the features as a payload to the ML model. For example, an auto insurance online quote application has an ML model that takes a driver's information to predict their risk level and suggest a quote. This application needs to pull vehicle-related features from a feature store based on the car make provided by the user. You'd expect a modern application to return a quote immediately. Therefore, an ideal architecture should keep the latency of both pulling features from a feature store and making an ML inference low. We can't have a system where the ML model responds immediately but takes seconds or minutes to gather features from various databases and locations. </p>
+			<h2 id="_idParaDest-68"><a id="_idTextAnchor067"/>Understanding an offline store</h2>
+			<p>An offline store in SageMaker Feature Store is designed to provide much more versatile functionality <a id="_idIndexMarker253"/>by keeping all the records over time for use. You will be able to access features at any given condition and time for a variety of use cases. But this comes <a id="_idIndexMarker254"/>at the cost of higher-latency response times for requests to an offline store, because the offline store uses slower and less expensive storage. </p>
+			<p>An offline store complements the online store for ML use cases where low latency isn't a requirement. For example, when building an ML training dataset to reproduce a particular model for compliance purposes, you need to access historic features in order to build a model that was created in the past. ML training is typically not expected to complete within seconds anyway, so you don't necessarily need sub-second performance when querying a feature store for training data.</p>
+			<p>Now that we've got a good understanding of the key components and concepts in SageMaker Feature Store, let's get hands-on with a use case.</p>
+			<h1 id="_idParaDest-69"><a id="_idTextAnchor068"/>Getting started with SageMaker Feature Store</h1>
+			<p>Following the scenario we described earlier, we are a data science team in a company in the <a id="_idIndexMarker255"/>automotive industry. We are working on a fuel efficiency <a id="_idIndexMarker256"/>dataset to create ML models. Let's use an Auto MPG dataset from UCI (<a href="https://archive.ics.uci.edu/ml/datasets/Auto+MPG">https://archive.ics.uci.edu/ml/datasets/Auto+MPG</a>), which is a collection of vehicle data and fuel efficiency (measured by miles per gallon) by make from 1970 to 1982, to demonstrate the following:</p>
+			<ul>
+				<li>How to ingest features into a feature store</li>
+				<li>How to access features from an online store and an offline store</li>
+				<li>How to update the features year over year and access features using versioning (time travel)</li>
+			</ul>
+			<p>As a prerequisite, please navigate to the code repository and open the <strong class="source-inline">chapter04/01-sagemaker_feature_store.ipynb</strong> notebook. First, execute the notebook until the following code to read the data from the source into a pandas DataFrame:</p>
+			<p class="source-code">data_url='https://archive.ics.uci.edu/ml/machine-learning-databases/auto-mpg/auto-mpg.data'</p>
+			<p class="source-code">col_names=['mpg','cylinders', 'displacement', 'horsepower', 'weight', 'acceleration', 'model_year', 'origin', 'car_name']</p>
+			<p class="source-code">df=pd.read_csv(data_url, delimiter='\s+', header=None, names=col_names, na_values='?')</p>
+			<p class="source-code">df['car_name']=df['car_name'].astype('string')</p>
+			<p>Additionally, we convert the data type to <strong class="source-inline">string</strong> for the <strong class="source-inline">car_name</strong> column, which is required by SageMaker Feature Store. We will describe what this means later in the <em class="italic">Creating a feature group</em> section. </p>
+			<p>We are going <a id="_idIndexMarker257"/>to split the DataFrames by year in order to later ingest them to simulate the feature updates over the years. Therefore, it is easier to convert the type for one DataFrame now. The following cell creates a dictionary to hold DataFrames by year and adds a new <strong class="source-inline">event_time</strong> column to encode the time of feature creation. We simulate it by adding a Unix epoch time at 8:00 am on January 1 in each respective year using Python's <strong class="source-inline">datetime</strong> library:</p>
+			<p class="source-code">d_df = {}</p>
+			<p class="source-code">for yr in df['model_year'].unique():</p>
+			<p class="source-code">    print(yr)</p>
+			<p class="source-code">    d_df[str(yr)]=df[df['model_year']==yr]</p>
+			<p class="source-code">    d_df[str(yr)]['event_time']=datetime.datetime(1900+yr, 1, 1, 8, 0, 0).timestamp()</p>
+			<p class="callout-heading">Important Note</p>
+			<p class="callout">A feature that denotes event time, <strong class="source-inline">event_time</strong> in this example, is required for any feature table that goes into a feature group in SageMaker Feature Store. This allows us to perform time travel and versioning of the features by time. </p>
+			<p>Next, we will start interacting with SageMaker Feature Store. </p>
+			<h2 id="_idParaDest-70"><a id="_idTextAnchor069"/>Creating a feature group</h2>
+			<p>A <strong class="bold">feature group</strong> in SageMaker <a id="_idIndexMarker258"/>Feature Store defines the metadata, feature definition, unique identifier for the data entries, and other SageMaker <a id="_idIndexMarker259"/>Feature Store configurations. </p>
+			<p>There are two ways to create a feature group – using the SageMaker Python SDK or the Studio UI.</p>
+			<p>By <a id="_idIndexMarker260"/>following these steps (also in the notebook), we can create a feature group in SageMaker Feature Store using the SageMaker Python SDK:</p>
+			<ol>
+				<li>Firstly, we create a SageMaker feature group named <strong class="source-inline">auto-mpg-&lt;timestamp&gt;</strong> with the <strong class="source-inline">FeatureGroup</strong> class:<p class="source-code">from sagemaker.feature_store.feature_group import FeatureGroup</p><p class="source-code">feature_group = FeatureGroup(name=feature_group_name, sagemaker_session=sess)</p></li>
+				<li>Next, we need to make the SageMaker feature group aware of the data schema and definition. <strong class="source-inline">feature_group.load_feature_definitions()</strong> is an API to load the schema and definition from a pandas DataFrame. The API automatically detects the data type. We also need to make sure that the features in the DataFrame are configured to have the data types supported by SageMaker Feature Store.<p class="callout-heading">Important Note</p><p class="callout">The data types <a id="_idIndexMarker261"/>supported by <a id="_idIndexMarker262"/>SageMaker Feature Store are <strong class="bold">string</strong>, <strong class="bold">fractional</strong>, and <strong class="bold">integral</strong>. A pandas <a id="_idIndexMarker263"/>DataFrame infers a <strong class="source-inline">data</strong> column with strings as the <strong class="source-inline">object</strong> type for backward-compatibility reasons. With pandas 1.0 onwards, you can explicitly request to use the <strong class="source-inline">string</strong> type for columns containing strings. SageMaker Feature Store works with the <strong class="source-inline">string</strong> type from pandas, not the <strong class="source-inline">object</strong> type. The acceptable data type for the <strong class="source-inline">event_time</strong> column is either <strong class="source-inline">string</strong> or <strong class="source-inline">fractional</strong>. For the <strong class="source-inline">string</strong> type, event time has to be in the ISO-8601 format in UTC time with the <em class="italic">yyyy-MM-dd'T'HH:mm:ssZ</em> or <em class="italic">yyyy-MM-dd'T'HH:mm:ss.SSSZ</em> patterns. For the <strong class="source-inline">fractional</strong> type, the values are expected to be in seconds from Unix epoch time with millisecond precision. In our example, we used Unix epoch time returned by the <strong class="source-inline">datetime</strong> library.</p></li>
+			</ol>
+			<p>We <a id="_idIndexMarker264"/>load the feature definition from the first DataFrame. You will see the definition and data types loaded into <strong class="source-inline">feature_group</strong> in the output:</p>
+			<p class="source-code">feature_group.load_feature_definitions(data_frame=d_df['70'])</p>
+			<p class="source-code"><strong class="bold">[FeatureDefinition(feature_name='mpg', feature_type=&lt;FeatureTypeEnum.FRACTIONAL: 'Fractional'&gt;),</strong></p>
+			<p class="source-code"><strong class="bold"> FeatureDefinition(feature_name='cylinders', feature_type=&lt;FeatureTypeEnum.INTEGRAL: 'Integral'&gt;),</strong></p>
+			<p class="source-code"><strong class="bold"> FeatureDefinition(feature_name='displacement', feature_type=&lt;FeatureTypeEnum.FRACTIONAL: 'Fractional'&gt;),</strong></p>
+			<p class="source-code"><strong class="bold"> FeatureDefinition(feature_name='horsepower', feature_type=&lt;FeatureTypeEnum.FRACTIONAL: 'Fractional'&gt;),</strong></p>
+			<p class="source-code"><strong class="bold"> FeatureDefinition(feature_name='weight', feature_type=&lt;FeatureTypeEnum.FRACTIONAL: 'Fractional'&gt;),</strong></p>
+			<p class="source-code"><strong class="bold"> FeatureDefinition(feature_name='acceleration', feature_type=&lt;FeatureTypeEnum.FRACTIONAL: 'Fractional'&gt;),</strong></p>
+			<p class="source-code"><strong class="bold"> FeatureDefinition(feature_name='model_year', feature_type=&lt;FeatureTypeEnum.INTEGRAL: 'Integral'&gt;),</strong></p>
+			<p class="source-code"><strong class="bold"> FeatureDefinition(feature_name='origin', feature_type=&lt;FeatureTypeEnum.INTEGRAL: 'Integral'&gt;),</strong></p>
+			<p class="source-code"><strong class="bold"> FeatureDefinition(feature_name='car_name', feature_type=&lt;FeatureTypeEnum.STRING: 'String'&gt;),</strong></p>
+			<p class="source-code"><strong class="bold"> FeatureDefinition(feature_name='event_time', feature_type=&lt;FeatureTypeEnum.FRACTIONAL: 'Fractional'&gt;)]</strong></p>
+			<ol>
+				<li value="3">After the definition is loaded, we can create <strong class="source-inline">feature group</strong> in the system: <p class="source-code">record_identifier_feature_name = 'car_name'</p><p class="source-code">event_time_feature_name = 'event_time'</p><p class="source-code">feature_group.create(</p><p class="source-code">    s3_uri=f's3://{bucket}/{prefix}',</p><p class="source-code">    record_identifier_name=record_identifier_feature_name,</p><p class="source-code">    event_time_feature_name=event_time_feature_name,</p><p class="source-code">    role_arn=role,</p><p class="source-code">    enable_online_store=True,</p><p class="source-code">    description=description</p><p class="source-code">)</p></li>
+			</ol>
+			<p>In <a id="_idIndexMarker265"/>the <strong class="source-inline">create()</strong> function, the following is configured for the feature group:</p>
+			<ul>
+				<li>We specify an S3 bucket location to the <strong class="source-inline">s3_uri</strong> argument to indicate that we want to set up an offline store at this location for the feature group. We could set it to <strong class="source-inline">False</strong> to disable the offline store.</li>
+				<li>We set <strong class="source-inline">enable_online_store</strong> to <strong class="source-inline">True</strong> to create an online store for the feature group. Set it to <strong class="source-inline">False</strong> if you do not need an online store and avoid unnecessary charges.</li>
+				<li>We indicate that the record identifier is the <strong class="source-inline">car_name</strong> column and the <strong class="source-inline">event_time</strong> feature is the <strong class="source-inline">event_time</strong> column in the feature group.</li>
+			</ul>
+			<p>This creation is an asynchronous operation and takes a couple of seconds. The <strong class="source-inline">check_feature_group_status()</strong> function in the next cell checks the status every 5 seconds and returns the cell once the feature group is created successfully. You can also see a list of feature groups in the Studio UI in the <strong class="bold">SageMaker component and</strong> <strong class="bold">registry</strong> tab in the left sidebar, as shown in <em class="italic">Figure 4.1</em>. If you click on the feature group in the list, you can see all the information associated with the feature group, a description, a feature definition, and example queries:</p>
+			<div>
+				<div id="_idContainer055" class="IMG---Figure">
+					<img src="image/B17447_05_001.jpg" alt="Figure 4.1 – Viewing the feature group in the SageMaker Studio UI&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 4.1 – Viewing the feature group in the SageMaker Studio UI</p>
+			<p>Alternatively, you can also create a feature group from the UI. Because we have the data <a id="_idIndexMarker266"/>already in a pandas DataFrame, it was straightforward to load the definition using the SDK. The following steps demonstrate how to create a feature group in Studio UI:</p>
+			<ol>
+				<li value="1">Click on <strong class="bold">Create feature group</strong>, as shown in <em class="italic">Figure 4.1</em>.</li>
+				<li>In the first step, as shown in <em class="italic">Figure 4.2</em>, enter the feature group name, a description, and configurations for the online and offline stores. For the offline store, we put in an S3 bucket location to store the offline store data and an IAM Role ARN that has permission to access the bucket. In this example, we will use the SageMaker execution role that is also attached to the SageMaker Studio user profile. You can see the full ARN from the <strong class="source-inline">role</strong> variable in the notebook. For the <strong class="bold">DATA CATALOG</strong> options, let's check the <strong class="bold">Auto create AWS Glue table</strong> box and either have SageMaker assign names in the three fields or assign names ourselves. Click <strong class="bold">Continue</strong>:</li>
+			</ol>
+			<div>
+				<div id="_idContainer056" class="IMG---Figure">
+					<img src="image/B17447_05_002.jpg" alt="Figure 4.2 – Configuring a feature group in the Studio UI&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 4.2 – Configuring a feature group in the Studio UI</p>
+			<ol>
+				<li value="3">In the second step, we need to create the feature definition. We can use <strong class="bold">JSON editor</strong> to <a id="_idIndexMarker267"/>paste in definition in bulk, as shown in <em class="italic">Figure 4.3:</em></li>
+			</ol>
+			<div>
+				<div id="_idContainer057" class="IMG---Figure">
+					<img src="image/B17447_05_003.jpg" alt="Figure 4.3 – Editing the feature definitions in JSON editor&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 4.3 – Editing the feature definitions in JSON editor</p>
+			<ol>
+				<li value="4">Or we can use the <strong class="bold">Table </strong>tab to edit the feature with an easy-to-use drop-down list, as shown in <em class="italic">Figure 4.4</em>. Click <strong class="bold">Continue</strong> once you've finished:</li>
+			</ol>
+			<div>
+				<div id="_idContainer058" class="IMG---Figure">
+					<img src="image/B17447_05_004.jpg" alt="Figure 4.4 – Editing the feature definitions in Table&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 4.4 – Editing the feature definitions in Table</p>
+			<ol>
+				<li value="5">In <a id="_idIndexMarker268"/>the third step, as shown in <em class="italic">Figure 4.5</em>, we need to choose a feature to be a record identifier (<strong class="source-inline">car_name</strong>) and another feature to identify event time (<strong class="source-inline">event_time</strong>). Click <strong class="bold">Continue</strong> to proceed:</li>
+			</ol>
+			<div>
+				<div id="_idContainer059" class="IMG---Figure">
+					<img src="image/B17447_05_005.jpg" alt="Figure 4.5 – Selecting a record identifier and event time feature&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 4.5 – Selecting a record identifier and event time feature</p>
+			<ol>
+				<li value="6">Then, we <a id="_idIndexMarker269"/>can optionally add tags to the feature group. Click <strong class="bold">Create feature group </strong> to continue. <p class="callout-heading">Important Note</p><p class="callout">I demonstrated two ways of creating a feature group. We will only need one to proceed. Let's come back to the notebook and use the feature group created from the SageMaker Python SDK.</p></li>
+			</ol>
+			<p>Once your feature group is created, we are ready to proceed to ingest data to the feature group.</p>
+			<h2 id="_idParaDest-71"><a id="_idTextAnchor070"/>Ingesting data to SageMaker Feature Store </h2>
+			<p>You can ingest data into the SageMaker Feature Store feature group in a batch or streaming fashion. There is an API in the <strong class="source-inline">sagemaker.feature_store</strong> SDK that allows us to ingest <a id="_idIndexMarker270"/>pandas DataFrames asynchronously <a id="_idIndexMarker271"/>and in batch fashion. For streaming ingestion, the <strong class="source-inline">sagemaker-featurestore-runtime</strong> API makes it easy to put a single record with low latency into a feature group. These two approaches to make feature ingestion flexible can be implemented in different parts of the ML life cycle. </p>
+			<p>A data engineer or scientist can create a feature group and ingest the first batch of data, which is typically the case in the exploratory phase, using batch ingestion. Once a model is built and is ready to serve, it is critical to think about capturing new data and ingesting it into the feature store so that you can iterate over the model retraining with an enriched dataset. If your data come in batches, you can use batch ingestion that allow ingestion large amount of data efficiently. Alternatively, if your model is deployed as part of a real-time application, you can use the streaming ingestion approach. In this section, we will see how both batch and streaming ingestion work.</p>
+			<p>In our example, we are simulating data update annually, as we have chopped the dataset by year into multiple DataFrames with distinct <strong class="source-inline">event_time</strong> values for each year's data. We can ingest each DataFrame in a batch with the following code:</p>
+			<p class="source-code">for yr, df_auto in d_df.items():</p>
+			<p class="source-code">    print(yr)</p>
+			<p class="source-code">    print(df_auto.shape)</p>
+			<p class="source-code">    feature_group.ingest(data_frame=df_auto, max_workers=1, max_processes = 1, wait=True)</p>
+			<p>We will loop through all the DataFrames in the <strong class="source-inline">d_df</strong> dictionary and call the <strong class="source-inline">feature_group.ingest()</strong> method to ingest each DataFrame. You can control the ingestion runtime with the <strong class="source-inline">max_workers</strong> and <strong class="source-inline">max_processes</strong> arguments where the <strong class="source-inline">max_processes</strong> number of processes will be created to ingest different partitions of the DataFrame in parallel, each with the <strong class="source-inline">max_worker</strong> threads. The <strong class="source-inline">wait=True</strong> argument in <strong class="source-inline">.ingest()</strong> waits for the ingestion of a DataFrame to finish before proceeding. </p>
+			<p class="callout-heading">Important Note</p>
+			<p class="callout">While the SageMaker Python SDK allows you to create feature groups, work with feature definitions, ingest data, and query data from the offline store, the <strong class="source-inline">sagemaker-featurestore-runtime</strong> <strong class="source-inline">boto3</strong> SDK allows you to interact (<strong class="source-inline">Get</strong> and <strong class="source-inline">Put</strong>) with the online store. Features are available in the online store immediately after ingestion, whereas it takes some time to make features available in the offline store. </p>
+			<p>After <a id="_idIndexMarker272"/>the ingestion, we can quickly verify it <a id="_idIndexMarker273"/>by pulling a sample record from the online store, as shown in the following code block, using the <strong class="source-inline">get_record</strong> function from the <strong class="source-inline">sagemaker-featurestore-runtime</strong> <strong class="source-inline">boto3</strong> API: </p>
+			<p class="source-code">car_name = 'amc concord'</p>
+			<p class="source-code">featurestore_runtime =  sess.boto_session.client(service_name='sagemaker-featurestore-runtime', </p>
+			<p class="source-code">                                                 region_name=region)</p>
+			<p class="source-code">sample_record = featurestore_runtime.get_record(</p>
+			<p class="source-code">    FeatureGroupName=feature_group_name, RecordIdentifierValueAsString=car_name</p>
+			<p class="source-code">) </p>
+			<p class="source-code">sample_record</p>
+			<p>To ingest features for a record in a streaming fashion, we could use the <strong class="source-inline">put_record</strong> API from the <strong class="source-inline">sagemaker-featurestore-runtime</strong> <strong class="source-inline">boto3</strong> API to ingest a single data record, as shown in the following snippet. This API provides low latency that is typically required by a streaming application. Note that <strong class="source-inline">record</strong> is a list of dictionaries with a <strong class="source-inline">FeatureName</strong> and <strong class="source-inline">ValueAsString</strong> pair for each feature in a record:</p>
+			<p class="source-code">record = [{'FeatureName': 'mpg', </p>
+			<p class="source-code">           'ValueAsString': str(mpg)},</p>
+			<p class="source-code">          {'FeatureName':'cylinders', </p>
+			<p class="source-code">           'ValueAsString': str(cylinders)},</p>
+			<p class="source-code">          {'FeatureName':'displacement', </p>
+			<p class="source-code">           'ValueAsString': str(displacement)}, </p>
+			<p class="source-code">          {'FeatureName': 'horsepower', </p>
+			<p class="source-code">           'ValueAsString': str(horsepower)},</p>
+			<p class="source-code">          {'FeatureName': 'weight', </p>
+			<p class="source-code">           'ValueAsString': str(weight)},</p>
+			<p class="source-code">          {'FeatureName': 'acceleration', </p>
+			<p class="source-code">           'ValueAsString': str(acceleration)},</p>
+			<p class="source-code">          {'FeatureName': 'model_year', </p>
+			<p class="source-code">           'ValueAsString': str(model_year)},</p>
+			<p class="source-code">          {'FeatureName': 'origin', </p>
+			<p class="source-code">           'ValueAsString': str(origin)},</p>
+			<p class="source-code">           'ValueAsString': str(car_name)},</p>
+			<p class="source-code">          {'FeatureName': 'event_time', </p>
+			<p class="source-code">           'ValueAsString': str(int(round(time.time())))}]</p>
+			<p class="source-code">featurestore_runtime.put_record(FeatureGroupName=feature_group_name, </p>
+			<p class="source-code">                                Record=record)</p>
+			<p>If you <a id="_idIndexMarker274"/>have enabled both online and offline stores, as per our example, SageMaker automatically synchronizes features from an online <a id="_idIndexMarker275"/>store to an offline store. When we update the feature group with annual data, SageMaker appends the latest values to the offline store to give you a full history of values over time.</p>
+			<p>We have walked through how to ingest features into a feature group in SageMaker Feature Store <a id="_idIndexMarker276"/>in both batch and streaming fashion using the SageMaker Python SDK and the <strong class="source-inline">sagemaker-featurestore-runtime</strong> <strong class="source-inline">boto3</strong> API respectively. Let's now take a look at another way of ingesting features into SageMaker Feature Store – from <strong class="bold">SageMaker Data Wrangler</strong>.</p>
+			<h2 id="_idParaDest-72"><a id="_idTextAnchor071"/>Ingesting from SageMaker Data Wrangler</h2>
+			<p>If you have read <a href="B17447_03_ePub_RK.xhtml#_idTextAnchor043"><em class="italic">Chapter 3</em></a>, <em class="italic">Data Preparation with SageMaker Data Wrangler</em>, you may <a id="_idIndexMarker277"/>recall that at the end of the journey with SageMaker Data Wrangler, there is an option to export data to SageMaker Feature Store. SageMaker Data Wrangler creates a notebook with all the code automatically so that you can simply execute the cells to ingest data to a feature group. In the notebook, it shows you how SageMaker enables the ingestion <a id="_idIndexMarker278"/>by applying <strong class="bold">Amazon SageMaker Processing</strong>, which integrates with SageMaker Feature Store as an output destination. To do this, follow these steps:</p>
+			<ol>
+				<li value="1">Open the <strong class="source-inline">flow</strong> file created in <a href="B17447_03_ePub_RK.xhtml#_idTextAnchor043"><em class="italic">Chapter 3</em></a>, <em class="italic">Data Preparation with SageMaker Data Wrangler</em>.</li>
+				<li>Go to the <strong class="bold">Export</strong> tab to select the last transformation step in the flow.</li>
+				<li>Click the <strong class="bold">Export step</strong> button in the top right, as shown in <em class="italic">Figure 4.6</em>, and choose <strong class="bold">Feature Store</strong>:</li>
+			</ol>
+			<div>
+				<div id="_idContainer060" class="IMG---Figure">
+					<img src="image/B17447_05_006.jpg" alt="Figure 4.6 – Exporting transformed data to SageMaker Feature Store from SageMaker Data Wrangler&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 4.6 – Exporting transformed data to SageMaker Feature Store from SageMaker Data Wrangler</p>
+			<ol>
+				<li value="4">A new notebook will pop up. Follow and execute the cells to start a SageMaker Processing job. </li>
+			</ol>
+			<p>At <a id="_idIndexMarker279"/>the end of processing, a new feature group will be created and available in SageMaker Feature Store.</p>
+			<p>After we have created a feature group and ingested features to it, we can move on to see how we can interact with the feature store.</p>
+			<h1 id="_idParaDest-73"><a id="_idTextAnchor072"/>Accessing features from SageMaker Feature Store</h1>
+			<p>Features in a feature store can be accessed programmatically when you are building a training <a id="_idIndexMarker280"/>dataset for ML modeling, and when your application is making inferences against a model and is in need of features that are associated with a data point. We will walk through these scenarios to show you how to access features from SageMaker Feature Store.</p>
+			<h2 id="_idParaDest-74"><a id="_idTextAnchor073"/>Accessing a feature group in the Studio UI</h2>
+			<p>In the <a id="_idIndexMarker281"/>Studio UI, you can quickly browse through the feature groups in the account on the feature store page. In <em class="italic">Figure 4.1</em>, you can see a list of feature groups. You can double-click on the line to access further details, such as <strong class="bold">Feature group summary</strong>, <strong class="bold">Description</strong>, <strong class="bold">Feature definitions</strong>, and <strong class="bold">Feature group tags</strong>, as shown in <em class="italic">Figure 4.7</em>: </p>
+			<div>
+				<div id="_idContainer061" class="IMG---Figure">
+					<img src="image/B17447_05_007.jpg" alt="Figure 4.7 – Detailed information of a feature group in the Studio UI&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 4.7 – Detailed information of a feature group in the Studio UI</p>
+			<p>Once you <a id="_idIndexMarker282"/>and your team start to use SageMaker Feature Store in more projects, you will have many feature groups in the account. You can use the search bar in the feature group list to search for a feature group of interest: </p>
+			<div>
+				<div id="_idContainer062" class="IMG---Figure">
+					<img src="image/B17447_05_008.jpg" alt="Figure 4.8 – Searching for a feature group in the Studio UI&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 4.8 – Searching for a feature group in the Studio UI</p>
+			<p>To use <a id="_idIndexMarker283"/>the search bar, as shown in <em class="italic">Figure 4.8</em>, do the following:</p>
+			<ol>
+				<li value="1">Type in the name of the column you want to search, for example, <strong class="source-inline">short description</strong>.</li>
+				<li>Type in the search keyword; for example, I want to find out which feature group description contains the word <strong class="source-inline">horsepower</strong>.</li>
+				<li>The filter is then applied, resulting in only one feature group that satisfies the search criteria.</li>
+				<li>You can search by <strong class="bold">Tags</strong> or <strong class="bold">Feature group name</strong> as well.</li>
+			</ol>
+			<p>Searching by tags is a flexible and powerful tool. In the <strong class="bold">Feature group tags</strong> tab, you can add tags on the fly with additional information that will help you identify a feature group. For example, in <em class="italic">Figure 4.9</em>, I can add up to 50 tags to a feature group to help me organize and search:</p>
+			<div>
+				<div id="_idContainer063" class="IMG---Figure">
+					<img src="image/B17447_05_009.jpg" alt="Figure 4.9 – Adding tags to a feature group in the Studio UI&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 4.9 – Adding tags to a feature group in the Studio UI</p>
+			<p>The feature <a id="_idIndexMarker284"/>store page in the Studio helps us to identify the right feature group and learn more about feature definition and other configurations before we access the features programmatically. In the next section, we will learn how to access the features.</p>
+			<h2 id="_idParaDest-75"><a id="_idTextAnchor074"/>Accessing an offline store – building a dataset for analysis and training</h2>
+			<p>When building <a id="_idIndexMarker285"/>a training dataset, we typically need to be able to access a large number of features, access features of a specific time or version, and combine information from multiple feature groups. The offline store is designed to support such activities. </p>
+			<p>After ingesting features to a feature group, SageMaker Feature Store stages the data into an S3 bucket, creates a data catalog in the <strong class="bold">AWS Glue Catalog</strong>, registers the catalog in <strong class="bold">Amazon Athena</strong>, exposes a simple API for a SQL-based query, and returns a pandas DataFrame. We can use the following snippet to turn a query into a pandas DataFrame:</p>
+			<p class="source-code">query = feature_group.athena_query()</p>
+			<p class="source-code">table_name = query.table_name</p>
+			<p class="source-code">query_string = ('SELECT * FROM "%s"' % table_name)</p>
+			<p class="source-code">query.run(</p>
+			<p class="source-code">        query_string=query_string,</p>
+			<p class="source-code">        output_location=f's3://{bucket}/{prefix}/query_results/')</p>
+			<p class="source-code">query.wait()</p>
+			<p class="source-code">dataset = query.as_DataFrame()</p>
+			<p>In this snippet, we use the <strong class="source-inline">athena_query()</strong> method from a feature group to create an <strong class="source-inline">AthenaQuery</strong> class instance, which allows us to run a query, saves the query output into an S3 location, and returns a pandas DataFrame. <strong class="source-inline">table_name</strong> refers to the name of the Athena table that we can use in the query string. Here, our query selects all rows and columns <a id="_idIndexMarker286"/>from the feature table. You can take a look at the returned <strong class="source-inline">dataset</strong>, which has 398 entries, and note that besides the features that we have defined, there are three additional columns – <strong class="source-inline">write_time</strong>, <strong class="source-inline">api_invocation_time</strong>, and <strong class="source-inline">is_deleted</strong>. These three are also not seen in the output of <strong class="source-inline">featurestore_runtime.get_record()</strong>. They are created specifically for the offline store to enable better governance around the features and versioning. We will see how they can be used later.</p>
+			<p>Now we understand how to interact and query against the feature store. Let's consider this use case: we want to build training data using all vehicles built before 1979. Our query would look like the following:</p>
+			<p class="source-code">query_string_2 = '''</p>
+			<p class="source-code">SELECT * FROM "%s" WHERE model_year &lt; 79</p>
+			<p class="source-code">''' % table_name</p>
+			<p>If we run the query, we get a DataFrame (<strong class="source-inline">dataset_2</strong>) of 280 entries, which is a subset of the full table (398). </p>
+			<p>Consider another scenario: we would like to build training data using all vehicles built before 1979 but considering only the specs from the latest model year. We can build a point-in-time query, as shown in the following code block. This is also called time travel (going back in time to get the features from that point):</p>
+			<p class="source-code">query_string_3 = '''</p>
+			<p class="source-code">SELECT *</p>
+			<p class="source-code">FROM</p>
+			<p class="source-code">    (SELECT *,</p>
+			<p class="source-code">         row_number()</p>
+			<p class="source-code">        OVER (PARTITION BY car_name</p>
+			<p class="source-code">    ORDER BY  event_time desc, Api_Invocation_Time DESC, write_time DESC) AS row_number</p>
+			<p class="source-code">    FROM "%s"</p>
+			<p class="source-code">    where event_time &lt; %.f)</p>
+			<p class="source-code">WHERE row_number = 1 and</p>
+			<p class="source-code">NOT is_deleted</p>
+			<p class="source-code">''' % (table_name, datetime.datetime(1979, 1, 1, 8, 0, 0).timestamp())</p>
+			<p>With this <a id="_idIndexMarker287"/>query, we get a DataFrame of 212 entries (<strong class="source-inline">dataset_3</strong>). We can compare the entries for the <strong class="source-inline">amc gremlin</strong> car in the last two DataFrames, as shown in <em class="italic">Figure 4.10</em>:</p>
+			<div>
+				<div id="_idContainer064" class="IMG---Figure">
+					<img src="image/B17447_05_010.jpg" alt="Figure 4.10 – A point-in-time query (dataset_3) returns the latest data for a vehicle as of 1979 instead of all entries prior to 1979 (dataset_2) &#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 4.10 – A point-in-time query (dataset_3) returns the latest data for a vehicle as of 1979 instead of all entries prior to 1979 (dataset_2) </p>
+			<p>Thanks to the detailed time attribute that is stored in SageMaker Feature Store along with the features, we can perform sophisticated versioning and point-in-time queries against <a id="_idIndexMarker288"/>a feature group. We can see that <strong class="source-inline">dataset_3</strong> contains only one entry for the vehicle, whereas <strong class="source-inline">dataset_2</strong> has all the historical entries for the vehicle:</p>
+			<div>
+				<div id="_idContainer065" class="IMG---Figure">
+					<img src="image/B17447_05_011.jpg" alt="Figure 4.11 – Example queries that can help you perform common tasks with the offline store of a feature group&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 4.11 – Example queries that can help you perform common tasks with the offline store of a feature group</p>
+			<p>The offline store in SageMaker Feature Store can be very versatile. In the Feature Store UI, you can find a couple of query examples against the offline store on the <strong class="bold">Sample query</strong> tab, as shown in <em class="italic">Figure 4.11</em>. </p>
+			<p>Now, let's switch our focus to accessing features from the online store.</p>
+			<h2 id="_idParaDest-76"><a id="_idTextAnchor075"/>Accessing online store – low-latency feature retrieval</h2>
+			<p>SageMaker <a id="_idIndexMarker289"/>Feature Store's online store capability offers single-digit millisecond latency and high throughput. This is suitable for use cases where the feature is ingested to the cloud with a streaming architecture and the model inference is of a real-time and streaming nature. Accessing the online <a id="_idIndexMarker290"/>store of a feature group can be achieved with the <strong class="source-inline">sagemaker-featurestore-runtime</strong> <strong class="source-inline">boto3</strong> API, which is also what we used to verify the feature ingestion in the <em class="italic">Ingesting data to SageMaker Feature Store</em> section:</p>
+			<p class="source-code">car_name = 'amc gremlin'</p>
+			<p class="source-code">featurestore_runtime =  sess.boto_session.client(service_name='sagemaker-featurestore-runtime', region_name=region)</p>
+			<p class="source-code">amc_gremlin = featurestore_runtime.get_record(</p>
+			<p class="source-code">    FeatureGroupName=feature_group_name, </p>
+			<p class="source-code">    RecordIdentifierValueAsString=car_name</p>
+			<p class="source-code">)</p>
+			<p class="source-code">amc_gremlin['Record']<strong class="bold"> </strong></p>
+			<p class="source-code"><strong class="bold">[{'FeatureName': 'mpg', 'ValueAsString': '20.0'},</strong></p>
+			<p class="source-code"><strong class="bold"> {'FeatureName': 'cylinders', 'ValueAsString': '6'},</strong></p>
+			<p class="source-code"><strong class="bold"> {'FeatureName': 'displacement', 'ValueAsString': '232.0'},</strong></p>
+			<p class="source-code"><strong class="bold"> {'FeatureName': 'horsepower', 'ValueAsString': '100.0'},</strong></p>
+			<p class="source-code"><strong class="bold"> {'FeatureName': 'weight', 'ValueAsString': '2914.0'},</strong></p>
+			<p class="source-code"><strong class="bold"> {'FeatureName': 'acceleration', 'ValueAsString': '16.0'},</strong></p>
+			<p class="source-code"><strong class="bold"> {'FeatureName': 'model_year', 'ValueAsString': '75'},</strong></p>
+			<p class="source-code"><strong class="bold"> {'FeatureName': 'origin', 'ValueAsString': '1'},</strong></p>
+			<p class="source-code"><strong class="bold"> {'FeatureName': 'car_name', 'ValueAsString': 'amc gremlin'},</strong></p>
+			<p class="source-code"><strong class="bold"> {'FeatureName': 'event_time', 'ValueAsString': '157795200.0'}]</strong></p>
+			<p>We take <strong class="source-inline">amc gremlin</strong> as an example vehicle to retrieve the features. We use the <strong class="source-inline">get_record</strong> API from <strong class="source-inline">boto3</strong> to access the features for the vehicle. The output of the API (<strong class="source-inline">amc_gremlin</strong>) is a Python dictionary. The feature values are returned in the <strong class="source-inline">Record</strong> field. If you look closely, you will note that the <strong class="source-inline">model_year</strong> value for the vehicle is <strong class="source-inline">75</strong>. This shows that the online store keeps only the latest entry. </p>
+			<p>We can also use the <strong class="source-inline">batch_get_record</strong> API to retrieve multiple records and features in a batch. We can retrieve multiple records with a list of car names and select a subset of features <a id="_idIndexMarker291"/>with a list of features that we need. If <strong class="source-inline">FeatureNames</strong> is not provided, all features are returned:</p>
+			<p class="source-code">car_names = ['amc gremlin', 'amc concord', 'dodge colt']</p>
+			<p class="source-code">feature_names = ['cylinders', 'displacement', 'horsepower'] </p>
+			<p class="source-code">sample_batch_records=featurestore_runtime.batch_get_record(</p>
+			<p class="source-code">   Identifiers=[</p>
+			<p class="source-code">     {'FeatureGroupName': feature_group_name,</p>
+			<p class="source-code">       'RecordIdentifiersValueAsString': car_names,</p>
+			<p class="source-code">       'FeatureNames': feature_names},</p>
+			<p class="source-code">   ]</p>
+			<p class="source-code">)</p>
+			<p class="source-code">sample_batch_records['Records'][0]['Record'] # indexing first record</p>
+			<p class="source-code"><strong class="bold">[{'FeatureName': 'cylinders', 'ValueAsString': '4'},</strong></p>
+			<p class="source-code"><strong class="bold"> {'FeatureName': 'displacement', 'ValueAsString': '151.0'},</strong></p>
+			<p class="source-code"><strong class="bold"> {'FeatureName': 'horsepower', 'ValueAsString': '90.0'}]</strong></p>
+			<p>You can run these lines of code in your web applications to retrieve features for ML inference with single-digit millisecond latency. With SageMaker Feature Store, you can quickly retrieve features of a given data index quickly and make ML inference in the cloud.</p>
+			<h1 id="_idParaDest-77"><a id="_idTextAnchor076"/>Summary</h1>
+			<p>In this chapter, we learned about the concept of a feature store from an ML perspective. We described the functionality of Amazon SageMaker Feature Store and walked through several feature store use cases when developing an ML model using a public automotive dataset. In the example code, we showed you how to create a feature group in SageMaker Feature Store and how to ingest and update features and data to a feature group. We also showed you how to access features from the offline store for model training purposes and how to perform a point-in-time (time travel) feature query, which is useful when you need to access features in the past. Finally, we showed you how to access features from the online store for ML inference purposes.</p>
+			<p>In the next chapter, we will move into the topic of building and training ML models with the SageMaker Studio IDE. Building and training ML models can be challenging in a typical ML life cycle, as it is time-consuming and is compute resource-intensive. You will learn ways to build and train ML models with ease using the SageMaker Studio IDE.</p>
+		</div>
+	</body></html>
