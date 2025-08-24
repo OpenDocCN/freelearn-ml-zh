@@ -1,0 +1,548 @@
+<html><head></head><body>
+		<div id="_idContainer510">
+			<h1 id="_idParaDest-109"><a id="_idTextAnchor116"/>Chapter 7: Text Analytics and Natural Language Processing Using Graphs</h1>
+			<p>Nowadays, a vast amount of information is available in the form of text in terms of natural written language. The very same book you are reading right now is one such example. The news you read every morning, the tweets or the Facebook posts you sent/read earlier, the reports you write for a school assignment, the emails we write continuously – these are all examples of information we exchange via written documents and text. It is undoubtedly the most common way of indirect interaction, as opposed to direct interaction such as talking or gesticulating. It is, therefore, crucial to be able to leverage such kinds of information and extract insights from documents and texts.</p>
+			<p>The vast amount of information present nowadays in this form has determined the great development and recent advances in the field of <strong class="bold">natural language processing</strong> (<strong class="bold">NLP</strong>).</p>
+			<p>In this chapter, we will show you how to process natural language texts and review some basic models that allow us to structure text information. Using the information that's been extracted from a corpus of documents, we will show you how to create networks that can be analyzed using some of the techniques we have seen in previous chapters. In particular, using a tagged corpus we will show you how to develop both supervised (classification models to classify documents in pre-determined topics) and unsupervised (community detection to discover new topics) algorithms.</p>
+			<p>The chapter covers the following topics:</p>
+			<ul>
+				<li>Providing a quick overview of a dataset </li>
+				<li>Understanding the main concepts and tools used in NLP</li>
+				<li>Creating graphs from a corpus of documents</li>
+				<li>Building a document topic classifier</li>
+			</ul>
+			<h1 id="_idParaDest-110"><a id="_idTextAnchor117"/>Technical requirements</h1>
+			<p>We will be using <em class="italic">Python 3.8</em> for all our exercises. The following is a list of Python libraries that you must install for this chapter using pip. To do this, run, for example, <strong class="source-inline">pip install networkx==2.4</strong> on the command line and so on:</p>
+			<p class="source-code">networkx==2.4 </p>
+			<p class="source-code">scikit-learn==0.24.0</p>
+			<p class="source-code">stellargraph==1.2.1</p>
+			<p class="source-code">spacy==3.0.3</p>
+			<p class="source-code">pandas==1.1.3</p>
+			<p class="source-code">numpy==1.19.2</p>
+			<p class="source-code">node2vec==0.3.3</p>
+			<p class="source-code">Keras==2.0.2</p>
+			<p class="source-code">tensorflow==2.4.1</p>
+			<p class="source-code">communities==2.2.0</p>
+			<p class="source-code">gensim==3.8.3</p>
+			<p class="source-code">matplotlib==3.3.4</p>
+			<p class="source-code">nltk==3.5</p>
+			<p class="source-code">fasttext==0.9.2</p>
+			<p>All the code files relevant to this chapter are available at <a href="https://github.com/PacktPublishing/Graph-Machine-Learning/tree/main/Chapter07">https://github.com/PacktPublishing/Graph-Machine-Learning/tree/main/Chapter07</a>.</p>
+			<h1 id="_idParaDest-111"><a id="_idTextAnchor118"/>Providing a quick overview of a dataset </h1>
+			<p>To show you how to process a corpus of documents with the aim of extracting relevant information, we will be using a <a id="_idIndexMarker680"/>dataset derived from a well-known benchmark in the field of NLP: the so-called <strong class="bold">Reuters-21578</strong>. The original dataset includes a set of 21,578 news articles that were published in the financial Reuters newswire in 1987, which were assembled and indexed in categories. The original dataset has a very skewed distribution, with some categories appearing only in the training set or in the test set. For this reason, we will use a modified version, known as <strong class="bold">ApteMod</strong>, also <a id="_idIndexMarker681"/>referred to as <em class="italic">Reuters-21578 Distribution 1.0</em>, that has a smaller skew distribution and consistent labels between the training and test datasets.</p>
+			<p>Even though these articles are a bit outdated, the <a id="_idIndexMarker682"/>dataset has been used in a plethora of papers on NLP and still represents a dataset that's often used for benchmarking algorithms.</p>
+			<p>Indeed, Reuters-21578 contains enough documents for interesting post-processing and insights. A corpus with a larger number of documents can easily be found nowadays (see, for instance, <a href="https://github.com/niderhoff/nlp-datasets">https://github.com/niderhoff/nlp-datasets</a> for an overview of the most common ones), but they may require larger storage and computational power so that they can be processed. In <a href="B16069_09_Final_JM_ePub.xhtml#_idTextAnchor141"><em class="italic">Chapter 9</em></a><em class="italic">, Building a Data-Driven, Graph-Powered Application</em>, we will show you some of the tools and libraries that can be used to scale out your application and analysis.</p>
+			<p>Each document of the Reuters-21578 dataset is provided with a set of labels that represent its content. This makes it a perfect benchmark for testing both supervised and unsupervised algorithms. The Reuters-21578 dataset can easily be downloaded using the <strong class="source-inline">nltk</strong> library (which is a very useful library for post-processing documents):</p>
+			<p class="source-code">from nltk.corpus import reuters</p>
+			<p class="source-code">corpus = pd.DataFrame([</p>
+			<p class="source-code">    {"id": _id,</p>
+			<p class="source-code">     "text": reuters.raw(_id).replace("\n", ""), </p>
+			<p class="source-code">     "label": reuters.categories(_id)}</p>
+			<p class="source-code">    for _id in reuters.fileids()</p>
+			<p class="source-code">])</p>
+			<p>As you will see from inspecting the <strong class="source-inline">corpus</strong> DataFrame, the IDs are in the form <strong class="source-inline">training/{ID}</strong> and <strong class="source-inline">test/{ID}</strong>, which makes it clear which documents should be used for training and for testing. To start, let's list all the topics and see how many documents there are per topic using the following code:</p>
+			<p class="source-code">from collections import Counter</p>
+			<p class="source-code">Counter([label for document_labels in corpus["label"] for label in document_labels]).most_common()</p>
+			<p>The Reuters-21578 dataset includes 90 different topics with a significant degree of unbalance between classes, with almost 37% of the documents in the <strong class="source-inline">most common</strong> category and only 0.01% in each of the <a id="_idIndexMarker683"/>five least common categories. As you can see from inspecting the text, some of the documents have some newline characters embedded, which can easily be removed in the first text cleaning stage:</p>
+			<p class="source-code">corpus["clean_text"] = corpus["text"].apply(</p>
+			<p class="source-code">    lambda x: x.replace("\n", "")</p>
+			<p class="source-code">)</p>
+			<p>Now that we have loaded the data in memory, we can start analyzing it. In the next subsection, we will show you some of the main tools that can be used for dealing with unstructured text data. They will help you extract structured information so that it can be used with ease.</p>
+			<h1 id="_idParaDest-112"><a id="_idTextAnchor119"/>Understanding the main concepts and tools used in NLP</h1>
+			<p>When processing documents, the first analytical step is certainly to infer the document language. Most analytical <a id="_idIndexMarker684"/>engines that are used in NLP tasks are, in fact, trained on documents in a specific language and should only be used for such a language. Some attempts to build cross-language models (see, for instance, multi-lingual embeddings such as <a href="https://fasttext.cc/docs/en/aligned-vectors.html">https://fasttext.cc/docs/en/aligned-vectors.html</a> and <a href="https://github.com/google-research/bert/blob/master/multilingual.md">https://github.com/google-research/bert/blob/master/multilingual.md</a>) have recently gained increasing popularity, although they still represent a small portion of NLP models. Therefore, it is very common to first infer the language so that you can use the correct downstream analytical NLP pipeline.</p>
+			<p>You can use different methods to infer the language. One very simple yet effective approach relies on looking for the most common words of a language (the so-called <strong class="source-inline">stopwords</strong>, such as <strong class="source-inline">the</strong>, <strong class="source-inline">and</strong>, <strong class="source-inline">be</strong>, <strong class="source-inline">to</strong>, <strong class="source-inline">of</strong>, and so on) and building a score based on their frequencies. Its precision, however, tends to be limited to short text and does not make use of the word's positioning and context. On the other hand, Python has many libraries that use more elaborated logic, allowing us to infer the language in a more precise manner. Some such libraries are <strong class="source-inline">fasttext</strong>, <strong class="source-inline">polyglot</strong>, and <strong class="source-inline">langdetect</strong>, to name just a few. </p>
+			<p>As an example, we will use <strong class="source-inline">fasttext</strong> in the following code, which can be integrated with very few lines and provides support for more than 150 languages. The language can be inferred for all documents using the following snippet:</p>
+			<p class="source-code">from langdetect import detect</p>
+			<p class="source-code">import numpy as np</p>
+			<p class="source-code">def getLanguage(text: str):</p>
+			<p class="source-code">    try:</p>
+			<p class="source-code">        return langdetect.detect(text)</p>
+			<p class="source-code">    except:</p>
+			<p class="source-code">        return np.nan</p>
+			<p class="source-code">corpus["language"] = corpus["text"].apply(langdetect.detect)</p>
+			<p>As you will see in the <a id="_idIndexMarker685"/>output, there seem to be documents in languages other than English. Indeed, these documents are often either very short or have a strange structure, which means they're not actual news articles. When documents represent text that a human would read and label as news, the model is generally rather precise and accurate.</p>
+			<p>Now that we have inferred the language, we can continue with the language-dependent steps of the analytical pipeline. For the following tasks, we will be using <strong class="source-inline">spaCy</strong>, which is an extremely powerful library that allows us to embed state-of-the-art NLP models with very few lines of code. After installing the library with <strong class="source-inline">pip install spaCy</strong>, language-specific models can be integrated by simply installing them using the <strong class="source-inline">spaCy</strong> download utility. For instance, the following command can be used to download and install the English model:</p>
+			<p class="source-code">python -m spacy download en_core_web_sm</p>
+			<p>Now, we should have the language models for English ready to use. Let's see which information it can provide. Using spaCy is extremely simple and, using just one line of code, can embed the computation as a very rich set of information. Let's start by applying the model to one of the documents in the Reuters corpus:</p>
+			<p class="callout-heading">SUBROTO SAYS INDONESIA SUPPORTS TIN PACT EXTENSION</p>
+			<p class="callout">Mines and Energy Minister Subroto confirmed Indonesian support for an extension of the sixth <strong class="bold">International Tin Agreement</strong> (<strong class="bold">ITA</strong>), but <a id="_idIndexMarker686"/>said a new pact was not necessary. Asked by Reuters to clarify his statement on Monday in which he said the pact should be allowed to lapse, Subroto said Indonesia was ready to back extension of the ITA. "We can support extension of the sixth agreement," he said. "But a seventh accord we believe to be unnecessary." The sixth ITA will expire at the end of June unless a two-thirds majority of members vote for an extension.</p>
+			<p><strong class="source-inline">spacy</strong> can easily be applied just by loading the model and applying it to the text:</p>
+			<p class="source-code">nlp = spacy.load('en_core_web_md')</p>
+			<p class="source-code">parsed = nlp(text)</p>
+			<p>The <strong class="source-inline">parsed</strong> object, which is returned by <strong class="source-inline">spacy</strong>, has several fields due to many models being combined into a single pipeline. These provide a different level of text structuring. Let's examine them one by one:</p>
+			<ul>
+				<li><strong class="bold">Text segmentation and tokenization</strong>: This is a process that <a id="_idIndexMarker687"/>aims to split a <a id="_idIndexMarker688"/>document into its periods, sentences, and single words (or tokens). This step is generally very important for all <a id="_idIndexMarker689"/>subsequent analyses and usually leverages punctuation, black spaces, and newlines <a id="_idIndexMarker690"/>characters to infer the best document segmentation. The segmentation engine provided in <strong class="source-inline">spacy</strong> generally works fairly well. However, please note that, depending on the context, a bit of model tuning or rule modification might be necessary. For instance, when you're dealing with short texts that contain slang, emoticons, links, and hashtags, a better choice for text segmentation and tokenization may be <strong class="source-inline">TweetTokenizer</strong>, which is included in the <strong class="source-inline">nltk</strong> library. Depending on the context, we encourage you to explore other possible segmentations.<p>In the document <a id="_idIndexMarker691"/>returned by <strong class="source-inline">spacy</strong>, the sentence segmentation can be found in the <strong class="source-inline">sents</strong> attribute of the <strong class="source-inline">parsed</strong> object. Each <a id="_idIndexMarker692"/>sentence can <a id="_idIndexMarker693"/>be iterated over its token by simply <a id="_idIndexMarker694"/>using the following code:</p><p class="source-code">for sent in parsed.sents:</p><p class="source-code">    for token in sent:</p><p class="source-code">        print(token)</p><p>Each token is a spaCy <strong class="source-inline">Span</strong> object that has attributes that specify the type of token and further characterization that's introduced by the other models.</p></li>
+				<li><strong class="bold">Part-of-</strong>Speech Tagger: Once the <a id="_idIndexMarker695"/>text has been divided into its single words (also referred to as tokens), the next step is to associate each token with a <strong class="bold">Part-of-Speech</strong> (<strong class="bold">PoS</strong>) tag; that is, its <a id="_idIndexMarker696"/>grammatical type. The inferred tags are usually nouns, verbs, auxiliary verbs, adjectives, and so on. The engines that are <a id="_idIndexMarker697"/>used for PoS tagging are usually models that have been trained to classify tokens based on a large, labeled corpus, where each token has an associated PoS tag. Being trained on actual data, they learn to recognize the common pattern within a language; for instance, the word "the" (which is a determinative article, <strong class="source-inline">DET</strong>) is usually followed by a noun, and so on. When using spaCy, the information about PoS tagging is usually stored in the <strong class="source-inline">label_</strong> attribute of the <strong class="source-inline">Span</strong> object. The types of tags that are available can be found at <a href="https://spacy.io/models/en">https://spacy.io/models/en</a>. Conversely, you can get a human-readable value for a given type using the <strong class="source-inline">spacy.explain</strong> function.</li>
+				<li><strong class="bold">Named Entity Recognition (NER)</strong>: This <a id="_idIndexMarker698"/>analytical step <a id="_idIndexMarker699"/>is generally a statistical model that is trained to recognize the type of nouns that appear within the text. Some common examples of entities are Organization, Person, Geographic Location and Addresses, Products, Numbers, and Currencies. Given the context (the surrounding words), as well as the prepositions that are used, the model infers the most probable type of the entity, if any. As in other steps of the NLP pipeline, these models are also usually trained using a large, tagged dataset that they learn common <a id="_idIndexMarker700"/>patterns and structures from. In spaCy, the information about the document entities is usually stored in the <strong class="source-inline">ents</strong> attribute of the <strong class="source-inline">parsed</strong> object. spaCy also provides some utilities to nicely visualize the <a id="_idIndexMarker701"/>entities in a text using the <strong class="source-inline">displacy</strong> module: <p class="source-code">displacy.render(parsed, style='ent', jupyter=True)</p><p>This results in the following output:</p></li>
+			</ul>
+			<div>
+				<div id="_idContainer478" class="IMG---Figure">
+					<img src="image/B16069_07_01.jpg" alt="Figure 7.1 – Example of the spaCy output for the NER engine&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 7.1 – Example of the spaCy output for the NER engine</p>
+			<ul>
+				<li><strong class="bold">Dependency parser</strong>: The dependency parser is an <a id="_idIndexMarker702"/>extremely powerful engine that infers the relationships between tokens within a sentence. It basically allows you to build a syntactic tree of how <a id="_idIndexMarker703"/>words are related to each other. The root token (the one all the other tokens depend on) is usually the main verb of the sentence, that relates the subject and the object. Subjects and objects can in turn relate to other syntactic tokens, such as possessive pronouns, adjectives and/or articles. Besides, verbs can relate, beside subject and object, also to propositions, as well as other subordinate predicates. Let's look at a simple example that's been taken from the spaCy website: <em class="italic">Autonomous cars shift insurance liability towards manufacturers</em>.<p>The following diagram shows the dependency tree for this example. Here, we can see that the main verb (or root), "shift," is related, via the subject-object relationship, to "cars" (subject) and "liability" (object). It also sustains the "towards" preposition. In the same way, the remaining nouns/adjectives ("Autonomous," "insurance," and "manufacturers") are related to either the subject, the object, or the <a id="_idIndexMarker704"/>preposition. Thus, <strong class="source-inline">spacy</strong> can be used to build a syntactic tree that can be <a id="_idIndexMarker705"/>navigated to identify relationships between the tokens. As we will see shortly, this information can be crucial when building knowledge graphs: </p></li>
+			</ul>
+			<div>
+				<div id="_idContainer479" class="IMG---Figure">
+					<img src="image/B16069_07_02.jpg" alt="Figure 7.2 – Example of a syntactic dependency tree provided by spaCy&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 7.2 – Example of a syntactic dependency tree provided by spaCy</p>
+			<ul>
+				<li><strong class="bold">Lemmatizer</strong>: Finally, the very <a id="_idIndexMarker706"/>last step of the analytical pipeline is the so-called lemmatizer, which allows us to reduce words to a common root to provide a cleaner version of it, thus reducing <a id="_idIndexMarker707"/>the morphological variation of words. Take, for instance, the verb <em class="italic">to be</em>. It can have many morphological variations, such as "is," "are," and "was," all of which are different, valid forms. Now, consider the difference between "car" and "cars." In most cases, we are not interested in these small differences that are introduced by morphology. The lemmatizer helps reduce tokens to their common, stable forms so that they can be processed easily. Usually, the lemmatizer is based on a set of rules that associate particular words (along with conjugations, plurals, inflections) with a common root form. More elaborated implementations may also use the context and the <em class="italic">PoS</em> tagging information to be more robust against homonyms. <strong class="bold">Stemmers</strong> are sometimes <a id="_idIndexMarker708"/>used in place of the lemmatizer. Instead of associating words with a common root form, stemmers usually removed the last part of the word to deal with inflectional and derivational variance. Stemmers are usually a bit simpler and are <a id="_idIndexMarker709"/>generally based on a set of rules that remove a certain pattern, rather than considering lexica and syntactic information. In spaCy, the lemmatized version of a <a id="_idIndexMarker710"/>token can be found in the <strong class="source-inline">Span</strong> object via the <strong class="source-inline">lemma_</strong> attribute.<p>As shown in the preceding diagram, spaCy pipelines can be easily integrated to process the entire corpus and store the results in our <strong class="source-inline">corpus</strong> DataFrame:</p><p class="source-code">nlp = spacy.load('en_core_web_md')</p><p class="source-code">sample_corpus["parsed"] = sample_corpus["clean_text"]\</p><p class="source-code">    .apply(nlp)</p></li>
+			</ul>
+			<p>This DataFrame represents the structured information of the documents. This will be the base of all our subsequent analysis. In the next section, we will show you how to build graphs while using such information.</p>
+			<h1 id="_idParaDest-113"><a id="_idTextAnchor120"/>Creating graphs from a corpus of documents</h1>
+			<p>In this section, we will use the <a id="_idIndexMarker711"/>information we extracted in the previous section using the different text engines to build networks that relate the different information. In particular, we will focus on two kinds of graphs:</p>
+			<ul>
+				<li><strong class="bold">Knowledge-based graphs</strong>, where we will use the semantic meaning of sentences to infer relationships between the different entities.</li>
+				<li><strong class="bold">Bipartite graphs</strong>, where we will be connecting the documents to the entities that appear in the text. We will then project the bipartite graph into a homogeneous graph, which will be <a id="_idIndexMarker712"/>made up of either document or entity nodes only. </li>
+			</ul>
+			<h2 id="_idParaDest-114"><a id="_idTextAnchor121"/>Knowledge graphs</h2>
+			<p>Knowledge graphs are <a id="_idIndexMarker713"/>very interesting as they not only relate entities but also provide a direction and a meaning to the <a id="_idIndexMarker714"/>relationship. For instance, let's take a look at the following relationship:</p>
+			<p>                                                                     I (-&gt;) buy (-&gt;) a book</p>
+			<p>This is substantially different from the following relationship:</p>
+			<p>                                                                       I (-&gt;) sell (-&gt;) a book</p>
+			<p>Besides the kind of relationship (buying or selling), it is also important to have a direction, where the subject and object are not treated symmetrically, but where there is a difference between who is performing the action and who is the target of such an action. </p>
+			<p>So, to create a knowledge graph, we need a function that can identify the <strong class="bold">Subject-Verb-Object</strong> (<strong class="bold">SVO</strong>) triplet for <a id="_idIndexMarker715"/>each sentence. This function can then be applied to all the sentences in the corpus; then, all the triplets can be aggregated to generate the corresponding graph.</p>
+			<p>The SVO extractor can be implemented on top of the enrichment provided by spaCy models. Indeed, the tagging provided by the dependency tree parser can be very helpful for separating main sentences and their subordinates, as well as identifying the SOV triplets. The business logic may need to consider a few special cases (such as conjunctions, negations, and preposition handling), but this can be encoded with a set of rules. Moreover, these rules may also change, depending on the specific use case, with slight variations to be tuned by the user. A base implementation of such rules can be found at <a href="https://github.com/NSchrading/intro-spacy-nlp/blob/master/subject_object_extraction.py">https://github.com/NSchrading/intro-spacy-nlp/blob/master/subject_object_extraction.py</a>. These have been slightly adopted for our scope and are included in the GitHub repository provided with this book. Using this helper function, we can compute all the triplets in the corpus and store them in our <strong class="source-inline">corpus</strong> DataFrame:</p>
+			<p class="source-code">from subject_object_extraction import findSVOs</p>
+			<p class="source-code">corpus["triplets"] = corpus["parsed"].apply(</p>
+			<p class="source-code">    lambda x: findSVOs(x, output="obj")</p>
+			<p class="source-code">)</p>
+			<p class="source-code">edge_list = pd.DataFrame([</p>
+			<p class="source-code">    {</p>
+			<p class="source-code">        "id": _id,</p>
+			<p class="source-code">        "source": source.lemma_.lower(),</p>
+			<p class="source-code">        "target": target.lemma_.lower(),</p>
+			<p class="source-code">        "edge": edge.lemma_.lower()</p>
+			<p class="source-code">    }</p>
+			<p class="source-code">    for _id, triplets in corpus["triplets"].iteritems()</p>
+			<p class="source-code">    for (source, (edge, neg), target) in triplets</p>
+			<p class="source-code">])</p>
+			<p>The type of the connection (determined by the sentence's main predicate) is stored in the <strong class="source-inline">edge</strong> column. The first 10 most <a id="_idIndexMarker716"/>common relationships can be shown using the <a id="_idIndexMarker717"/>following command:</p>
+			<p class="source-code">edges["edge"].value_counts().head(10)</p>
+			<p>The most common edge types correspond to very basic predicates. Indeed, together with very general verbs (such as be, have, tell, and give), we can also find predicates that are more related to a financial context (such as buy, sell, and make). Using all these edges, we can now create our knowledge-based graph using the <strong class="source-inline">networkx</strong> utility function:</p>
+			<p class="source-code">G = nx.from_pandas_edgelist(</p>
+			<p class="source-code">    edges, "source", "target", </p>
+			<p class="source-code">    edge_attr=True, create_using=nx.MultiDiGraph()</p>
+			<p class="source-code">)</p>
+			<p>By filtering the edge DataFrame and creating a subnetwork using this information, we can analyze specific relationship types, such as the <strong class="source-inline">lend</strong> edge:</p>
+			<p class="source-code">G=nx.from_pandas_edgelist(</p>
+			<p class="source-code">    edges[edges["edge"]=="lend"], "source", "target",</p>
+			<p class="source-code">    edge_attr=True, create_using=nx.MultiDiGraph()</p>
+			<p class="source-code">)</p>
+			<p>The following diagram shows the <a id="_idIndexMarker718"/>subgraph based on the <em class="italic">lend</em> relationships. As we can see, it already <a id="_idIndexMarker719"/>provides interesting economical insights, such as the economic relationships between countries, such as Venezuela-Ecuador and US-Sudan: </p>
+			<div>
+				<div id="_idContainer480" class="IMG---Figure">
+					<img src="image/B16069_07_03.jpg" alt="Figure 7.3 – Example of a portion of the knowledge graph for the edges related the lending relationships&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 7.3 – Example of a portion of the knowledge graph for the edges related the lending relationships</p>
+			<p>You can play around with the preceding code by filtering the graph based on other relationships. We definitely encourage you to do so, in order to unveil further interesting insights from the knowledge graphs we just created. In the next section, we will show you another method that allows us to encode the information that's been extracted from the text into a graph structure. In doing so, we will also make use of a particular type of graph that we introduced in <a href="B16069_01_Final_JM_ePub.xhtml#_idTextAnchor014"><em class="italic">Chapter 1</em></a><em class="italic">,</em> <em class="italic">Bipartite Graphs</em>. </p>
+			<h2 id="_idParaDest-115"><a id="_idTextAnchor122"/>Bipartite document/entity graphs</h2>
+			<p>Knowledge graphs can unveil and query aggregated information over entities. However, other graph representations are also possible and can be useful in other situations. For example, when you <a id="_idIndexMarker720"/>want to cluster documents semantically, the knowledge graph may <a id="_idIndexMarker721"/>not be the best data structure to use and analyze. Knowledge graphs are also not very effective at finding indirect relationships, such as identifying competitors, similar products, and so on, that do not often occur in the same sentence, but that often occur in the same document. </p>
+			<p>To address these limitations, we will encode the information present in the document in the form of a <strong class="bold">bipartite graph</strong>. For each document, we will extract the entities that are most relevant and connect a node, representing the document, with all the nodes representing the relevant entities in such a document. Each node may have multiple relationships: by definition, each document connects multiple entities. By contract, an entity can be referenced in multiple documents. As we will see, cross-referencing can be used to create a measure of similarity between entities and documents. This similarity can also be used for projecting the bipartite graph into one particular set of nodes – either the document nodes or the entity nodes.</p>
+			<p>To this aim, to build our bipartite graph, we need to extract the relevant entities of a document. The term <em class="italic">relevant entity</em> is clearly <a id="_idIndexMarker722"/>fuzzy and broad. In the current context, we will consider a relevant entity to be either a named entity (such as an organization, person, or location recognized by the NER engine) or a keyword; that is, a word (or a composition of words) that identifies and generally describes the document and its content. For instance, the suitable keywords for this book may be "graph," "network," "machine learning," "supervised model," and "unsupervised model." Many algorithms exist that extract keywords from a document. One very simple way to do this is based on the so-called TF-IDF score, which is based on building a score for each token (or group of tokens, often referred to as <em class="italic">grams</em>) that is proportional to the word <a id="_idIndexMarker723"/>count in the document (the <strong class="bold">Term Frequency</strong>, or <strong class="bold">TF</strong>) and to the inverse of the frequency of that word in a given corpus (the <strong class="bold">Inverse Document Frequenc<a id="_idTextAnchor123"/>y</strong>, or <strong class="bold">IDF</strong>):</p>
+			<div>
+				<div id="_idContainer481" class="IMG---Figure">
+					<img src="image/B16067_07_001.jpg" alt=""/>
+				</div>
+			</div>
+			<p>Here, <img src="image/B16067_07_002.png" alt=""/> represents the count of word <img src="image/B16067_07_003.png" alt=""/> in document <img src="image/B16067_07_004.png" alt=""/>, <img src="image/B16067_07_005.png" alt=""/> represents the number of documents in the corpus, and <img src="image/B16067_07_006.png" alt=""/> is the document where the word <img src="image/B16067_07_007.png" alt=""/> appears. Therefore, the TF-IDF score promotes words that are repeated many times in the document, penalizing words that are common and therefore might not be very representative for a document. There are also more sophisticated algorithms. </p>
+			<p>One method that is quite powerful and worth mentioning in the context of this book is indeed <strong class="bold">TextRank</strong>, since it is <a id="_idIndexMarker724"/>also based on a graph representation of the document. TextRank creates a network where the nodes are the single token and where the edges between them are created when tokens are within a certain window. After creating such a network, PageRank is used to compute the centrality for each token, which it does by <a id="_idIndexMarker725"/>providing a score that allows ranking within the <a id="_idIndexMarker726"/>document based on the centrality score. The most central nodes (up to a certain ratio, generally between 5% and 20% of the document size) are identified as candidate keywords. When two candidate keywords occur close to each other, they get aggregated into composite keywords, made up of multiple tokens. Implementations of TextRank are available in many NLP packages. One such package is <strong class="source-inline">gensim</strong>, which can be used in a straightforward manner:</p>
+			<p class="source-code">from gensim.summarization import keywords</p>
+			<p class="source-code">text = corpus["clean_text"][0]</p>
+			<p class="source-code"> keywords(text, words=10, split=True, scores=True,</p>
+			<p class="source-code">         pos_filter=('NN', 'JJ'), lemmatize=True)</p>
+			<p>This produces the following output:</p>
+			<p class="source-code">[('trading', 0.4615130639538529),</p>
+			<p class="source-code"> ('said', 0.3159855693494515),</p>
+			<p class="source-code"> ('export', 0.2691553824958079),</p>
+			<p class="source-code"> ('import', 0.17462010006456888),</p>
+			<p class="source-code"> ('japanese electronics', 0.1360932626379031),</p>
+			<p class="source-code"> ('industry', 0.1286043740379779),</p>
+			<p class="source-code"> ('minister', 0.12229815662000462),</p>
+			<p class="source-code"> ('japan', 0.11434500812642447),</p>
+			<p class="source-code"> ('year', 0.10483992409352465)]</p>
+			<p>Here, the score represents the centrality, which represents the importance of a given token. As you can see, some composite tokens may also occur, such as <strong class="source-inline">japanese electronics</strong>. Keyword extraction can be implemented to compute the keywords for the entire corpus, thus storing the information in our <strong class="source-inline">corpus</strong> DataFrame:</p>
+			<p class="source-code">corpus["keywords"] = corpus["clean_text"].apply(</p>
+			<p class="source-code">    lambda text: keywords(</p>
+			<p class="source-code">       text, words=10, split=True, scores=True,</p>
+			<p class="source-code">       pos_filter=('NN', 'JJ'), lemmatize=True)</p>
+			<p class="source-code">)</p>
+			<p>Besides the keywords, to build the <a id="_idIndexMarker727"/>bipartite graph, we also need to parse the named entities that <a id="_idIndexMarker728"/>were extracted by the NER engine, and then encode the information in a similar data format as the one that was used for the keywords. This can be done using a few utility functions:</p>
+			<p class="source-code">def extractEntities(ents, minValue=1, </p>
+			<p class="source-code">                    typeFilters=["GPE", "ORG", "PERSON"]):</p>
+			<p class="source-code">    entities = pd.DataFrame([</p>
+			<p class="source-code">       {</p>
+			<p class="source-code">          "lemma": e.lemma_, </p>
+			<p class="source-code">          "lower": e.lemma_.lower(),</p>
+			<p class="source-code">          "type": e.label_</p>
+			<p class="source-code">       } for e in ents if hasattr(e, "label_")</p>
+			<p class="source-code">    ])</p>
+			<p class="source-code">    if len(entities)==0:</p>
+			<p class="source-code">        return pd.DataFrame()</p>
+			<p class="source-code">    g = entities.groupby(["type", "lower"])</p>
+			<p class="source-code">    summary = pd.concat({</p>
+			<p class="source-code">        "alias": g.apply(lambda x: x["lemma"].unique()),</p>
+			<p class="source-code">        "count": g["lower"].count()</p>
+			<p class="source-code">    }, axis=1)</p>
+			<p class="source-code">    return summary[summary["count"]&gt;1]\</p>
+			<p class="source-code">             .loc[pd.IndexSlice[typeFilters, :, :]]</p>
+			<p class="source-code"> </p>
+			<p class="source-code">def getOrEmpty(parsed, _type):</p>
+			<p class="source-code">    try:  </p>
+			<p class="source-code">        return list(parsed.loc[_type]["count"]\</p>
+			<p class="source-code">           .sort_values(ascending=False).to_dict().items())</p>
+			<p class="source-code">    except:</p>
+			<p class="source-code">        return []</p>
+			<p class="source-code">def toField(ents):</p>
+			<p class="source-code">    typeFilters=["GPE", "ORG", "PERSON"]</p>
+			<p class="source-code">    parsed = extractEntities(ents, 1, typeFilters)</p>
+			<p class="source-code">    return pd.Series({_type: getOrEmpty(parsed, _type)</p>
+			<p class="source-code">                      for _type in typeFilters})</p>
+			<p>With these <a id="_idIndexMarker729"/>functions, parsing the <strong class="source-inline">spacy</strong> tags can be done with the <a id="_idIndexMarker730"/>following code:</p>
+			<p class="source-code">entities = corpus["parsed"].apply(lambda x: toField(x.ents))</p>
+			<p>The <strong class="source-inline">entities</strong> DataFrame can easily be merged with the <strong class="source-inline">corpus</strong> DataFrame using the <strong class="source-inline">pd.concat</strong> function, thus placing all the information in a single data structure:</p>
+			<p class="source-code">merged = pd.concat([corpus, entities], axis=1)</p>
+			<p>Now that we have all the ingredients for our bipartite graph, we can create the edge list by looping over all the documents-entity or document-keyword pairs:</p>
+			<p class="source-code">edges = pd.DataFrame([</p>
+			<p class="source-code">    {"source": _id, "target": keyword, "weight": score, "type": _type}</p>
+			<p class="source-code">    for _id, row in merged.iterrows()</p>
+			<p class="source-code">    for _type in ["keywords", "GPE", "ORG", "PERSON"] </p>
+			<p class="source-code">    for (keyword, score) in row[_type]</p>
+			<p class="source-code">])</p>
+			<p>Once the edge list has <a id="_idIndexMarker731"/>been created, we can <a id="_idIndexMarker732"/>produce the bipartite graph using <strong class="source-inline">networkx</strong> APIs: </p>
+			<p class="source-code">G = nx.Graph()</p>
+			<p class="source-code">G.add_nodes_from(edges["source"].unique(), bipartite=0)</p>
+			<p class="source-code"> G.add_nodes_from(edges["target"].unique(), bipartite=1)</p>
+			<p class="source-code"> G.add_edges_from([</p>
+			<p class="source-code">    (row["source"], row["target"])</p>
+			<p class="source-code">    for _, row in edges.iterrows()</p>
+			<p class="source-code">])</p>
+			<p>Now, we can look at an overview of our graph by using <strong class="source-inline">nx.info</strong>:</p>
+			<p class="source-code">Type: Graph</p>
+			<p class="source-code">Number of nodes: 25752</p>
+			<p class="source-code">Number of edges: 100311</p>
+			<p class="source-code">Average degree:   7.7905</p>
+			<p>In the next subsection, we will project the bipartite graph in either of the two sets of nodes: entities or documents. This will allow us to explore the difference between the two graphs and cluster both the terms and documents using the unsupervised techniques described in <a href="B16069_04_Final_JM_ePub.xhtml#_idTextAnchor064"><em class="italic">Chapter 4</em></a><em class="italic">, Supervised Graph Learning</em>. Then, we will return to the bipartite graph to show an <a id="_idIndexMarker733"/>example of supervised classification, which we'll do by <a id="_idIndexMarker734"/>leveraging the network information of the bipartite graphs. </p>
+			<h3>Entity-entity graph</h3>
+			<p>We will start by projecting our <a id="_idIndexMarker735"/>graph into the set of entity nodes. <strong class="source-inline">networkx</strong> provides a <a id="_idIndexMarker736"/>special submodule for dealing with bipartite graphs, <strong class="source-inline">networkx.algorithms.bipartite</strong>, where a number of algorithms have already been implemented. In particular, the <strong class="source-inline">networkx.algorithms.bipartite.projection</strong> submodule provides a number of utility functions to project bipartite graphs on a subset of nodes. Before performing projection, we must extract the nodes relative to a particular set (either documents or entities) using the "bipartite" property we created when we generated the graph:</p>
+			<p class="source-code">document_nodes = {n </p>
+			<p class="source-code">                  for n, d in G.nodes(data=True)</p>
+			<p class="source-code">                  if d["bipartite"] == 0}</p>
+			<p class="source-code">entity_nodes = {n </p>
+			<p class="source-code">                for n, d in G.nodes(data=True)</p>
+			<p class="source-code">                if d["bipartite"] == 1}</p>
+			<p>The graph projection basically creates a new graph with the set of selected nodes. Edges are places between the nodes based on whether two nodes have neighbors in common. The basic <strong class="source-inline">projected_graph</strong> function creates such a network with unweighted edges. However, it is usually more informative to have edges weighted based on the number of common neighbors. The <strong class="source-inline">projection</strong> module provides different functions based on how the weights are computed. In the next section, we will use <strong class="source-inline">overlap_weighted_projected_graph</strong>, where the edge weight is computed using the Jaccard similarity based on common neighbors. However, we encourage you to also explore the other options that, depending on your use case and context, may best suit your aims.</p>
+			<h4>Be aware of dimensions – filtering the graph</h4>
+			<p>There is another point of <a id="_idIndexMarker737"/>caution you should be aware of when dealing with projections: the dimension of the projected graph. In certain cases, like the one we are considering here, projection may create an extremely large number of edges, which makes the graph hard to analyze. In our use case, following the logic we used to create our network, a document node is connected to at least 10 keywords, plus a few entities. In the resulting entity-entity graph, all these entities will be connected to each other as they share at least one common neighbor (the document that contains them). Therefore, we will only be generating around <img src="image/B16067_07_008.png" alt=""/> edges for one document. If we multiply this number for the number of documents, <img src="image/B16067_07_009.png" alt=""/>, we will end up with several edges that, despite the small use case, already become almost intractable, since there's a few million edges. Although this surely represents a conservative upper bound (as some of the co-occurrence between entities will be common in many documents and therefore not repeated), it provides an order of magnitude of the complexity that you might expect. Therefore, we encourage you to proceed with caution before projecting your bipartite graph, depending on the topology of the underlying network and the size of your graph. One trick to reduce this complexity and make the projection feasible is to only consider entity nodes that have a certain degree. Most of the complexity arises from the presence of entities that appear only once or a few times, but still generate <em class="italic">cliques</em> within the graph. Such entities are not very informative for capturing patterns and providing insights. Besides, they are possibly strongly affected by statistical variability. On the other hand, we should focus on strong correlations that are supported by larger occurrences and provide more reliable statistical results. </p>
+			<p>Therefore, we will only consider entity nodes with a certain degree. To this aim, we will generate the filtered bipartite subgraph, which excludes nodes with low degree values, namely smaller than 5:</p>
+			<p class="source-code">nodes_with_low_degree = {n </p>
+			<p class="source-code">    for n, d in nx.degree(G, nbunch=entity_nodes) if d&lt;5}</p>
+			<p class="source-code">subGraph = G.subgraph(set(G.nodes) - nodes_with_low_degree)</p>
+			<p>This subgraph can now be projected without generating a graph with an excessive number of edges:</p>
+			<p class="source-code">entityGraph = overlap_weighted_projected_graph(</p>
+			<p class="source-code">    subGraph,</p>
+			<p class="source-code">    {n for n in subGraph.nodes() if n in entity_nodes}</p>
+			<p class="source-code">)</p>
+			<p>We can check the dimension of the graph with the <strong class="source-inline">networkx</strong> function of <strong class="source-inline">nx.info</strong>:</p>
+			<p class="source-code">Number of nodes: 2386</p>
+			<p class="source-code">Number of edges: 120198</p>
+			<p class="source-code">Average degree: 100.7527</p>
+			<p>Despite the filters we've <a id="_idIndexMarker738"/>applied, the number of edges and the average node degree are still quite large. The following graph shows the distribution of the degree and of the edge weights, where we can observe one peak in the degree distribution at fairly low values, with a fat tail toward large degree values. Also, the edge weight shows a similar behavior, with a peak at rather low values and fat right tails. These distributions suggest the presence of several small communities, namely cliques, which are connected to each other via some central nodes:</p>
+			<div>
+				<div id="_idContainer490" class="IMG---Figure">
+					<img src="image/B16069_07_04(Merged).jpg" alt="Figure 7.4 – Degree and weight distribution for the entity-entity network&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 7.4 – Degree and weight distribution for the entity-entity network</p>
+			<p>The distribution of the edge weights also suggests that a second filter could be applied. The filter on the entity degree that we applied previously on the bipartite graph allowed us to filter out rare entities that only appeared in a few documents. However, the resulting graph could also be affected by the opposite problem: popular entities may be connected just because they tend to appear often in documents, even if there is not an interesting causal connection between them. Consider the US and Microsoft. They are almost surely <a id="_idIndexMarker739"/>connected, as it is extremely likely that there will be at least one or a few documents where they both appear. However, if there is not a strong and causal connection between them, it is very unlikely that the Jaccard similarity will be large. Considering only the edges with the largest weights allows you to focus on the most relevant and possibly stable relationships. The edge weight distribution shown in the preceding graph suggests that a suitable threshold could be <strong class="source-inline">0.05</strong>:</p>
+			<p class="source-code">filteredEntityGraph = entityGraph.edge_subgraph(</p>
+			<p class="source-code">    [edge </p>
+			<p class="source-code">     for edge in entityGraph.edges</p>
+			<p class="source-code">     if entityGraph.edges[edge]["weight"]&gt;0.05])</p>
+			<p>Such a threshold reduces the number of edges significantly, making it feasible to analyze the network:</p>
+			<p class="source-code">Number of nodes: 2265</p>
+			<p class="source-code">Number of edges: 8082</p>
+			<p class="source-code">Average degree:   7.1364   </p>
+			<div>
+				<div id="_idContainer491" class="IMG---Figure">
+					<img src="image/B16069_07_05.jpg" alt="Figure 7.5 – Degree Distribution (Left) and Edge Weight Distribution (Right) for the resulting graph, after filtering based on the edge weight"/>
+				</div>
+			</div>
+			<p class="figure-caption"> </p>
+			<p class="figure-caption">Figure 7.5 – Degree Distribution (Left) and Edge Weight Distribution (Right) for the resulting graph, after filtering based on the edge weight</p>
+			<p>The preceding diagram <a id="_idIndexMarker740"/>shows the distribution of the node degree and edge weights for the filtered graph. The distribution for the edge weights corresponds to the right tail of the distribution shown in <em class="italic">Figure 7.4</em>. The relationship that the degree distribution has with <em class="italic">Figure 7.4</em> is less obvious, and it shows the peak for the nodes that have a degree around 10, as opposed to the peak shown in <em class="italic">Figure 7.4</em>, which was observed in the low range, at around 100.</p>
+			<h4>Analyzing the graph</h4>
+			<p>Using Gephi we can <a id="_idIndexMarker741"/>provide an overview of the overall network, which is shown in <em class="italic">Figure 7.6</em>. </p>
+			<p>The graph is as follows:</p>
+			<div>
+				<div id="_idContainer492" class="IMG---Figure">
+					<img src="image/B16069_07_06.jpg" alt="Figure 7.6 – Entity-entity network highlighting the presence of multiple small subcommunities"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 7.6 – Entity-entity network highlighting the presence of multiple small subcommunities</p>
+			<p>To obtain some further insights on the topology of the network, we will also compute some global measures, such as the <a id="_idIndexMarker742"/>average shortest path, clustering coefficient, and global efficiency. Although the graph has five different connected components, the largest one almost entirely accounts for the whole graph, including 2,254 out of 2,265 nodes:</p>
+			<p class="source-code">components = nx.connected_components(filteredEntityGraph)</p>
+			<p class="source-code"> pd.Series([len(c) for c in components])</p>
+			<p>The global properties of the largest components can be found with the following code:</p>
+			<p class="source-code">comp = components[0] </p>
+			<p class="source-code">global_metrics = pd.Series({</p>
+			<p class="source-code">    "shortest_path": nx.average_shortest_path_length(comp),</p>
+			<p class="source-code">    "clustering_coefficient": nx.average_clustering(comp),</p>
+			<p class="source-code">    "global_efficiency": nx.global_efficiency(comp)</p>
+			<p class="source-code"> })</p>
+			<p>The shortest path and global efficiency may require a few minutes of computation. This results in the following output:</p>
+			<p class="source-code">{</p>
+			<p class="source-code">    'shortest_path': 4.715073779178782,</p>
+			<p class="source-code">    'clustering_coefficient': 0.21156314975836915,</p>
+			<p class="source-code">    'global_efficiency': 0.22735551077454275</p>
+			<p class="source-code">}</p>
+			<p>Based on the magnitude of these metrics (with a shortest path of about 5 and a clustering coefficient around 0.2), together with the degree distribution shown previously, we can see <a id="_idIndexMarker743"/>that the network has multiple communities of a limited size. Other interesting local properties, such as degree, page rank, and betweenness centralities distributions, are shown in the following graph, which shows how all these measures tend to correlate and connect to each other:</p>
+			<div>
+				<div id="_idContainer493" class="IMG---Figure">
+					<img src="image/B16069_07_07.jpg" alt="Figure 7.7 – Relationships and distribution between the degree, page rank, and betweenness centrality measures"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 7.7 – Relationships and distribution between the degree, page rank, and betweenness centrality measures</p>
+			<p>After providing a description in terms of loca;/global measures, as well as a general visualization of the network, we will apply some of the techniques we have seen in the previous chapters to identify some insights and information within the network. We will do this using the unsupervised techniques described in <a href="B16069_04_Final_JM_ePub.xhtml#_idTextAnchor064"><em class="italic">Chapter 4</em></a><em class="italic">, Supervised Graph Learning</em>. </p>
+			<p>We will start by using the Louvain community detection algorithms, which, by optimizing their modularity, aim to identify the best partitions of the nodes in disjoint communities:</p>
+			<p class="source-code">import community</p>
+			<p class="source-code">communities = community.best_partition(filteredEntityGraph)</p>
+			<p>Note that the results <a id="_idIndexMarker744"/>might vary between runs because of random seeds. However, a similar partition, with a distribution of cluster memberships similar to the one shown in the following graph, should emerge. We generally observe about 30 communities, with the larger ones containing around 130-150 documents. </p>
+			<div>
+				<div id="_idContainer494" class="IMG---Figure">
+					<img src="image/B16069_07_08.jpg" alt="Figure 7.8 – Distribution of the size of the detected communities"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 7.8 – Distribution of the size of the detected communities</p>
+			<p><em class="italic">Figure 7.9</em> shows a close-up of one of the communities, where we can identify a particular topic/argument. On the left, beside the entity nodes, we can also see the document nodes, thus uncovering the structure of the related bipartite graph:</p>
+			<div>
+				<div id="_idContainer495" class="IMG---Figure">
+					<img src="image/B16069_07_09(Merged).jpg" alt="Figure 7.9 – Close-up for one of the communities we've identified"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 7.9 – Close-up for one of the communities we've identified</p>
+			<p>As shown in <a href="B16069_04_Final_JM_ePub.xhtml#_idTextAnchor064"><em class="italic">Chapter 4</em></a>, <em class="italic">Supervised Graph Learning</em>, we can extract insightful information about the topology and similarity between entities by using node embeddings. In particular, we <a id="_idIndexMarker745"/>can use Node2Vec, which, by feeding a randomly generated walk to a skip-gram model, can project the nodes into a vector space, where close-by nodes are mapped to nearby points: </p>
+			<p class="source-code">from node2vec import Node2Vec</p>
+			<p class="source-code">node2vec = Node2Vec(filteredEntityGraph, dimensions=5) </p>
+			<p class="source-code">model = node2vec.fit(window=10) </p>
+			<p class="source-code">embeddings = model.wv</p>
+			<p>In the vector space of embeddings, we can apply traditional clustering algorithms, such as <em class="italic">GaussianMixture</em>, <em class="italic">K-means</em>, and <em class="italic">DB-scan</em>. As we did in the previous chapters, we can also project the embeddings into a 2D plane using t-SNE to visualize clusters and communities. Besides giving us another option to identify clusters/communities within the graph, Node2Vec can also be used to provide similarity between words, as traditionally <a id="_idIndexMarker746"/>done by <strong class="bold">Word2Vec</strong>. For instance, we can query the Node2Vec embedding model and find the word that's most similar "<strong class="source-inline">turkey</strong>," which provides semantically similar words:</p>
+			<p class="source-code">[('turkish', 0.9975333213806152),</p>
+			<p class="source-code"> ('lira', 0.9903393983840942),</p>
+			<p class="source-code"> ('rubber', 0.9884852170944214),</p>
+			<p class="source-code"> ('statoil', 0.9871745109558105),</p>
+			<p class="source-code"> ('greek', 0.9846569299697876),</p>
+			<p class="source-code"> ('xuto', 0.9830175042152405),</p>
+			<p class="source-code"> ('stanley', 0.9809650182723999),</p>
+			<p class="source-code"> ('conference', 0.9799597263336182),</p>
+			<p class="source-code"> ('released', 0.9793018102645874),</p>
+			<p class="source-code"> ('inra', 0.9775203466415405)]</p>
+			<p>Although these two approaches, Node2Vec and Word2Vec, share some methodological similarities, the two <a id="_idIndexMarker747"/>embedding schemes come from different types of information: Word2Vec is built directly from the text and encloses relationships at the sentence level, while Node2Vec encodes a description that acts more at the document level, since it comes from the bipartite entity-document graph. </p>
+			<h3>Document-document graph</h3>
+			<p>Now, let's project the <a id="_idIndexMarker748"/>bipartite graph into the set of document nodes to create a document-document network we can analyze. In a similar way to when we <a id="_idIndexMarker749"/>created an entity-entity network, we will use the <strong class="source-inline">overlap_weighted_projected_graph</strong> function to obtain a weighted graph that can be filtered to reduce the number of significant edges. Indeed, the topology of the network and the business logic used to build the bipartite graph do not favor clique creation, as we saw for the entity-entity graph: two nodes will only be connected when they share at least one keyword, organization, location, or person. This is certainly possible, but not extremely likely, within groups of 10-15 nodes, as observed for the entities.</p>
+			<p>As we did previously, we can easily build our network with the following lines:</p>
+			<p class="source-code">documentGraph = overlap_weighted_projected_graph(</p>
+			<p class="source-code">    G,</p>
+			<p class="source-code">    document_nodes</p>
+			<p class="source-code">)</p>
+			<p>The following graph shows the distribution of the degree and the edge weight. This can help us decide on the value of the threshold to be used to filter out the edges. Interestingly, the node degree distribution shows a clear peak toward large values compared to the degree distribution observed for the entity-entity graph. This suggests the presence of a number of <em class="italic">supernodes</em> (that is, nodes with rather large degrees) that are highly connected. Also, the edge weight distribution shows the Jaccard index's tendency to attain values close to 1, which are much larger than the ones we observed in the entity-entity graph. These two observations highlight a profound difference between the two networks: whereas the entity-entity graph is characterized by many tightly connected <a id="_idIndexMarker750"/>communities (namely cliques), the <a id="_idIndexMarker751"/>document-document graph is characterized by a rather tight connection among nodes with a large degree (which constitutes the core) versus a periphery of weakly connected or disconnected nodes: </p>
+			<div>
+				<div id="_idContainer496" class="IMG---Figure">
+					<img src="image/B16069_07_10.jpg" alt="Figure 7.10 – Degree Distribution and Edge Weight Distribution for the projection of the bipartite graph into the document-document network"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 7.10 – Degree Distribution and Edge Weight Distribution for the projection of the bipartite graph into the document-document network</p>
+			<p>It can be convenient to store all the edges in a DataFrame so that we can plot them and then use them to filter and, thus, create a subgraph:</p>
+			<p class="source-code">allEdgesWeights = pd.Series({</p>
+			<p class="source-code">    (d[0], d[1]): d[2]["weight"] </p>
+			<p class="source-code">    for d in documentGraph.edges(data=True)</p>
+			<p class="source-code">})</p>
+			<p>By looking at the preceding diagram, it seems reasonable to set a threshold value of <strong class="source-inline">0.6</strong> for the edge weight, thus allowing us to generate a more tractable network using the <strong class="source-inline">edge_subgraph</strong> function of <strong class="source-inline">networkx</strong>:</p>
+			<p class="source-code">filteredDocumentGraph = documentGraph.edge_subgraph(</p>
+			<p class="source-code">    allEdgesWeights[(allEdgesWeights&gt;0.6)].index.tolist()</p>
+			<p class="source-code">)</p>
+			<p>The following graph shows the <a id="_idIndexMarker752"/>resulting distribution for the <a id="_idIndexMarker753"/>degree and for the edge weight for the reduced graph:</p>
+			<div>
+				<div id="_idContainer497" class="IMG---Figure">
+					<img src="image/B16069_07_11.jpg" alt="Figure 7.11 – Degree Distribution and Edge Weight Distribution for the document-document filtered network"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 7.11 – Degree Distribution and Edge Weight Distribution for the document-document filtered network</p>
+			<p>The substantial difference in topology of the document-document graph with respect to the entity-entity graph can also be clearly seen in the following diagram, which shows a full network visualization. As anticipated by the distributions, the document-document network is characterized by a core network and several weekly connected satellites. These satellites represent all the documents that share none or a few keywords or entity common occurrences. The number of disconnected documents is quite large and accounts for almost 50% of the total:</p>
+			<div>
+				<div id="_idContainer498" class="IMG---Figure">
+					<img src="image/B16069_07_12(Merged).jpg" alt="Figure 7.12 – (Left) Representation of the document-document filtered network, highlighting the presence of a core and a periphery. (Right) Close-up of the core, with some subcommunities embedded. The node size is proportional to the node degree&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 7.12 – (Left) Representation of the document-document filtered network, highlighting the presence of a core and a periphery. (Right) Close-up of the core, with some subcommunities embedded. The node size is proportional to the node degree</p>
+			<p>It may be worthwhile <a id="_idIndexMarker754"/>extracting the connected components for this <a id="_idIndexMarker755"/>network using the following commands:</p>
+			<p class="source-code">components = pd.Series({</p>
+			<p class="source-code">    ith: component </p>
+			<p class="source-code">    for ith, component in enumerate(</p>
+			<p class="source-code">        nx.connected_components(filteredDocumentGraph)</p>
+			<p class="source-code">    )</p>
+			<p class="source-code">})</p>
+			<p>In the following graph, we can see the distribution for the connected component sizes. Here, we can clearly see the presence of a few very large clusters (the cores), together with a large number of disconnected or very small components (the periphery or satellites). This structure is strikingly different from the one we observed for the entity-entity graph, where all the nodes were generated by a very large, connected cluster:</p>
+			<div>
+				<div id="_idContainer499" class="IMG---Figure">
+					<img src="image/B16069_07_13.jpg" alt="Figure 7.13 – Distribution of the connected component sizes, highlighting the presence of many small-sized communities (representing the periphery) and a few large communities (representing the core)&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 7.13 – Distribution of the connected component sizes, highlighting the presence of many small-sized communities (representing the periphery) and a few large communities (representing the core)</p>
+			<p>It can be <a id="_idIndexMarker756"/>interesting to investigate the structure of the <a id="_idIndexMarker757"/>core components further. We can extract the subgraph composed of the largest components of the network from the full graph with the following code:</p>
+			<p class="source-code">coreDocumentGraph = nx.subgraph(</p>
+			<p class="source-code">    filteredDocumentGraph,</p>
+			<p class="source-code">    [node </p>
+			<p class="source-code">     for nodes in components[components.apply(len)&gt;8].values</p>
+			<p class="source-code">     for node in nodes]</p>
+			<p class="source-code">)</p>
+			<p>We can inspect the properties of the core network using <strong class="source-inline">nx.info</strong>:</p>
+			<p class="source-code">Type: Graph</p>
+			<p class="source-code">Number of nodes: 1050</p>
+			<p class="source-code">Number of edges: 7112</p>
+			<p class="source-code">Average degree:  13.5467</p>
+			<p>The left panel in <em class="italic">Figure 7.12</em> shows a Gephi visualization of the core. As we can see, the core is composed of a few communities, along with nodes with fairly large degrees strongly connected to each other. </p>
+			<p>As we did for the entity-entity network, we can process the network to identify communities embedded in the graph. However, different from what we did previously, the document-document graph now provides a mean for judging the clustering using the document <a id="_idIndexMarker758"/>labels. Indeed, we expect documents <a id="_idIndexMarker759"/>belonging to the same topic to be close and connected to each other. Moreover, as we will see shortly, this will also allow us to identify similarities among topics. </p>
+			<p>First, let's start by extracting the candidate communities:</p>
+			<p class="source-code">import community</p>
+			<p class="source-code">communities = pd.Series(</p>
+			<p class="source-code">    community.best_partition(filteredDocumentGraph)</p>
+			<p class="source-code">)</p>
+			<p>Then, we will extract the topic mixture within each community to see whether there is a homogeneity (all the documents belonging to the same class) or some correlation between topics:</p>
+			<p class="source-code">from collections import Counter</p>
+			<p class="source-code">def getTopicRatio(df):</p>
+			<p class="source-code">    return Counter([label </p>
+			<p class="source-code">                    for labels in df["label"] </p>
+			<p class="source-code">                    for label in labels])</p>
+			<p class="source-code"> </p>
+			<p class="source-code">communityTopics = pd.DataFrame.from_dict({</p>
+			<p class="source-code">    cid: getTopicRatio(corpus.loc[comm.index])</p>
+			<p class="source-code">    for cid, comm in communities.groupby(communities)</p>
+			<p class="source-code"> }, orient="index")</p>
+			<p class="source-code">normalizedCommunityTopics = (</p>
+			<p class="source-code">    communityTopics.T / communityTopics.sum(axis=1)</p>
+			<p class="source-code">).T</p>
+			<p><strong class="source-inline">normalizedCommunityTopics</strong> is a DataFrame that, for each community (row in the DataFrame), provides the topic mixture (in percentage) of the different topics (along the column axis). To quantify the heterogeneity of the topic mixture within the clusters/communities, we must compute the Shannon entropy of each commun<a id="_idTextAnchor124"/>ity:</p>
+			<div>
+				<div id="_idContainer500" class="IMG---Figure">
+					<img src="image/B16067_07_010.jpg" alt=""/>
+				</div>
+			</div>
+			<p>Here, <img src="image/B16067_07_011.png" alt=""/> represents the <a id="_idIndexMarker760"/>entropy of the cluster, <img src="image/B16067_07_012.png" alt=""/>, and <img src="image/B16067_07_013.png" alt=""/> corresponds to the <a id="_idIndexMarker761"/>percentage of topic <img src="image/B16067_07_014.png" alt=""/> in community <img src="image/B16067_07_015.png" alt=""/>. We must compute the empirical Shannon entropy for all communities:</p>
+			<p class="source-code">normalizedCommunityTopics.apply(</p>
+			<p class="source-code">    lambda x: np.sum(-np.log(x)), axis=1)</p>
+			<p>The following graph shows the entropy distribution across all communities. Most communities have zero or very low entropy, thus suggesting that the documents that belong to the same class (label) tend to cluster together:</p>
+			<div>
+				<div id="_idContainer506" class="IMG---Figure">
+					<img src="image/B16069_07_14.jpg" alt="Figure 7.14 – Entropy distribution of the topic mixture in each community&#13;&#10;"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 7.14 – Entropy distribution of the topic mixture in each community</p>
+			<p>Even if most of the communities show zero or low variability around topics, it is interesting to investigate whether there is a relationship between topics, when communities show some heterogeneity. Namely, we compute the correlation between topic distributions:</p>
+			<p class="source-code">topicsCorrelation = normalizedCommunityTopics.corr().fillna(0)</p>
+			<p>These can then be represented and visualized using a topic-topic network:</p>
+			<p class="source-code">topicsCorrelation[topicsCorrelation&lt;0.8]=0</p>
+			<p class="source-code">topicsGraph = nx.from_pandas_adjacency(topicsCorrelation)</p>
+			<p>The left-hand side of the <a id="_idIndexMarker762"/>following diagram shows the full graph <a id="_idIndexMarker763"/>representation for the topics network. As observed for the document-document network, the topic-topic graph shows a structure organized in a periphery of disconnected nodes and a strongly connected core. The right-hand side of the following diagram shows a close-up of the core network. This indicates a correlation that is supported by a semantic meaning, with the topics related to commodities tightly connected to each other:</p>
+			<div>
+				<div id="_idContainer507" class="IMG---Figure">
+					<img src="image/B16069_07_15(Merged).jpg" alt="Figure 7.15 – (Left) Topic-topic correlation graph, organized with a periphery-core structure. (Right) Close-up of the core of the network"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 7.15 – (Left) Topic-topic correlation graph, organized with a periphery-core structure. (Right) Close-up of the core of the network</p>
+			<p>In this section, we analyzed the different types of networks that arise when analyzing documents and, more generally, text sources. To do so, we used global and local properties to statistically <a id="_idIndexMarker764"/>describe the networks, as well as <a id="_idIndexMarker765"/>some unsupervised algorithms, which allowed us to unveil some structure within the graph. In the next section, we will show you how to leverage these graph structures when building a machine learning model. </p>
+			<h1 id="_idParaDest-116"><a id="_idTextAnchor125"/>Building a document topic classifier</h1>
+			<p>To show you how to <a id="_idIndexMarker766"/>leverage a graph structure, we will focus on using the topological information and the connections between the entities provided by the bipartite entity-document graph to train multi-label classifiers. This will help us predict the document topics. To do this, we will analyze two different approaches:</p>
+			<ul>
+				<li><strong class="bold">A shallow machine-learning approach</strong>, where we will use the embeddings we extracted from the bipartite network to train <em class="italic">traditional</em> classifiers, such as a RandomForest classifier.</li>
+				<li><strong class="bold">A more integrated and differentiable approach</strong> based on using a graphical neural network that's been applied to heterogeneous graphs (such as the bipartite graph).</li>
+			</ul>
+			<p>Let's consider the first 10 topics, which we have enough documentation on to train and evaluate our models:</p>
+			<p class="source-code">from collections import Counter</p>
+			<p class="source-code">topics = Counter(</p>
+			<p class="source-code">    [label </p>
+			<p class="source-code">     for document_labels in corpus["label"] </p>
+			<p class="source-code">     for label in document_labels]</p>
+			<p class="source-code">).most_common(10)</p>
+			<p>The preceding <a id="_idIndexMarker767"/>code block produces the following output. This shows the names of the topics, all of which we will focus on in the following analysis:</p>
+			<p class="source-code">[('earn', 3964), ('acq', 2369), ('money-fx', 717), </p>
+			<p class="source-code">('grain', 582), ('crude', 578), ('trade', 485), </p>
+			<p class="source-code">('interest', 478), ('ship', 286), ('wheat', 283), </p>
+			<p class="source-code">('corn', 237)]</p>
+			<p>When training topic classifiers, we must restrict our focus to only those documents that belong to such labels. The filtered corpus can easily be obtained by using the following code block:</p>
+			<p class="source-code">topicsList = [topic[0] for topic in topics]</p>
+			<p class="source-code"> topicsSet = set(topicsList)</p>
+			<p class="source-code">dataset = corpus[corpus["label"].apply(</p>
+			<p class="source-code">    lambda x: len(topicsSet.intersection(x))&gt;0</p>
+			<p class="source-code">)]</p>
+			<p>Now that we have extracted and structured the dataset, we are ready to start training our topic models and evaluating their performance. In the next section, we will start by creating a simple model <a id="_idIndexMarker768"/>using shallow learning methods so that we can increase the complexity of the model by using graph neural networks.</p>
+			<h2 id="_idParaDest-117"><a id="_idTextAnchor126"/>Shallow learning methods</h2>
+			<p>We will start by <a id="_idIndexMarker769"/>implementing a <a id="_idIndexMarker770"/>shallow approach for the topic classification tasks by leveraging the network's information. We will show you how to do this so that you can customize even further, depending on your use case:</p>
+			<ol>
+				<li>First, we will compute the embeddings by <a id="_idIndexMarker771"/>using <strong class="source-inline">Node2Vec</strong> on the bipartite graph. Filtered document-document networks are characterized by a periphery with many nodes that are disconnected, so they would not benefit from topological information. On the other hand, the unfiltered document-document network will have many edges, which makes the scalability of the approach an issue. Therefore, using the bipartite graph is crucial in order to efficiently leverage the topological information and the connection between entities and documents:<p class="source-code">from node2vec import Node2Vec</p><p class="source-code">node2vec = Node2Vec(G, dimensions=10) </p><p class="source-code">model = node2vec.fit(window=20) </p><p class="source-code">embeddings = model.wv </p><p>Here, the <strong class="source-inline">dimension</strong> embedding, as well as our <strong class="source-inline">window</strong>, which is used for generating the walks, are hyperparameters that must be optimized via cross-validation. </p></li>
+				<li>To make this computationally efficient, a set of embeddings can be computed beforehand, saved to disk, and then be used in the optimization process. This would work based on the assumption that we are in a <em class="italic">semi-supervised</em> setting or in a <em class="italic">transductive</em> task, where we have connection information about the entire dataset, apart from their labels, at training time. Later in this chapter, we will outline another approach, based on graph neural networks, that provides an inductive framework for integrating topology when training classifiers. Let's store the embeddings in a file:<p class="source-code">pd.DataFrame(embeddings.vectors,</p><p class="source-code">             index=embeddings.index2word</p><p class="source-code">).to_pickle(f"graphEmbeddings_{dimension}_{window}.p")</p><p>Here, we can choose and loop different values for <strong class="source-inline">dimension</strong> and <strong class="source-inline">window</strong>. Some possible choices are 10, 20, and 30 for both variables. </p></li>
+				<li>These embeddings <a id="_idIndexMarker772"/>can be integrated into a scikit-learn <strong class="source-inline">transformer</strong> so that they can be used in a grid <a id="_idIndexMarker773"/>search cross-validation process:<p class="source-code">from sklearn.base import BaseEstimator</p><p class="source-code">class EmbeddingsTransformer(BaseEstimator):</p><p class="source-code">    def __init__(self, embeddings_file):</p><p class="source-code">        self.embeddings_file = embeddings_file        </p><p class="source-code">    def fit(self, *args, **kwargs):</p><p class="source-code">        self.embeddings = pd.read_pickle(</p><p class="source-code">            self.embeddings_file)</p><p class="source-code">        return self        </p><p class="source-code">    def transform(self, X):</p><p class="source-code">        return self.embeddings.loc[X.index]    </p><p class="source-code">    def fit_transform(self, X, y):</p><p class="source-code">        return self.fit().transform(X)</p></li>
+				<li>To build a modeling training pipeline, we will split our corpus into training and test sets:<p class="source-code">def train_test_split(corpus):</p><p class="source-code">    indices = [index for index in corpus.index]</p><p class="source-code">    train_idx = [idx </p><p class="source-code">                 for idx in indices </p><p class="source-code">                 if "training/" in idx]</p><p class="source-code">    test_idx = [idx </p><p class="source-code">                for idx in indices </p><p class="source-code">                if "test/" in idx]</p><p class="source-code">    return corpus.loc[train_idx], corpus.loc[test_idx]</p><p class="source-code">train, test = train_test_split(dataset)</p><p>We will also <a id="_idIndexMarker774"/>build functions to <a id="_idIndexMarker775"/>conveniently extract features and labels:</p><p class="source-code">def get_features(corpus):</p><p class="source-code">    return corpus["parsed"]</p><p class="source-code">def get_labels(corpus, topicsList=topicsList):</p><p class="source-code">    return corpus["label"].apply(</p><p class="source-code">        lambda labels: pd.Series(</p><p class="source-code">           {label: 1 for label in labels}</p><p class="source-code">        ).reindex(topicsList).fillna(0)</p><p class="source-code">    )[topicsList]</p><p class="source-code">def get_features_and_labels(corpus):</p><p class="source-code">    return get_features(corpus), get_labels(corpus)</p><p class="source-code">features, labels = get_features_and_labels(train)</p></li>
+				<li>Now, we can instantiate the modeling pipeline:<p class="source-code">from sklearn.pipeline import Pipeline</p><p class="source-code">from sklearn.ensemble import RandomForestClassifier </p><p class="source-code">from sklearn.multioutput import MultiOutputClassifier</p><p class="source-code">pipeline = Pipeline([</p><p class="source-code">    ("embeddings", EmbeddingsTransformer(</p><p class="source-code">        "my-place-holder")</p><p class="source-code">    ),</p><p class="source-code">    ("model", MultiOutputClassifier(</p><p class="source-code">        RandomForestClassifier())</p><p class="source-code">    )</p><p class="source-code">])</p></li>
+				<li>Let's define the <a id="_idIndexMarker776"/>parameter space, as <a id="_idIndexMarker777"/>well as the configuration, for the cross-validated grid search:<p class="source-code">from glob import glob</p><p class="source-code">param_grid = {</p><p class="source-code">    "embeddings__embeddings_file": glob("graphEmbeddings_*"),</p><p class="source-code">    "model__estimator__n_estimators": [50, 100],</p><p class="source-code">    "model__estimator__max_features": [0.2,0.3, "auto"], </p><p class="source-code">}</p><p class="source-code">grid_search = GridSearchCV(</p><p class="source-code">    pipeline, param_grid=param_grid, cv=5, n_jobs=-1)</p></li>
+				<li>Finally, let's train our topic model by using the <strong class="source-inline">fit</strong> method of the sklearn API:<p class="source-code">model = grid_search.fit(features, labels)</p></li>
+			</ol>
+			<p>Great! You have just created your topic model, which leverages the graph's information. Once the best model has been identified, we can use this model on the test dataset to evaluate its performance. To do so, we must define the following helper function, which allows us to obtain a set of predictions: </p>
+			<p class="source-code">def get_predictions(model, features):</p>
+			<p class="source-code">    return pd.DataFrame(</p>
+			<p class="source-code">        model.predict(features),</p>
+			<p class="source-code">        columns=topicsList, index=features.index)</p>
+			<p class="source-code">preds = get_predictions(model, get_features(test))</p>
+			<p class="source-code"> labels = get_labels(test)</p>
+			<p>Using <strong class="source-inline">sklearn</strong> functionalities, we can <a id="_idIndexMarker778"/>promptly look at the <a id="_idIndexMarker779"/>performance of the trained classifier:</p>
+			<p class="source-code">from sklearn.metrics import classification_report</p>
+			<p class="source-code">print(classification_report(labels, preds))</p>
+			<p>This provides the following output, which shows the overall performance measure that's received by the F1-score. This is around 0.6 – 0.8, depending on how unbalanced classes are accounted for:</p>
+			<p class="source-code">              precision    recall  f1-score   support</p>
+			<p class="source-code">           0       0.97      0.94      0.95      1087</p>
+			<p class="source-code">           1       0.93      0.74      0.83       719</p>
+			<p class="source-code">           2       0.79      0.45      0.57       179</p>
+			<p class="source-code">           3       0.96      0.64      0.77       149</p>
+			<p class="source-code">           4       0.95      0.59      0.73       189</p>
+			<p class="source-code">           5       0.95      0.45      0.61       117</p>
+			<p class="source-code">           6       0.87      0.41      0.56       131</p>
+			<p class="source-code">           7       0.83      0.21      0.34        89</p>
+			<p class="source-code">           8       0.69      0.34      0.45        71</p>
+			<p class="source-code">           9       0.61      0.25      0.35        56</p>
+			<p class="source-code">   micro avg       0.94      0.72      0.81      2787</p>
+			<p class="source-code">   macro avg       0.85      0.50      0.62      2787</p>
+			<p class="source-code">weighted avg       0.92      0.72      0.79      2787</p>
+			<p class="source-code"> samples avg       0.76      0.75      0.75      2787</p>
+			<p>You can play around with the types and hyperparameters of the analytical pipeline, vary the models, and experiment with different values when you're encoding the embeddings. As we <a id="_idIndexMarker780"/>mentioned previously, the preceding approach is clearly transductive since it uses an embedding that's been trained on the entire dataset. This is a common situation in semi-supervised tasks, where the <a id="_idIndexMarker781"/>labeled information is only present in a small subset of points, and the task is to infer the labels for all the unknown samples. In the next subsection, we will outline how to build an inductive classifier using graph neural networks. These can be used when the test samples are not known at training time.</p>
+			<h2 id="_idParaDest-118"><a id="_idTextAnchor127"/>Graph neural networks</h2>
+			<p>Now, let's describe a <a id="_idIndexMarker782"/>neural network-based approach that natively integrates and makes use of the graph structure. Graph neural networks <a id="_idIndexMarker783"/>were introduced in <a href="B16069_03_Final_JM_ePub.xhtml#_idTextAnchor046"><em class="italic">Chapter 3</em></a>, <em class="italic">Unsupervised Graph Learning</em>, and <a href="B16069_04_Final_JM_ePub.xhtml#_idTextAnchor064"><em class="italic">Chapter 4</em></a>, <em class="italic">Supervised Graph Learning</em>. However, here, we will show you how to apply this framework to heterogeneous graphs; that is, graphs where there is more than one type of node. Each node type might have a different set of features and the training might target only one specific node type over the other. </p>
+			<p>The approach we will show here will make use of <strong class="source-inline">stellargraph</strong> and the <strong class="source-inline">GraphSAGE</strong> algorithms, which we described previously. These methods also support the use of features for each node, instead of just relying on the topology of the graph. If you do not have any node features, the one-hot node representation can be used in its place, as shown in <a href="B16069_06_Final_JM_ePub.xhtml#_idTextAnchor100"><em class="italic">Chapter 6</em></a>, <em class="italic">Social Network Graphs</em>. However, here, to make things more general, we will produce a set of node features based on the TF-IDF score (which we saw earlier) for each entity and keyword. Here, we will show you a step-by-step guide that will help you <a id="_idIndexMarker784"/>train and evaluate a model, based on <a id="_idIndexMarker785"/>graph neural networks, for predicting document topic classification:</p>
+			<ol>
+				<li value="1">Let's start by computing the TF-IDF score for each document. <strong class="source-inline">sklearn</strong> already provides some functionalities that allow us to easily compute the TF-IDF scores from a corpus of documents. The <strong class="source-inline">TfidfVectorizer</strong> <strong class="source-inline">sklearn</strong> class already comes with a <strong class="source-inline">tokenizer</strong> embedded. However, since we already have a tokenized and lemmatized version that we extracted with <strong class="source-inline">spacy</strong>, we can also provide an implementation of a custom tokenizer that leverages on spaCy processing:<p class="source-code">def my_spacy_tokenizer(pos_filter=["NOUN", "VERB", "PROPN"]):</p><p class="source-code">    def tokenizer(doc):</p><p class="source-code">        return [token.lemma_ </p><p class="source-code">                for token in doc </p><p class="source-code">                if (pos_filter is None) or </p><p class="source-code">                   (token.pos_ in pos_filter)] </p><p class="source-code">    return tokenizer </p><p>This can be used in <strong class="source-inline">TfidfVectorizer</strong>:</p><p class="source-code">cntVectorizer = TfidfVectorizer(</p><p class="source-code">    analyzer=my_spacy_tokenizer(),</p><p class="source-code">    max_df = 0.25, min_df = 2, max_features = 10000</p><p class="source-code">)</p><p>To make the approach truly inductive, we will only train the TF-IDF for the training set. This will only be applied to the test set:</p><p class="source-code">trainFeatures, trainLabels = get_features_and_labels(train)</p><p class="source-code">testFeatures, testLabels = get_features_and_labels(test)</p><p class="source-code">trainedIDF = cntVectorizer.fit_transform(trainFeatures)</p><p class="source-code">testIDF = cntVectorizer.transform(testFeatures)</p><p>For our convenience, the <a id="_idIndexMarker786"/>two TF-IDF representations (for the training and test sets) can now be stacked together into a <a id="_idIndexMarker787"/>single data structure representing the features for the document nodes for the whole graph:</p><p class="source-code">documentFeatures = pd.concat([trainedIDF, testIDF])</p></li>
+				<li>Beside the feature information for document nodes, we will also build a simple feature vector for entities, based on the one-hot encoding representation of the entity type:<p class="source-code">entityTypes = {</p><p class="source-code">    entity: ith </p><p class="source-code">    for ith, entity in enumerate(edges["type"].unique())</p><p class="source-code">}</p><p class="source-code">entities = edges\</p><p class="source-code">    .groupby(["target", "type"])["source"]\</p><p class="source-code">    .count()\</p><p class="source-code">    .groupby(level=0).apply(</p><p class="source-code">        lambda s: s.droplevel(0)\</p><p class="source-code">                   .reindex(entityTypes.keys())\</p><p class="source-code">                   .fillna(0))\</p><p class="source-code">    .unstack(level=1)</p><p class="source-code">entityFeatures = (entities.T / entities.sum(axis=1))</p></li>
+				<li>We now have all the information we need to create an instance of a <strong class="source-inline">StellarGraph</strong>. We will do this by merging the information of the node features, both for <a id="_idIndexMarker788"/>documents and for entities, with the connections provided by the <strong class="source-inline">edges</strong> DataFrame. We should <a id="_idIndexMarker789"/>only filter out some of the edges/nodes so that we only include the documents that belong to the targeted topics:<p class="source-code">from stellargraph import StellarGraph</p><p class="source-code">_edges = edges[edges["source"].isin(documentFeatures.index)]</p><p class="source-code">nodes = {«entity»: entityFeatures, </p><p class="source-code">         «document»: documentFeatures}</p><p class="source-code">stellarGraph = StellarGraph(</p><p class="source-code">    nodes, _edges,</p><p class="source-code">    target_column=»target», edge_type_column=»type»</p><p class="source-code">)</p><p>With that, we have created our <strong class="source-inline">StellarGraph</strong>. We can inspect the network, similar to what we did for <strong class="source-inline">networkx</strong>, with the following command:</p><p class="source-code">print(stellarGraph.info())</p><p>This produces the <a id="_idIndexMarker790"/>following <a id="_idIndexMarker791"/>overview:</p><p class="source-code">StellarGraph: Undirected multigraph</p><p class="source-code"> Nodes: 23998, Edges: 86849</p><p class="source-code">Node types:</p><p class="source-code">  entity: [14964]</p><p class="source-code">    Features: float32 vector, length 6</p><p class="source-code">    Edge types: entity-GPE-&gt;document, entity-ORG-&gt;document, entity-PERSON-&gt;document, entity-keywords-&gt;document</p><p class="source-code">  document: [9034]</p><p class="source-code">    Features: float32 vector, length 10000</p><p class="source-code">    Edge types: document-GPE-&gt;entity, document-ORG-&gt;entity,</p><p class="source-code"> document-PERSON-&gt;entity, document-keywords-&gt;entity</p><p class="source-code">Edge types:</p><p class="source-code">    document-keywords-&gt;entity: [78838]</p><p class="source-code">        Weights: range=[0.0827011, 1], mean=0.258464,</p><p class="source-code"> std=0.0898612</p><p class="source-code">        Features: none</p><p class="source-code">    document-ORG-&gt;entity: [4129]</p><p class="source-code">        Weights: range=[2, 22], mean=3.24122, std=2.30508</p><p class="source-code">        Features: none</p><p class="source-code">    document-GPE-&gt;entity: [2943]</p><p class="source-code">        Weights: range=[2, 25], mean=3.25926, std=2.07008</p><p class="source-code">        Features: none</p><p class="source-code">    document-PERSON-&gt;entity: [939]</p><p class="source-code">        Weights: range=[2, 14], mean=2.97444, std=1.65956</p><p class="source-code">        Features: none</p><p>The <strong class="source-inline">StellarGraph</strong> description is actually very informative. Besides, <strong class="source-inline">StellarGraph</strong> also natively handles different types of nodes and edges and provides out-of-the-box segmented statistics for each node/edge type.</p></li>
+				<li>You may have noted that the graph we just created includes both training and test data. To truly test the performance of an inductive approach and avoid information from <a id="_idIndexMarker792"/>being linked between the <a id="_idIndexMarker793"/>train and test sets, we need to create a subgraph that only contains the data available at training time:<p class="source-code">targets = labels.reindex(documentFeatures.index).fillna(0)</p><p class="source-code"> sampled, hold_out = train_test_split(targets)</p><p class="source-code">allNeighbors = np.unique([n </p><p class="source-code">    for node in sampled.index </p><p class="source-code">    for n in stellarGraph.neighbors(node)</p><p class="source-code">])</p><p class="source-code">subgraph = stellarGraph.subgraph(</p><p class="source-code">    set(sampled.index).union(allNeighbors)</p><p class="source-code">)</p><p>The considered subgraph contains 16,927 nodes and 62,454 edges, compared to the 23,998 nodes and 86,849 edges in the entire graph. </p></li>
+				<li>Now that we only have the data and the network available at training time, we can build our machine learning model on top of it. To do so, we will split the data into train, validation, and test data. For training, we will only use 10% of the data, which resembles a semi-supervised task:<p class="source-code">from sklearn.model_selection import train_test_split</p><p class="source-code">train, leftOut = train_test_split(</p><p class="source-code">    sampled,</p><p class="source-code">    train_size=0.1,</p><p class="source-code">    test_size=None,</p><p class="source-code">    random_state=42</p><p class="source-code">)</p><p class="source-code">validation, test = train_test_split(</p><p class="source-code">    leftOut, train_size=0.2, test_size=None, random_state=100,</p><p class="source-code">) </p></li>
+				<li>Now, we can start to build our graph neural network model using <strong class="source-inline">stellargraph</strong> and the <strong class="source-inline">keras</strong> API. First, we will create a generator able to produce the samples that will feed the neural network. Note that, since we are dealing with a <a id="_idIndexMarker794"/>heterogeneous graph, we need a generator that will sample examples from nodes <a id="_idIndexMarker795"/>that only belong to specific class. Here, we will be using the <strong class="source-inline">HinSAGENodeGenerator</strong> class, which generalizes the node generator we used for the homogeneous graph into heterogeneous graphs, allowing us to specify the node type we want to target:<p class="source-code">from stellargraph.mapper import HinSAGENodeGenerator</p><p class="source-code">batch_size = 50</p><p class="source-code">num_samples = [10, 5]</p><p class="source-code">generator = HinSAGENodeGenerator(</p><p class="source-code">    subgraph, batch_size, num_samples,</p><p class="source-code">    head_node_type="document"</p><p class="source-code">)</p><p>Using this object, we can create a generator for the train and validation datasets:</p><p class="source-code">train_gen = generator.flow(train.index, train, shuffle=True)</p><p class="source-code"> val_gen = generator.flow(validation.index, validation)</p></li>
+				<li>Now, we can create our <a id="_idIndexMarker796"/>GraphSAGE model. As we did for the generator, we need to use a model that can handle <a id="_idIndexMarker797"/>heterogenous graphs. Here, <strong class="source-inline">HinSAGE</strong> will be used in place of <strong class="source-inline">GraphSAGE</strong>:<p class="source-code">from stellargraph.layer import HinSAGE</p><p class="source-code">from tensorflow.keras import layers</p><p class="source-code">graphsage_model = HinSAGE(</p><p class="source-code">    layer_sizes=[32, 32], generator=generator,</p><p class="source-code">    bias=True, dropout=0.5</p><p class="source-code">)</p><p class="source-code">x_inp, x_out = graphsage_model.in_out_tensors()</p><p class="source-code">prediction = layers.Dense(</p><p class="source-code">    units=train.shape[1], activation="sigmoid"</p><p class="source-code">)(x_out)</p><p>Note that in the final dense layer, we use a <em class="italic">sigmoid</em> activation function instead of a <em class="italic">softmax</em> activation function, since the problem at hand is a multi-class, multi-label task. Thus, a document may belong to more than one class, and the sigmoid activation function seems a more sensible choice in this context. As usual, we will compile our Keras model:</p><p class="source-code">from tensorflow.keras import optimizers, losses, Model</p><p class="source-code">model = Model(inputs=x_inp, outputs=prediction)</p><p class="source-code">model.compile(</p><p class="source-code">    optimizer=optimizers.Adam(lr=0.005),</p><p class="source-code">    loss=losses.binary_crossentropy,</p><p class="source-code">    metrics=["acc"]</p><p class="source-code">)</p></li>
+				<li>Finally, we will <a id="_idIndexMarker798"/>train the <a id="_idIndexMarker799"/>neural network model:<p class="source-code">history = model.fit(</p><p class="source-code">    train_gen, epochs=50, validation_data=val_gen,</p><p class="source-code">    verbose=1, shuffle=False</p><p class="source-code">)</p><p>This results in the following output:</p><div id="_idContainer508" class="IMG---Figure"><img src="image/B16069_07_016.jpg" alt="Figure.7.16 – (Top) Train and validation accuracy versus the number of epochs. (Bottom) Binary cross-entropy loss for the training and validation dataset versus the number of epochs"/></div><p class="figure-caption">Figure.7.16 – (Top) Train and validation accuracy versus the number of epochs. (Bottom) Binary cross-entropy loss for the training and validation dataset versus the number of epochs</p><p>The preceding <a id="_idIndexMarker800"/>graph shows the plots of the evolution of the train and validation losses and accuracy <a id="_idIndexMarker801"/>versus the number of epochs. As we can see, the train and validation accuracy increase consistently, up to around 30 epochs. Here, the accuracy of the validation set settle to a <em class="italic">plateau</em>, whereas the training accuracy continues to increase, indicating a tendency for overfitting. Thus, stopping training at around 50 seems a rather legitimate choice. </p></li>
+				<li>Once the model has been trained, we can test its performance on the test set:<p class="source-code">test_gen = generator.flow(test.index, test)</p><p class="source-code"> test_metrics = model.evaluate(test_gen)</p><p>This should provide the following values:</p><p class="source-code">loss: 0.0933</p><p class="source-code">accuracy: 0.8795</p><p>Note that because of the unbalanced label distribution, accuracy may not be the best choice for assessing performances. Besides, a value of 0.5 is generally used for thresholding, so providing label assignment may also be sub-optimal in unbalanced settings.</p></li>
+				<li>To identify the best <a id="_idIndexMarker802"/>threshold to be used to classify the documents, we will compute the prediction <a id="_idIndexMarker803"/>over all the test samples:<p class="source-code">test_predictions = pd.DataFrame(</p><p class="source-code">    model.predict(test_gen), index=test.index,</p><p class="source-code">    columns=test.columns)</p><p class="source-code">test_results = pd.concat({</p><p class="source-code">    "target": test,</p><p class="source-code">    "preds": test_predictions</p><p class="source-code">}, axis=1)</p><p>Then, we will compute the F1-score with a macro average (where the F1-score for the single classes are averaged) for different threshold choices: </p><p class="source-code">thresholds = [0.01,0.05,0.1,0.2,0.3,0.4,0.5] </p><p class="source-code">f1s = {}</p><p class="source-code">for th in thresholds:</p><p class="source-code">    y_true = test_results["target"]</p><p class="source-code">    y_pred = 1.0*(test_results["preds"]&gt;th)</p><p class="source-code">    f1s[th] = f1_score(y_true, y_pred, average="macro")    </p><p class="source-code">pd.Series(f1s).plot()</p><p>As shown in the <a id="_idIndexMarker804"/>following graph, a <a id="_idIndexMarker805"/>threshold value of 0.2 seems to be the best choice as it achieves the best performance:</p><div id="_idContainer509" class="IMG---Figure"><img src="image/B16069_07_17.jpg" alt="Figure 7.17 – Macro-averaged F1-score versus the threshold used for labeling&#13;&#10;"/></div><p class="figure-caption">Figure 7.17 – Macro-averaged F1-score versus the threshold used for labeling</p></li>
+				<li>Using a threshold value of 0.2, we can extract the classification report for the test set:<p class="source-code">print(classification_report(</p><p class="source-code">    test_results["target"], 1.0*(test_results["preds"]&gt;0.2))</p><p class="source-code">)</p><p>This gives us the following output:</p><p class="source-code">              precision    recall  f1-score   support</p><p class="source-code">           0       0.92      0.97      0.94      2075</p><p class="source-code">           1       0.85      0.96      0.90      1200</p><p class="source-code">           2       0.65      0.90      0.75       364</p><p class="source-code">           3       0.83      0.95      0.89       305</p><p class="source-code">           4       0.86      0.68      0.76       296</p><p class="source-code">           5       0.74      0.56      0.63       269</p><p class="source-code">           6       0.60      0.80      0.69       245</p><p class="source-code">           7       0.62      0.10      0.17       150</p><p class="source-code">           8       0.49      0.95      0.65       149</p><p class="source-code">           9       0.44      0.88      0.58       129</p><p class="source-code">   micro avg       0.80      0.89      0.84      5182</p><p class="source-code">   macro avg       0.70      0.78      0.70      5182</p><p class="source-code">weighted avg       0.82      0.89      0.84      5182</p><p class="source-code"> samples avg       0.83      0.90      0.85      5182</p></li>
+				<li>At this point, we have trained a graph neural network model and assessed its performance. Now, let's <a id="_idIndexMarker806"/>apply this model to a set of unobserved data – the data that we left out at the <a id="_idIndexMarker807"/>very beginning – and represent the true test data in an inductive setting. To do this, we need to instantiate a new generator:<p class="source-code">generator = HinSAGENodeGenerator(</p><p class="source-code">    stellarGraph, batch_size, num_samples,</p><p class="source-code">    head_node_type="document")</p><p>Note that the graph we've taken as an input from <strong class="source-inline">HinSAGENodeGenerator</strong> is now the entire graph (in place of the filtered one we used previously), which contains both training and test documents. Using this class, we can create a generator that only samples from the test nodes, filtering out the ones that do not belong to one of our main selected topics:</p><p class="source-code">hold_out = hold_out[hold_out.sum(axis=1) &gt; 0]</p><p class="source-code">hold_out_gen = generator.flow(hold_out.index, hold_out)</p></li>
+				<li>The model can then be <a id="_idIndexMarker808"/>evaluated over these samples, and the labels are predicted using the threshold we <a id="_idIndexMarker809"/>identified earlier; that is, 0.2:<p class="source-code">hold_out_predictions = model.predict(hold_out_gen)</p><p class="source-code">preds = pd.DataFrame(1.0*(hold_out_predictions &gt; 0.2),</p><p class="source-code">                     index = hold_out.index,</p><p class="source-code">                     columns = hold_out.columns)</p><p class="source-code">results = pd.concat(</p><p class="source-code">    {"target": hold_out,"preds": preds}, axis=1</p><p class="source-code">)</p><p>Finally, we can extract the performance of the inductive test dataset:</p><p class="source-code">print(classification_report(</p><p class="source-code">    results["target"], results["preds"])</p><p class="source-code">)</p><p>This produces the following table:</p><p class="source-code">              precision    recall  f1-score   support</p><p class="source-code">           0       0.93      0.99      0.96      1087</p><p class="source-code">           1       0.90      0.97      0.93       719</p><p class="source-code">           2       0.64      0.92      0.76       179</p><p class="source-code">           3       0.82      0.95      0.88       149</p><p class="source-code">           4       0.85      0.62      0.72       189</p><p class="source-code">           5       0.74      0.50      0.59       117</p><p class="source-code">           6       0.60      0.79      0.68       131</p><p class="source-code">           7       0.43      0.03      0.06        89</p><p class="source-code">           8       0.50      0.96      0.66        71</p><p class="source-code">           9       0.39      0.86      0.54        56</p><p class="source-code">   micro avg       0.82      0.89      0.85      2787</p><p class="source-code">   macro avg       0.68      0.76      0.68      2787</p><p class="source-code">weighted avg       0.83      0.89      0.84      2787</p><p class="source-code">samples avg       0.84      0.90      0.86      2787</p></li>
+			</ol>
+			<p>Compared to the <a id="_idIndexMarker810"/>shallow learning method, we <a id="_idIndexMarker811"/>can see that we have achieved a substantial improvement in performance that's between 5-10%.</p>
+			<h1 id="_idParaDest-119"><a id="_idTextAnchor128"/>Summary</h1>
+			<p>In this chapter, you learned how to process unstructured information and how to represent such information by using graphs. Starting from a well-known benchmark dataset, the Reuters-21578 dataset, we applied standard NLP engines to tag and structure textual information. Then, we used these high-level features to create different types of networks: knowledge-based networks, bipartite networks, and projections for a subset of nodes, as well as a network relating the dataset topics. These different graphs have also allowed us to use the tools we presented in previous chapters to extract insights from the network representation.</p>
+			<p>We used local and global properties to show you how these quantities can represent and describe structurally different types of networks. We then used unsupervised techniques to identify semantic communities and cluster documents that belong to similar subjects/topics. Finally, we used the labeled information provided in a dataset to train supervised multi-class multi-label classifiers, which also leveraged the topology of the network.</p>
+			<p>Then, we applied supervised techniques to a heterogeneous graph, where two different node types are present: documents and entities. In this setting, we showed you how to implement both transductive and inductive approaches by using shallow learning and graph neural networks, respectively.</p>
+			<p>In the next chapter, we will look at another domain where graph analytics can be efficiently used to extract insights and/or create machine learning models that leverage network topology: transactional data. The next use case will also allow you to generalize the bipartite graph concepts that were introduced in this chapter to another level: tripartite graphs.</p>
+		</div>
+	</body></html>
