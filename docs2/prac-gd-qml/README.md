@@ -1,6 +1,6 @@
-# Python 应用监督学习
+# 量子机器学习实践指南
 
-> 原文：[`annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47`](https://annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47)
+> 原文：[`annas-archive.org/md5/5910c09b32ac3a97f59ad38b8a2d7b2e`](https://annas-archive.org/md5/5910c09b32ac3a97f59ad38b8a2d7b2e)
 > 
 > 译者：[飞龙](https://github.com/wizardforcel)
 > 
