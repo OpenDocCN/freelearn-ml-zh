@@ -1,6 +1,6 @@
-# Python 应用监督学习
+# AWS 应用机器学习与高性能计算
 
-> 原文：[`annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47`](https://annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47)
+> 原文：[`annas-archive.org/md5/f0e3669000f461b1b15efc00e448b120`](https://annas-archive.org/md5/f0e3669000f461b1b15efc00e448b120)
 > 
 > 译者：[飞龙](https://github.com/wizardforcel)
 > 
