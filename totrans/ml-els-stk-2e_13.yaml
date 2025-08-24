@@ -1,0 +1,929 @@
+- en: '*Chapter 10*: Outlier Detection'
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In the first section of this book, we discussed anomaly detection in depth,
+    a feature that allows us to detect unusual behavior in time series data in an
+    unsupervised fashion. This works well when we want to detect whether one of our
+    applications is experiencing unusual latency at a particular time or whether a
+    host on our corporate network is transmitting an unusual number of bytes.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In this chapter, we will learn about the second unsupervised learning feature
+    in the Elastic Stack: outlier detection, which allows us to detect unusual entities
+    in non-time series-based indices. Some interesting applications of outlier detection
+    could involve, for example, detecting unusual cells in a tissue sample, investigating
+    unusual houses, or areas in a local real estate market and catching unusual binaries
+    installed on your computer.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The outlier detection functionality in the Elastic Stack is based on an ensemble
+    or a grouping of four different outlier detection techniques. Two of these techniques
+    are density-based – that is, they try to determine which data points in your index
+    are far away from the bulk of the data – and two are distance-based – that is,
+    they try to determine which points are far away from all other points. While,
+    individually, each of the four algorithms has its strengths and weaknesses, taken
+    together as an ensemble (or a grouping), they perform robust outlier detection.
+    We discuss what each of these algorithms does on a conceptual level later in the
+    chapter.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In addition to exploring the technology that powers outlier detection, we will
+    take a look at how outlier detection differs from anomaly detection, how to configure
+    an outlier detection job in Elasticsearch, how to interpret the results of outlier
+    detection, as well as how to understand which features were responsible for a
+    given point being declared an outlier. We will explore the following topics in
+    this chapter:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Discovering how outlier detection works under the hood
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Applying outlier detection in practice
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Evaluating outlier detection with the Evaluate API
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Hyperparameter tuning for outlier detection
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Technical requirements
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'The material in this chapter relies on using Elasticsearch version 7.9 or above.
+    The figures in this chapter have been generated using Elasticsearch 7.10\. Code
+    snippets and code examples used in this chapter are under the `chapter10` folder
+    in the book''s GitHub repository: [https://github.com/PacktPublishing/Machine-Learning-with-Elastic-Stack-Second-Edition](https://github.com/PacktPublishing/Machine-Learning-with-Elastic-Stack-Second-Edition).'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Discovering how outlier detection works
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**Outlier detection** can offer insights into datasets by discovering which
+    points are different or unusual, but how does outlier detection in the Elastic
+    Stack work? To understand how outlier detection functionality can be constructed,
+    let''s start by thinking conceptually about how you would design the algorithm,
+    and then see how our conceptual ideas can be formalized into the four separate
+    algorithms that make up the outlier detection ensemble in Elasticsearch.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Suppose for a second that we have a two-dimensional set of weight and circumference
+    measurements of pumpkins and we wish to discover which pumpkins are outliers in
+    this population (perhaps we want to use that information to find out *why* they
+    are outliers). A good first step would be to plot the data to see whether there
+    are any obvious data points that appear to be far from others:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 10.1 – Points A and B appear to be outliers in this dataset because
+    they are located far from the general mass of data'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B17040_10_001.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 10.1 – Points A and B appear to be outliers in this dataset because they
+    are located far from the general mass of data
+  prefs: []
+  type: TYPE_NORMAL
+- en: Human eyes are exceptionally good at picking up patterns and a quick glance
+    of the plot in *Figure 10.1* will tell you that points A and B appear to be outliers.
+    What is the underlying intuitive reasoning that led us to this conclusion? Our
+    visual system tells us that both points A and B appear to be, in some sense, far
+    away from the two other distinct groups of points in the two-dimensional space.
+    This observation and its formalization is the crux on which the outlier detection
+    techniques used in the Elastic Stack are based.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Discovering the four techniques used for outlier detection
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'As mentioned in the previous section, the outlier detection algorithm in the
+    Elastic Stack is an ensemble, or grouping, of four distinct outlier detection
+    techniques. These techniques can be further subdivided into two categories: **distance-based
+    techniques** and **density-based techniques**. We will examine each in turn in
+    the following sections.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Distance-based techniques
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: As we saw in the previous section, the human visual system is incredibly adept
+    at picking up outliers in two-dimensional images and the gist of how we are able
+    to do this is by picking up the points that seem far away from the general mass
+    of data. This observation is what the two distance-based techniques, **distance
+    to kth-nearest neighbors** and **average distance to kth-nearest neighbors**,
+    aim to capture.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Suppose we have a two-dimensional dataset that is spatially distributed, as
+    in *Figure 10.2*, and suppose we pick the value of *k* to be 3\. At this point,
+    we are just picking an arbitrarily low value of *k* for illustration purposes.
+    This would mean that for point A in *Figure 10.2*, we find the third closest point
+    and compute the distance of point A to it (marked with a thicker arrow in *Figure
+    10.2*). This approach is great in its simplicity but is also prone to noise. To
+    make this a bit more robust, we can also compute the **average distance to the
+    kth-nearest neighbors** (illustrated in *Figure 10.2*):'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 10.2 – Distance to kth-nearest neighbor from point A and average distance
+    to kth-nearest neighbor for point A when k=3'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B17040_10_002.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 10.2 – Distance to kth-nearest neighbor from point A and average distance
+    to kth-nearest neighbor for point A when k=3
+  prefs: []
+  type: TYPE_NORMAL
+- en: While distance-based methods are great in their simplicity and interpretability,
+    they are unable to capture certain subtleties in the spatial distribution of the
+    data, in particular, how sparse or dense the neighborhood of each data point is.
+    To capture these properties, we have to look at density-based techniques.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Density-based techniques
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'One factor that the distance-based methods fail to capture in full is the difference
+    between the density of points in the neighborhood of our point of interest and
+    the density of points around its neighbors. Computing the local outlier factor
+    of a point captures exactly this: how different a given point''s neighborhood
+    is from other points in the neighborhood.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '*Figure 10.3* illustrates the basic idea of this technique for k=3\. In this
+    case, we compare the neighborhood of point A to the neighborhoods of its three
+    nearest neighbors (illustrated by the dotted circles in the diagram in *Figure
+    10.3*). A value of 1 for the local outlier factor measure means that the neighborhood
+    of point A is comparable to that of its neighbors – it is neither more sparse
+    nor more dense. A value greater than 1 means that the neighborhood of A is sparser
+    than that of its neighbors and it could potentially be an outlier. Conversely,
+    a value less than 1 means that the point is densely surrounded by its neighbors
+    and thus unlikely to be an outlier:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 10.3 – Local outlier factor compares the neighborhood of point A to
+    the neighborhoods of its kth-nearest neighbors'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B17040_10_003.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 10.3 – Local outlier factor compares the neighborhood of point A to the
+    neighborhoods of its kth-nearest neighbors
+  prefs: []
+  type: TYPE_NORMAL
+- en: The final method in our ensemble of four methods is the **local distance-based
+    outlier factor** (**LDOF**). Similarly to the **local outlier factor** (**LOF**),
+    the goal of **LDOF** is to compare the neighborhood of a given point, A, to the
+    neighborhoods of its neighbors. In this case, we compute the average distance
+    to the kth-nearest neighbors of A for some fixed value of *k*, *avg(A)*. Then,
+    for each of the kth-nearest neighbors of A, we compute the pairwise distances
+    and take the average value of them, *avgkk(A)*.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Finally, we inspect the ratio *avg(A)/avgkk(A)* to see how close it is to the
+    value 1\. If the ratio approaches 1, it means that point A is surrounded by a
+    local density of other points and is thus unlikely to be an outlier.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The final overall outlier score that is assigned to each data point is a combination
+    of the values derived from the four methods above. The closer the value is to
+    1, the more likely the point is to be an outlier.
+  prefs: []
+  type: TYPE_NORMAL
+- en: While sometimes we simply want to figure out which of the points in our datasets
+    are outliers, on other occasions, we also want to see why the outlier detection
+    algorithm is suggesting that a particular point is an outlier. Is there a particular
+    feature or field value or perhaps a group of values that is making the point unusual?
+    This is the topic we will address in the next section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Understanding feature influence
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: Let's return for a moment to our fictional pumpkin dataset from the beginning
+    of this chapter. Suppose we are analyzing this dataset using outlier detection.
+    After the analysis is complete, we have, for each pumpkin, a score from 0 to 1
+    that measures the unusualness of the pumpkin. In addition to knowing the score,
+    we might also be interested in understanding which feature – the weight of the
+    pumpkin or the circumference of the pumpkin – contributed to its unusualness.
+  prefs: []
+  type: TYPE_NORMAL
+- en: This is exactly the problem that **feature influence** aims to solve. In a nutshell,
+    feature influence assigns to each feature (or **field** if we are thinking in
+    terms of the vocabulary we usually use to describe Elasticsearch documents) a
+    score from 0 to 1 that describes how significant the feature was in determining
+    that the data point was an outlier. The total sum of feature influence scores
+    across all features adds up to 1\.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s take a closer look at feature influence with the help of the fictional
+    pumpkin dataset in *Figure 10.4*. Suppose that our outlier detection algorithm
+    has identified points A and B as the outliers in this dataset. Now, let''s consider
+    how the feature influence values of pumpkin weight and pumpkin circumference would
+    be relative to one another in points A and B:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 10.4 – Feature influence scores measure how influential a given feature
+    is in determining the unusualness of a data point'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B17040_10_004.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 10.4 – Feature influence scores measure how influential a given feature
+    is in determining the unusualness of a data point
+  prefs: []
+  type: TYPE_NORMAL
+- en: Pumpkin A has a weight that is far outside of the normal weight range of the
+    pumpkins, but its circumference falls somewhere in the middle of the circumference
+    values in the pumpkins of the left-hand cluster. Thus, we would expect the feature
+    influence value for pumpkin weight to be high for point A, but the feature influence
+    value for circumference to be low.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Now let's take a look at outlier pumpkin B, where the situation is reversed.
+    While the weight of pumpkin B falls into the mid-range of the dataset, the circumference
+    of pumpkin B is much higher than almost any other data point. Thus, for pumpkin
+    B, the feature influence value of circumference would be higher than the value
+    of weight.
+  prefs: []
+  type: TYPE_NORMAL
+- en: How is feature influence for each point calculated?
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: In the interpretation of these feature influence scores, it is often helpful
+    to know exactly what goes into the calculation. Let's return for a moment to our
+    two-dimensional pumpkin dataset to illustrate the steps that go into the calculation
+    of feature influence. What we want to establish is how much of an effect a particular
+    feature, *X*, say the weight of the pumpkin, has on the final outlier score. A
+    natural way to try and quantify this effect is to imagine that we don't include
+    this feature at all in our outlier calculation. *Figure 10.5* shows how this would
+    look in practice for our pumpkin example. For each pumpkin data point, we project
+    the value of the **Weight** feature to a fixed value 0 and see by how much each
+    data point's unusualness has changed.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We can see from *Figure 10.5* that for point A, removing or projecting the
+    value of the weight to 0 will ultimately result in point A becoming an inlier.
+    Hence, we can conclude that the `Weight` feature has a large influence on point
+    A''s unusualness. On the other hand, if we look at point B on the right-hand side
+    diagram in *Figure 10.5*, we can see that as a result of projecting its `Weight`
+    feature to 0, the unusualness has not changed. Hence, we can conclude that the
+    value of the `Weight` feature does not have much bearing on the unusualness of
+    point B and thus its feature influence value will be low:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 10.5 – Feature influence is calculated by asking how much a given
+    data point''s unusualness will change if a given feature is projected to a fixed
+    value or removed'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B17040_10_005.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 10.5 – Feature influence is calculated by asking how much a given data
+    point's unusualness will change if a given feature is projected to a fixed value
+    or removed
+  prefs: []
+  type: TYPE_NORMAL
+- en: How does outlier detection differ from anomaly detection?
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'While reading this chapter, you may have noticed that both outlier detection
+    and anomaly detection are unsupervised learning methods that try to achieve a
+    similar goal: to find unusual or outlying data points. A natural question would
+    then be to ask, *how does anomaly detection differ from outlier detection?* In
+    this section, we are going to outline and explain the main differences between
+    the two. A summary of the main points is given in *Figure 10.6*, which we will
+    see very soon.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Probability model-based versus instance-based
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: To make the distinction between anomaly detection and outlier detection clearer
+    in our minds, let's first take a brief look at the available anomaly detection
+    methods. The anomaly detection functionality allows us to detect unusual features
+    in time series-based data. It does this by chunking up the time series into discrete
+    time units called **buckets**, then applying a detector function such as mean
+    or sum to the individual values in the bucket. Each bucket value is then used
+    as an individual data point in a probability distribution that is continuously
+    updated as the anomaly detector sees more and more data. The buckets that have
+    a low probability of occurring under the probability distribution are flagged
+    up as anomalies.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Instead of building a probabilistic model that tracks the evolution of our data
+    across time, outlier detection uses an ensemble (or a group) of four techniques
+    – two distance-based techniques and two density-based techniques, which were covered
+    earlier in the chapter. The further away a data point is from the general mass
+    of data in the dataset, the more likely it is to be an outlier. No probability
+    model is constructed for the dataset.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Scoring
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: This major difference in the two techniques leads us, in turn, to a difference
+    in scoring. In anomaly detection, the anomalousness of a bucket is determined
+    by how unlikely it is to occur under the model that the anomaly detector has learned
+    from the data. The lower the probability, the more anomalous the bucket is.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In contrast, in outlier detection, we compute an outlier score, instead of a
+    probability. The outlier score is a continuous measure ranging from 0 to 1 that
+    captures a summary measure of how far the given data point is from the general
+    mass of data in the whole dataset. As we saw earlier in the chapter, this measure
+    is computed using four different techniques. The higher the outlier score, the
+    more anomalous or unusual the data point is in the dataset.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Data characteristics
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: In addition to scoring, another major difference between the two techniques
+    is the type of data for which they are intended. Anomaly detection is suitable
+    only for time series data, while outlier detection can be used on single or multidimensional
+    datasets that may or may not contain a time-based component.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Online versus batch
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: Finally, the last major difference between the two unsupervised learning techniques
+    is how amenable they are for updates if new data is ingested into the index. Users
+    familiar with anomaly detection will know that this technique is great for streaming
+    data. As soon as a new bucket of data arrives in the cluster and is processed,
+    the probability model can be updated to reflect the new data.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Outlier detection, on the other hand, is not amenable to online updates in the
+    same fashion as anomaly detection. If a group of new data points is ingested into
+    the source index, we have to rerun the outlier detection job on the source index
+    once again. The reason for this is that outlier detection is an instance-based
+    method that uses the spatial and density distribution of data points to determine
+    which are normal and which are outliers. Any new points ingested into the source
+    index could alter the spatial distribution of the data to such an extent that
+    points previously classified as outliers would no longer be outliers and hence,
+    a re-evaluation of new data requires the outlier score to be recomputed for the
+    whole dataset in a batch add a lead-in sentence before the following table.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 10.6 – A summary of the main differences between anomaly detection
+    and outlier detection ](img/B17040_10_006.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Figure 10.6 – A summary of the main differences between anomaly detection and
+    outlier detection
+  prefs: []
+  type: TYPE_NORMAL
+- en: Applying outlier detection in practice
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In this section, we will take a look at a practical example of outlier detection
+    using a public dataset describing the physicochemical properties of wine. This
+    dataset is available for download from the **University of California Irvine (UCI)**
+    repository ([https://archive.ics.uci.edu/ml/datasets/wine+quality](https://archive.ics.uci.edu/ml/datasets/wine+quality)).
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The wine dataset is composed of two CSV files: one describing the physicochemical
+    properties of white wine, the other those of red wine. In this walk-through, we
+    will be focusing on the white wine dataset, but you are welcome to use the data
+    for red wine as well since most of the steps described in this chapter should
+    be applicable to both.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'First let''s import the dataset into our Elasticsearch cluster using the `winequality-white`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 10.7 – The Data Visualizer tool can be found in the Machine Learning
+    app in Kibana and is handy for importing small data files that can be used for
+    experimentation'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B17040_10_007.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 10.7 – The Data Visualizer tool can be found in the Machine Learning
+    app in Kibana and is handy for importing small data files that can be used for
+    experimentation
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Taking a brief look at the data in the **Discover** tab will show us that each
+    document represents a single wine and contains information about the alcohol content,
+    the acidity, the pH, and the sugar content, among other chemical measurements,
+    as well as a qualitative score for quality, which has been assigned by human tasters.
+    The goal of our investigation will be to use outlier detection to detect which
+    wines are outliers in terms of their chemical makeup and then see whether this
+    correlates with the quality score they have received from human tasters. Our hypothesis
+    is that wines that are unusual in terms of chemical makeup will also be outliers
+    in terms of quality. Follow the steps outlined here to explore this hypothesis:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Let's begin by creating an outlier detection job using the **Data Frame Analytics**
+    wizard as seen in *Figure 10.8*:![Figure 10.8 – Use the Data Frame Analytics wizard
+    to create an outlier detection job.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '](img/B17040_10_008.jpg)'
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Figure 10.8 – Use the Data Frame Analytics wizard to create an outlier detection
+    job.
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Because we are interested in comparing wines that are outliers in chemical composition
+    to the wines that are outliers in quality score, we will exclude the quality score
+    from the outlier detection job as shown in *Figure 10.9*:![Figure 10.9 – Exclude
+    the quality score from the outlier detection job by unticking the box next to
+    the field name
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '](img/B17040_10_009.jpg)'
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Figure 10.9 – Exclude the quality score from the outlier detection job by unticking
+    the box next to the field name
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: We will use the default settings for the rest of the configuration options.
+    Once the job has been completed, we can examine the results using the **Data Frame
+    Analytics** results viewer:![Figure 10.10 – Use the Data frame analytics jobs
+    management UI to see when the outlier detection job has been completed
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '](img/B17040_10_010.jpg)'
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Figure 10.10 – Use the Data frame analytics jobs management UI to see when the
+    outlier detection job has been completed
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: A view of the `ml.outlier_score`. The outlier score is a floating value between
+    0 and 1, which captures how outlying a given data point is with respect to the
+    dataset. The closer a given point scores to 1, the more outlying it is and vice
+    versa.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: The rest of the columns in the table show us the values of a selection of other
+    fields from the dataset. Each cell is shaded according to a gradient value from
+    0 to 1, which captures the feature influence, in other words, how important the
+    feature was in determining the unusualness of the data point. The darker shade
+    of blue a given cell is, the more important that feature was for the unusualness
+    of the point.
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: 'For example, by looking at the values in the `ml.outlier_score` column in *Figure
+    10.11*, we can see that the four most unusual wines in the dataset each scored
+    an outlier score of 0.998:'
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: '![Figure 10.11 – The results UI for outlier detection displays a summary table
+    that captures the outlier score of each data point as well as a selection of fields
+    (in alphabetical order) color-coded with the feature influence score'
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: '](img/B17040_10_0011.jpg)'
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Figure 10.11 – The results UI for outlier detection displays a summary table
+    that captures the outlier score of each data point as well as a selection of fields
+    (in alphabetical order) color-coded with the feature influence score
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Important note
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: An interesting question to ask at this point is *what is the threshold at which
+    we declare a point as an outlier?* Do we say that all points that score above
+    0.5 are outliers? Or do we set a more conservative threshold and say that only
+    points above 0.9 are outliers? The process of setting a threshold for a continuous
+    score to bin each data point as either normal or an outlier is known as binarization
+    and is often determined by combining domain knowledge and goals that the user
+    has. However, in the presence of a labeled dataset (for example, a dataset where
+    each data point has already been labeled with the ground truth values of normal/outlier),
+    it is possible to conduct a slightly more systematic process for choosing the
+    threshold. We will return to this topic in the next section when we take a look
+    at the Evaluate API.
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Next, let's return to the results UI and take a look at the shading of the cells
+    to see whether we can glean some interesting information about which factors make
+    a certain wine unusual. We can toggle the hidden columns switch in the UI and
+    add all of the remaining features so that we see a full picture of feature influence
+    for the topmost outlying data points, as shown in *Figure 10.12*:![Figure 10.12
+    – Feature influence displayed for all fields in the wine quality dataset
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '](img/B17040_10_012.jpg)'
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Figure 10.12 – Feature influence displayed for all fields in the wine quality
+    dataset
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: As we can see from the annotated areas, outlying wines are unusual for different
+    reasons. For the first data point, the fields with the highest feature influence
+    scores are chloride and citric acid content, while for the following three the
+    most important features in determining unusualness seem to be density and the
+    pH of the wine.
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: 'Finally, we can return to the question we posed at the beginning of this section.
+    *Does the unusualness of the wine correlate with the quantitative quality score
+    assigned to it by human tasters?* To see whether we can glean any correlation
+    with a quick glance, let''s add the quality score to the dataset alongside the
+    outlier score (*Figure 10.13*):'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 10.13 – The most unusual white wines sorted by descending outlier
+    score along with the qualitative quality score assigned by human tasters'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B17040_10_013.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 10.13 – The most unusual white wines sorted by descending outlier score
+    along with the qualitative quality score assigned by human tasters
+  prefs: []
+  type: TYPE_NORMAL
+- en: As we can see, none of the top 10 most outlying white wines score in the best
+    category (a quality score of 9). Instead, most of them score in the lower range
+    of 3-6\. While this is not conclusive evidence, we have a hint that the most chemically
+    unusual wines are usually not the best tasting!
+  prefs: []
+  type: TYPE_NORMAL
+- en: Evaluating outlier detection with the Evaluate API
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In the previous section, we touched on the fact it can be hard for a user to
+    know how to set the threshold for outlier scores in order to group the data points
+    in the dataset into normal and outlier categories. In this section, we will show
+    how to approach this issue if you have a labeled dataset that contains, for each
+    point, the ground truth values that record whether the point is an outlier. Before
+    we dive into the practical demonstration, let's take a moment to understand some
+    key performance metrics that are used in evaluating the performance of the outlier
+    detection algorithm.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'One of the simplest ways we can measure the performance of the algorithm is
+    to compute the number of data points that it correctly predicted as outliers;
+    in other words, the number of **true positives** (**TPs**). In addition, we also
+    want to know the number of **true negatives** (**TNs**): how many normal data
+    points were correctly predicted as normal. By extension, we also want to record
+    the number of times the outlier detection algorithm made one of two possible mistakes:
+    either normal points were mislabeled as outliers (**false positives** (**FPs**))
+    or vice versa (**false negatives** (**FNs**)).'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'These four measures can be conveniently summarized in a table known as a **confusion
+    matrix**. An example confusion matrix is displayed in *Figure 10.14*:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 10.14 – A confusion matrix displaying the true positive, true negative,
+    false positive, and false negative rates'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B17040_10_014.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 10.14 – A confusion matrix displaying the true positive, true negative,
+    false positive, and false negative rates
+  prefs: []
+  type: TYPE_NORMAL
+- en: The following two measures, the **precision** and **recall**, can be built on
+    top of the four metrics we just described.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Precision is the proportion of true positives among all of the points that
+    were predicted positive or outlying. Recall, on the other hand, is the proportion
+    of true positives among all of the points that were actually positive. These quantities
+    can be summarized as equations as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/Formula_10_001.jpg)![](img/Formula_10_002.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Based on the definitions given in the preceding paragraphs, it seems that in
+    order to compute the number of true positives, true negatives, and so forth, we
+    require each of the points in our destination index to be assigned a class label.
+  prefs: []
+  type: TYPE_NORMAL
+- en: However, the result of the outlier detection job, as we described a few sections
+    ago, is not a binary class label that assigns each point as an outlier or normal,
+    but instead a numeric outlier score that ranges from 0 to 1.
+  prefs: []
+  type: TYPE_NORMAL
+- en: This presents a problem for us when it comes to computing our desired metrics
+    because we have to make a decision and specify a cut-off point. Everything that
+    scores higher than the cut-off point is assigned to the outlying class and everything
+    that scores below the cut-off point is assigned to the normal class. We will call
+    this the **binarization threshold**.
+  prefs: []
+  type: TYPE_NORMAL
+- en: It can be challenging to know exactly what value to set this threshold to, which
+    brings us back to our original goal in this chapter – using the Evaluate API to
+    understand the different performance metrics above at different thresholds so
+    that we can make an informed choice.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s now take a practical walk-through and see how we can apply this knowledge
+    in practice:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s examine the public dataset that we are going to use for this section.
+    The source of the original dataset is the UCI repository here : [https://archive.ics.uci.edu/ml/datasets/Breast+Cancer+Wisconsin+%28Diagnostic%29](https://archive.ics.uci.edu/ml/datasets/Breast+Cancer+Wisconsin+%28Diagnostic%29).
+    To better fit the purpose of this exercise, we have modified the dataset slightly
+    by creating an extra field called Outlier which records whether or not the given
+    data point is an outlier or not. The modified dataset is in a file called `breast-cancer-wisconsin-outlier.csv`
+    and is available for download in the book''s GitHub repository here [https://github.com/PacktPublishing/Machine-Learning-with-Elastic-Stack-Second-Edition/tree/main/Chapter%2010%20-%20Outlier%20Detection%20Analysis](https://github.com/PacktPublishing/Machine-Learning-with-Elastic-Stack-Second-Edition/tree/main/Chapter%2010%20-%20Outlier%20Detection%20Analysis).'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Once you have downloaded this dataset, you can use the data import functionality
+    in the Data Visualizer to import the dataset. For a refresher on the Data Visualizer
+    and how to import data, please see the section Applying Outlier Detection in Practice
+    .
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: 'The dataset describes features measured from malignant and benign breast cancer
+    tissue and includes a **Class** field, which can take either the value 2 (benign)
+    or 4 (malignant). For the purpose of this section, we will treat the data points
+    labeled as malignant as outliers:'
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: '![Figure 10.15 – Each data point in the dataset is labeled with a Class label.
+    We have converted the Class label into a Boolean label and stored it in a new
+    field called Outlier'
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: '](img/B17040_10_015.jpg)'
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Figure 10.15 – Each data point in the dataset is labeled with a Class label.
+    We have converted the Class label into a Boolean label and stored it in a new
+    field called Outlier
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: It is worth mentioning at this point that the Evaluate API ([https://www.elastic.co/guide/en/elasticsearch/reference/current/evaluate-dfanalytics.html](https://www.elastic.co/guide/en/elasticsearch/reference/current/evaluate-dfanalytics.html)),
+    which we will be using to understand how well the outlier detection algorithm
+    performed against the ground truth labels, requires the ground truth label to
+    be a Boolean 0 (for a normal data point) and 1 for an outlier data point. Therefore,
+    we have slightly adjusted the original dataset by adding an extra field called
+    **Outlier**, which converts the **Class** field into a suitable format for consumption
+    by the Evaluate API. A sample document from the dataset is displayed in *Figure
+    10.15*.
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Let's use the **Data Frame Analytics** wizard to create an outlier detection
+    job with this dataset. We will exclude the field that contains the **Class** label,
+    the field that contains the ground truth label, as well as the sample code number,
+    as shown in *Figure 10.16*:![Figure 10.16 – Excluding the Class, Outlier, and
+    Sample_code_number fields from the outlier detection job
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '](img/B17040_10_016.jpg)'
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Figure 10.16 – Excluding the Class, Outlier, and Sample_code_number fields from
+    the outlier detection job
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Once the job has been completed, we can use the destination index that contains
+    the results of the outlier detection job together with the Evaluate API to compute
+    how well our outlier detection algorithm worked when compared to the ground truth
+    labels.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: We will interact with the Evaluate API through the `actual_field`. This is the
+    field that contains the ground truth label for our data. In our case, this is
+    the field called **Outlier**. Finally, we proceed to define the metrics that we
+    would like the API to return for us as well as the thresholds at which these should
+    be calculated.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'The parameters in the REST API call allow us to specify a wide variety of possible
+    thresholds or cut-off points for which to compute the performance metrics. In
+    the preceding example, we asked the Evaluate API to return the values of the performance
+    metrics at three different binarization thresholds: 0.25, 0.5, and 0.75, but equally
+    we could have picked another set of values.'
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: 'Next, we will examine the results returned by the Evaluate API. The response
+    is shown here:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE0]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: As we can see, the Evaluate API has returned a response where each of the metrics
+    is computed three different times – once for each of the thresholds that were
+    specified in the REST API call.
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: The different values of the confusion matrix indicate that the outlier detection
+    algorithm has done quite poorly when it comes to this particular dataset. Not
+    a single one of the thresholds yields any true positives, which means that we
+    were not able to detect any outliers with the default settings. In the next section,
+    we are going to see how **hyperparameter tuning** can help us achieve better results
+    with outlier detection.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Hyperparameter tuning for outlier detection
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: For the more advanced user, the **Data Frame Analytics** wizard offers an opportunity
+    to configure and tune **hyperparameters** – various knobs and dials that fine-tune
+    how the outlier detection algorithm works. The available hyperparameters are displayed
+    in *Figure 10.17*. For example, we can direct the outlier detection job to use
+    only a certain type of outlier detection method instead of the ensemble, to use
+    a certain value for the number of nearest neighbors that are used in the computation
+    in the ensemble, and to assume that a certain portion of the data is outlying.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Please note that while it is good to play around with these settings to experiment
+    and get a feel for how they affect the final results, if you want to customize
+    any of these for a production usecase, you should carefully study the characteristics
+    of your data and have an awareness of how these characteristics will interact
+    with your chosen hyperparameter settings. More information on each of these hyperparameters
+    is available in the documentation here [https://www.elastic.co/guide/en/elasticsearch/reference/current/put-dfanalytics.html](https://www.elastic.co/guide/en/elasticsearch/reference/current/put-dfanalytics.html).
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In our case, we know that the dataset contains about 30% malicious samples.
+    Therefore, the number of outliers we expect is close to that as well. We can configure
+    this as the value for **Outlier fraction** and rerun our job. This is shown in
+    *Figure 10.17*:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 10.17 – It is possible to fine-tune the behavior of the outlier detection
+    job by tuning hyperparameters through the Data Frame Analytics wizard'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B17040_10_017.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 10.17 – It is possible to fine-tune the behavior of the outlier detection
+    job by tuning hyperparameters through the Data Frame Analytics wizard
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s recreate our outlier detection job with this new hyperparameter and
+    compare the result to the one in *Figure 10.17*:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Follow the steps outlined during the creation of our first outlier detection
+    job in the *Evaluating outlier detection with the Evaluate API section*, but adjust
+    the **Outlier fraction** setting under the **Hyperparameters** dialog as shown
+    in *Figure 10.17*. Create and run the outlier detection job.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'After the job has finished running, we can rerun the Evaluate API commands
+    for this new results index. We have used the name `breast-cancer-wisconsin-outlier-fraction`
+    as the name of the destination index that contains the results of the job with
+    tuned hyperparameters. Hence our new Evaluate API call is as follows:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE1]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'Let''s see how much our confusion matrix has changed for the three different
+    thresholds. The response we receive from the Evaluate API is displayed here:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE2]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: As we can see from the values of the confusion matrix, we are doing slightly
+    better in terms of the detection of the true positives, the true outliers, but
+    slightly worse in terms of detecting false negatives.
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Comparing the evaluation metrics from the preceding outlier detection job and
+    the outlier detection job we created in the *Evaluating outlier detection with
+    the Evaluate API* section illustrates that hyperparameter choice can have a significant
+    bearing on the result of the outlier detection job. How should you, then, proceed
+    in choosing sensible hyperparameters?
+  prefs: []
+  type: TYPE_NORMAL
+- en: There are many subtleties and advanced topics that you can dive into when choosing
+    hyperparameters, but a good guideline is to remember the iterative nature of the
+    process. It is good to start with a labeled dataset and try the quality of results
+    using the default settings (in other words, without adjusting anything under the
+    **Hyperparameters** dialog in the Data Frame Analytics wizards).
+  prefs: []
+  type: TYPE_NORMAL
+- en: The defaults have usually been sensibly chosen and tested on a variety of datasets.
+    If the quality of results is not satisfactory, you can start coming up with a
+    plan to adjust and fine-tune the various hyperparameter settings. A good first
+    step is to fix known issues and examine how this affects the quality of the results.
+    For example, we knew from prior experience that the breast cancer dataset contains
+    outliers around 30% or 0.3 of the data, which allowed us to adjust this setting
+    and achieve a slightly better true positive rate.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Summary
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'To conclude the chapter, let''s remind ourselves of the main features of the
+    second unsupervised learning feature in the Elastic Stack: outlier detection.
+    Outlier detection can be used to detect unusual data points in single or multidimensional
+    datasets.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The algorithm is based on an ensemble of four separate measures: two distance-based
+    measures based on kth-nearest neighbors and two density-based measures. The combination
+    of these measures captures how far a given data point is from its neighbors and
+    from the general mass of data in the dataset. This unusualness is captured in
+    a numerical outlier score that ranges from 0 to 1\. The closer a given data point
+    scores to 1, the more unusual it is in the dataset.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: In addition to the outlier score, for each feature or field of a point, we compute
+    a quantity known as the feature influence. The higher the feature influence for
+    a given field, the more that field is responsible for a given point being unusual.
+    These feature influence scores can be used to understand why a particular point
+    received a particular outlier score.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In contrast with the other unsupervised learning functionality in the Elastic
+    Stack, anomaly detection, outlier detection does not require the data to have
+    a time component or be a time series of any kind. Moreover, outlier detection,
+    in contrast with anomaly detection, does not learn a probabilistic model to understand
+    which data points have a low probability of occurring. Instead, it uses distance
+    and density-based measures to compute unusualness. Because of this difference
+    in methodologies, it is not possible for outlier detection to function in an online
+    manner, updating its computations of outlier-ness on the fly as new data is added
+    to the source index. Instead, if we wish to predict the unusualness of new points
+    as they are added to the index, we have to rerun the outlier detection calculation
+    for the whole source index in batch mode.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the next chapter, we will leave unsupervised learning methods behind us and
+    dive into the exciting world of supervised learning, starting with classification.
+  prefs: []
+  type: TYPE_NORMAL

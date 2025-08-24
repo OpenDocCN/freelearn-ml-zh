@@ -1,0 +1,1162 @@
+- en: 'Chapter 5: Model Training and Inference'
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In the last chapter, we discussed **Feast deployment** in the AWS cloud and
+    set up S3 as an offline store and DynamoDB as an online store for the model. We
+    also revisited the few stages of the ML life cycle using the **Customer Lifetime
+    Value** (**LTV**/**CLTV**) model built in [*Chapter 1*](B18024_01_ePub.xhtml#_idTextAnchor014),
+    *An Overview of the Machine Learning Life Cycle*. During the processing of model
+    development, we performed data cleaning and feature engineering and produced the
+    feature set for which the feature definitions were created and applied to Feast.
+    In the end, we ingested the features into Feast successfully and we were also
+    able to query the ingested data.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In this chapter, we will continue with the rest of the ML life cycle, which
+    will involve model training, packaging, batch, and online model inference using
+    the feature store. The goal of this chapter is to continue using the feature store
+    infrastructure that was created in the previous chapter and go through the rest
+    of the ML life cycle. As we go through this process, it will provide an opportunity
+    to learn how using the feature store in ML development can improve the time to
+    production of the model, decouples different stages of the ML life cycle, and
+    helps in collaboration. We will also look back at [*Chapter 1*](B18024_01_ePub.xhtml#_idTextAnchor014),
+    *An Overview of the Machine Learning Life Cycle*, and compare the different stages
+    as we go through these steps. This chapter will help you understand how to use
+    the feature store for model training, followed by model inference. We will also
+    learn what use case the online store serves and use cases served by the offline
+    store.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We will discuss the following topics in order:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Model training with the feature store
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Model packaging
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Batch model inference with Feast
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Online model inference with Feast
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Handling changes to the feature set during development
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Prerequisites
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'To run through the examples and to get a better understanding of this chapter,
+    the resources created in [*Chapter 4*](B18024_04_ePub.xhtml#_idTextAnchor065),
+    *Adding Feature Store to ML Models*, are required. In this chapter, we will use
+    the resources created in the previous chapter and also use the feature repository
+    created in the chapter. The following GitHub link points to the feature repository
+    I created: [https://github.com/PacktPublishing/Feature-Store-for-Machine-Learning/tree/main/customer_segmentation](https://github.com/PacktPublishing/Feature-Store-for-Machine-Learning/tree/main/customer_segmentation).'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Technical requirements
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'To follow the code examples in the chapter, all you need is familiarity with
+    Python and any notebook environment, which could be a local setup such as Jupyter
+    or an online notebook environment such as Google Colab, Kaggle, or SageMaker.
+    You will also need an AWS account with full access to resources such as Redshift,
+    S3, Glue, DynamoDB, the IAM console, and more. You can create a new account and
+    use all the services for free during the trial period. In the last part, you will
+    need an IDE environment to develop the REST endpoints for the online model. You
+    can find the code examples of the book at the following GitHub link: [https://github.com/PacktPublishing/Feature-Store-for-Machine-Learning/tree/main/Chapter05](https://github.com/PacktPublishing/Feature-Store-for-Machine-Learning/tree/main/Chapter05).'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Model training with the feature store
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In [*Chapter 1*](B18024_01_ePub.xhtml#_idTextAnchor014), *An Overview of the
+    Machine Learning Life Cycle*, after feature engineering, we jumped right into
+    model training in the same notebook. Whereas in [*Chapter 4*](B18024_04_ePub.xhtml#_idTextAnchor065),
+    *Adding Feature Store to ML Models*, the generated features were ingested into
+    the feature store. This is one of the standardizations that the feature store
+    helps with in the ML life cycle. By ingesting features into the feature store,
+    a discoverable, sharable, reusable, and versioned dataset/feature set was created.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Now let's assume that two data scientists, Ram and Dee, are working on the same
+    model. Both can use this feature set without having to do anything extra. Not
+    only that, if the background data gets refreshed every day, then all that needs
+    to be done is to run the feature engineering notebook once a day when data scientists
+    comes in, and the latest features will be available for consumption. An even better
+    thing to do is schedule the feature engineering notebook using an orchestration
+    framework such as **Airflow**, **AWS Step Functions**, or even **GitHub** workflows.
+    Once that is done, the latest features are available for experimentation for both
+    Dee and Ram when they come to work.
+  prefs: []
+  type: TYPE_NORMAL
+- en: As we have been discussing, one of the biggest advantages that data engineers
+    and scientists get out of feature stores is collaboration. Let's try and see how
+    our two data scientists, Dee and Ram, can collaborate/compete in model building.
+    Every day when Dee and Ram come into work, assuming that the scheduled feature
+    engineering has run successfully, they start with the model training. The other
+    important thing to note here is, for model training, the source is the feature
+    store. Data scientists don't need to go into raw data sources to generate features
+    unless they are not happy with the model produced by the existing features. In
+    which case, data scientists would go into data exploration again, generate additional
+    feature sets, and ingest them into the feature store. The ingested features are
+    again available for everybody to use. This will go on until the team/data scientist
+    is happy with the model's performance.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Before we split the workflow of two data scientists, Dee and Ram, let''s run
+    through the common steps of their model training notebook. Let''s open a new Python
+    notebook, call it `model-training.ipynb`, and generate training data. The offline
+    store will be used for generating training datasets as it stores the historical
+    data and versions the data with a timestamp. In Feast, the interface to data stores
+    is through an API, as we looked at in [*Chapter 3*](B18024_03_ePub.xhtml#_idTextAnchor050)*,
+    Feature Store Fundamentals, Terminology, and Usage.* and in [*Chapter 4*](B18024_04_ePub.xhtml#_idTextAnchor065),
+    *Adding Feature Store to ML Models*. Hence, to generate the training dataset,
+    we will be using `get_historical_features`. One of the inputs of the `get_historical_features`
+    API is entity IDs. Usually, in enterprises, entity IDs can be fetched from the
+    raw data source. The typical raw sources include databases, data warehouses, object
+    stores, and more. The queries to fetch entities could be as simple as `select
+    unique {entity_id} from {table};`. Let''s do something similar here. Our raw data
+    source is the CSV file. Let''s use that to fetch the entity IDs. Before we go
+    further, let''s install the required packages:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The following code block installs the required packages for the model training:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE0]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'After installing the required packages, if you haven''t already cloned the
+    feature repository, please do so, since we need to connect to the feature store
+    to generate the training dataset. The following code clones the repository:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE1]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'Now that we have the feature repository, let''s connect to Feast/the feature
+    store and make sure that everything works as expected before we move on:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE2]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: The preceding code block connects to the Feast feature repository The `repo_path="."`
+    parameter indicates that `feature_store.yaml` is in the current working directory.
+    It also lists the available entities in the `customer_segmentation` feature repository
+  prefs: []
+  type: TYPE_NORMAL
+- en: Now that we are able to connect to the feature repository let's create the list
+    of entity IDs that are required for training the model. To get the list of entity
+    IDs, in this case, `CustomerId`, let's use the raw dataset and filter out the
+    entity IDs from it.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Important Note
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We are using the same raw dataset that was used in [*Chapter 4*](B18024_04_ePub.xhtml#_idTextAnchor065),
+    *Adding Feature Store to ML Models*. Here is the URL of the dataset: [https://www.kaggle.com/datasets/vijayuv/onlineretail](https://www.kaggle.com/datasets/vijayuv/onlineretail).'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The following code block loads the raw data:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE3]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: Important Note
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: You might question why we need raw data here. Feast allows queries on entities.
+    Hence, we need the entity IDs for which the features are needed.
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Let's filter out the customer IDs that are of interest, similar to the filtering
+    done during feature creation. The following code block selects the dataset that
+    doesn't belong to the United Kingdom and also the customer IDs that exists in
+    the three months dataset (the reason for picking the customers in the three months
+    dataset is, after generating the RFM feature, we performed a left join on the
+    dataset in the feature engineering notebook).
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'The following code block performs the described filtering:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE4]'
+  prefs: []
+  type: TYPE_PRE
+- en: From `uk_data_3m`, we need to fetch the unique `CustomerId`. The additional
+    column required in the entity data is the timestamp to perform point-in-time joins.
+    For now, I'm going to use the latest timestamp for all the entity IDs.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The following code block creates the entity DataFrame required for querying
+    the historical store:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE5]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'The preceding code block produces the following output:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 5.1 – Entity DataFrame for generating the training dataset'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B18024_05_001.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 5.1 – Entity DataFrame for generating the training dataset
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'As you can see in *Figure 5.1*, the entity DataFrame contains two columns:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**CustomerID**: A list of customers for whom the features need to be fetched.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`event_timestamp`.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Now that the common steps in Dee and Ram's model training notebook are complete,
+    let's split their workflow and look at how they can collaborate.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Dee's model training experiments
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'Continuing from the last step (feel free to copy the code blocks and run them
+    in a different notebook and name it as `dee-model-training.ipynb`), it is time
+    to pick the feature set required for training the model:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'To pick the features, Dee would run the following command to look at the available
+    features in the existing feature view:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE6]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'The preceding command outputs the feature view. The following block displays
+    a part of the output that includes features and entities that are part of the
+    feature view:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE7]'
+  prefs: []
+  type: TYPE_PRE
+- en: From the feature set, let's assume that Dee wants to leave out frequency-related
+    features and see how the performance of the model is affected. Hence, she picks
+    all other features for the query and leaves out *frequency* and *F*, which indicates
+    frequency group.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The following code block queries the historical/offline store to fetch the
+    required features using the entity DataFrame shown in *Figure 5.1*:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE8]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'The previous code block outputs the DataFrame shown as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 5.2 – Training dataset for Dee''s model'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B18024_05_002.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 5.2 – Training dataset for Dee's model
+  prefs: []
+  type: TYPE_NORMAL
+- en: Important Note
+  prefs: []
+  type: TYPE_NORMAL
+- en: Replace `<aws_key_id>` and `<aws_secret>` in the preceding code block with the
+    user credentials created in [*Chapter 4*](B18024_04_ePub.xhtml#_idTextAnchor065),
+    *Adding Feature Store to ML Models*.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Now that Dee has the training dataset generated, the next step is model training.
+    Let''s build the XGBoost model with the same parameters that were used in [*Chapter
+    1*](B18024_01_ePub.xhtml#_idTextAnchor014), *An Overview of the Machine Learning
+    Life Cycle*. The following code block splits the dataset into training and testing:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE9]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'The following code block uses the training and test dataset created in the
+    previous example and trains an `XGBClassifier` model:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE10]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'The preceding code block prints the accuracy of the model:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE11]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The following code block runs the `predict` function on the test dataset and
+    prints the classification report:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE12]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'The preceding code block produces the following output:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 5.3 – Classification report of Dee''s model'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B18024_05_003.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 5.3 – Classification report of Dee's model
+  prefs: []
+  type: TYPE_NORMAL
+- en: Not only this but Dee can also try out different feature sets and algorithms.
+    For now, let's assume Dee is happy with her model. Let's move on and look at what
+    Ram does.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Ram's model training experiments
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'Again, we''ll continue in the notebook from the step after *Figure 5.1* (feel
+    free to copy the code blocks, run them in a different notebook, and name it as
+    `ram-model-training.ipynb`). It''s time to pick the feature set required for training
+    the model. To pick the features, Ram would follow similar steps as Dee did. Let''s
+    assume that Ram thinks differently – instead of dropping out one specific category,
+    he drops the features with actual values and just uses the R, F, and M categorical
+    features and segments categorical features. According to Ram, these categorical
+    variables are some transformations of the actual values:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The following code block produces the features set required by Ram to train
+    the model:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE13]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: Important Note
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Replace `<aws_key_id>` and `<aws_secret>` in the preceding code block with the
+    user credentials created in [*Chapter 4*](B18024_04_ePub.xhtml#_idTextAnchor065),
+    *Adding Feature Store to ML Models*.
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: 'The preceding code block produces the following output:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 5.4 – Training dataset for Ram''s model'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B18024_05_004.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 5.4 – Training dataset for Ram's model
+  prefs: []
+  type: TYPE_NORMAL
+- en: The next step is similar to what Dee performed, which is to train the model
+    and look at its classification report. Let's do that.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'The following code block trains the model on the feature set in *Figure 5.4*:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE14]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The preceding code block prints the model accuracy after training and scoring
+    the model on the test set. The code is similar to what Dee was using, but instead
+    of `XGBClassifier` uses `LogisticRegression`. The code block produces the following
+    output:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE15]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Let''s print the classification report on the test dataset so that we can compare
+    Ram and Dee''s models. The following code block produces the classification report
+    for the model:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE16]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'The preceding code block produces the following output:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 5.5 – Classification report of Ram''s model'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B18024_05_005.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 5.5 – Classification report of Ram's model
+  prefs: []
+  type: TYPE_NORMAL
+- en: Ram and Dee can now compare each other's work by looking at the experiments
+    each of them has run. Not only these two experiments but they can run multiple
+    experiments and come up with the best model after all the comparisons. Not only
+    that, but they can also automate the experimentation by writing code to try out
+    all combinations of feature sets and look at and explore more data or work on
+    some other aspect while these experiments are run.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'One other thing I suggest here is to use one of the experiment tracking tools/software.
+    There are many out there on the market. Some of them come with the notebook infrastructure
+    that you use. For example, **Databricks** offers **MLflow**, **SageMaker** has
+    its own, and there are also third-party experiment tracking tools such as **Neptune**,
+    **ClearML**, and others. More tools for experiment tracking and comparison can
+    be found in the following blog: [https://neptune.ai/blog/best-ml-experiment-tracking-tools](https://neptune.ai/blog/best-ml-experiment-tracking-tools).'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Let's assume that Dee and Ram, after all the experimentation, conclude that
+    `XGBClassifier` performed better and decide to use that model. Let's look at model
+    packaging in the next section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Model packaging
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'In the previous section, we built two versions of the model. In this section,
+    let''s package one of the models and save it for model scoring and deployment.
+    As mentioned in the previous section, let''s package the `XGBClassifier` model.
+    Again, for packaging, there are different solutions and tools available. To avoid
+    setting up another tool, I will be using the `joblib` library to package the model:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Continuing in the same notebook that produced the `XGBClassifier` model, the
+    following code block installs the `joblib` library:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE17]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'After installing the `joblib` library, the next step is to package the model
+    object using it. The following code block packages the model and writes the model
+    to a specific location on the filesystem:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE18]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: The preceding code block creates a file in the `/content` folder. To verify
+    that, run an `ls` command and check whether the file exists. Let's also verify
+    whether the model can be loaded and if we can run the `predict` function on it.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The following code block loads the model from the location `/content/customer_segment-v0.0`
+    and runs predictions on a sample dataset:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE19]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'The preceding code block should run without any errors and print the following
+    prediction output:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE20]'
+  prefs: []
+  type: TYPE_PRE
+- en: Now that we have the packaged model, the next step is to register it in the
+    model repository. Again, there are a bunch of tools available to use to manage
+    the model, such as MLflow, SageMaker, and others. I would highly recommend using
+    one of them as they handle a lot of use cases for sharing, deployment, standard
+    versioning, and more. For simplicity, I will use an S3 bucket as the model registry
+    here and upload the trained model to it.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'The following code uploads the packaged model into the S3 bucket:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE21]'
+  prefs: []
+  type: TYPE_PRE
+- en: The preceding code block uploads the file S3 bucket, `feast-demo-mar-2022`,
+    into the following prefix: `model-repo/customer_segment-v0.0`. Please verify this
+    by visiting the AWS console to make sure the model is uploaded to the specified
+    location.
+  prefs: []
+  type: TYPE_NORMAL
+- en: So far, we are done with model training and experimentation and have registered
+    a candidate model in the model registry (S3 bucket). Let's create the model prediction
+    notebook for a batch model use case in the next section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Batch model inference with Feast
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'In this section, let''s look at how to run prediction for batch models. To
+    perform prediction for a batch model, we need two things: one is a model and the
+    other is a list of customers and their feature set for prediction. In the previous
+    section, we created and registered a model in the model registry (which is S3).
+    Also, the required features are available in the feature store. All we need is
+    the list of customers for whom we need to run the predictions. The list of customers
+    can be generated from the raw dataset as we did before, during model training.
+    However, for the purpose of this exercise, we will take a small subset of customers
+    and run predictions on them.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s create a model prediction notebook and load the model that is registered
+    in the model registry:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The following code block installs the required dependencies for the prediction
+    notebook:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE22]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: After installing the dependencies, the other required step is to fetch the feature
+    repository if you haven't already. This is one of the common requirements in all
+    the notebooks that use Feast. However, the process may not be the same in other
+    feature stores. One of the reasons for this being Feast is SDK/CLI oriented. Other
+    feature stores, such as SageMaker and Databricks, might just need the credentials
+    to access it. We will look at an example in a later chapter.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Assuming that you have cloned the Feast repository that was created in the previous
+    chapter (which was also used during the model creation), the next step is to fetch
+    the model from the model registry S3\.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'The following code block downloads the model from the S3 location (the same
+    location to which the model was uploaded):'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE23]'
+  prefs: []
+  type: TYPE_PRE
+- en: After executing the preceding code block, you should see a file named `customer_segment-v0.0`
+    in the current work directory. You can verify it using the `ls` command or through
+    the folder explorer.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Important Note
+  prefs: []
+  type: TYPE_NORMAL
+- en: Replace `<aws_key_id>` and `<aws_secret>` in the preceding code block with the
+    user credentials created in [*Chapter 4*](B18024_04_ePub.xhtml#_idTextAnchor065),
+    *Adding Feature Store to ML Models*.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The next step is to get the list of customers who need to be scored. As mentioned
+    before, this can be fetched from the raw data source, but for the purpose of the
+    exercise, I will be hardcoding a sample list of customers. To mimic fetching the
+    customers from the raw data source, I will be invoking a function that returns
+    the list of customers.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'The following code block displays the mock function to fetch customers from
+    the raw data source:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE24]'
+  prefs: []
+  type: TYPE_PRE
+- en: Now that we have the list of customers to be scored, the next step is to fetch
+    the features for these customers. There are different ways to do it. One way is
+    to use the online store and the other is to use the offline store. For batch models,
+    since latency is not a requirement, the most cost-efficient way is to use the
+    offline store; it's just that offline stores need to be queried for the latest
+    features. This can be done by using the `event_timestamp` column. Let's use the
+    offline store and query the required features for the given customer list. To
+    do that, we need the entity DataFrame. Let's create that next.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'The following code block creates the required entity DataFrame to fetch the
+    latest features:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE25]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'The preceding code block outputs the following entity DataFrame:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 5.6 – Entity DataFrame for prediction'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B18024_05_006.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 5.6 – Entity DataFrame for prediction
+  prefs: []
+  type: TYPE_NORMAL
+- en: To fetch the latest features for any customer, you need to set `event_timestamp`
+    to `datetime.now()`. Let's use the entity DataFrame in *Figure 5.4* to query the
+    offline store.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The following code block fetches the features for the given entity DataFrame:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE26]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'The preceding code block produces the following output:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 5.7 – Features for prediction'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B18024_05_007.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 5.7 – Features for prediction
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Now that we have the features for prediction, the next step is to load the
+    downloaded model and run the prediction for the customers using the features in
+    *Figure 5.5*. The following code block does just that:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE27]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: The last step after running the prediction is to store the prediction results
+    in a database or object store for later consumption. In this exercise, I will
+    be writing the prediction results to an S3 bucket. Feel free to sink the results
+    into other data stores.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'The following code block saves the prediction results along with the features
+    in an S3 location:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE28]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: With that last code block, we are done with the implementation of a batch model.
+    The question in your mind will be *how has the introduction of the feature store
+    changed the ML life cycle so far?*. The early adoption of it decoupled the steps
+    of feature engineering, model training, and model scoring. Any of them can be
+    run independently without having to disturb the other parts of the pipeline. That's
+    a huge benefit. The other part is deployment. The notebook we created in step
+    one is concrete and does a specific job such as feature engineering, model training,
+    and model scoring.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Now, to productionize the model, all we need to do is schedule the feature engineering
+    notebook and model scoring notebook using an orchestration framework and the model
+    will be running at full scale. We will look at the productionization of the model
+    in the next chapter.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the next section, let's look at what needs to be done for the online model
+    use case.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Online model inference with Feast
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In the last section, we discussed how to use Feast in batch model inference.
+    Now, it's time to look at the online model use case. One of the requirements of
+    online model inference is that it should return results in low latency and also
+    be invoked from anywhere. One of the common paradigms is to expose the model as
+    a REST API endpoint. In the *Model packaging* section, we logged the model using
+    the `joblib` library. That model needs to be wrapped with the RESTful framework
+    to be deployable as a REST endpoint. Not only that but the features also need
+    to be fetched in real time when the inference endpoint is invoked. Unlike in [*Chapter
+    1*](B18024_01_ePub.xhtml#_idTextAnchor014), *An Overview of the Machine Learning
+    Life Cycle*, where we didn't have the infrastructure for serving features in real
+    time, here, we already have that in place thanks to Feast. However, we need to
+    run the command to sync offline features to the online store using the Feast library.
+    Let's do that first. Later, we will look into packaging.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Syncing the latest features from the offline to the online store
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'To load features from the offline to the online store, we need the Feast library:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s open a notebook and install the required dependencies:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE29]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'After installing the required dependencies, clone the feature store repository
+    As mentioned before, this is a requirement for all notebooks. Assuming you have
+    cloned the repository in the current working directory, the following command
+    will load the latest features from the offline to the online store:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE30]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'The preceding command outputs the progress as shown in the following screenshot:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 5.8 – Sync the offline to the online store'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B18024_05_008.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 5.8 – Sync the offline to the online store
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'After loading the offline data into the online store, let''s run a query on
+    the online store and make sure that it works as expected. To query the online
+    store, initialize the feature store object and invoke the `get_online_features`
+    API, as shown in the following code block:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE31]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'The preceding code block fetches the data from the online store (**DynamoDB**)
+    at low latency. When you run the preceding block, you will notice how quickly
+    it responds compared to the historical store queries. The output of the code block
+    is as shown in the following screenshot:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 5.9 – Query the online store'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B18024_05_009.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 5.9 – Query the online store
+  prefs: []
+  type: TYPE_NORMAL
+- en: In *Figure 5.7*, the last row contains `NaN` values. That is an example of how
+    Feast would respond if any of the given entity IDs don't exist in the online store.
+    In this example, the customer with the ID `abcdef` doesn't exist in the feature
+    store, hence it returns `NaN` values for the corresponding row.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Now that the online store is ready with the latest features, let's look into
+    packaging the model as a RESTful API next.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Packaging the online model as a REST endpoint with Feast code
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'This part is more about software engineering than data engineering or data
+    science skills. There are many REST API frameworks for Python that are available
+    out there, namely `POST` method endpoint, which will take a list of customer IDs
+    as input and return the prediction list:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The following code block shows the API contract that will be implemented:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE32]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: Now that we have the API contract, the next step is to choose the REST framework
+    that we are going to use. There are different trade-offs in choosing one over
+    the other among the existing REST frameworks. Since that is out of scope for this
+    book, I will use `fastapi` ([https://fastapi.tiangolo.com/](https://fastapi.tiangolo.com/))
+    as it is an async framework. If you are familiar with other frameworks such as
+    `flask` or `django`, feel free to use them. The prediction result will be the
+    same irrespective of the framework you use. Whatever framework you choose, just
+    remember that we will be dockerizing the REST API before deployment.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: To build the API, I will be using the PyCharm IDE. If you have another favorite
+    IDE, feel free to use that. Also, for the development of the API and for running
+    the API, we need the following libraries:  `feast[aws]`, `uvicorn[standard]`,
+    `fastapi`, `joblib`, and `xgboost`. You can install the libraries using the `pip
+    install` command. I will leave it up to you since the steps to install differ
+    based on the IDE and the platform you are using and also personal preferences.
+    However, I will be using `virtualenv` to manage my Python environment.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The folder structure of my project looks as shown in the following figure.
+    If you haven''t noticed already, the feature repository is also copied into the
+    same folder as we need to initialize the feature store object and also the online
+    store for features:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 5.10 – Online model folder structure in the IDE'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B18024_05_010.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 5.10 – Online model folder structure in the IDE
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In the `main.py` file, let''s define the APIs that we will be implementing.
+    Copy the following code and paste it into the `main.py` file:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE33]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'As you can see in the preceding code block, there are two APIs: `ping` and
+    `inference`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '`ping`: The `ping` API is a health check endpoint that will be required when
+    deploying the application. The ping URL will be used by the infrastructure, such
+    as ECS or Kubernetes, to check whether the application is healthy.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`inference`: The `inference` API, on the other hand, will contain the logic
+    for fetching the features for the given customers from the feature store, scoring
+    against the model, and returning the results.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Once you''ve copied the preceding code and pasted it into `main.py` and saved,
+    go to the terminal and run the following command:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE34]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'The preceding commands will run the FastAPI server in a local server and print
+    output similar to the following code block:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE35]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: Important Note
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Make sure that you have activated the virtual environment in the terminal before
+    running the command.
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: 'Once the application is run, visit the URL [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs).
+    You should see a Swagger UI, as shown in the following screenshot:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 5.11 – Swagger UI for the API'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B18024_05_011.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 5.11 – Swagger UI for the API
+  prefs: []
+  type: TYPE_NORMAL
+- en: We will be using the Swagger UI in *Figure 5.9* to invoke the APIs later. For
+    now, feel free to play around, explore what is available, and invoke the APIs.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Now that we have the API structure set up, let's implement the `inference` API
+    next. As mentioned, the `inference` API will read the features from the feature
+    store and run predictions.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'We also need to load the model from the model repository. In our case, the
+    repository is S3\. Hence, we need code to download the model from the S3 location
+    and load the model into the memory. The following code block downloads the model
+    from S3 and loads it into the memory. Please note that this is a one-time activity
+    during the initial application load. Hence, let''s add the following code outside
+    the functions in the `main.py` file:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE36]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'Now that the model is loaded into the memory, the next step is to initialize
+    the feature store object. The initialization can also be outside the method since
+    it is a one-time activity:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE37]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'As the `customer_segmentation` feature repository is at the same level as that
+    of `main.py` file, as shown in *Figure 5.8*, I have set `repo_path` appropriately.
+    The remaining logic to fetch features from the online store, run prediction, and
+    return results goes into the `inference` method definition. The following code
+    block contains the same. Copy the method and replace it in the `main.py` file:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE38]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'Now that the prediction logic is complete, let''s run the application and try
+    running the prediction. To run the application, the command is the same as the
+    one used before:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE39]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: Once the application loads successfully, visit the Swagger UI URL ([http://localhost:8000/docs](http://localhost:8000/docs)).
+    In the Swagger UI, expand the `invocations` API and click on **Try out**. You
+    should see a screen similar to the one in *Figure 5.12*.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 5.12 – Swagger UI invocation API'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B18024_05_012.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 5.12 – Swagger UI invocation API
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In the request body, provide the input as shown in *Figure 5.12* (the one in
+    the following code block):'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE40]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'With this input, submit a request by clicking on **Execute**. The API should
+    respond within milliseconds and the output will be visible when you scroll down
+    on the screen. The following figure shows an example output:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure: 5.13 – Online model response'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B18024_05_013.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Figure: 5.13 – Online model response'
+  prefs: []
+  type: TYPE_NORMAL
+- en: That completes the steps of building a REST API for an online model with code
+    to fetch features from Feast. Now that we have both the online and the batch model,
+    in the next chapter, we will look at how to productionize these and how the transition
+    from development to production is simple as we adopted the feature store and MLOps
+    early.
+  prefs: []
+  type: TYPE_NORMAL
+- en: One thing that we are yet to look into is how to change/update or add additional
+    features. Let's look at this briefly before we move on.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Handling changes to the feature set during development
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Model development is an evolving process. So are models – they evolve over time.
+    Today, we may be using a few features for a specific model, but as and when we
+    discover and try out new features, if the performance is better than the current
+    model, we might end up including the new features in the model training and scoring.
+    Hence, the feature set may change over time. What that means with the feature
+    store is some of the steps we performed in [*Chapter 4*](B18024_04_ePub.xhtml#_idTextAnchor065),
+    *Adding Feature Store to ML Models*, might need to be revisited. Let's look at
+    what those steps are.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Important Note
+  prefs: []
+  type: TYPE_NORMAL
+- en: The assumption here is feature definitions change during model development,
+    not after production. We will look at how to handle changes to the feature set
+    after the model goes into production in later chapters.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Step 1 – Change feature definitions
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: If the features or entities change during the model development, the first step
+    is to update the feature definitions in the feature repository If you recall correctly,
+    when the features were finalized, the first thing that we did was to create feature
+    definitions. In the feature repository, the file `rfm_features.py` contains the
+    definitions. After making the changes, run the `feast apply` command to update
+    the feature definition in the resource. If you create or delete new entities or
+    views, the corresponding online store resources (DynamoDB tables) will be created
+    or deleted. You can verify that in the console. If there are minor changes such
+    as changing the data type or feature name, the changes will be saved in the feature
+    repository registry.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Step 2 – Add/update schema in the Glue/Lake Formation console
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: The second step is to define new tables in the Glue/Lake Formation database
+    that we created. If the old tables are not required, you can delete them to avoid
+    any confusion later. In case of the schema changes (if the feature name or data
+    type changes), you need to update the existing schema to reflect the changes.
+    If the schema is not updated with the changes, there will be errors when you query
+    the historical store or try to load the latest feature from an offline to an online
+    store. One other thing to note here is, when defining the schema, we set an S3
+    location for the feature views. Now that this location contains the old data,
+    which works only with the old schema, you need to define a new path to which the
+    data that adheres to the new schema will be written.
+  prefs: []
+  type: TYPE_NORMAL
+- en: An alternate approach would be to define a brand new table with the new schema
+    definitions and new S3 path for data and also update the Redshift source definitions
+    in the feature repository with the new table name. If you do that, you can query
+    the data in both old and new definitions. However, keep in mind that you may be
+    managing two versions of the feature set, one with the older schema and one with
+    the new schema. Also, there will be two DynamoDB tables.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Step 3 – Update notebooks with the changes
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: The last step is simple, which is to go update all the affected notebooks. In
+    the feature engineering notebook, the update would be to write data into the new
+    location, whereas in the model training and scoring notebook, it would be to update
+    the feature name or fetch additional features during training and scoring respectively.
+  prefs: []
+  type: TYPE_NORMAL
+- en: These are the three steps you need to perform every time there are updates to
+    the feature definitions. With that, let's summarize what we learned in this chapter,
+    and in the next chapter, we will look at how to productionize the online and batch
+    models that we built in the chapter and what the challenges are beyond production.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Summary
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In this chapter, our aim was to look at how model training and scoring change
+    with the feature store. To go through the training and scoring stages of the ML
+    life cycle, we used the resources that were created in the last chapter. In the
+    model training phase, we looked at how data engineers and data scientists can
+    collaborate and work towards building a better model. In model prediction, we
+    discussed batch model scoring and how using an offline store is a cost-effective
+    way of running a batch model. We also built a REST wrapper for the online model
+    and added Feast code to fetch the features for prediction during runtime. At the
+    end of the chapter, we looked at the required changes if there are updates to
+    features during development.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the next chapter, we will continue using the batch model and the online model
+    that we built in this chapter, productionize them and look at what the challenges
+    are once the models are in production.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Further reading
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'You can find more information on Feast in the following references:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Feast: [https://docs.feast.dev/](https://docs.feast.dev/)'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Feast AWS credit scoring tutorial: [https://github.com/feast-dev/feast-aws-credit-scoring-tutorial](https://github.com/feast-dev/feast-aws-credit-scoring-tutorial)'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL

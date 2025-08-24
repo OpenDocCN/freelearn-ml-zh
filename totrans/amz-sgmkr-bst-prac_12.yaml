@@ -1,0 +1,716 @@
+- en: 'Chapter 9: Updating Production Models Using Amazon SageMaker Endpoint Production
+    Variants'
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: A deployed production model needs to be updated for a variety of reasons, such
+    as to gain access to new training data, to experiment with a new algorithm and
+    hyperparameters, or to model predictive performance deteriorating over time. Any
+    time you update a model with a new version in production, there is a risk of the
+    model becoming unavailable during the update and the model's quality being worse
+    than the previous version. Even after careful evaluation in the development and
+    QA environments, new models need additional testing, validation, and monitoring
+    to make sure they work properly in production.
+  prefs: []
+  type: TYPE_NORMAL
+- en: When deploying new versions of models into production, you should carefully
+    consider reducing deployment risks and minimizing downtime for the model consumers.
+    It is also important to proactively plan for an unsuccessful model update and
+    roll back to a previous working model. Replacing an existing model with a newer
+    model should, ideally, not cause any service interruptions to the model's consumers.
+    Model consumers may be applications that are internal to your organization or
+    external, customer-facing applications.
+  prefs: []
+  type: TYPE_NORMAL
+- en: This chapter will address the challenge of updating production models with minimal
+    disruption for model consumers using **Amazon SageMaker Endpoint Production Variants**. You
+    will learn how to use SageMaker Endpoint Production Variants to implement Standard
+    deployment and advanced model deployment strategies such as **A/B testing**, **Blue/Green**,
+    **Canary**, and **Shadow** deployments, which balance cost with model downtime
+    and ease of rollbacks.
+  prefs: []
+  type: TYPE_NORMAL
+- en: By the end of this chapter, you will be able to implement multiple deployment
+    strategies for updating production machine learning models. You will learn when
+    and how to use live production traffic to test new model versions. You will also
+    learn about the best practices for balancing cost, availability, and reducing
+    risk while choosing the right deployment strategy for your use case.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In this chapter, we are going to cover the following main topics:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Basic concepts of Amazon SageMaker Endpoint Production Variants
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Deployment strategies for updating ML models with Amazon SageMaker Endpoint
+    Production Variants
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Selecting an appropriate deployment strategy
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Technical requirements
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: You will need an **AWS** account to run the examples included in this chapter.
+    If you have not set up the data science environment yet, please refer to [*Chapter
+    2*](B17249_02_Final_JM_ePub.xhtml#_idTextAnchor039)*, Data Science Environments*,
+    which provides a walk-through of the setup process.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The code examples included in the book are available on GitHub at [https://github.com/PacktPublishing/Amazon-SageMaker-Best-Practices/tree/main/Chapter09](https://github.com/PacktPublishing/Amazon-SageMaker-Best-Practices/tree/main/Chapter09).
+    You will need to install a Git client to access them ([https://git-scm.com/](https://git-scm.com/)).
+  prefs: []
+  type: TYPE_NORMAL
+- en: Basic concepts of Amazon SageMaker Endpoint Production Variants
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'In this section, you will review the basics of deploying and updating ML models
+    using SageMaker Endpoint Production Variants. There are two ways you can deploy
+    a machine learning model using SageMaker: by using a real-time endpoint for low
+    latency live predictions or a batch transform for making asynchronous predictions
+    on large numbers of inference requests. Production Variants can be applied to
+    real-time endpoints.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Deploying a real-time endpoint involves two steps:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**Creating an Endpoint Configuration**'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: An endpoint configuration identifies one or more Production Variants. Each production
+    variant indicates a model and infrastructure to deploy the model on.
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: '**Creating an Endpoint Pointing to the Endpoint Configuration**'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Endpoint creation results in an HTTPS endpoint that the model consumers can
+    use to invoke the model.
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: 'The following diagram shows two different endpoint configurations with Production
+    Variants. `model_1` that''s deployed on an `ml.m4.xlarge` instance; all inference
+    traffic is served by this single model. `model_1` and `model_2` on `ml.m4.xlarge`
+    and `ml.m4.2xlarge`, respectively. Both models serve the inference requests equally
+    because they have the same `initial_weight` configuration:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.1 – Endpoint configurations with Production Variants'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B17249_09_01.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 9.1 – Endpoint configurations with Production Variants
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'When an endpoint has been configured with multiple Production Variants, how
+    do you know which model is serving the inference requests? There are two ways
+    to determine this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: First, the `initial_weight` parameter of the production variant determines the
+    relative percentage of the requests served by the model specified by that variant.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Second, the inference request may also include the model variant to invoke.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The following diagram shows these two ways of invoking the endpoint
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.2 – Two ways to invoke SageMaker Endpoint'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B17249_09_02.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 9.2 – Two ways to invoke SageMaker Endpoint
+  prefs: []
+  type: TYPE_NORMAL
+- en: As the SageMaker Endpoints are serving inference traffic, they are monitored
+    using `EndpointName` and `VariantName` dimensions to monitor metrics for each
+    distinct production variant of the same endpoint. The `Invocations` metric captures
+    the number of requests that are sent to a model, as indicated by the production
+    variant. You can use this metric to monitor the number of requests that are served
+    by different models and deployed with a single endpoint.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The following diagram shows a comparison of the `Invocations` metrics that
+    have been captured for an endpoint that''s been configured with two Production
+    Variants. The first chart shows the number of invocations per production variant
+    when the initial weights are set to `1` and `1`. In this case, each variant serves
+    a similar number of requests. The second chart shows the same metric with the
+    initial weights of `2` and `1`. As you can see, the number of requests that are
+    served by variant 1 is double the number of requests that are served by variant
+    2:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.3 – Invocations of SageMaker Endpoint Production Variants'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B17249_09_03.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 9.3 – Invocations of SageMaker Endpoint Production Variants
+  prefs: []
+  type: TYPE_NORMAL
+- en: While the `Invocations` metric is intuitively easy to understand, there are
+    other CloudWatch metrics such as `Latency` and `Overhead` that you can use to
+    monitor, compare, and contrast multiple endpoints and multiple Production Variants
+    of a single endpoint.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Note
+  prefs: []
+  type: TYPE_NORMAL
+- en: For a full list of CloudWatch Metrics for Amazon SageMaker, please see [https://docs.aws.amazon.com/sagemaker/latest/dg/monitoring-cloudwatch.html#cloudwatch-metrics-endpoint-invocation](https://docs.aws.amazon.com/sagemaker/latest/dg/monitoring-cloudwatch.html#cloudwatch-metrics-endpoint-invocation).
+  prefs: []
+  type: TYPE_NORMAL
+- en: Similar to Production Variants, SageMaker **multi-model endpoints** (**MME**)
+    also allow us to host multiple models on a single endpoint. If that is the case,
+    how are Production Variants different from multi-model endpoints?
+  prefs: []
+  type: TYPE_NORMAL
+- en: With an MME, all models are hosted on the same compute infrastructure. However,
+    not all the models are loaded into the container memory when the endpoint is created.
+    Instead, the model is loaded into memory when an inference request is made. Each
+    inference request must specify the model to invoke. The invoked model is then
+    loaded into memory from the **S3 bucket** if it is not already in memory. Depending
+    on the invocation pattern, a model that hasn't been invoked recently may not be
+    in memory. This could result in increased latency when serving the request. When
+    you have a large number of similar ML models that are infrequently accessed and
+    can tolerate slightly increased latency, then a single MME can serve inference
+    traffic at significantly low costs.
+  prefs: []
+  type: TYPE_NORMAL
+- en: On the other hand, with Production Variants, each model is hosted on a completely
+    different compute infrastructure, and all the models are readily available without
+    having to be loaded into container memory on demand. Each inference request may
+    or may not specify the variant to invoke. If the variant to invoke is not specified,
+    the number of inference requests that are served by each variant depends on the
+    `initial_weight` parameter of the production variant. In the context of model
+    deployment, use Production Variants to test different versions of ML models that
+    have been trained using different datasets, algorithms, and ML frameworks or to
+    test how a model performs on different instance types.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the next section, you will learn how to use Production Variants in various
+    deployment strategies. As we discuss these various deployment strategies, we will
+    focus on what it takes to update an existing production model deployed as a real-time
+    SageMaker endpoint using Production Variants.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Deployment strategies for updating ML models with SageMaker Endpoint Production
+    Variants
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In this section, we will dive into multiple deployment strategies you can adopt
+    to update production models using SageMaker Endpoint Production Variants. While
+    some deployment strategies are easy to implement and are cost-effective, others
+    add complexity while lowering deployment risks. We will dive into five different
+    strategies, including Standard, A/B, Blue/Green, Canary, and Shadow deployments,
+    and discuss the various steps involved in each approach.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Standard deployment
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'This strategy is the most straightforward approach to deploying and updating
+    models in production. In a Standard model deployment, there is always a single
+    active SageMaker endpoint, and the endpoint is configured with a single production
+    variant, which means only a single model is deployed behind the endpoint. All
+    inference traffic is processed by a single model. The endpoint configuration is
+    similar to `variant1`, hosts `model_name_1` on a single `ml.m5.xlarge` instance
+    and serves all inference traffic, as indicated by `initial_weight=1`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE0]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The following code block shows how to create an endpoint from the production
+    variant. `endpoint_from_production_variants` automatically creates an `endpoint_configuration`
+    with the same name as `endpoint_name`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE1]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'To update the endpoint with a newer version of the model, create a new endpoint
+    configuration specifying the new model and infrastructure to deploy the model
+    on. Then, update the endpoint with a new endpoint configuration. The following
+    code block shows the code for updating the endpoint with the new model version:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE2]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'SageMaker automatically creates and manages the infrastructure necessary for
+    the new production variant and routes the traffic to the new model without any
+    downtime. All inference traffic is now served by the new model. The following
+    diagram shows the steps involved in updating a deployed model:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.4 – Standard deployment with SageMaker Endpoint Production Variants'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B17249_09_04.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 9.4 – Standard deployment with SageMaker Endpoint Production Variants
+  prefs: []
+  type: TYPE_NORMAL
+- en: To roll back, simply update the endpoint with the original endpoint configuration,
+    as represented by *Step 1*. As you can see, inference traffic is served by either
+    the old version of the model or the new version at all times.
+  prefs: []
+  type: TYPE_NORMAL
+- en: One benefit of this approach is that it is a simple, straightforward way to
+    update an endpoint with a new model. When the endpoint is updated with the new
+    endpoint configuration, SageMaker switches the inference requests to the new model
+    while keeping the endpoint `InService`. This means that the model consumer does
+    not experience any disruption to the service. This is also a cost-effective strategy
+    for updating a real-time endpoint since you only pay for the infrastructure hosting
+    a single model.
+  prefs: []
+  type: TYPE_NORMAL
+- en: On the other hand, model evaluation and testing happen in non-production environments
+    such as the QA or staging environments with test data. Since the new model is
+    not tested in a production environment, it will face the production data volume
+    and live traffic on the new infrastructure for the first time in production. This
+    could lead to unforeseen complications, either with the model hosting the infrastructure
+    or the model's quality.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Note
+  prefs: []
+  type: TYPE_NORMAL
+- en: While evaluating the model in staging environments, it is recommended that you
+    perform load testing to validate that the model can handle the traffic with acceptable
+    latency before moving to production.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Refer to [https://aws.amazon.com/blogs/machine-learning/load-test-and-optimize-an-amazon-sagemaker-endpoint-using-automatic-scaling/](https://aws.amazon.com/blogs/machine-learning/load-test-and-optimize-an-amazon-sagemaker-endpoint-using-automatic-scaling/)
+    to learn how to load test an endpoint using autoscaling and serverless-artillery.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Use Standard deployment if the model consumer is risk- and failure-tolerant,
+    such as an internal application that can re-execute the predictions in case of
+    failures. For example, an internal model that predicts employee turnover is a
+    good candidate for Standard deployment.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Since only one model is serving inference requests at a time, this strategy
+    is not suitable for comparing different models. If you are experimenting with
+    different features, multiple algorithms, or hyperparameters, you want to be able
+    to compare the models in production. The next deployment strategy helps with this
+    need.
+  prefs: []
+  type: TYPE_NORMAL
+- en: A/B deployment
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: In the Standard deployment, you have a single endpoint in the production environment
+    with no scope for testing or evaluating the model in production. On the other
+    hand, an A/B deployment strategy is focused on experimentation and exploration,
+    such as comparing the performance of different versions of the same feature.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In this scenario, the endpoint configuration uses two Production Variants:
+    one for model `A` and one for model `B`. For a fair comparison of the two models,
+    `initial_weight` of the two production variants should be the same so that both
+    models handle the same amount of inference traffic. Additionally, make sure the
+    instance type and instance count are also the same. This initial setting is necessary
+    so that neither version of the model is impacted by a difference in traffic patterns
+    or a difference in the underlying compute capacity.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The following code blocks shows how to create and update an endpoint for A/B
+    deployments.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'First, create `production variant A`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE3]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Then, create an endpoint with one production variant, which initially serves
+    production traffic:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE4]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'When you are ready to test the next version of the model, create another production
+    variant and update the endpoint so that it includes two Production Variants:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE5]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'To invoke the endpoint, use the `invoke_endpoint()` API, as shown in the following
+    code. The result of using the `invoke_endpoint()` API consists of the variant
+    name that serves each specific request:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE6]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The output from the endpoint should look similar to the following:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE7]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'You can collect and examine results from `VariantB`. You can explore the CloudWatch
+    metrics for `VariantB` even further as well, as explained in the *Basic concepts
+    of Amazon SageMaker Endpoint Production Variants* section. Once you are happy
+    with the performance of `VariantB`, gradually shift the balance toward the new
+    model (`40/60`, `20/80`) until your new model is processing all the live traffic.
+    The following code block shows how to route 60% of live traffic to `VariantB`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE8]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Alternatively, you can choose to update the endpoint to route all live traffic
+    to `VariantB` in a single step, as shown in the following code block:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE9]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The following diagram shows the steps involved in updating a deployed model.
+    To roll back, simply update the endpoint with the original endpoint configuration,
+    as represented by Step 1:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.5 – A/B deployment with SageMaker Endpoint Production Variants'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B17249_09_05.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 9.5 – A/B deployment with SageMaker Endpoint Production Variants
+  prefs: []
+  type: TYPE_NORMAL
+- en: The benefits of this strategy are that it is well-understood and that SageMaker
+    makes it simple to implement this strategy by managing traffic routing. Since
+    the new model is evaluated in production with an increased percentage of live
+    traffic on the new infrastructure, the risk of the model becoming unavailable
+    to the model consumer during the update, or the model quality being worse than
+    it was in the previous version, is reduced. This addresses the typical deployment
+    issue of *the model worked perfectly in the dev/QA environment, so I'm not sure
+    why it is failing in production*. However, since two Production Variants are active
+    for a certain period, the cost increases as you are paying for two sets of infrastructure
+    resources.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Note
+  prefs: []
+  type: TYPE_NORMAL
+- en: A relatively recent type of A/B testing that's gaining popularity is **Multi-Arm
+    Bandits** (**MAB**). MAB is a machine learning-based approach that learns from
+    the data that's collected during testing. Using a combination of exploration and
+    exploitation, MAB dynamically shifts traffic to better-performing model variants
+    much sooner than a traditional A/B test.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Refer to [https://aws.amazon.com/blogs/machine-learning/power-contextual-bandits-using-continual-learning-with-amazon-sagemaker-rl/](https://aws.amazon.com/blogs/machine-learning/power-contextual-bandits-using-continual-learning-with-amazon-sagemaker-rl/)
+    to learn how to use Amazon SageMaker RL to implement MAB to recommend personalized
+    content to users.
+  prefs: []
+  type: TYPE_NORMAL
+- en: While the A/B strategy is helpful with experimentation and exploration, what
+    about releasing major changes to your models? Is there a way to reduce the risk
+    further? Blue/Green deployments can help with this.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Blue/Green deployment
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: The Blue/Green deployment strategy involves two identical production environments,
+    one containing the current model and another containing the next version of the
+    model that you want to update to. While one environment, say Blue, is serving
+    live traffic, the next version of the model is tested in the Green environment.
+    While model testing is happening in production, only test or synthetic data is
+    used. The new model version should be tested against functional, business, and
+    traffic load requirements.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Once you are satisfied with the test results over a certain period, update the
+    live endpoint with the new (Green) endpoint configuration. Validate the tests
+    again with the Green endpoint configuration using live inference traffic. If you
+    find any issues during this testing period, route the traffic back to a Blue endpoint
+    configuration. After a while, if there are no issues with the new model, go ahead
+    and delete the Blue endpoint configuration.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The following diagram shows the steps involved in updating a deployed model:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 9.6 – Blue/Green deployment with SageMaker Endpoint Production Variants
+  prefs: []
+  type: TYPE_NORMAL
+- en: The advantage of this approach is that before serving live traffic, the new
+    model is evaluated in the production environment. Both the model itself and the
+    infrastructure hosting the model are evaluated and thereby risk is reduced. However,
+    since two identical production environments are active for a while, the cost of
+    this option could double compared to the strategies we've discussed so far. This
+    option also loses the advantage of SageMaker managing the routing logic.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In this strategy, while the model is evaluated in production, testing still
+    involves synthetic traffic. Synthetic data can simulate the production volumes,
+    but it is not trivial to reflect the live data patterns. What if you want to test
+    the new model with live traffic? Canary deployment is the strategy that allows
+    you to do this.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Canary deployment
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: In a Canary deployment, the setup is very similar to Blue/Green deployments,
+    with two different production environments hosting the old and new models. However,
+    instead of using synthetic test data with a new model, you use a portion of the
+    live traffic. Initially, a small portion of the inference traffic from the model
+    consumer will be served by the new model. The rest of the inference requests continue
+    to use the previous version. During the testing phase, the designated set of users
+    using the new model should remain the same, and this requires *stickiness*. When
+    you are satisfied with the new model, gradually increase the percentage of requests
+    that are sent to the new model, until all live traffic is served by the new model.
+    Finally, the old model can be deleted.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Unlike the other strategies we've discussed so far, switching between the two
+    different environments is not implemented by SageMaker. To make the switch between
+    the environments completely transparent to the model consumer, a switching component
+    must be used between the consumer and the endpoints. Examples of switching components
+    include load balancers, DNS routers, and more.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The following diagram shows the steps involved in updating a deployed model
+    using this strategy:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.7 – Canary deployment with SageMaker Endpoint Production Variants'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B17249_09_07.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 9.7 – Canary deployment with SageMaker Endpoint Production Variants
+  prefs: []
+  type: TYPE_NORMAL
+- en: As with the Blue/Green deployments, the advantage of this approach is that risk
+    to the model consumers is reduced as the new model is tested in the production
+    environment. Additionally, the model is gradually exposed to live traffic instead
+    of a sudden switch. But this strategy does require you to manage the logic of
+    gradually increasing traffic for the new model. Additionally, since two identical
+    production environments are active for a certain period, the cost of this option
+    is also significantly higher.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Shadow deployment
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: In a Shadow deployment, the setup is, once again, very similar to a Canary deployment
+    in that two different production environments are hosting the old and new models,
+    and inference traffic is sent to both. However, only responses from the old model
+    are sent back to the model consumer.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The traffic that''s sent to the old model is collected and also sent to the
+    new model, either immediately or after a delay. While the production traffic is
+    sent to the new model as well as the old, the output from the new model is only
+    captured and stored for analysis, not sent to model consumers. The new model should
+    be tested against functional, business, and traffic load with the live traffic.
+    The following diagram shows the steps involved in updating a model that''s been
+    deployed using this strategy:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.8 – Shadow deployment with SageMaker Endpoint Production Variants'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B17249_09_08.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 9.8 – Shadow deployment with SageMaker Endpoint Production Variants
+  prefs: []
+  type: TYPE_NORMAL
+- en: As with the Canary deployments, the advantage of this approach is that all risks
+    to the model consumers are reduced as the new model is tested in the production
+    environment.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Note
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'An example notebook that demonstrates the end-to-end A/B deployment strategy
+    is provided in the following GitHub repository. You can use this as a starting
+    point for implementing other deployment strategies: [https://gitlab.com/randydefauw/packt_book/-/blob/main/CH09/a_b_deployment_with_production_variants.ipynb](https://gitlab.com/randydefauw/packt_book/-/blob/main/CH09/a_b_deployment_with_production_variants.ipynb).'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Now that you know about the multiple deployment strategies you can use to update
+    production models, in the next section, we will discuss how to select a strategy
+    to meet your specific requirements.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Selecting an appropriate deployment strategy
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: As you have seen so far, the initial deployment of a machine model is only one
+    step of making it available to consumers. New versions of models are built regularly.
+    Before making the new models available to the consumers, the model quality and
+    infrastructure that's needed to host the model should be evaluated carefully.
+    There are multiple factors to consider when selecting the deployment strategy
+    to initially deploy and continue to update models. For example, not all models
+    can be tested in production due to budget and resource constraints. Similarly,
+    some model consumers can tolerate the model being unavailable for certain periods.
+  prefs: []
+  type: TYPE_NORMAL
+- en: This section will summarize the deployment strategies you can use to deploy
+    and update real-time SageMaker Endpoints. You will get an idea of the pros and
+    cons for each strategy, in addition to when should it be used.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Selecting a standard deployment
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'Model consumers are not business or revenue critical and are risk-tolerant.
+    For example, a company''s internal employee attrition prediction models are not
+    time-critical and can be re-executed on errors:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.9 – Pros and cons of a standard deployment'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B17249_09_09_new.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 9.9 – Pros and cons of a standard deployment
+  prefs: []
+  type: TYPE_NORMAL
+- en: Selecting an A/B deployment
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'You should use A/B deployments to explore the effect different sets of hyperparameters
+    have on model quality, new or different slices of the training dataset, and different
+    feature engineering techniques:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.10 – Pros and cons of A/B deployment'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B17249_09_10.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 9.10 – Pros and cons of A/B deployment
+  prefs: []
+  type: TYPE_NORMAL
+- en: Selecting a Blue/Green deployment
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'You should use this deployment with mission-critical model consumers, such
+    as e-commerce applications, that are sensitive to model downtime:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.11 – Pros and cons of Blue/Green deployment'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B17249_09_11.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 9.11 – Pros and cons of Blue/Green deployment
+  prefs: []
+  type: TYPE_NORMAL
+- en: Selecting a Canary deployment
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'You should use this deployment with mission-critical model consumers, such
+    as financial services models, that are not risk-tolerant:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.12 – Pros and cons of a Canary deployment'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B17249_09_12.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 9.12 – Pros and cons of a Canary deployment
+  prefs: []
+  type: TYPE_NORMAL
+- en: Selecting a Shadow deployment
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'You should use this deployment with mission-critical model consumers, such
+    as financial services models, that are not risk-tolerant:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.13 – Pros and cons of Shadow deployment'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B17249_09_13.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 9.13 – Pros and cons of Shadow deployment
+  prefs: []
+  type: TYPE_NORMAL
+- en: You should choose an appropriate model strategy using the trade-offs discussed
+    in the preceding subsections for ease of implementation, acceptable model downtime,
+    the risk tolerance of the consumers, and the costs that must be taken into account
+    for you to meet your needs.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Summary
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In this chapter, we reviewed the reasons we should update production ML models.
+    You learned how to use Production Variants to host multiple models using a single
+    SageMaker Endpoint. You then learned about multiple deployment strategies that
+    balance the cost and risk of model updates with ease of implementation and rollbacks.
+    You also learned about the various steps involved and the configurations to use
+    for Standard, A/B, Blue/Green, Canary, and Shadow deployments.
+  prefs: []
+  type: TYPE_NORMAL
+- en: This chapter concluded with a comparison of the pros and cons and the applicability
+    of each deployment strategy to specific use cases. Using this discussion as guidance,
+    you can now choose an appropriate strategy to update your production models so
+    that they meet your model availability and model quality requirements.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the next chapter, we will continue our discussion of deploying models and
+    learn about optimizing model hosting and infrastructure costs.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/B17249_09_06.jpg)'
+  prefs: []
+  type: TYPE_IMG

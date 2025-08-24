@@ -1,0 +1,1145 @@
+- en: '*Chapter 9*: Production Scoring and the H2O MOJO'
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: We spent the entire previous section learning how to build world-class models
+    against data at scale with H2O. In this chapter, we will learn how to deploy these
+    models and make predictions from them. First, we will cover the background on
+    putting models into production scoring systems. We will then learn how H2O makes
+    this easy and flexible. At the center of this story is the H2O **MOJO** (short
+    for **Model Object, Optimized**), a ready-to-deploy scoring artifact that you
+    export from your model building environment. We will learn technically what a
+    MOJO is and how to deploy it. We will then code a simple batch file scoring program
+    and embed a MOJO in it. We will finish with some final notes on the MOJO. Altogether,
+    in this chapter, you will develop the knowledge to deploy H2O models in diverse
+    ways and so begin achieving value from live predictions.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'These are the main topics we will cover in this chapter:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Relating the model building context to the scoring context for H2O models
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Recognizing the diversity of target production systems for H2O models
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Examining the technical design of the H2O deployable artifact, the H2O MOJO
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Writing your own H2O MOJO batch file scorer to show how to embed MOJOs in your
+    own software
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Technical requirements
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'In this chapter, you will need a Java SE 8 or greater environment. A Java IDE
+    such as Eclipse is optional but useful. You will get a MOJO, a dataset to score
+    and the Java code for the batch file scorer program in the following GitHub repository:
+    [https://github.com/PacktPublishing/Machine-Learning-at-Scale-with-H2O/tree/main/chapt9](https://github.com/PacktPublishing/Machine-Learning-at-Scale-with-H2O/tree/main/chapt9).
+    These artifacts were generated from the model built in [*Chapter 8*](B16721_08_Final_SK_ePub.xhtml#_idTextAnchor137),
+    *Putting It All Together*.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Note that we are done with model building at this point, so you do not need
+    a model building environment pointing to a running H2O cluster.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The model building and model scoring contexts
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In *Section 2*, *Building State-of-the-Art Models on Large Data Volumes Using
+    H2O*, we spent a great amount of focus on building world-class models at scale
+    with H2O. Building highly accurate and trusted models against massive datasets
+    can potentially generate millions of dollars for a business, save lives, and define
+    new product areas, but only when the models are deployed to production systems
+    where predictions are made and acted upon.
+  prefs: []
+  type: TYPE_NORMAL
+- en: This last step of deploying and predicting (or scoring) on a production system
+    can often be time-consuming, problematic, and risky for reasons discussed shortly.
+    H2O makes this transition from a built (trained) model to a deployed model easy.
+    It also provides a wide range of flexibility in regard to where scoring is done
+    (device, web application, database, microservice endpoint, or Kafka queue) and
+    to the velocity of data (real-time, batch, and streaming). And, whatever the production
+    context, the H2O deployed model scores lightning fast.
+  prefs: []
+  type: TYPE_NORMAL
+- en: At the center of this ease, flexibility, and low-latency production scoring
+    is the H2O MOJO. An H2O MOJO is a ready-to-deploy scoring artifact that is generated
+    by a simple export command at the end of your model-building code. H2O MOJOs are
+    similar regardless of the model-building algorithm that generated them. As a result,
+    all H2O models are deployed similarly. Before diving into the MOJO and learning
+    how to deploy it, let's first take a look in general at the process of moving
+    from model training to model scoring.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Model training to production model scoring
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: We'll first take a general view of how models transition from model training
+    to production scoring and then see how this is done with H2O.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Generic training-to-scoring pipeline
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'A generic pipeline of a trained to a deployed model can be represented as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.1 – Generalized pipeline from model training to scoring'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/Figure_9.1_B16721.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 9.1 – Generalized pipeline from model training to scoring
+  prefs: []
+  type: TYPE_NORMAL
+- en: Do note that this pipeline is more formally represented and elaborated by the
+    practice called **Machine Learning Operations** (**MLOps**), which involves a
+    larger area of concern, but for the focus of deploying a model to production,
+    the representation here should work for us.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Each step is summarized as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '`if-else` logic in software code. This is time-consuming because the logic
+    of the trained model must be accurately communicated by the data scientist to
+    the software developer, who must implement the logic correctly and then have it
+    tested thoroughly to validate its accuracy. This is also error-prone and, therefore,
+    risky, as well as time-consuming.'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: The best-case scenario is when a conversion tool translates the trained model
+    into a deployable artifact. This can be either a format (for example, XML for
+    PMML, PFA, or ONNX) that declares the logic for a production system that is ready
+    to compute against the declarative constructs, or it can be a runnable software
+    artifact (for example, a Python wheel or Java JAR file) that can be embedded into
+    a software program or framework.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**Deployable model**: The converted model is deployed to a production system.
+    This written code or converted artifact is integrated into a software application
+    or framework that, at some point, inputs data into the scoring logic it holds
+    and outputs the scoring result. For example, a customer''s data goes in and the
+    probability of churn comes out.'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Model deployment should be performed in TEST and **production** (**PROD**) environments,
+    with deployment and promotion done through a formal governance process using a
+    **continuous integration and continuous deployment** (**CI/CD**) pipeline, as
+    with the deployment of software in general. Deployable artifacts that are recognizable
+    and standardized across all models built (for example, among different ML algorithms)
+    are easier to automate during deployment than those that are not.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**Production system**: Scoring live in production. Production scoring needs
+    can be diverse. Scoring may be needed, for example, against entire database tables
+    in one batch, against each live ATM transaction sent over the network, inside
+    a web application for every web page click of a customer, or on streams of sensor
+    data sent from edge devices. Scoring may be on a device or on a large server in
+    the cloud. Typically, the faster the score, the better (demands of less than 50
+    microseconds per score or faster are not uncommon), and the smaller the scorer
+    size and resource consumption footprint, the closer to the edge it can be deployed.'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '**Predictions**: Scoring the output. Models output predictions during scoring.
+    Note that predictions need a business context and action to achieve purpose or
+    value. For example, customers who are predicted to churn are given phone calls
+    or special offers to help ensure they remain customers. Often, scoring outputs
+    require not just predictions, but also explanations in the form of reason codes
+    for those predictions. How did the model weigh each input to the scorer when generating
+    the prediction for a particular customer? In other words, which factors were most
+    important in a specific prediction. These decision weights are represented as
+    reason codes and they can help personalize a phone call or special offer in the
+    churn case.'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Let's see how the training-to-scoring pipeline is realized with H2O.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The H2O pipeline and its advantages
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'Trained H2O models participate in a similar pipeline as discussed, but with
+    important attributes that make them easy to deploy to a diverse target of software
+    systems and are also very fast when they score there. The deployable artifact
+    for H2O is called a MOJO and it bridges the gap between model training and model
+    scoring, and so is the central character in the story. Attributes of the H2O pipeline
+    are summarized as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.2 – H2O''s model training-to-scoring pipeline'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/Figure_9.2_B16721.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 9.2 – H2O's model training-to-scoring pipeline
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s elaborate on H2O''s advantages of deploying models:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**H2O trained model**: H2O MOJOs exported from the model-building IDE as ready
+    to deploy. The data scientist converts the trained model into an exported and
+    ready-to-deploy MOJO by writing a single line of code in the IDE.'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '**H2O MOJO**: H2O MOJOs are standardized low-latency scoring artifacts and
+    ready to deploy. The MOJO construct is standardized and shared by all model types
+    and has its own runtime that embeds in any Java runtime. This means that all MOJOS
+    (models) are identically embedded in any **Java virtual machine** (**JVM**) independent
+    of the larger software and hardware context. MOJOs are also lightweight and can
+    be deployed to nearly all infrastructure (except the smallest of edge devices).
+    MOJOs are super fast at scoring and can handle any data velocity (real-time scoring,
+    batch scoring, and streaming scoring).'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '**Production system**: H2O MOJOs flexibly deploy to a diversity of production
+    systems. MOJOs deploy to a wide range of production systems. An overview of these
+    systems and details of how MOJOS are deployed to them are given a bit later in
+    this chapter.'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '**Predictions**: MOJOs can output a lot of information in their scoring. Inputs
+    to MOJO return predictions in the form of class probabilities for classification,
+    predicted numeric values for regression, and model-specific outcomes for unsupervised
+    problems. Additionally, and optionally, MOJOs may return reason codes in the form
+    of Shapley or K-LIME values, or other attributes such as leaf node assignments
+    for a prediction.'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Let's focus more on H2O production scoring specifically in the next section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: H2O production scoring
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Models achieve their business value when they are put into production to make
+    predictions (or generate unsupervised results for an unsupervised class of problems).
+    We discuss, in this section, a more detailed view of the H2O pipeline from model
+    building to production scoring.
+  prefs: []
+  type: TYPE_NORMAL
+- en: End-to-end production scoring pipeline with H2O
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'Take a look at the following diagram showing an end-to-end H2O pipeline from
+    model training to model deployment and production scoring:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.3 – High-level view of full scoring pipeline with H2O'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/Figure_9.3_B16721.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 9.3 – High-level view of full scoring pipeline with H2O
+  prefs: []
+  type: TYPE_NORMAL
+- en: Typically, model building is considered a **development** (**DEV**) environment,
+    and model scoring is a PROD environment with source data from each respective
+    environment.
+  prefs: []
+  type: TYPE_NORMAL
+- en: For DEV, we have treated feature engineering and model training (and many associated
+    steps such as model explainability and evaluation) extensively in *Section 2*,
+    *Building State-of-the-Art Models on Large Data Volumes Using H2O*. We also briefly
+    discussed the exportable ready-to-deploy H2O MOJO scoring artifact and deploying
+    it to PROD systems earlier in this chapter.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s identify some key points to keep in mind during this pipeline:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '*You need feature engineering parity between DEV and PROD*: This means that
+    any feature engineering done to create the training dataset must be matched by
+    the scoring input in TEST/PROD. In other words, the features in the training dataset
+    must be the same as those fed into the model scoring. If there were multiple steps
+    of feature engineering (for example, **extract, transform, and load** (**ETL**)
+    from a data source and feature engineering in H2O Sparkling Water) before constructing
+    the training dataset in DEV, the input to scoring in TEST/PROD must have those
+    same engineered features.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Having said that, depending on how the MOJO is deployed (H2O Scorer, third-party
+    integration, or your own scorer), you likely will have to input to TEST/PROD only
+    a subset of the features from those in the training dataset. This reflects the
+    fact that the trained model typically selects only a subset of data features that
+    contribute to the final model. This subsetting is not required, however; MOJOs
+    can accept full or subsets of features (compared to the training dataset) depending
+    on how you design it. This flexibility will become clearer later in the chapter
+    when we take a closer look at deploying MOJOs.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '*You may need a wrapper around your MOJO (but not with H2O Scorers and most
+    third-party integrations)*: MOJOs are ready to deploy to a Java environment. This
+    means the MOJO is ready to convert input data to a prediction output using the
+    mathematical logic derived from model training and held in the MOJO, and that
+    the MOJO itself does not need compiling or modification in any way. But, you must
+    still make sure the input (for example, CSV, JSON, batch, and so on) feeds into
+    the MOJO in a way that the MOJO can accept. On the other side, you may want to
+    extract more from the MOJO scoring result than only predictions, and you will
+    need to convert the MOJO output to a format expected downstream in the application.
+    You do this by writing a simple Java wrapper class and using the MOJO API called
+    `h2o-genmodel` API to interact with the MOJO. These wrapper classes are not complicated.
+    We will learn more about wrapping MOJOs with an example later in this chapter.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Important Note
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: H2O Scorers and many third-party integrations for MOJOs do not require wrappers
+    because they handle this internally. All you need is the exported MOJO in these
+    cases. Additionally, many integrations occur by way of REST APIs to endpoints
+    of MOJOs deployed on REST servers.
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: '*You may want to return reason codes or other information with your predictions*:
+    MOJOs return predictions for supervised models and model-specific output for unsupervised
+    models (for example, an anomaly score is returned for a model trained with `H2OIsolationForestEstimator`.
+    But, there is more to retrieve from the MOJO; you can also return reason codes
+    as K-LIME or Shapley values, the decision path taken through tree-based models,
+    or class labels for the prediction of classification problems. These additional
+    outputs are implemented in wrapper code using the `h2o-genmodel` API for scorers
+    you build. They may or may not be built into the functionality of H2O Scorers
+    or out-of-the-box third-party integrations. You will need to check the specifications
+    for these scorers.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '*You need a formalized process to deploy and govern your model*: Putting models
+    into production involves risks: generally, the risk of failure or delay from errors
+    during deployment, and the risk to revenue or reputation from adverse consequences
+    from model decisions by deployed models. We will look at this topic more closely
+    in [*Chapter 14*](B16721_14_Final_SK_ePub.xhtml#_idTextAnchor256), *H2O at Scale
+    in a Larger Platform Context*.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '*You need MLOps to monitor your model*: Models in PROD typically need to be
+    monitored to see whether values of input data are changing over time compared
+    to those in the training data (this result is called data drift). In this case,
+    the model may need to be retrained since the signal it was trained against has
+    changed, possibly causing the predictive accuracy of the model to degrade. Bias,
+    prediction distributions, and other aspects of scoring may also be monitored.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Model monitoring is outside the capability of MOJOs. MOJOs are concerned with
+    single scores. Monitoring fundamentally tracks aggregate trends from MOJO inputs
+    and outputs and is a separate area of technology and concern that will not be
+    treated here. Do note, however, that H2O has an MLOps platform that performs model
+    monitoring and governance. It is overviewed in *Chapter 16*, *The Machine Learning
+    Life Cycle, AI Apps, and H2O AI Hybrid Cloud*.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We have just overviewed the full pipeline from H2O model building to production
+    scoring and identified key points regarding this pipeline. One part of this pipeline
+    is quite variable depending on your needs: the target system on which to deploy
+    your MOJO. Let''s explore this in greater detail.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Target production systems for H2O MOJOs
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'One large advantage of MOJOs is that they can be deployed to a wide range of
+    production systems. Let''s dig deeper using the following diagram to summarize:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.4 – Taxonomy of production systems for MOJO scoring'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/Figure_9.4_B16721.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 9.4 – Taxonomy of production systems for MOJO scoring
+  prefs: []
+  type: TYPE_NORMAL
+- en: Business requirements mostly determine whether scoring needs to be real time,
+    batch, or streaming and MOJOs can handle the full range of these data velocities.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'It is useful to articulate production target systems into the following three
+    categories for MOJO deployments:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**H2O scoring system**: This represents the H2O scoring software that is available
+    from H2O. These scorers include a REST server with MLOps and rich model monitoring
+    and governance capabilities (and a lively roadmap that includes batch scoring,
+    champion/challenger testing, A/B testing, and more), a database scorer for batch
+    database table scoring that outputs to a table or file, a file batch scorer, and
+    AMQ and Kafka Scorers for streaming events. H2O is actively adding more scorers,
+    so visit their website to keep up to date. The MLOps scorer specifically is discussed
+    in more detail in *Chapter 16*, *The Machine Learning Lifecycle, AI Apps, and
+    H2O AI Hybrid Cloud*.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Third-party integrations**: Many third parties integrate out-of-the-box with
+    MOJOs for scoring on their framework or software. Others require some glue to
+    be built to create a custom integration.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Your own DIY system**: You can embed MOJOs in your software or framework
+    integrations that run a Java environment. Integrations will require a simple Java
+    wrapper class to interface your application or framework to the MOJO data input
+    and output capabilities (for example, your REST server will need to convert JSON
+    to a MOJO data object). H2O makes this easy with its **MOJO API**. Wrapping with
+    the MOJO API is discussed in greater detail with code examples later in the chapter.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Note that this chapter provides an introduction to deploying MOJOs to target
+    systems. The entire [*Chapter 10*](B16721_10_Final_SK_ePub.xhtml#_idTextAnchor178),
+    *H2O Model Deployment Patterns,* will be devoted to walking through multiple examples
+    of MOJO deployments to target systems.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Now that we understand the end-to-end H2O pipeline from model building to live
+    scoring on diverse production systems, let''s take a closer look at its central
+    player: the MOJO.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: H2O MOJO deep dive
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: All MOJOs are fundamentally similar from a deployment and scoring standpoint.
+    This is true regardless of the MOJO's origin from an upstream model-building standpoint,
+    that is, regardless of which of H2O's wide diversity of model-building algorithms
+    (for example, Generalized Linear Model, and XGBoost) and techniques (for example,
+    Stacked Ensembles and AutoML) and training dataset sizes (from GBs to TBs) were
+    used to build the final model.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Let's get to know the MOJO in greater detail.
+  prefs: []
+  type: TYPE_NORMAL
+- en: What is a MOJO?
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'A **MOJO** stands for Model Object, Optimized. It is exported from your model-building
+    IDE by running the following line of code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE0]'
+  prefs: []
+  type: TYPE_PRE
+- en: This downloads a uniquely-named `.zip` file onto the filesystem of your IDE,
+    to the path you specified. This `.zip` file is the MOJO and this is what is deployed.
+    You do not unzip it, but if you are curious, it contains a `model.ini` file that
+    describes the MOJO as well as multiple `.bin` files, all of which are used by
+    the **MOJO runtime**.
+  prefs: []
+  type: TYPE_NORMAL
+- en: What is a MOJO runtime? This is a Java `.jar` file called `h2o-genmodel.jar`
+    and is a generic runtime for all H2O Core MOJOs. In other words, MOJOs are specific
+    to the trained models they are derived from, and all MOJOs are loaded identically
+    into the MOJO runtime. The MOJO runtime integrates with a Java runtime (in H2O
+    software, third-party software, or your own software). The following diagram relates
+    MOJOs to the MOJO runtime.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.5 – MOJOs and the MOJO runtime'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/Figure_9.5_B16721.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 9.5 – MOJOs and the MOJO runtime
+  prefs: []
+  type: TYPE_NORMAL
+- en: As mentioned previously, MOJOs are deployed to a Java runtime, more formally
+    known as a `h2o-genmodel.jar` as a dependent library to do so. The software loads
+    the model-specific MOJO into the generic `h2o-genmodel.jar` runtime using the
+    `h2o-genmodel` API. The actual scoring logic in the application code also uses
+    `h2o-genmodel.jar` and its API to implement the scoring and extraction of results
+    from the embedded MOJO.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Let's dig down and elaborate in the next section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Deploying a MOJO
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: You need only the MOJO if you deploy a MOJO to an H2O Scorer or to a third-party
+    software that integrates MOJOs out-of-the-box. You do not need to consider the
+    MOJO runtime and API in these cases. This is because these software systems have
+    already implemented `h2o-genmodel.jar` (using the `h2o-genmodel` API) behind the
+    scenes, in other words, in the H2O Scorer or third-party software that is deployed
+    and operating.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In other cases, you need to write the code that embeds the MOJO and extracts
+    its scoring results. This code, typically, is a single Java wrapper class that
+    uses the `h2o-genmodel` API. We will visit this a bit later using a code example.
+  prefs: []
+  type: TYPE_NORMAL
+- en: This distinction is important and deserves a larger callout.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Key Distinction in MOJO Deployment
+  prefs: []
+  type: TYPE_NORMAL
+- en: You need only the MOJO when deploying to H2O scoring software or third-party
+    software that integrates MOJOs out of the box (configuration-based).
+  prefs: []
+  type: TYPE_NORMAL
+- en: You need to write a simple Java wrapper class using the `h2o-genmodel` API when
+    integrating the MOJO into your own software or third-party software that does
+    not integrate MOJO out of the box. This wrapper requires `h2o-genmodel.jar`, which
+    is the library that the `h2o-genmodel` API represents.
+  prefs: []
+  type: TYPE_NORMAL
+- en: (If you are consuming MOJO predictions in third-party software or your own software
+    from a REST server, you do not, of course, need the MOJO or the MOJO runtime.
+    You simply need to conform to the REST endpoint API for the MOJO.)
+  prefs: []
+  type: TYPE_NORMAL
+- en: Let's look at the case when you need to write a wrapper.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Wrapping MOJOs using the H2O MOJO API
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Let's first touch upon a few precursors before learning how to wrap MOJOs inside
+    larger software programs.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Obtaining the MOJO runtime
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'You can download `h2o-genmodel.jar` when you download your MOJO from the IDE
+    after model building. This is simply a matter of adding a new argument to your
+    download statement, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE1]'
+  prefs: []
+  type: TYPE_PRE
+- en: '[PRE2]'
+  prefs: []
+  type: TYPE_PRE
+- en: This method of obtaining `h2o-genmodel.jar` generally is not done in a governed
+    production deployment. This is because `h2o-genmodel.jar` is generic to all MOJOs
+    and is a concern of the software developer and not the data scientists.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Software developers can download the MOJO runtime from the Maven repository
+    at [https://mvnrepository.com/artifact/ai.h2o/h2o-genmodel](https://mvnrepository.com/artifact/ai.h2o/h2o-genmodel).
+    The `h2o-genmodel.jar` is backward-compatible; it should work for a MOJO generated
+    from an H2O-3 (or Sparkling Water) version equal to or less than the `h2o-genmodel.jar`
+    version.
+  prefs: []
+  type: TYPE_NORMAL
+- en: A Tip for Obtaining the MOJO Runtime (h2o-genmodel.jar)
+  prefs: []
+  type: TYPE_NORMAL
+- en: Data scientists do not have to download the MOJO runtime each time they download
+    their MOJO from their model-building IDEs. This is because the MOJO runtime is
+    generic to all MOJOs. A best practice is to let your developers (not the data
+    scientists) concern themselves with obtaining and using the MOJO runtime for production
+    deployments when needed. This can be done through the Maven repository referenced
+    earlier.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The h2o-genmodel API
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: Javadocs for the `h2o-genmodel` API are located at [https://docs.h2o.ai/h2o/latest-stable/h2o-genmodel/javadoc/index.html](https://docs.h2o.ai/h2o/latest-stable/h2o-genmodel/javadoc/index.html).
+    Note that this is for the latest H2O-3 (or Sparkling Water). To get a different
+    version, go to [https://docs.h2o.ai/prior_h2o/index.html](https://docs.h2o.ai/prior_h2o/index.html).
+  prefs: []
+  type: TYPE_NORMAL
+- en: In summary, the `h2o-genmodel` API is used to build wrappers around the MOJO
+    so your application can feed data into the MOJO, extract prediction and decision
+    information from it, and convert these results to the code in your wrapper. The
+    wrapper is typically part of your larger application and can be seen as the glue
+    between your app and the MOJO.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Let's dive in.
+  prefs: []
+  type: TYPE_NORMAL
+- en: A generalized approach to wrapping your MOJO
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'It will be useful before writing code to first look at the logical flow of
+    application code for the MOJO wrapper you develop. This can be seen in the following
+    diagram:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.6 – Logical view of wrapping a MOJO'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/Figure_9.6_B16721.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 9.6 – Logical view of wrapping a MOJO
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The Java wrapper typically is its own class (or part of a class) and imports
+    `h2o-genmodel.jar` and follows these general logical steps:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Load `yourMOJO.zip` into the MOJO runtime. Recall that `h2o-genmodel.jar` is
+    the runtime that holds the generic logic to work on model-specific MOJOs. This
+    runtime is now ready to operate on your specific model.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Feed data into the MOJO. To do so, convert the Java data structure of your input
+    into a MOJO data structure using the `h2o-genmodel` code.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Score the MOJO. This is a single line of `h2o-genmodel` code.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Extract the subset of information that you need from the MOJO scoring results.
+    Recall that prediction results (or unsupervised results) represent aspects of
+    the prediction (labels and predictions) as well as aspects of scoring decisions
+    (reason codes, decision path to leaf node results, and other).
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Convert the extracted results into a data structure needed downstream by the
+    application.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Let's write a wrapper.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Wrapping example – Build a batch file scorer in Java
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: The goal of the wrapper we are writing is to batch score new data from a file.
+    The output of the scoring will be the input record, the prediction, and the reason
+    codes all formatted as a line of CSV. The reason codes will be a single CSV field
+    but the reason codes will be pipe-delimited.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We will compile this wrapper class as a runnable program that accepts three
+    input parameters:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Input param 1: `path/of/batch/file/to/score`'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Input param 2: `path/to/yourMOJO.zip`'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Input param 3 (optional): The `—shap` flag to trigger the return of Shapley
+    reason codes in addition to the scoring prediction for each row in the file'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Shapley Values Add Latency
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Keep in mind that returning Shapley values adds additional computation and,
+    therefore, latency to each scoring. You might want to benchmark latencies with
+    and without Shapley reason codes in your results to evaluate whether to include
+    them in scoring or not if latency is critical.
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: We will use the MOJO that you exported at the end of your model building exercise
+    in [*Chapter 8*](B16721_08_Final_SK_ePub.xhtml#_idTextAnchor137), *Putting It
+    All Together*.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The code
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: Our batch file scorer program will involve a single Java class and will not
+    include error handling and other production quality software design. Our purpose
+    here is to show the fundamentals of integrating a MOJO into your software.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Note that the code samples below are elaborated step by step. To access the
+    entire Java code from beginning to end, go to the GitHub repository at [https://github.com/PacktPublishing/Machine-Learning-at-Scale-with-H2O/tree/main/chapt9](https://github.com/PacktPublishing/Machine-Learning-at-Scale-with-H2O/tree/main/chapt9).
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s get started:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '`BatchFileScorer`. Since this is also an executable program, we will create
+    a `main` method to start the code execution. Note the `import` statements for
+    the `h2o-genmodel` library packages:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE3]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: Now, let's fill the `main` method with code, as shown in the following steps.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**Retrieve the input parameters**: We retrieve the input parameters from the
+    program''s arguments:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE4]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: '**Load the MOJO and configure it to optionally return reason codes**: We load
+    the MOJO into the MOJO runtime and configure it to return Shapley values:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE5]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: The MOJO is loaded only once here before all scoring later in the code.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Important Design Point – Load Your MOJO Once
+  prefs: []
+  type: TYPE_NORMAL
+- en: Loading the MOJO can take a few seconds, but it only needs to be loaded into
+    your program once.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Load the MOJO once in your wrapper class (for example, when it initializes)
+    before making all scoring requests. You do not want your sub-hundred or sub-ten
+    millisecond scores each preceded by multiple seconds of loading.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Now to the magic: generating predictions.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '`import` statements shown in *step 1*:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE6]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: That is it! You have loaded the MOJO and configured the scoring, and scored
+    each line of a file. To score, you have converted each record from its application
+    representation (CSV string) to the `h2o-genmodel` representation (the `DataRow`
+    object). You have written one line of code to score the record. And, you have
+    retrieved the prediction and, optionally, Shapley reason codes from the scoring
+    result. You then formatted this to a representation used by your application.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Drill-downs to the code
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: Let's drill down into methods from the previous code.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Method drilldown – Converting your application data object to an h2o-genmodel
+    data object
+  prefs:
+  - PREF_H4
+  type: TYPE_NORMAL
+- en: 'Note that `RowData mojoRow` is where the program code is converted into the
+    `h2o-genmodel` API data object. In the example here, it is done through the `convertInput(record)`
+    method as shown:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE7]'
+  prefs: []
+  type: TYPE_PRE
+- en: '[PRE8]'
+  prefs: []
+  type: TYPE_PRE
+- en: '[PRE9]'
+  prefs: []
+  type: TYPE_PRE
+- en: '[PRE10]'
+  prefs: []
+  type: TYPE_PRE
+- en: '[PRE11]'
+  prefs: []
+  type: TYPE_PRE
+- en: '[PRE12]'
+  prefs: []
+  type: TYPE_PRE
+- en: '[PRE13]'
+  prefs: []
+  type: TYPE_PRE
+- en: '[PRE14]'
+  prefs: []
+  type: TYPE_PRE
+- en: '[PRE15]'
+  prefs: []
+  type: TYPE_PRE
+- en: '[PRE16]'
+  prefs: []
+  type: TYPE_PRE
+- en: '[PRE17]'
+  prefs: []
+  type: TYPE_PRE
+- en: '[PRE18]'
+  prefs: []
+  type: TYPE_PRE
+- en: '[PRE19]'
+  prefs: []
+  type: TYPE_PRE
+- en: We have simply split the input using a comma as a separator and assigned each
+    value to the H2O `RowData` object, which essentially is a map of key-value pairs
+    with the keys representing feature names (that is, column headings). There are
+    alternatives to using `RowData`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Design Decision – Choices for converting Your Data Object to the MOJO API Data
+    Object
+  prefs: []
+  type: TYPE_NORMAL
+- en: Using the `h2o-genmodel` API's `RowData` class, as we did here, is just one
+    way to convert your application data object into an `h2o-genmodel` object to feed
+    to the MOJO for scoring. Check the API for additional ways that may offer better
+    code design for your implementation.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Method drilldown – The single line to score
+  prefs:
+  - PREF_H4
+  type: TYPE_NORMAL
+- en: 'Only a single line of code was needed to score the MOJO and retrieve results:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE20]'
+  prefs: []
+  type: TYPE_PRE
+- en: Note that you may need a different class than `BinomialModelPrediction` depending
+    on which type of model you build. Check the `h2o-genmodel` Javadocs for details
+    on which Java class to use and what scoring information is returned.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Method drilldown – Collecting results and formatting as output
+  prefs:
+  - PREF_H4
+  type: TYPE_NORMAL
+- en: 'We ultimately constructed a string from the scoring results using the `formatOutput(record,
+    p, doShapley)` method. Here is how that method was implemented:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE21]'
+  prefs: []
+  type: TYPE_PRE
+- en: '[PRE22]'
+  prefs: []
+  type: TYPE_PRE
+- en: '[PRE23]'
+  prefs: []
+  type: TYPE_PRE
+- en: '[PRE24]'
+  prefs: []
+  type: TYPE_PRE
+- en: '[PRE25]'
+  prefs: []
+  type: TYPE_PRE
+- en: '[PRE26]'
+  prefs: []
+  type: TYPE_PRE
+- en: '[PRE27]'
+  prefs: []
+  type: TYPE_PRE
+- en: '[PRE28]'
+  prefs: []
+  type: TYPE_PRE
+- en: '[PRE29]'
+  prefs: []
+  type: TYPE_PRE
+- en: '[PRE30]'
+  prefs: []
+  type: TYPE_PRE
+- en: '[PRE31]'
+  prefs: []
+  type: TYPE_PRE
+- en: '[PRE32]'
+  prefs: []
+  type: TYPE_PRE
+- en: '[PRE33]'
+  prefs: []
+  type: TYPE_PRE
+- en: '[PRE34]'
+  prefs: []
+  type: TYPE_PRE
+- en: '[PRE35]'
+  prefs: []
+  type: TYPE_PRE
+- en: '[PRE36]'
+  prefs: []
+  type: TYPE_PRE
+- en: '[PRE37]'
+  prefs: []
+  type: TYPE_PRE
+- en: '[PRE38]'
+  prefs: []
+  type: TYPE_PRE
+- en: The main point here is that the prediction results are held in the `h2o-genmodel`
+    API's `BinomialModelPrediction p` object that was returned from scoring. We can
+    retrieve a lot of information from this object. In our case, we retrieved the
+    predicted class, identified by `p.label` , and its probability, `p.classProbabilities[0]`.
+    Since this is a `BinomialModelPrediction`, the probability of the other class
+    would be retrieved by `p.classProbabilities[1]`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We then iterated through an array of the Shapley reason contribution names (`model.getContributionNames()[i]`)
+    and values (`p.contributions[i]`). In our case, we are retrieving only reason
+    codes with values over `0.01`. Alternatively, for example, we could have sorted
+    the reasons by value and returned the top five. When returning all reasons, a
+    bias is returned as the last in the array, and the sum of all features and the
+    bias will equal the raw prediction of the model.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Altogether, we used a bunch of code to format all of this into a CSV string
+    starting with the original record and then appending the predicted class and its
+    probability, and then a bar-delimited list of reason codes.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Running the code
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'To run the application, compile `BatchFileScorer.java` with `h2o-genmodel.jar`
+    as an executable JAR file called `BatchFileScorer.jar`. Then, run the following
+    command in the same directory as `BatchFileScorer.jar`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE39]'
+  prefs: []
+  type: TYPE_PRE
+- en: To retrieve Shapley reason codes, append `--shap` to the statement.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Other things to know about MOJOs
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: You are now ready to deploy MOJOs, with or without required wrappers, as articulated
+    in the previous section. Let's round up our knowledge of MOJOs by addressing the
+    following secondary topics.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Inspecting MOJO decision logic
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: For tree-based models, you can use a utility built into `h2o-genmodel.jar` to
+    generate a graphical representation of the tree logic in the MOJO. Here is how.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s use the same MOJO we used in the previous coding example of building
+    a wrapper class. On the command line where your `h2o-genmodel.jar` is located,
+    run the following:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE40]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'This will create a `.png` file that looks like this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 9.7 – Output of the PrintMojo utility'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/Figure_9.7_B16721.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 9.7 – Output of the PrintMojo utility
+  prefs: []
+  type: TYPE_NORMAL
+- en: Note that if you omitted `--tree 0`, you would have generated a folder holding
+    a forest of all trees. We have specified to return only the first one.
+  prefs: []
+  type: TYPE_NORMAL
+- en: You can also use `dot` for `--format`. This produces a format that can be consumed
+    by the third-party **Graphviz** utility to make the graphical representation more
+    prettified than that shown in *Figure 9.7*.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Alternatively, if you wish to include this output for programmatic use, for
+    `–format`, state `.json`, which outputs the file to JSON format.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'See the H2O documentation for more details and configuration alternatives:
+    [https://docs.h2o.ai/h2o/latest-stable/h2o-docs/productionizing.html#viewing-a-mojo-model](https://docs.h2o.ai/h2o/latest-stable/h2o-docs/productionizing.html#viewing-a-mojo-model).'
+  prefs: []
+  type: TYPE_NORMAL
+- en: MOJO and POJO
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'OK, let''s say it: MOJOs are not the only H2O deployable artifact. Before MOJOs,
+    there were only `h2o-genmodel` API to build wrapper classes, as we discussed before.
+    They are also a bit different. Let''s compare, contrast, and conclude.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: MOJO and POJO similarities
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'The following are the similarities between MOJOs and POJOs:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: They are both exported from the IDE after your model is built (or from the H2O
+    Flow UI).
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'They are both deployed in the same way: they both run in a JVM, there is the
+    wrapper or no wrapper distinction depending on the target scoring system (H2O
+    Scorers, third-party, or your own software program), and they both use the MOJO
+    runtime (`h2o-genmodel.jar`) and the same API and Javadoc.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: MOJO and POJO differences
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'These are the differences between MOJOs and POJOs:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: A POJO is exported as a single `.java` file that needs to be compiled, whereas
+    the MOJO exports as a single `.zip` file, as described earlier.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: POJOs contain entire trees to navigate the model, whereas MOJOs contain tree
+    metadata and use generic tree-walker code in `h2o-genmodel.zip` to navigate the
+    model. The larger the tree structure, the larger the POJO.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: POJOs are significantly larger than MOJOs (typically 20-25 times larger) and
+    slower than MOJOs when scoring (2-3 times slower). In general, the larger the
+    POJO, the slower it is compared to any MOJO built from the same model.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Large POJOs may have trouble compiling. POJOs over 1 GB are not supported by
+    H2O.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: When to use either a MOJO or POJO
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: You should view POJOs as deprecated but still supported (except > 1GB) and sometimes
+    needed in edge cases. Know that MOJOs are not fully supported across all algorithms
+    so, in these cases, you are forced to use POJOs. Therefore, use MOJOs when you
+    can and resort to POJOs in infrequent cases when you cannot.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Deployment Decision – MOJO or POJO?
+  prefs: []
+  type: TYPE_NORMAL
+- en: See MOJOs as your go-to current technology and POJOs as similar to deploy but
+    deprecated yet supported (except > 1 GB). MOJOs have advantages primarily in scoring
+    speed and size footprint.
+  prefs: []
+  type: TYPE_NORMAL
+- en: MOJOs are not supported for some algorithms. Check the H2O documentation for
+    current support considerations for MOJOs and POJOs.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We are now ready to summarize.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Summary
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: We began this chapter by taking a high-level view of the transition from model
+    building to model deployment. We saw that this transition is bridged for H2O by
+    the MOJO, a deployable representation of the trained model that is easy to generate
+    from model building and easy to deploy for fast model scoring.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We then took a closer look at the range of target systems MOJOs can be deployed
+    on, and saw that these must run in a Java runtime but, otherwise, are quite diverse.
+    MOJOs can be scored on real-time, batch, and streaming systems, usefully categorized
+    as H2O Scorers (scoring software provided and supported by H2O), third-party integrations
+    (software provided and supported by companies other than H2O), and your software
+    integrations (software that you build and maintain).
+  prefs: []
+  type: TYPE_NORMAL
+- en: This categorization of target systems helps us determine whether you can deploy
+    the exported MOJO directly, or whether you need to wrap it in a Java class using
+    the `h2o-genmodel` API to embed it into the scoring software. H2O Scorers and
+    some third-party scorers require only the exported MOJO and no wrapper to be implemented.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We then took a detailed look at the MOJO and the MOJO runtime, and how these
+    relate to deployments with and without the need for wrappers. We described the
+    general structure of a MOJO wrapper and coded a wrapper to batch score records
+    from a file. Our coding gave us a better understanding of the MOJO API that is
+    used to interact with the MOJO in your application. This understanding included
+    how to use the API to load the MOJO, structure data to a type that can be used
+    by the MOJO, score with the MOJO, and retrieve predictions and reason codes from
+    the scoring results.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We then learned how to use a handy tool in the MOJO API to obtain a visual,
+    JSON, or dot representation of the decision logic in the MOJO for your model.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Finally, we introduced the predecessor of the MOJO, the POJO, and characterized
+    it as similar to the MOJO in terms of deployment and use of the MOJO API but deprecated
+    yet supported, and so to be used for a minority of cases when MOJOs cannot.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Now, we understand in great detail the MOJO and how it is flexibly deployed
+    to a diversity of production scoring systems. Let's move to the next chapter where
+    we will exhibit this flexibility and diversity by describing concrete MOJO deployments
+    on a handful of these systems.
+  prefs: []
+  type: TYPE_NORMAL

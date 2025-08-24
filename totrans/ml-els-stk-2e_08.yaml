@@ -1,0 +1,1042 @@
+- en: '*Chapter 6*: Alerting on ML Analysis'
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: The previous chapter ([*Chapter 5*](B17040_05_Epub_AM.xhtml#_idTextAnchor090)*,
+    Interpreting Results*) explained in depth how anomaly detection and forecasting
+    results are stored in Elasticsearch indices. This gives us the proper background
+    to now create proactive, actionable, and informative alerts on those results.
+  prefs: []
+  type: TYPE_NORMAL
+- en: At the time of writing this book, we find ourselves at an inflection point.
+    For several years, Elastic ML has relied on the alerting capabilities of Watcher
+    (a component of Elasticsearch) as this was the exclusive mechanism to alert on
+    data. However, a new platform of alerting has been designed as part of Kibana
+    (and was deemed GA in v7.11) and this new approach will be the primary mechanism
+    of alerting moving forward.
+  prefs: []
+  type: TYPE_NORMAL
+- en: There are still some interesting pieces of functionality that Watcher can provide
+    that are not yet available in Kibana alerting. As such, this chapter will showcase
+    the usage of alerts using both Kibana alerting and Watcher. Depending on your
+    needs, you can decide which approach you would like to use.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Specifically, this chapter will cover the following topics:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Understanding alerting concepts
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Building alerts from the ML UI
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Creating alerts with a watch
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Technical requirements
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: The information in this chapter will use the Elastic Stack as it exists in v7.12\.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Understanding alerting concepts
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Hopefully, without running the risk of being overly pedantic, a few declarations
+    can be made here about alerting and how certain aspects of alerting (especially
+    with respect to anomaly detection) are extremely important to understand before
+    we get into the mechanics of configuring those alerts.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Anomalies are not necessarily alerts
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: This needs to be explicitly said. Often, users who first embrace anomaly detection
+    feel compelled to alert on everything once they realize that you can alert on
+    anomalies. This is potentially a really challenging situation if anomaly detection
+    is deployed across hundreds, thousands, or even tens of thousands of entities.
+    Anomaly detection, while certainly liberating users from having to define specific,
+    rule-driven exceptions or hardcoded thresholds from alerts, also has the potential
+    to be deployed broadly across a lot of data. We need to be cognizant that detailed
+    alerting on every little anomaly could be potentially quite noisy if we're not
+    careful.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Fortunately, there are a few mechanisms that we''ve already learned about in
+    [*Chapter 5*](B17040_05_Epub_AM.xhtml#_idTextAnchor090)*, Interpreting Results*,
+    that help us mitigate such a situation:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**Summarization**: We learned that anomalousness is not only reported for individual
+    anomalies (at the "record level") but is also summarized at the bucket level and
+    influencer level. These summary scores can facilitate alerting at a higher level
+    of abstraction if we so desire.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Normalized** **scoring**: Because every anomaly detection job has a custom
+    normalization scale that is purpose-built for the specific detector configuration
+    and dataset being analyzed, it means that we can leverage the normalized scoring
+    that comes out of Elastic ML to rate-limit the typical alerting cadence. Perhaps
+    for a specific job that you create, alerting at a minimum anomaly score of 10
+    will typically give about a dozen alerts per day, a score of 50 will give about
+    one per day, and a score of 90 will give about one alert per week. In other words,
+    you can effectively tune the alerting to your own tolerance for the number of
+    alerts you''d prefer to get per unit of time (of course, except for the case of
+    an unexpected system-wide outage, which may create more alerts than usual).'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Correlation**/**combination**: Perhaps alerting on a single metric anomaly
+    (a host''s CPU being abnormally high) is not as compelling as a group of related
+    anomalies (CPU is high, free memory is low, and response time is also high). Alerting
+    on compound events or sequences may be more meaningful for some situations.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The bottom line is that even though there isn't a one-size-fits-all philosophy
+    about the best way to structure alerting and increase the effectiveness of alerts,
+    there are some options available to the user in order to choose what may be right
+    for you.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In real-time alerting, timing matters
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: Back in [*Chapter 2*](B17040_02_Epub_AM.xhtml#_idTextAnchor033)*, Enabling and
+    Operationalization*, we learned that anomaly detection jobs are a relatively complex
+    orchestration of querying of raw data, analyzing that data, and reporting of the
+    results as an ongoing process that can run in near real time. As such, there were
+    a few key aspects of the job's configuration that determined the cadence of that
+    process, namely the `bucket_span`, `frequency`, and `query_delay` parameters.
+    These parameters define when results are "available" and what timestamp the values
+    will have. This is extremely important because alerting on anomaly detection jobs
+    will involve a subsequent query to the results indices (`.ml-anomalies-*`), and
+    clearly, when that query is run and what time range is used matters whether or
+    not you actually find the anomalies you are looking for.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'To illustrate, let''s look at the following:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 6.1 – A representation of the bucket span, query delay, and frequency
+    with respect to now'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B17040_06_1.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 6.1 – A representation of the bucket span, query delay, and frequency
+    with respect to now
+  prefs: []
+  type: TYPE_NORMAL
+- en: In *Figure 6.1*, we see that a particular bucket of time (represented by the
+    width of time equal to *t2-t1*), lags the current system time (`query_delay`.
+    Within the bucket, there may be subdivisions of time, as defined by the `frequency`
+    parameter. With respect to how the results of this bucket are written to the results
+    indices (`.ml-anomalies-*`), we should remember that the timestamp of the documents
+    written for this bucket will all have a `timestamp` value equal to the time at
+    *t1*, the leading edge of the bucket.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'To make a practical example for discussion, let''s imagine the following:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '`bucket_span` = 15 minutes'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`frequency` = 15 minutes'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`query_delay` = 2 minutes'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: If `query_delay`) and the results document was written into `.ml-anomalies-*`
+    soon after (but written with a timestamp equal to 11:45 A.M.). Therefore, if at
+    12:05 P.M. we looked into `.ml-anomalies-*` to see whether results were there
+    for 11:45 A.M., we would be pretty confident they would exist, and we could inspect
+    the content. However, if **now** were only 12:01 P.M., the results documents for
+    the bucket corresponding to 11:45 A.M.-12:00 P.M. would not yet exist and wouldn't
+    be written for another minute or so. We can see that the timing of things is very
+    important.
+  prefs: []
+  type: TYPE_NORMAL
+- en: If in our example scenario, we instead had reduced the value of `frequency`
+    to 7.5 minutes or 5 minutes, then we would indeed have access to the results of
+    the bucket "sooner," but the results would be marked as **interim** and are subject
+    to change when the bucket is finalized.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Note
+  prefs: []
+  type: TYPE_NORMAL
+- en: Interim results are created within a bucket if the frequency is a sub-multiple
+    of the bucket span, but not all detectors make interim results. For example, if
+    you have a `max` or `high_count` detector, then an interim result that shows a
+    higher-than-expected value over the typical value is possible and sensible – you
+    don't need to see the contents of the entire bucket to know that you've already
+    exceeded expectations. However, if you have a `mean` detector, you really do need
+    to see that entire bucket's worth of observations before determining the average
+    value – therefore, interim results are not produced because they are not sensible.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'So, with that said, if we now take the diagram from *Figure 6.1* and advance
+    time a little, but also draw the buckets before and after this one, it will look
+    like the following:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 6.2 – A representation of consecutive buckets'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B17040_06_2.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 6.2 – A representation of consecutive buckets
+  prefs: []
+  type: TYPE_NORMAL
+- en: Here in *Figure 6.2*, we see that the current system time (again, denoted by
+    `is_interim:true` flag as first shown in [*Chapter 5*](B17040_05_Epub_AM.xhtml#_idTextAnchor090)*,
+    Interpreting Results*.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'If we wanted to invoke an alert search that basically asked the question, "Are
+    there any new anomalies created since last time I looked?" and the time that we
+    invoked that search was done at the time that is **now** in *Figure 6.2*, then
+    we should notice the following:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The "look back" period of time should be about twice the width of `bucket_span`.
+    This is because this guarantees that we will see any interim results that may
+    be published for the current bucket (here **bucket t2**) and any finalized results
+    for the previous bucket (here **bucket t1**). Results from **bucket t0** will
+    not be matched because the timestamp for **bucket t0** is outside of the window
+    of time queried – this is okay as long as we get the alert query to repeat on
+    a proper schedule (see the following point).
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The time chosen to run this query could fall practically anywhere within bucket
+    *t2*'s window of time and this will still work as described. This is important
+    because the schedule at which the alert query runs will likely be asynchronous
+    to the schedule that the anomaly detection job is operating (and writing results).
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: We would likely schedule our alert search to repeat its operation at most at
+    an interval equal to `bucket_span`, but it could be executed more frequently if
+    we're interested in catching interim anomalies in the current, not-yet-fiinalized
+    bucket.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: If we didn't want to consider interim results, we would need to modify the query
+    such that `is_interim:false` was part of the query logic to not match them.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Given all of these conditions, you might think that there is some type of dark
+    magic that is required to get this working correctly and reliably. Fortunately,
+    when we build the alerts using Kibana from the Elastic ML UI, these considerations
+    are taken care of for you. However, if you feel like you are a wizard and fully
+    understand how this all works, then you may not be too intimidated by the prospect
+    of building very custom alert conditions using Watcher, where you will have complete
+    control.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the following main sections, we'll do some examples using each method so
+    that you can compare and contrast how they work.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Building alerts from the ML UI
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: With the release of v7.12, Elastic ML changed its default alert handler from
+    Watcher to Kibana alerting. Prior to v7.12, the user had a choice of accepting
+    a default **watch** (an instance of a script for Watcher) if alerting was selected
+    from the ML UI, or the user could create a watch from scratch. This section will
+    focus on the new workflow using Kibana alerting as of v7.12, which offers a nice
+    balance of flexibility and ease of use.
+  prefs: []
+  type: TYPE_NORMAL
+- en: To create a working, illustrative example of real-time alerting, we will contrive
+    a scenario using the Kibana sample web logs dataset that we first used in [*Chapter
+    3*](B17040_03_Epub_AM.xhtml#_idTextAnchor049)*, Anomaly Detection.*
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The process outlined in this section will be as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Define some sample anomaly detection jobs on the sample data.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Define two alerts on two of the anomaly detection jobs.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Run a simulation of anomalous behavior, to catch that behavior in an alert.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Let's first define the sample anomaly detection jobs.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Defining sample anomaly detection jobs
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: Of course, before we can build alerts, we need jobs running in real time. We
+    can leverage the sample ML jobs that come with the same Kibana web logs dataset.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Note
+  prefs: []
+  type: TYPE_NORMAL
+- en: If you still have this dataset loaded in your cluster, you should delete it
+    and re-add it. This will reset the timestamps on the dataset so that about half
+    of the data will be in the past and the rest will be in the future. Having some
+    data in the future will allow us to pretend that data is appearing in real time
+    and therefore our real-time anomaly detection jobs and our alerts on those jobs
+    will act like they are truly real time.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'To get started, let''s reload the sample data and build some sample jobs:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: From the Kibana home screen, click on **Try our sample data**:![Figure 6.3 –
+    Kibana home screen
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '](img/B17040_06_3.jpg)'
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Figure 6.3 – Kibana home screen
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Click on **Index Patterns** in the **Sample web logs** section (if already loaded,
+    please remove and re-add):![Figure 6.4 – Add sample web logs data
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '](img/B17040_06_4.jpg)'
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Figure 6.4 – Add sample web logs data
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Under the **View data** menu, select **ML jobs** to create some sample jobs:![Figure
+    6.5 – Selecting to create some sample ML jobs
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '](img/B17040_06_5.jpg)'
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Figure 6.5 – Selecting to create some sample ML jobs
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Give the three sample jobs a job ID prefix (here `alert-demo-` was chosen) and
+    make sure you de-select Use full `kibana_sample_data_logs` data and pick the end
+    time to be the closest 15 minutes to your current system time (in your time zone):![Figure
+    6.6 – Naming the sample jobs with a prefix and selecting now as the end time
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '](img/B17040_06_6.jpg)'
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Figure 6.6 – Naming the sample jobs with a prefix and selecting now as the end
+    time
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Notice in *Figure 6.6* that **Apr 8, 2021 @ 11:00:00.00** was chosen as the
+    end time and that a date of 11 days earlier (**Mar 28, 2021 @ 00:00:00.00**) was
+    chosen as the start time (the sample data goes back about 11 days from when you
+    install it). The current local time at the time of this screenshot was 11:10 A.M.
+    on April 8th. This is important in the spirit of trying to make this sample data
+    seem real time. Click the **Create Jobs** button to set the job creation in motion.
+    Once the jobs are created, you will see the following screen:![Figure 6.7 – Sample
+    jobs completed initial run
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '](img/B17040_06_7.jpg)'
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Figure 6.7 – Sample jobs completed initial run
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: We don't need to view the results just yet. Instead, we need to make sure these
+    three jobs are running in real time. Let's click **Anomaly Detection** at the
+    top to return us to the **Job** **Management** page. There we can see our three
+    jobs have analyzed some data but are now in the closed state with the data feeds
+    currently stopped:![Figure 6.8 – Sample jobs in the Jobs Management screen
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '](img/B17040_06_8.jpg)'
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Figure 6.8 – Sample jobs in the Jobs Management screen
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Now we need to enable these three jobs to run in real time. Click the boxes
+    next to each job, and then select the gear icon to bring up the menu to choose
+    **Start data feeds** for all three jobs:![Figure 6.9 – Starting the datafeed for
+    all three sample jobs
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '](img/B17040_06_9.jpg)'
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Figure 6.9 – Starting the datafeed for all three sample jobs
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: In the pop-up window, choose the top option for both **Search start time** and
+    **Search end time**, ensuring that the job will continue to run in real time.
+    For now, we will leave **Create alert after datafeed has started** unchecked as
+    we will create our own alerts in just a moment:![Figure 6.10 – Starting the data
+    feeds of the three sample jobs to run in real time
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '](img/B17040_06_10.jpg)'
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Figure 6.10 – Starting the data feeds of the three sample jobs to run in real
+    time
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: 'After clicking the **Start** button, we will see that our three jobs are now
+    in the opened/started state:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 6.11 – Sample jobs now running in real time'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B17040_06_11.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 6.11 – Sample jobs now running in real time
+  prefs: []
+  type: TYPE_NORMAL
+- en: Now that we have our jobs up and running, let's now define a few alerts against
+    them.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Creating alerts against the sample jobs
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'With our jobs running in real time, we can now define some alerts for our jobs:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: For the `alert-demo-response_code_rates` job, click the **…** icon and select
+    **Create alert**:![Figure 6.12 – Creating an alert for a sample job
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '](img/B17040_06_12.jpg)'
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Figure 6.12 – Creating an alert for a sample job
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Now the **Create alert** flyout window appears, and we can now begin to fill
+    in our desired alert configuration:![Figure 6.13 – Creating an alert configuration
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '](img/B17040_06_13.jpg)'
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Figure 6.13 – Creating an alert configuration
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: In *Figure 6.13*, we will name our alert, but will also define that we wish
+    to have this alert check for anomalies every 10 minutes. This job's `bucket_span`
+    is set for 1 hour, but the frequency is set to 10 minutes – therefore interim
+    results will be available much sooner than the full bucket time. This is also
+    why we chose to include interim results in our alert configuration, so that we
+    can get notified as soon as possible. We also set **Result type** to be of type
+    **Bucket** to give us a summarized treatment of the anomalousness, as previously
+    discussed. Finally, we set the severity threshold to **51** to have alerts be
+    generated only for anomalies of a score exceeding that value.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Before we continue too far, we can check the alert configuration on past data.
+    Putting `30d` into the test box, we can see that there was only one other alert
+    in the last 30 days' worth of data that matched this alert condition:![Figure
+    6.14 – Testing alert configuration on past data
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '](img/B17040_06_14.jpg)'
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Figure 6.14 – Testing alert configuration on past data
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Lastly, we can configure an action to invoke on an alert being fired. In this
+    case, our system was pre-configured to use Slack as an alert action, so we will
+    choose that here, but there are many other options available for the user to consider
+    (please see [https://www.elastic.co/guide/en/kibana/current/action-types.html](https://www.elastic.co/guide/en/kibana/current/action-types.html)
+    to explore all options available and how to customize the alert messaging):![Figure
+    6.15 – Configuring alert action
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '](img/B17040_06_15.jpg)'
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Figure 6.15 – Configuring alert action
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Clicking on the **Save** button will obviously save the alert, which is then
+    viewable and modifiable via the **Stack Management | Alerts and Actions** area
+    of Kibana:![Figure 6.16 – Alerts management
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '](img/B17040_06_16.jpg)'
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Figure 6.16 – Alerts management
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: 'We are going to create one more alert, for the `alert-demo-url_scanning` job.
+    This time, we''ll create a **Record** alert, but with the other configuration
+    parameters similar to the prior example:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![Figure 6.17 – Configuring another alert on the URL scanning job'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B17040_06_17.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 6.17 – Configuring another alert on the URL scanning job
+  prefs: []
+  type: TYPE_NORMAL
+- en: Now that we have our two alerts configured, let's move on to simulating an actually
+    anomalous situation in real time to trigger our alerts.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Simulating some real-time anomalous behavior
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: Triggering simulated anomalous behavior in the context of these sample web logs
+    is a little tricky, but not too hard. It will involve some usage of the Elasticsearch
+    APIs, executing a few commands via **the Dev Tools console** in Kibana. Console
+    is where you can issue API calls to Elasticsearch and see the output (response)
+    of those API calls.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Note
+  prefs: []
+  type: TYPE_NORMAL
+- en: If you are unfamiliar with Console, please consult [https://www.elastic.co/guide/en/kibana/current/console-kibana.html](https://www.elastic.co/guide/en/kibana/current/console-kibana.html).
+  prefs: []
+  type: TYPE_NORMAL
+- en: What we will be simulating is twofold – we'll inject several fake documents
+    into the index that the anomaly detection job is monitoring, and then wait for
+    the alert to fire. These documents will show a spike in requests from a fictitious
+    IP address of `0.0.0.0` that will result in a response code of `404` and will
+    also be requesting random URL paths.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s get started:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We need to determine the current time for you in UTC. We must know the UTC
+    time (as opposed to your local time zone''s time) because the documents stored
+    in the Elasticsearch index are stored in UTC. To determine this, you can simply
+    use an online tool (such as Googling `current time utc`). At the time of writing,
+    the current UTC time is 4:41 P.M. on April 8, 2021\. Converted into the format
+    that Elasticsearch expects for the `kibana_sample_data_logs` index, this will
+    take the form of this:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE0]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'Let''s now insert some new bogus documents into the `kibana_sample_data_logs`
+    index at the current time (perhaps with a little buffer – rounding up to the next
+    half hour, in this case to 17:00). Replace the `timestamp` field value accordingly
+    and invoke the following command *at least 20 times* in the Dev Tools console
+    to insert:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE1]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: 'We can then dynamically modify only the documents we just inserted (in particular,
+    the `url` field) to simulate that the URLs are all unique by using a little script
+    to randomize the field value in an `_update_by_query` API call:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE2]'
+  prefs:
+  - PREF_IND
+  type: TYPE_PRE
+- en: We can validate that we have correctly created a bunch of unique, random requests
+    from our bogus IP address by looking that the appropriate time in Kibana Discover:![Figure
+    6.18 – Our contrived burst of anomalous events shown in Discover
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '](img/B17040_06_18.jpg)'
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Figure 6.18 – Our contrived burst of anomalous events shown in Discover
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Notice in *Figure 6.18* that we had to peek into the future a little to see
+    the documents we artificially inserted (as the red vertical line in the timeline
+    near 12:45 P.M. is the actual current system time in the local time zone). Also
+    notice that our inserted documents have a nice-looking random `url` field as well.
+    Now that we have "laid the trap" for anomaly detection to find, and we have our
+    alerts ready, we must now sit back and patiently wait for the alerts to trigger.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Receiving and reviewing the alerts
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: Since the anomalous behavior we inserted is now waiting to be found by our anomaly
+    detection job and our alerts, we can contemplate when we should expect to see
+    that alert. We should recognize that given our jobs have bucket spans of 1 hour,
+    frequencies of 10 minutes, and query delays on the order of 1-2 minutes (and that
+    our alerts will indeed look for interim results – and that our alerts are running
+    with a 10-minute frequency that is asynchronous from the anomaly detection job),
+    we should expect to see our alerts between 1:12 P.M. and 1:20 P.M. local time.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Right on cue, the alert messages for the two jobs surface in Slack at 1:16
+    P.M. and 1:18 P.M. local time:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 6.19 – Alerts received in the Slack client'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B17040_06_19.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 6.19 – Alerts received in the Slack client
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The top alert in *Figure 6.19*, of course, is for the anomaly detection job
+    that was counting the number of events for each `response.keyword` (and thus seeing
+    the spike of 404 documents exceeds expectations) and the bottom alert is for the
+    other job that notices the high distinct count of unique URLs that were being
+    requested. Notice that both jobs correctly identify `clientip = 0.0.0.0` as an
+    influencer into the anomalies. Included in the alert text is the ability to follow
+    the link to directly view the information in **Anomaly** **Explorer**. In *Figure*
+    *6.20*, we can see that by following the link in the second alert, we arrive at
+    a familiar place to investigate the anomaly further:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 6.20 – Anomaly Explorer from the alert drill-down link'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B17040_06_20.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 6.20 – Anomaly Explorer from the alert drill-down link
+  prefs: []
+  type: TYPE_NORMAL
+- en: Hopefully, through this example you can see not only how to use the alerts using
+    the Kibana alerting framework on anomaly detection jobs but can now also appreciate
+    the intricacies of the real-time operation of both the job and the alert. The
+    settings within the job's datafeed and alert sampling interval truly affect how
+    real-time the alerts can be. We could have, for example, reduced both the datafeed
+    `frequency` and the alert's **Check every** setting to shave a few minutes off.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the next section, we won't attempt to replicate a real-time alert detection
+    with Watcher, but we will work to understand the equivalent settings within a
+    watch to accomplish what we need to interface Watcher to an anomaly detection
+    job and to also showcase some interesting example watches.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Creating an alert with a watch
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Prior to version 7.12, Watcher was used as the mechanism to alert on anomalies
+    found by Elastic ML. **Watcher** is a very flexible native plugin for Elasticsearch
+    that can handle a number of automation tasks and alerting is certainly one of
+    them. In versions 7.11 and earlier, users could either create their own **watch**
+    (an instance of an automation task in Watcher) from scratch to alert on anomaly
+    detection job results or opt to use a default watch template that was created
+    for them by the Elastic ML UI. We will first look at the default watch that was
+    provided and then will discuss some ideas around custom watches.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Understanding the anatomy of the legacy default ML watch
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'Now that alerting on anomaly detection jobs is handled by the new Kibana alerting
+    framework, the legacy watch default template (plus a few other examples) are memorialized
+    in a GitHub repository here: [https://github.com/elastic/examples/tree/master/Alerting/Sample%20Watches/ml_examples](https://github.com/elastic/examples/tree/master/Alerting/Sample%20Watches/ml_examples).'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In dissecting the default ML watch (`default_ml_watch.json`) and the companion
+    version, which has an email action (`default_ml_watch_email.json`), we see that
+    there are four main sections:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**trigger**: Defines the scheduling of the watch'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**input**: Specifies the input data to be evaluated'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`actions` section is executed'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**actions**: Lists the desired actions to take if the watch''s condition is
+    met'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Note
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: For a full explanation of all of the options of Watcher, please consult the
+    Elastic documentation at [https://www.elastic.co/guide/en/elasticsearch/reference/current/how-watcher-works.html](https://www.elastic.co/guide/en/elasticsearch/reference/current/how-watcher-works.html).
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: Let's discuss each section in depth.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The trigger section
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'In the default ML watch, the `trigger` section is defined as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE3]'
+  prefs: []
+  type: TYPE_PRE
+- en: Here, we can see that the interval at which the watch will fire in real time
+    is every 82 seconds. This usually should be a random value between 60 and 120
+    seconds so that if a node restarts, all of the watches will not be synchronized,
+    and they will have their execution times more evenly spread out to reduce any
+    potential load on the cluster. It is also important that this interval value is
+    less than or equal to the bucket span of the job. As explained earlier in this
+    chapter, having it larger than the bucket span may cause recently written anomaly
+    records to be missed by the watch. With the interval being less (or even much
+    less) than the bucket span of the job, you can also take advantage of the advanced
+    notification that is available when there are interim results, anomalies that
+    can still be determined despite not having seen all of the data within a bucket
+    span.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The input section
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'The `input` section starts with a `search` section in which the following `query`
+    is defined against the `.ml-anomalies-*` index pattern:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE4]'
+  prefs: []
+  type: TYPE_PRE
+- en: Here, we are asking Watcher to query for `bucket`, `record`, and `influencer`
+    result documents for a job (you would replace `<job_id>` with the actual `job_id`
+    for the anomaly detection job of interest) in the last 30 minutes. As we know
+    from earlier in the chapter, this look-back window should be twice the `bucket_span`
+    value of the ML job (this template must assume that the job's bucket span is 15
+    minutes). While all result types were asked for, we will later see that only the
+    bucket-level results are used to evaluate whether or not to create an alert.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Next comes a series of three aggregations. When they''re collapsed, they look
+    as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Figure 6.21 – Query aggregations in the watch input'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '](img/B17040_06_21.jpg)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Figure 6.21 – Query aggregations in the watch input
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The `bucket_results` aggregation first filters for buckets where the anomaly
+    score is greater than or equal to 75:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE5]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Then, a sub-aggregation asks for the top 1 bucket sorted by `anomaly_score`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE6]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Next, still within the `top_bucket_hits` sub-aggregation, there are a series
+    of defined `script_fields`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE7]'
+  prefs: []
+  type: TYPE_PRE
+- en: These newly defined variables will be used by the watch to provide more functionality
+    and context. Some of the variables are merely reformatting values (`score` is
+    just a rounded version of `anomaly_score`), while `start` and `end` will later
+    fill a functional role by defining a start and end time that is equal to +/- 10
+    bucket spans from the time of the anomalous bucket. This is later used by the
+    UI to show an appropriate contextual time range before and after the anomalous
+    bucket so that the user can see things more clearly.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The `influencer_results` and `record_results` aggregations ask for the top three
+    influencer scores and record scores, but only the output of the `record_results`
+    aggregation is used in subsequent parts of the watch (and only in the `action`
+    section of `default_ml_watch_email.json`, which contains some default email text).
+  prefs: []
+  type: TYPE_NORMAL
+- en: The condition section
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'The `condition` section is where `input` is evaluated to see whether or not
+    the `action` section is executed. In this case, the `condition` section is as
+    follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE8]'
+  prefs: []
+  type: TYPE_PRE
+- en: We are using this to check whether the `bucket_results` aggregation returned
+    any documents (where `doc_count` is greater than 0). In other words, if the `bucket_results`
+    aggregation did indeed return non-zero results, that indicates that there were
+    indeed documents where `anomaly_score` was greater than 75\. If true, then the
+    `action` section will be invoked.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The action section
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'The `action` section of our default watches has two parts in our case: one
+    `log` action for logging information to a file and a `send_email` action for sending
+    an email. The text of the watch won''t be repeated here for brevity (it is a lot
+    of text). The `log` action will print a message to an output file, which by default
+    is the Elasticsearch log file. Notice that the syntax of the message is using
+    the templating language called **Mustache** (named because of its prolific usage
+    of curly braces). Simply put, variables contained in Mustache''s double curly
+    braces will be substituted with their actual values. As a result, for one of the
+    sample jobs we created earlier in the chapter, the logging text written out to
+    the file may look as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE9]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'This alert should look familiar to what we saw in our Slack message earlier
+    in the chapter – of course, because it is derived from the same information. The
+    email version of the action may look as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE10]'
+  prefs: []
+  type: TYPE_PRE
+- en: It is obvious that the format of the alert HTML is really oriented not around
+    getting the user a summary of the information but enticing the user to investigate
+    further by clicking on the link within the email.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Also, it is notable that the top three records are reported in the text of the
+    email response. In our example case, there is only one record (a `count` detector
+    with a score of 91). This section of information came from the `record_results`
+    aggregation we described previously in the `input` section of the watch.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'This default watch is a good, usable alert that provides summarized information
+    about the unusualness of the dataset over time, but it is also good to understand
+    the implications of using this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The main condition for firing the alert is a bucket anomaly score above a certain
+    value. Therefore, it would not alert on individual anomalous records within a
+    bucket in the case where their score does not lift the overall bucket score above
+    the stated threshold.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: By default, only a maximum of the top three record scores in the bucket are
+    reported in the output, and only in the email version.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The only action in these examples is logging and email. Adding other actions
+    (Slack message, webhook, and so on) would require manually editing the watch.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Knowing this information, it may become necessary at some point to create a
+    more full- featured, complex watch to fully customize the behavior and output
+    of the watch. In the next section, we'll discuss some more examples of creating
+    a watch from scratch.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Custom watches can offer some unique functionality
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: For those who feel emboldened and want to dig deeper into some advanced aspects
+    of Watcher, let's look at some highlights from a few of the other samples in the
+    GitHub repository. These include examples of querying the results of multiple
+    jobs at once, programmatically combining the anomaly scores, and dynamically gathering
+    additional potential root-cause evidence of other anomalies correlated in time.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Chained inputs and scripted conditions
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'A nice example of an interesting watch is `multiple_jobs_watch.json`, which
+    shows the ability to do a chained input (doing multiple queries against the results
+    of multiple jobs) but also executing a more dynamic condition using a script:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE11]'
+  prefs: []
+  type: TYPE_PRE
+- en: This is basically saying that the alert only gets triggered if the combined
+    weighted anomaly scores of the three different jobs are greater than a value of
+    75\. In other words, not every job is considered equally important, and the weighting
+    takes that into account.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Passing information between chained inputs
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'Another unique aspect of chained inputs is that information gleaned from one
+    input chain can be passed along to another. As shown in `chained_watch.json`,
+    the second and third input chains use the `timestamp` value learned from the first
+    query as part of the `range` filter:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE12]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'This effectively means that the watch is gathering anomalies as evidence culled
+    from a window of time prior to a presumably important anomaly from the first job.
+    This kind of alert aligns nicely to the situation we''ll discuss in [*Chapter
+    7*](B17040_07_Epub_AM.xhtml#_idTextAnchor131)*, AIOps and Root Cause Analysis*,
+    in which a real application problem is solved by looking for correlated anomalies
+    in a window of time around the anomaly of a KPI. Therefore, a sample output of
+    this watch could look like this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE13]'
+  prefs: []
+  type: TYPE_PRE
+- en: Here, the formatting of the output that collates results from each of the three
+    payloads is managed with a hefty **transform** script that leverages the Java-like
+    **Painless** scripting language.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Note
+  prefs: []
+  type: TYPE_NORMAL
+- en: For more information on the Painless scripting language, please consult the
+    Elastic documentation at [https://www.elastic.co/guide/en/elasticsearch/reference/current/modules-scripting-painless.html](https://www.elastic.co/guide/en/elasticsearch/reference/current/modules-scripting-painless.html).
+  prefs: []
+  type: TYPE_NORMAL
+- en: If you're not intimidated by the code-heavy format of Watcher, you can wield
+    it as a very powerful tool to implement some very interesting and useful alert
+    schemes.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Summary
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Anomaly detection jobs are certainly useful on their own, but when combined
+    with near real-time alerting, users can really harness the power of automated
+    analysis – while also being confident about getting only alerts that are meaningful.
+  prefs: []
+  type: TYPE_NORMAL
+- en: After a practical study of how to effectively capture the results of anomaly
+    detection jobs with real-time alerts, we went through a comprehensive example
+    of using the new Kibana alerting framework to easily define some intuitive alerts
+    and we tested them with a realistic alerting scenario. We then witnessed how an
+    expert user can leverage the full power of Watcher for advanced alerting techniques
+    if Kibana alerting cannot satisfy the complex alerting requirements.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the next chapter, we'll see how anomaly detection jobs can assist not only
+    with alerting on important key performance indicators but also how Elastic ML's
+    automated analysis of a broad set of data within a specific application context
+    is the means to achieving some "AI" on tracking down an application problem and
+    determining its root cause.
+  prefs: []
+  type: TYPE_NORMAL

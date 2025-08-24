@@ -1,0 +1,2577 @@
+- en: Performance Patterns
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: This chapter includes patterns related to improving system performance. High
+    performance is a major requirement in scientific computing, artificial intelligence,
+    machine learning, and big data processing. Why is that?
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the past decade, data has grown almost exponentially thanks to the scalability
+    from the cloud. Think about the **Internet of Things** (**IoT**). Sensors are
+    all around us—home security systems, personal assistants, and even room temperature
+    controls are collecting tons of data continuously. Furthermore, the data being
+    collected is stored and analyzed by companies that want to build smarter products.
+    Use cases such as these demand more computing power and speed.
+  prefs: []
+  type: TYPE_NORMAL
+- en: I once debated with a colleague about the use of cloud technologies for solving
+    computationally intensive problems. Computing resources are definitely available
+    in the cloud, but they are not free. It is therefore quite important that computer
+    programs are designed to be more efficient and optimized to avoid unnecessary
+    costs in the cloud.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Fortunately, the Julia programming language allows us to easily utilize CPU
+    resources to the fullest extent. The way to make things fast is not difficult
+    as long as some rules are followed. The online Julia reference manual already
+    contains some tips. This chapter provides further patterns that are used extensively
+    by veteran Julia developers to increase performance.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We will go over the following design patterns:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Global constant
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Struct of arrays
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Shared arrays
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Memoization
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Barrier function
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Let's get started!
+  prefs: []
+  type: TYPE_NORMAL
+- en: Technical requirements
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: The sample source code is located at [https://github.com/PacktPublishing/Hands-on-Design-Patterns-and-Best-Practices-with-Julia/tree/master/Chapter06](https://github.com/PacktPublishing/Hands-on-Design-Patterns-and-Best-Practices-with-Julia/tree/master/Chapter06).
+  prefs: []
+  type: TYPE_NORMAL
+- en: The code is tested in a Julia 1.3.0 environment.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The global constant pattern
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Global variables are generally considered evil. I'm not kidding—they are evil.
+    If you don't believe me, just google it. There are many reasons why they are bad,
+    but in Julia land, they can also be a contributor to poor application performance.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Why do we want to use global variables? In the Julia language, variables are
+    either in the global or local scope. For example, all variable assignments at
+    the top level of a module are considered global. Variables that appear inside
+    functions are local. Consider an application that connects to an external system—a
+    handle object is typically created upon connection. Such handle objects can be
+    kept in a global variable because all functions in the module can access the variable
+    without having to pass it around as a function argument. That's the convenience
+    factor. Also, this handler object only needs to be created once, and then it can
+    be used at any time for subsequent actions.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Unfortunately, global variables also come with a cost. It may not be obvious
+    at first, but it does hurt performance—indeed, quite badly, in some cases. In
+    this section, we will discuss how bad global variables hurt performance and how
+    the problem can be remedied by using global constants.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Benchmarking performance with global variables
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'Sometimes, it is convenient to use global variables because they are accessible
+    from anywhere in the code. However, application performance may suffer when using
+    global variables. Let''s figure out together how badly performance is affected.
+    Here is a very simple function that just adds two numbers together:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE0]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'To benchmark this code, we will use the great `BenchmarkTools.jl` package,
+    which can repeatedly run the code many times and report back some performance
+    statistics. Let''s get started:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/b6c8821c-a510-40bd-a34c-c358e06a8750.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'It seems a little slow for just adding two numbers. Let''s get rid of the global
+    variable and just add the numbers using two function arguments. We can define
+    the new function as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE1]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Let''s benchmark this new function:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/d5f2a094-899d-4de8-bfe5-5c627677127f.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: That's *unbelievable*! Taking away the reference to the global variable sped
+    up the function by almost 900 times. To understand where the performance hit came
+    from, we can use the built-in introspection tool from Julia to see the generated
+    LLVM code.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Here''s the generated code for the faster one. It is clean and contains just
+    a single `add` instruction:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/6cb895c9-a4f4-4efc-83e3-792ae74f2b6a.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'On the other hand, the function that uses global variable generated this ugly
+    code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/b94445a0-33b5-423a-bc2e-6b004dc86363.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: Why is that? Shouldn't the compiler be smarter? The answer is that the compiler
+    cannot really assume that the global variable is always an integer. Because it
+    is a variable, which means it can be changed at any time, the compiler must generate
+    code that can handle any data type, to stay on the safe side. Well, such additional
+    flexibility introduces a huge overhead in this case.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Enjoying the speed of global constants
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'To improve performance, let''s create a global constant by using the `const`
+    keyword. Then, we can define a new function that accesses the constant, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE2]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Let''s benchmark its performance now:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/88b2394b-71ec-4415-a994-b86a09e4a250.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: '*This is perfect!* If we introspect the function again, we get the following
+    clean code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/2ca377d5-b17a-4d31-a112-55f4a111e85a.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: Next, we will discuss how to use a global variable (not a constant) and still
+    make it slightly better.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Annotating variables with type information
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: It is best when we can just use global constants. But what if the variable *does*
+    need to be changed during the life cycle of the application? For example, maybe
+    it is a global counter that keeps track of the number of visitors on a website.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'At first, we may be tempted to do the following, but we quickly realized that
+    Julia does not support annotating global variables with type information:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/4f7fa24e-cffe-4e4c-96be-43c4b440c536.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Instead, what we can do is to annotate the variable type within the function
+    itself, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE3]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Let''s see how it performs:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/4a157480-d95c-4fcb-b082-0efe16f5dc3f.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: That's quite a speed boost compared to the untyped version of 31 ns! However,
+    it is still far away from the global constant solution.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Understanding why constants help performance
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'The compiler has a lot more freedom when dealing with constants because of
+    the following:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The value does not change.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The type of the constant does not change.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: This will become clear after we look into some simple examples.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s take a look at the following function:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE4]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'If we just follow the logic, then it is not difficult to see that it always
+    returns a value of 10\. Let''s just unroll it quickly here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The `a` variable has a value of 6.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The `b` variable has a value of `a + 1`, which is 7.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Because the `b` variable is greater than 1, it returns 10.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: From the compiler's perspective, the `a` variable can be inferred as a constant
+    because it is assigned but never changed, and likewise for the `b` variable.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We can take a look at the code generated by Julia for this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/c30489a9-dd5f-4b5d-bf3d-4f3332042207.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: The Julia compiler goes through several stages. In this case, we can use the `@code_typed` macro,
+    which shows the code that has been generated where all type information has been
+    resolved.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '*Voila!* The compiler has figured it all out and just returns a value of `10`
+    for this function.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We realize that a couple of things have happened here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: When the compiler saw the multiplication of two constant values (`2 * 3`), it
+    computed the final value of `6` for `a`. This process is called **constant folding**.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: When the compiler inferred `a` as a value of `6`, it calculated `b` as a value
+    of `7`. This process is called **constant propagation**.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: When the compiler inferred `b` as a value of `7`, it pruned away the `else`-branch
+    from the `if-then-else` operation. This process is called **dead code elimination**.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Julia's compiler optimization is truly state of the art. These are just some
+    of the examples that we can get a performance boost automatically without having
+    to refactor a lot of code.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Passing global variables as function arguments
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: There is another way to tackle the problem of global variables. In a performance-sensitive
+    function, rather than accessing the global variable directly, we can pass the
+    global variable into the function as an argument.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s refactor the code earlier in this section by adding a second argument,
+    as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE5]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Now, we can call the function by passing in the variable. Let''s benchmark
+    the code as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/d3e10bf7-9df8-4770-a931-3f43258d2429.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: '*Fantastic!* It''s as fast as treating it as a constant. Where''s the magic?
+    As it turns out, Julia''s compiler automatically generates specialized functions
+    according to the type of its arguments. In this case, when we pass the variable
+    as an integer value, the function is compiled to the most optimized version because
+    the types of the arguments are known. It is fast now for the same reason as using
+    constants.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Of course, you may argue that it defeats the purpose of using global variables.
+    Nonetheless, the flexibility is there and it can be used when you really need
+    to get to the most optimal performance.
+  prefs: []
+  type: TYPE_NORMAL
+- en: When using `BenchmarkTools.jl` macros, we must interpolate global variables
+    using the dollar-sign prefix. Otherwise, the time that it takes to reference the
+    global variable is included in the performance test.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Hiding a variable inside a global constant
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Before we conclude this section, there is yet another alternative to keep the
+    flexibility of global variables while not losing too much performance. We can
+    call it a **global variable placeholder**.
+  prefs: []
+  type: TYPE_NORMAL
+- en: As it may have become clear to you by now, Julia can generate highly optimized
+    code whenever the type of a variable is known at compilation time. Hence, one
+    way to solve the problem is to create a constant placeholder and store a value
+    inside the placeholder.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Consider this code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE6]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The global constant is assigned a `Ref` object. In Julia, a `Ref` object is
+    nothing but a placeholder where the type of the enclosed object is known. You
+    can try this in the Julia REPL:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/dcc14ebe-314a-46d9-b985-80d71519d3b2.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: As we can see, the value inside `Ref(10)` has a type of `Int64` according to
+    the type signature, `Base.RefValue{Int64}`. Similarly, the type of the value inside
+    `Ref("abc")` is `String`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: To fetch the value inside a `Ref` object, we can just use the index operator
+    with no argument. Hence, in the preceding code, we use `semi_constant[]`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'What would be the performance overhead of this extra indirection? Let''s benchmark
+    the code as usual:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/3b832665-11e3-4b60-a7e6-8bfacc12fe95.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: That's not bad. Although it is far from the optimal performance of using global
+    constant, it is still approximately 15 times faster than using a plain global
+    variable.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Because `Ref` object is just a placeholder, the underlying value can also be
+    assigned:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/34530746-060f-4740-83f8-f278311b3d8a.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: In summary, the use of `Ref` allows us to simulate global variables without
+    sacrificing too much performance.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Turning to some real-life examples
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Global constants are very common among Julia packages. It is not too surprising
+    because constants are also used to avoid hardcoding values directly in functions.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Example 1 – SASLib.jl package
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In the `SASLib.jl` package, most constants are defined in the `constants.jl`
+    file located at [https://github.com/tk3369/SASLib.jl/blob/master/src/constants.jl](https://github.com/tk3369/SASLib.jl/blob/master/src/constants.jl).
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Here''s a fragment of the code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE7]'
+  prefs: []
+  type: TYPE_PRE
+- en: Using these constants allows the file-reading functions to perform well.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Example 2 – PyCall.jl package
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'The `PyCall.jl` package''s documentation suggests the user stores a Python
+    object using the global variable placeholder technique. The following excerpt
+    can be found in its documentation:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '"For a type-stable global constant, initialize the constant to `PyNULL()` at
+    the top level, and then use the `copy!` function in your module''s `__init__`
+    function to mutate it to its actual value."'
+  prefs: []
+  type: TYPE_NORMAL
+- en: A type-stable global constant is generally what we want for high-performance
+    code. Basically, when the module is initialized, this global constant can be initialized
+    with a value of `PyNULL()`. This constant is really just a placeholder object
+    that can be mutated with the actual value later.
+  prefs: []
+  type: TYPE_NORMAL
+- en: This technique is similar to the use of `Ref` as mentioned in the *Hiding a
+    variable inside a global constant* section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Considerations
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: If a global variable can be replaced as a global constant, then it should always
+    be done. The reason for doing that is more than performance alone. Constants have
+    the nice property of guaranteeing that their values are unchanged throughout the
+    application life cycle. In general, the fewer global state changes, the more robust
+    the program. Mutating states is traditionally a source of hard-to-find bugs.
+  prefs: []
+  type: TYPE_NORMAL
+- en: At times, we may get into a situation that we cannot avoid using global variables.
+    That's too bad. However, before we feel sad about that, we could also check whether
+    the system performance is materially affected or not.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the preceding example of adding two numbers, accessing the global variable
+    carries a relatively large cost because the actual operation is so simple and
+    efficient. Hence, more work is done in terms of getting access to the global variable.
+    On the other hand, if we have a more complex function that takes much longer,
+    say, 500 nanoseconds, then the extra 25 nanosecond overhead becomes much less
+    significant. In that case, we may as well ignore the issue as the overhead becomes
+    immaterial.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Finally, we should always watch out when too many global variables are used.
+    The problem multiplies when more global variables are used. How many are too many?
+    It really depends on your situation, but it does not hurt to think about the application
+    design and ask yourself whether the application is designed properly.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the next section, we will discuss a pattern that helps to improve system
+    performance just by laying out data differently in memory.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The struct of arrays pattern
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In recent years, modern CPU architecture has got fancier to meet today's demands.
+    Due to various physical constraints, it is a lot more difficult to attain higher
+    processor speed. Many Intel processors now support a technology called **Single
+    Instruction, Multiple Data** (**SIMD**). By utilizing **Streaming SIMD Extension**
+    (**SSE**) and **Advanced Vector Extensions** (**AVX**) registers, several mathematical
+    operations can be executed within a single CPU cycle.
+  prefs: []
+  type: TYPE_NORMAL
+- en: That is nice, but one of the pre-requisites of utilizing these fancy CPU instructions
+    is to make sure that the data is located in a contiguous memory block in the first
+    place. That brings us to our topic here. How do we orient our data in a contiguous
+    memory block? You may find the solution in this section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Working with a business domain model
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: When designing an application, we often create an object model that mimics business
+    domain concepts. The idea is to clearly articulate data in a form that feels most
+    natural to the programmer.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Let's say we need to retrieve customers' data from a relational database. A
+    customer record may be stored in a `CUSTOMER` table, and each customer is stored as
+    a row in the table. When we fetch customer data from the database, we can construct
+    a `Customer` object and push that into an array. Similarly, when we work with
+    NoSQL databases, we may receive data as JSON documents and put them into an array
+    of objects. In both cases, we can see that data is represented as an array of
+    objects. Applications are usually designed to work with objects as defined using
+    the `struct` statement.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Let's take a look at a use case for analyzing taxi data coming from New York
+    City. The data is publicly available as several CSV files. For illustration purposes,
+    we have downloaded the data for December 2018 and truncated it to 100,000 records.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The full data file can be downloaded from [https://data.cityofnewyork.us/Transportation/2018-Yellow-Taxi-Trip-Data/t29m-gskq](https://data.cityofnewyork.us/Transportation/2018-Yellow-Taxi-Trip-Data/t29m-gskq).
+  prefs: []
+  type: TYPE_NORMAL
+- en: For convenience, a smaller file with 100,000 records is available from our GitHub
+    site at [https://github.com/PacktPublishing/Hands-On-Design-Patterns-with-Julia-1.0/raw/master/Chapter06/StructOfArraysPattern/yellow_tripdata_2018-12_100k.csv](https://github.com/PacktPublishing/Hands-On-Design-Patterns-with-Julia-1.0/raw/master/Chapter06/StructOfArraysPattern/yellow_tripdata_2018-12_100k.csv).
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'First, we define a type called `TripPayment`, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE8]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'To read the data into memory, we will take advantage of the `CSV.jl` package.
+    Let''s define a function to read the file into a vector:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE9]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Now, when we fetch the data, we end up with an array. In this example, we have
+    downloaded 100,000 records, as shown in the following screenshot:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/1ed1f4bb-8d9c-4730-9939-6a9e396706a0.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Now, suppose that we need to analyze this dataset. In many data analysis use
+    cases, we simply calculate various statistics for some of the attributes in the
+    payment records. For example, we may want to find the average fare amount, as
+    follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/0e00f27a-6eae-4d7e-9144-f36e56d4915c.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: This should be a fairly fast operation already because it uses a generator syntax
+    and avoids allocation.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Some Julia functions accept generator syntax, which can be written just like
+    an array comprehension without the square brackets. It is very memory efficient
+    because it avoids allocating memory for the intermediate object.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The only thing is that it needs to access the `fare_amount` field for every
+    record. If we benchmark the function, it shows the following:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/2351facb-3126-45e7-a9d8-5aaed47d2a0d.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'How do we know whether it runs at optimal speed? We don''t unless we try to
+    do it differently. Because all we are doing is calculating the mean of 100,000
+    floating-point numbers, we can easily replicate that with a simple array. Let''s
+    replicate the data in a separate array:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE10]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Then, we can benchmark the `mean` function by passing the array as is:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/e767bfde-5d70-473c-a2c6-72df4905136e.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: '*Whoa!* What''s happening here? It is 24x faster than before.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: In this case, the compiler was able to make use of the more advanced CPU instructions.
+    Because Julia arrays are dense arrays, that is, data is compactly stored in a
+    contiguous block of memory, it enables the compiler to fully optimize the operation.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Converting data into an array seems to be a decent solution. However, just imagine
+    that you have to create these temporary arrays for every single field. It is not
+    much fun anymore as there is a possibility to miss a field while doing so. Is
+    there a better way to solve this problem?
+  prefs: []
+  type: TYPE_NORMAL
+- en: Improving performance using a different data layout
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: The problem we just saw is caused by the use of an array of structs. What we
+    really want is a struct of arrays. Notice the difference between arrays of structs
+    and structs of arrays?
+  prefs: []
+  type: TYPE_NORMAL
+- en: In an array of structs, to access a field for an object, the program must first
+    index into the object and then find the field via a predetermined offset in memory.
+    For example, the `passenger_count` field in the `TripPayment` object is the fourth
+    field of the struct where the preceding three fields are `Int64`, `String`, and
+    `String types`. So, the offset to the fourth field is 24\. An array of structs
+    has a row-oriented layout as every row is stored in a contiguous block of memory.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We now introduce the concept of struct of arrays. In a struct of arrays, we
+    take a column-oriented approach. In this case, we only maintain a single object
+    for the entire dataset. Within the object, each field represents an array of a
+    particular field of the original record. For example, the `fare_amount` field
+    would be stored as an array of fare amounts in this object. The column-oriented
+    format is optimized for high-performance computing because the data values in
+    the array all have the same type. In addition, they are also more compact in memory.
+  prefs: []
+  type: TYPE_NORMAL
+- en: A struct is typically aligned into 8-byte memory blocks in a 64-bit system.
+    For example, a struct that contains just two fields of `Int32` and `Int16` types
+    still consumes 8 bytes even though 6 bytes are enough to store the data. The two
+    extra bytes are used to pad the data structure to an 8-byte boundary.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the following sections, we will look into how to implement this pattern and
+    confirm that performance has improved.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Constructing a struct of arrays
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'It is easy and straightforward to construct a struct of arrays. After all,
+    we were able to quickly do that for a single field earlier. For completeness,
+    this is how we can design a new data type for storing the same trip payment data
+    in a column-oriented format. The following code shows that this pattern helps
+    to improve performance:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE11]'
+  prefs: []
+  type: TYPE_PRE
+- en: Notice that every field has been turned into `Vector{T}`, where `T` is the original
+    data type of the particular field. It looks quite ugly but we are willing to sacrifice
+    ugliness here for performance reasons.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The general rule of thumb is that we should just **Keep It Simple** (**KISS**).
+    Under certain circumstances, when we do need higher runtime performance, we could
+    bend a little.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Now, although we have a data type that is more optimized for performance, we
+    still need to populate it with data for testing. In this case, it can be achieved
+    quite easily using array comprehension syntax:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE12]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'When we''re done, we can prove to ourselves that the new object structure is
+    indeed optimized:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/84f64c6f-bc48-499b-8d94-e7c79571ab0c.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: Yes, it now has great performance, as we expected.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Using the StructArrays package
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: The ugliness of the preceding columnar struct left us in a very unsatisfied
+    state. Not only do we need to create a new data type with tons of `Vector` fields,
+    we also have to create a constructor function to convert our array of structs
+    into the new type.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We can recognize the power of Julia when we get to use powerful packages in
+    its ecosystem. To fully implement this pattern, we will introduce the `StructArrays.jl`
+    package, which automates most of the mundane tasks in turning an array of structs
+    into a struct of arrays.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In fact, the usage of `StructArrays` is embarrassingly simple:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE13]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Let''s take a quick look at the content. First of all, we can treat `sa` just
+    like the original array—for example, we can take the first three elements of the
+    array as before:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/2d939db7-ba66-4b72-aff8-2fd1cf4b068f.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'If we pick just one record, it comes back with the original `TripPayment` object:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/45b3f966-82b6-401e-bd64-52be7717fc80.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Just to make sure that there is no mistake, we can also check the type of the
+    first record:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/591c6b3b-eb14-40e1-8a1a-91fe8121e596.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Hence, the new `sa` object works just like before. Now, the difference comes
+    in when we need to access all of the data from a single field. For example, we
+    can get the `fare_amount` field as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/21356317-9519-4dab-844e-5a6906b2d3f0.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Because the type is already materialized as a *dense array*, we can expect
+    superb performance when doing numerical or statistical analysis on this field,
+    as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/49c5f557-8aa1-43b5-82f7-32a6776442e0.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: What is a `DenseArray`? It is actually an abstract type for which all elements
+    in the array are allocated in a contiguous block of memory. `DenseArray` is a
+    super-type of array.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Julia supports dynamic arrays by default, which means the size of the array
+    can grow when we push more data into it. When it allocates more memory, it copies existing
+    data over to the new memory location.
+  prefs: []
+  type: TYPE_NORMAL
+- en: To avoid excessive memory reallocation, the current implementation uses a sophisticated
+    algorithm to increase the size of memory allocation—fast enough to avoid excessive
+    reallocation but conservative enough to not over-allocate memory.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Understanding the space versus time trade-off
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: The `StructArrays.jl` package provides a convenient mechanism to quickly turn
+    an array of structs into a struct of arrays. We must recognize that the price
+    we are paying is an additional copy of the data in memory. Hence, we are once
+    again getting into the classic space versus time trade-off in computing.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s quickly look into our use case again. We can use the `Base.summarysize` function
+    in the Julia REPL to see the memory footprint:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/4e2b3396-19e2-43bc-ac89-72ecac1610a0.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: The `Base.summarysize` function returns the size of the object in bytes. We
+    divided the number `1024` twice to arrive at the mega-byte unit. It is interesting
+    to see that the struct of arrays, `sa`, is more memory efficient than the original
+    array of structs, `records`. Nevertheless, we have two copies of data in memory.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Fortunately, we do have some options here if we want to conserve memory. First,
+    we may just discard the original data in the `records` variable if we no longer
+    need the data in that structure. We can even force the garbage collector to run,
+    as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/27df9a41-047e-4546-8b21-7361fc6eab58.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: Second, we can discard the `sa` variable when we are done with the computation.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Handling nested object structures
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: The preceding sample case works fine for any flat data structure. Nowadays,
+    it is not uncommon to design types that contain other composite types. Let's drill
+    down a little bit deeper to see how we can handle such a nested structure.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'First, suppose that we want to separate the fields related to the fare in a
+    separate composite data type:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE14]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We can adjust the file reader slightly:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE15]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'After we read the data, the array of trip payment data would look like the
+    following:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/d98bcb93-8d70-4324-b6e0-f7d69dddb29d.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'If we just create `StructArray` as before, we cannot extract the `fare_amount`
+    field:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/97b5134f-b460-4efa-b67b-68b31c7440d8.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'To achieve the same result at a level deeper, we can use the `unwrap` option:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/ea510a52-e760-47e0-a56b-8ba0d3781cea.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: The value of the `unwrap` keyword argument is basically a function that accepts
+    a data type for a particular field. If the function returns `true`, then that
+    particular field will be constructed with a nested `StructArray`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We can now access the `fare_amount` field with another level of indirection
+    as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/1700346f-7b1a-4f47-a289-38f90ab5adcb.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: Using the `unwrap` keyword argument, we can easily walk through the entire data
+    structure and create a `StructArray` object that allows us to access any data
+    element in a compact array structure. From this point on, application performance
+    can be improved.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Considerations
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: When designing applications, we ought to determine what is the most important
+    thing that is valued by our users. Similarly, when working on data analysis or
+    data science projects, we should think about what we care about the most. A customer-first
+    approach is essential in any decision-making process.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Let's assume that our priority is to achieve better performance. Then, the next
+    question is which part of the system requires optimization? If the part is slowed
+    down due to the use of an array of structs, how much do we gain in speed when
+    we employ the struct of arrays pattern? Is the performance gain noticeable—is
+    it measured in milliseconds, minutes, hours, or days?
+  prefs: []
+  type: TYPE_NORMAL
+- en: Further, we need to consider system constraints. We like to think that the sky
+    is the limit. But then coming back to reality, we are limited in system resources
+    all over the place—the number of CPU cores, available memory, and disk space,
+    as well other limits imposed by our system administrators, such as, maximum number
+    of opened files and processes.
+  prefs: []
+  type: TYPE_NORMAL
+- en: While struct of arrays can improve performance, there is an overhead in allocating
+    memory for the new arrays. If the data size is large, the allocation and data
+    copy operation will take some time as well.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the next section, we will look into another pattern that helps to conserve
+    memory and allows distributed computing— shared arrays.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The shared array pattern
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Modern operating systems can handle many concurrent processes and fully utilize
+    all processor cores. When it comes to distributed computing, a larger task is
+    typically broken down into smaller ones such that multiple processes can execute
+    the tasks concurrently. Sometimes, the results of these individual executions
+    may need to be combined or aggregated for final delivery. This process is called
+    **reduction**.
+  prefs: []
+  type: TYPE_NORMAL
+- en: This concept is reincarnated in various forms. For example, in functional programming,
+    it is common to implement data processes using map-reduce. The mapping process
+    takes a list and applies a function to each element, and the reduction process
+    combines the results. In big data processing, Hadoop uses a similar form of map-reduce,
+    except that it runs across multiple machines in a cluster. The `DataFrames` package
+    contains functions that perform the Split-Apply-Combine pattern. These all present
+    pretty much the same concept.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Sometimes, parallel worker processes need to communicate with each other. In
+    general, processes can talk to each other by passing data via some form of **Inter-Process
+    Communication** (**IPC**). There are many ways to do that—sockets, Unix domain
+    sockets, pipes, named pipes, message queues, shared memory, and memory maps.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Julia ships with a standard library called `SharedArrays`, which interfaces
+    with the operating system's shared memory and memory map interface. This facility
+    allows Julia processes to communicate with each other by sharing a central data
+    source.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In this section, we will take a look at how `SharedArrays` can be used for high-performance
+    computing.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Introducing a risk management use case
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In a risk management use case, we want to estimate the volatility of portfolio
+    returns using a process called Monte Carlo simulation. The concept is pretty simple.
+    First, we develop a risk model based on historical data. Second, we use the model
+    to predict the future in 10,000 ways. Finally, we look at the distribution of
+    security returns in the portfolio and gauge how much the portfolio gains or losses
+    in each of those scenarios.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Portfolios are often measured against benchmarks. For example, a stock portfolio
+    may be benchmarked against the S&P 500 Index. The reason is that portfolio managers
+    are typically rewarded for earning *alpha*, a term for describing the excess return
+    that is over and above the benchmark's return. In other words, the portfolio manager
+    is rewarded for their skills in picking the right stocks.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the fixed income market, the problem is a little more challenging. Unlike
+    the stock market, typical fixed income benchmarks are quite large, up to 10,000
+    bonds. In assessing portfolio risk, we often want to analyze the sources of return.
+    Did the value of a portfolio go up because it was riding the wave in a bull market,
+    or did it go down because everyone is selling? The risk that correlates to market
+    movement is called **systematic risk**. Another source of return relates to the
+    individual bond. For example, if the issuer of the bond is doing well and making
+    good profit, then the bond has a lower risk and the price goes up. This kind of
+    movement due to the specific individual bond is called **idiosyncratic risk**.
+    For a global portfolio, some bonds are exposed to **currency risk** as well. From
+    a computational complexity perspective, to estimate the returns of the benchmark
+    index 10,000 ways, we have to perform *10,000 future scenarios x 10,000 securities
+    x 3 sources of returns = 300 million* pricing calculations.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Coming back to our simulation example, we can generate 10,000 possible future
+    scenarios of the portfolio, and the results are basically a set of returns across
+    all such scenarios. The returns data is stored on disk and is now ready for additional
+    analysis. Here comes the problem—an asset manager has to analyze over 1,000 portfolios,
+    and each portfolio may require access to returns data varying between 10,000 to
+    50,000 bonds depending on the size of the benchmark index. Unfortunately, the
+    production server is limited in memory but has plenty of CPU resources. How can
+    we fully utilize our hardware to perform the analysis as quickly as possible?
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s quickly summarize our problem:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Hardware:'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 16 vCPU
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 32 GB RAM
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Security returns data:'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Stored in 100,000 individual files
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Each file contains a 10,000 x 3 matrix (10,000 future states and 3 return sources)
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Total memory footprint is ~22 GB
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Task:'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Calculate statistical measures (standard deviation, skewness, and kurtosis)
+    for all security returns across the 10,000 future states.
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Do that as quickly as possible!
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The naive way to just load all of the files sequentially. Needless to say, loading
+    100,000 files one by one is not going to be very fast no matter how small the
+    files are. We are going to use the Julia distributed computing facility to get
+    it done.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Preparing data for the example
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: To follow the subsequent code for this pattern, we can prepare some test data.
+    Before you run the code here, make sure that you have enough disk space for the
+    test data. You will need approximately 22 GB of free space.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Rather than putting 100,000 files in a single directory, we can split them
+    into 100 sub-directories. So, let''s just create the directories first. A simple
+    function is created for that purpose:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE16]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We can assume that every security is identified by a numerical index value
+    between 1 and 100,000. Let''s define a function that generates the path to find
+    the file:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE17]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The function is designed to hash the file into one of the 100 sub-directories.
+    Let''s see how it works:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE18]'
+  prefs: []
+  type: TYPE_PRE
+- en: So, the first 100 securities are located in directories called `0`, `1`, ...,
+    `99`. The 101^(st) security starts wrapping and goes back to directory `0`. For
+    consistency reasons, the filename contains the security index minus 1.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Now we are ready to generate the test data. Let''s define a function as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE19]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'To generate all test files, we just need to call this function by passing `nfiles` with
+    a value of 100,000\. By the end of this exercise, you should have test files scattered
+    in all 100 sub-directories. Note that the `generate_test_data` function will take
+    a few minutes to generate all the test data. Let''s do that now:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/99083063-29a9-481c-8f3a-eda572dc7038.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'When it is done, let''s quickly take a look at our data files in a Terminal:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/9a49f834-4f81-44b6-920e-26d6f524b42b.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: We're now ready to tackle the problem using the shared array pattern. Let's
+    get started.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Overview of a high-performance solution
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: The beauty of `SharedArrays` is that the data is maintained as a single copy,
+    and multiple processes can have both read and write access. It is a perfect solution
+    to our problem.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In this solution, we will do the following:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The master program creates a shared array.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Using a distributed `for` loop, the master program commands worker processes
+    to read each individual file into a specific segment of the array.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Again, using a distributed `for` loop, the master program commands worker process
+    to perform statistical analysis.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: As we have 16 vCPUs, we can utilize all of them.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In practice, we should probably utilize fewer vCPUs so that we can leave some
+    room for the operating system itself. Your mileage may vary depending on what
+    else is running on the same server. The best approach is to test various configurations
+    and determine the optimal settings.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Populating data in the shared array
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'The security return files are distributed and stored in 100 different directories.
+    Where it gets stored is based upon a simple formula: *file index **modulus** 100*,
+    where the *file index* is the numerical identifier for each security, numbered
+    between 1 to 100,000.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Each data file is in a simple binary format. The upstream process has calculated
+    three source returns for 10,000 future states, as in a 10,000 x 3 matrix. The
+    layout is column-oriented, meaning that the first 10,000 numbers are used for
+    the first return source, the next 10,000 numbers are for the second return source,
+    and so on.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Before we start using distributed computing functions, we must spawn worker
+    processes. Julia comes with a convenient command-line option (`-p`) that the user
+    can specify the number of worker processes up front as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/5ca28f21-f785-4ffe-90fa-082cc0f2468f.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: When the REPL comes up, we would already have 16 processes running and ready
+    to go. The `nworkers` function confirms that all 16 worker processes are available.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s look into the code now. First, we must load `Distributed` and `SharedArrays`
+    packages:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE20]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'To make sure that the worker processes know where to find the files, we have
+    to change directory on all of them:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE21]'
+  prefs: []
+  type: TYPE_PRE
+- en: The `@everywhere` macro executes the statement on all worker processes.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The main program looks like this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE22]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'In this case, we are creating a 3-dimensional shared array. Then, we call the
+    `load_data!` function to read all 100,000 files and shovel the data into the valuation
+    matrix. How does the `load_data!` function work? Let''s take a look:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE23]'
+  prefs: []
+  type: TYPE_PRE
+- en: It's a very simple `for` loop that just calls the `read_val_file!` function
+    with an index number. Notice the use of two macros here—`@distributed` and `@sync`.
+    First, the `@distributed` macro does the magic by sending the body of the `for` loop
+    to the worker processes. In general, the master program here does not wait for
+    the worker processes to return. However, the `@sync` macro blocks until all jobs
+    are completely finished.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'How does it actually read the binary file? Let''s see:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE24]'
+  prefs: []
+  type: TYPE_PRE
+- en: Here, the function first locates the path of the data file. Then, it opens the
+    file and reads all the binary data into a byte array. Since the data is just 64-bit
+    floating pointer numbers, we use the `reinterpret` function to parse the data
+    into an array of `Float64` values. We do expect 30,000 `Float64` values here in
+    each file, representing 10,000 future states and 3 source returns. When the data
+    is ready, we just save them into the array for the particular index.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We also use the `@everywhere` macro to ensure that the function is defined
+    and made available to all worker processes. The `locate_file` function is a little
+    less interesting. It is included here for completeness:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE25]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'To load the data files in parallel, we can define a `load_data!` function as
+    follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE26]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Here, we just put the `@sync` and `@distributed` macros in front of a `for` loop.
+    Julia automatically schedules and distributes the call among all work processes. Now
+    that everything is set up, we can run the program:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE27]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We simply create a valuation `SharedArray` object. Then, we pass it to the
+    `load_data!` function for processing:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/40798cd2-7a61-4a6e-ba4b-36bba294fc47.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: It only took about three minutes to load 100,000 files into memory using 16
+    parallel processes. *That's pretty good!*
+  prefs: []
+  type: TYPE_NORMAL
+- en: If you try to run the program in your own environment but encounter an error,
+    it may be due to system constraints. Refer to the later section, *Configuring
+    system settings for shared memory usage*, for more information.
+  prefs: []
+  type: TYPE_NORMAL
+- en: It turns out that this exercise is still IO-bound. CPU utilization hovered just
+    around 5% during the load process. Should the problem demand incremental computation,
+    we could possibly leverage the remaining CPU resource by spawning other asynchronous
+    processes that operate on data and just got loaded into memory.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Analyzing data directly on a shared array
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Using shared arrays allows us to perform parallel operations on the data from
+    a single memory space. As long as we do not mutate the data, then these operations
+    can run independently without conflicts. This type of problem is called *embarrassingly
+    parallel*.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'To illustrate the power of multi-processing, let''s first benchmark a simple
+    function that calculates the standard deviation of the returns across all securities:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE28]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The value of `n` represents number of securities.  The value of `nattr` represents
+    number of sources of return. Let''s see how much time it takes for a single process. The
+    best timing was 5.286 seconds:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/6ee6bc24-1814-4c85-9f1d-578a99d03435.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: The `@benchmark` macro provides some statistics about the performance benchmark.
+    Sometimes, it is useful to see the distribution and have an idea about how much
+    GC impacts performance.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The `seconds=30` parameter was specified because this function takes seconds
+    to run. The default parameter value is 5 seconds, and that would not allow the
+    benchmark to collect enough samples for reporting.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We are now ready to run the program in parallel. First, we need to make sure
+    that all child processes have the dependent packages loaded:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE29]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Then, we can define a distributed function, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE30]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'This function looks very similar to the previous one, with some exceptions:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: We have allocated a new shared array, `result`, to store the computed data.
+    This array is 2-dimensional because we are reducing the third dimension into a
+    single standard deviation value. This array is accessible by all worker processes.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: The `@distributed` macro in front of the `for` loop is used to automatically
+    distribute the work, in other words, the body of the `for` loop, to the worker
+    processes.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: The `@sync` macro in front of the `for` loop makes the system wait until all
+    of the work is done.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'We can now benchmark the performance of this new function using the same 16
+    worker processes:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/3ca5af15-5673-46dd-ae1b-b28a96bf02f8.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: Compared to the performance of a single process, this is approximately 6x faster
+    than before.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Understanding the overhead of parallel processing
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Have you noticed something interesting here? Since we have 16 worker processes,
+    we would have expected that the parallel processing function to be close to 16
+    times faster. But the result came in at around 6 times, which is somewhat less
+    than we expected. Why is that?
+  prefs: []
+  type: TYPE_NORMAL
+- en: The answer is that it is just a matter of scale. There is some performance overhead
+    to use the parallel processing facility. Typically, this overhead can be ignored
+    because it is immaterial when compared to the amount of work being performed.
+    In this particular example, calculating standard deviation is a really trivial
+    computation. So, in relative terms, the overhead of coordinating remote function
+    calls and collecting results overshadows the actual work itself.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Perhaps we should prove it. Let''s just do a little more work and calculate
+    skewness and kurtosis in addition to standard deviation:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE31]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The parallel processing version is similar:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE32]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Let''s compare their performance now:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/80ed0ef1-3b83-46f8-b933-0b2a7a2f481a.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: The parallel process is now 9x faster, as shown in the preceding. If we continue
+    on this path and do more non-trivial computation, then we would expect a higher
+    impact up to somewhere closer to 16x difference.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Configuring system settings for shared memory usage
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: The magic of `SharedArrays` come from the use of memory map and shared memory
+    facilities in the operating system. When dealing with large amounts of data, we
+    may need to configure the system to handle the volume.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Adjusting system kernel parameters
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'The Linux operating system has a limit on the size of shared memory. To find
+    out what that is, we can use the `ipcs` command:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/2f6ae1e3-49c1-4606-9c44-97fa10349c7d.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'The `E` unit may look a little unfamiliar. It''s in exabytes, which basically
+    mean 18 zeros: `kilo`, `mega`, `giga`, `tera`, `peta`, and `exa`. Get it? So,
+    we''re in luck here, because the limit is so high that we will probably never
+    reach. However, if you see a small number, then you may need to reconfigure the
+    system. The three kernel parameters are as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Maximum number of segments (SHMMNI)
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Maximum segment size (SHMMAX)
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Maximum total shared memory (SHMALL)
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'We can find out the actual values using the `sysctl` command:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/3d6c6676-4fb5-4855-9fbd-dd7832911227.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'To adjust the values, we can again use the `sysctl` command. For example, to
+    set the maximum segment size (`shmmax`) to 128 GiB, we can do the following:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/6c10ef33-5b2f-46c1-8147-fb6110b5ba99.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: We can see that the kernel setting is now updated.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Configuring a shared memory device
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'It is not enough to just change the system limits as shown in the preceding
+    section. The Linux kernel actually uses the `/dev/shm` device as an in-memory
+    backing store for shared memory. We can find out the size of the device using
+    the regular `df` command:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/b6305740-ce86-4c5f-9402-8b0ec6c1f737.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'At the current state, the `/dev/shm` device is unused as shown in the preceding.
+    The overall size of the block device is 16 GiB. As an exercise, let''s now open
+    a Julia REPL and create `SharedArray`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/497f7a1d-d304-47ab-8b76-dde3bd146aeb.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Re-running the `df` command, we can see that `/dev/shm` is now used:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/89ce04c0-03c3-47a6-95c2-9a0b0dab1035.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Now that we know `SharedArray` uses the `/dev/shm` device, how can we increase
+    the size to accommodate our problem, which requires more than 22 GiB? It can be
+    done using the `mount` command with a new size:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/4bbd27b7-904d-4e2f-abba-56c95e2806d5.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: The size of `/dev/shm` is now clearly shown as `28G`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Debugging the shared memory size issue
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'What happens if we exceed the size of the shared memory device if we have forgotten
+    to increase the size as described earlier? Let''s say we need to allocate 20 GiB
+    but there is only 16 GiB:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/a79c1524-d21b-4eed-801e-62a129a38c0d.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'There is no error even though we have exceeded the limit! Are we getting a
+    free ride? The answer is no. It turns out that Julia does not know the limit has
+    been breached. We can even work with the array *up close and personal* to the
+    16 GiB mark:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/65d91dad-4d67-4836-82d6-9577cc8a0a31.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'The preceding code simply sets the first 15 GiB of memory to `0x01`. No error
+    is shown so far. Going back to the shell, we can check the size of `/dev/shm`
+    again. Clearly, 15 GiB is in use:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/6a13b028-c67d-4aa6-933e-3b0ac611ebd1.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Now, if we continue to assign values to the later part of the array, we get
+    an ugly Bus error and a long stack trace:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/8457ac45-5f3b-413c-941c-2f4b4906d725.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: You may wonder why Julia cannot be smarter and tell you up front that you do
+    not have enough shared memory space. As it turns out, it's the same behavior if
+    you had used the underlying operating system's `mmap` function. Honestly, Julia
+    just does not have any more information about the system constraint.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Sometimes, a C function's manual page can be useful and provide some hints.
+    For example, the documentation about the `mmap` call indicates that a SIGBUS signal
+    will be thrown when the program attempts to access an unreachable portion of the
+    memory buffer. The manual page can be found at [https://linux.die.net/man/2/mmap](https://linux.die.net/man/2/mmap).
+  prefs: []
+  type: TYPE_NORMAL
+- en: Ensuring worker processes have access to code and data
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'When developing parallel computation, a beginner often runs into the following
+    issues:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**Functions not defined in the worker processes: **This can be a symptom of
+    a library package not being loaded, or a function that was only defined in the
+    current process but not defined in the worker processes. Both issues can be resolved
+    by using the `@everywhere` macro as shown in the preceding examples.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Data not available in the worker processes: **This can be a symptom of the
+    data being stored as a variable in the current processes but not passed to the
+    worker processes. `SharedArray` is convenient because it is automatically made
+    available to worker processes. For other cases, the programmer generally has two
+    options:'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Explicitly pass the data via function arguments.
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'If the data is in a global variable, then it can be transferred using the `@everywhere`
+    macro, as follows:'
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '[PRE33]'
+  prefs: []
+  type: TYPE_PRE
+- en: For more advanced use cases, the `ParallelDataTransfer.jl` package provides
+    several helpful functions to facilitate data transfer among the master process
+    and worker processes.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Avoiding race conditions among parallel processes
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: '`SharedArrays` provides an easy conduit for sharing data across multiple processes.
+    At the same time, a `SharedArray` is by design a global variable across all worker
+    processes. As a general rule of thumb for every parallel program, extreme care
+    should be given when the array is mutated. If the same memory address needs to
+    be written by multiple processes, then these operations must be synchronized or
+    the program could crash easily.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The best option is to avoid mutation whenever possible.
+  prefs: []
+  type: TYPE_NORMAL
+- en: An alternative is to assign each worker a mutually exclusive set of slots in
+    the array so that they do not collide with each other.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Working with the constraints of shared arrays
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'Elements in a `SharedArray` must be *bits type*. What does that mean? The formal
+    definition of bits type can be summarized as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The type is immutable.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The type contains only primitive types or other bits types.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'The following `OrderItem` type is a bits type because all fields are primitive
+    types:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE34]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The following `Customer` type is not a bits type because it contains a reference
+    to `String`, which is neither a primitive type nor a bits type:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE35]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Let''s try to create `SharedArray` for a bits type. The following code confirms
+    that it works properly:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/4712c21d-01c9-426d-ad50-b370085cd0a9.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'If we try to create `SharedArray` with a non-bits type such as a mutable struct
+    type, an error will result:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/d7034c0d-e743-4c89-acde-cc8e9b017467.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: In summary, Julia's shared array is a great way to distribute data to multiple
+    parallel processes for high-performance computing. The programming interface is
+    also very easy to use.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the next section, we will look into a pattern that improves performance by
+    exploiting the space-time trade-off.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The memoization pattern
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In 1968, an interesting article was published—it envisioned that computers should
+    be able to learn from experience during execution and improve their own efficiency.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In developing software, we often face a situation where the speed of execution
+    is constrained by many factors. Maybe a function needs to read a large amount
+    of historical data from disk (also known as I/O-bound). Or a function just needs
+    to perform some complex calculation that takes a lot of time (also known as CPU-bound).
+    When these functions are called repeatedly, application performance can suffer
+    greatly.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Memoization is a powerful concept to address these problems. In recent years,
+    it has become more popular as functional programming is becoming more mainstream.
+    The idea is really simple. When a function is called for the first time, the return
+    value is stored in a cache. If the function is called again with the exact same
+    argument as before, we can look up the value from the cache and return the result
+    immediately.
+  prefs: []
+  type: TYPE_NORMAL
+- en: As you will see later in this section, memoization is a specific form of caching
+    where the return data of a function call is cached according to the arguments
+    being passed to the function.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Introducing the Fibonacci function
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'In functional programming, recursion is a common technique for computation.
+    Sometimes, we may fall into a performance pitfall unknowingly. A classic example
+    is the generation of a Fibonacci sequence, which is defined as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/c33798f1-b1a1-4b1e-85cb-88cf2e05f396.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'It works well functionally but it is not very efficient. Why? It is because
+    the function is recursively defined, and the same function is called multiple
+    times with the same arguments. Let''s take a look at the computation graph when
+    finding the sixth Fibonacci number, where each `f(n)` node represents a call to
+    the `fib` function:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/d77512b9-8018-4131-9c85-41ce8c6d9ce5.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: As you can see, the function is called many times, especially for those that
+    are at the beginning part of the sequence. To calculate `fib(6)`, we end up calling
+    the function 15 times! And this is like a snowball, getting worse very quickly.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Improving the performance of the Fibonacci function
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'First, let''s analyze how bad the performance is by revising the function to
+    keep track of the number of executions. The code is as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE36]'
+  prefs: []
+  type: TYPE_PRE
+- en: Every time the `fib` function is called, it keeps tracks a counter. If the value
+    of `n` is smaller than `3`, then it returns the count of `1` along with the result.
+    If `n` is a larger number, then it aggregates the counts from the recursive calls
+    to `fib` function.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s run it several times with various input values:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/46c45877-c458-4688-9327-28a040dae00e.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: This simple example just illustrated how quickly it turns into a disaster when
+    the computer has no memory about what it did before. A high school student would
+    be able to calculate `fib(20)` manually with just 18 additions, discounting the
+    first two numbers of the sequence. Our nice little function calls itself over
+    13,000 items!
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s now put back the original code and benchmark the function. To illustrate
+    the problem, I will start with `fib(40)`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/0a6f947b-432a-46fd-a066-e7f37228baa2.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: For this task, the function should really return instantly. The 430 millisecond
+    feels like an eternity in computer time!
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We can use memoization to solve this problem. Here is our first attempt:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE37]'
+  prefs: []
+  type: TYPE_PRE
+- en: First of all, we have created a dictionary object called `fib_cache` to store
+    the results of previous calculations. Then, the core logic for the Fibonacci sequence
+    is captured in this private function, `_fib`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The `fib` function works by first looking up the input argument from the `fib_cache`
+    dictionary. If the value is found, it returns the value. Otherwise, it invokes
+    the private function, `_fib`, and updates the cache before returning the value.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The performance should be much better now. Let''s test it quickly:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/bf205143-755b-4ae0-8c18-349cf1b3fdc9.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: We should be must happier with the performance result by now.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We have used a `Dict` object to cache calculation results here for demonstration
+    purposes. In reality, we can optimize it further by using an array as a cache.
+    The lookup from an array should be a lot faster than a dictionary key lookup.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Note that an array cache works well for the `fib` function because it takes
+    a positive integer argument. For more complex functions, a `Dict` cache would
+    be more appropriate.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Automating the construction of a memoization cache
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: While we are quite happy with the result in the preceding implementation, it
+    feels a little unsatisfactory because we have to write the same code every time
+    we need to memoize a new function. Wouldn't it be nice if the cache is automatically
+    maintained? Realistically, we just need one cache for each function that we want
+    to memoize.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'So, let''s do it a little differently. The thought is that we should be able
+    to build a higher-order function that takes an existing function and return a
+    memoized version of it. Before we get there, let''s first redefine our `fib` function
+    as an anonymous function, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE38]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'For now, we have added a `println` statement just so that we can validate the
+    correctness of our implementation. If it works properly, `fib` should not be called
+    millions of times. Moving on, we can define a `memoize` function as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE39]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The `memoize` function first creates a local variable called `memo` for storing
+    previous return values. Then, it returns an anonymous function that captures the
+    `memo` variable, performs cache lookup, and calls `f` functions when it is needed.
+    This coding style of capturing a variable in an anonymous function is called a
+    **closure**. Now, we can use the `memoize` function to build a cache-aware `fib`
+    function:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE40]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Let''s also prove that it does not call the original `fib` function too many
+    times. For example, running `fib(6)` should be no more than 6 calls:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/b1cee8a1-3c1c-4069-b16e-31e576af7c0a.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'That looks satisfactory. If we run the function again with any input less than
+    or equal to 6, then the original logic should not be called at all, and all results
+    should be returned straight from the cache. However, if the input is larger than
+    6, then it calculates the ones above 6\. Let''s try that now:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/82adab99-9b14-4c83-89d3-eb0a5e7860bd.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: We cannot conclude what we did is good enough until we benchmark the new code.
+    Let's do it now.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/17ac42d4-ee15-4999-a35d-c79d011a3306.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: The original function took 433 ms to compute `fib(400)`. This memoized version
+    only takes 50 ns. This is a huge difference.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Understanding the constraint with generic functions
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: One drawback of the preceding method is that we must define the original function
+    as an anonymous function rather than a generic function. That seems to be a major
+    constraint. The question is why doesn't it work with generic function?
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s do a quick test by starting a new Julia REPL, defining the original
+    `fib` function again, and wrapping it with the same `memoize` function:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/c1bd0fc0-fdeb-495e-96b5-b2a356bab3b1.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'The problem is that `fib` is already defined as a generic function, and it
+    cannot be bound to a new anonymous function, which is what is being returned from
+    the `memoize` function. To work around the issue, we may be tempted to assign
+    the memoized function with a new name:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE41]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'However, it does not really work because the original `fib` function makes
+    a recursive call to itself rather than the new memoized version. To see it more
+    clearly, we can unroll a call as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Call the function as `fib_fast(6)`.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: In the `fib_fast` function, it checks whether the cache contains a key that
+    equals 6.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: The answer is no, so it calls `fib(5)`.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: In the `fib` function, since `n` is `5` and is greater than `3`, it calls `fib(4)`
+    and `fib(3)` recursively.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: As you can see, the original `fib` function got called rather than the memoized
+    version, so we are back to the same problem before. Hence, if the function being
+    memoized uses recursion, then we must write the function as an anonymous function.
+    Otherwise, it would be okay to create a memoized function with a new name.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Supporting functions that take multiple arguments
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In practice, we would probably encounter functions that are more complex than
+    this. For example, the function that requires speed-up probably requires multiple
+    arguments and possibly keyword arguments as well. Our `memoize` function in the
+    previous section assumes a single argument, so it would not work properly.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'A simple way to fix this is illustrated as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE42]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The anonymous function being returned now covers any number of positional arguments
+    and keyword arguments as specified in the splatted arguments, `args...` and `kwargs...`.
+    We can quickly test this with a dummy function as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE43]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Then, we can create the fast version as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE44]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Let''s test the memoized function with a few different cases:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/8a2049e1-1fef-459e-bf9e-b1d1627a1ee5.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: It's working great!
+  prefs: []
+  type: TYPE_NORMAL
+- en: Handling mutable data types in the arguments
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: So far, we did not pay much attention to the arguments or keyword arguments
+    being passed to the function. Care must be taken when any of those arguments are
+    mutable. Why? Because our current implementation uses the arguments as the key
+    of the dictionary cache. If we mutate the key of a dictionary, it could lead to
+    unexpected results.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Suppose that we have a function that takes 2 seconds to run:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE45]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Knowing that it''s quite slow, we happily memoize it as usual:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE46]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Initially, it seems to work perfectly, as it has always been:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/7e526f15-b390-475b-aff1-4fc1018d7d36.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'However, we are shocked by the following observation:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/1c494dcd-0233-4a83-92ba-f550f1640f71.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: '*Bummer!* Rather than returning a value of `21`, it returns the previous result
+    as if `-6` were not inserted to the array. Out of curiosity, let''s push one more
+    value to the array and try again:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/0e520ace-52df-4451-bcfa-cacda611732f.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'It''s working again. Why is that happening? To understand that, let''s recap
+    how the `memoize` function was written:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE47]'
+  prefs: []
+  type: TYPE_PRE
+- en: As you can see, we are caching the data using the `(args, kwargs)` tuple as
+    the key of the dictionary object. The problem is that the argument being passed
+    to the memoized `sum_abs` function is a mutable object. The dictionary object
+    gets *confused* when the key is mutated. In that case, it may or may not locate
+    the key anymore.
+  prefs: []
+  type: TYPE_NORMAL
+- en: When we added `-6` to the array, it found the same object in the dictionary
+    and returned the cached result. When we added `7` to the array, it could not find
+    the object. Hence, the function does not work 100% of the time.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'To fix this issue, we need to make sure that the content of the arguments are
+    considered, not just the memory address of the container. A common practice is
+    to apply a `hash` function to the thing that we wish to use as a key to the dictionary.
+    Here''s one implementation:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE48]'
+  prefs: []
+  type: TYPE_PRE
+- en: The initial value of the `h` variable is randomly selected. On a 64-bit system,
+    we can generate it with a call to `rand(UInt64)`. The `hash` function is a generic
+    function defined in the `Base` module. We will keep it simple here for illustration
+    purposes. In reality, a better implementation would support a 32-bit system as
+    well.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The `memoize` function can now be rewritten to utilize such a hashing scheme:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/d1292b06-fc26-42cd-bfa7-6f5d6bcc1f12.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: We can test it again more extensively. Let's redefine the `sum_abs` function
+    again using the new `memoize` function. Then, we run a loop and capture the calculation
+    result and timing.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The result is shown as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/235a693a-2447-431c-b66a-4b7174ddb109.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: '*Fantastic!* It now returns the correct result even though the input data has
+    been mutated.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Memoizing generic functions with macros
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'Earlier, we discussed that generic functions cannot be supported by the `memoize`
+    function. It would be most awesome if we can just annotate the functions as memoized
+    while they are being defined. For example, the syntax would be like this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE49]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'It turns out that there''s already an awesome package called `Memoize.jl` that
+    does the exact same thing. It is indeed quite convenient:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/6c88cbb9-ec27-474c-9945-fda4f353f0fd.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Here, we can observe the following:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The first call to `fib(40)` was quite fast already, which is an indication that
+    the cache is utilized.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: The second call to `fib(40)` was almost instant, which means that the result
+    was just a cache lookup.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: The third call to `fib(39)` was almost instant, which means that the result
+    was just a cache lookup.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: You should be advised that `Memoize.jl` does not support mutable data as arguments
+    either. It carries the same problem that we described in the preceding section
+    because it uses the objects' memory addresses as the key to the dictionary.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Turning to real-life examples
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Memoization is used in some open source packages. The actual usage may be more
+    common in private applications and data analysis. Let's see some use cases for
+    memoization in the following sections.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Symata.jl
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'The `Symata.jl` package provides support for Fibonacci polynomials. As we may
+    have realized, the implementation of Fibonacci polynomials is also recursive just
+    like the Fibonacci sequence problem we discussed earlier in this section. `Symata.jl`
+    uses the `Memoize.jl` package to create the `_fibpoly` function as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE50]'
+  prefs: []
+  type: TYPE_PRE
+- en: Omega.jl
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'The `Omega.jl` package implements its own memoization cache. Interestingly,
+    it ensures proper return type from the cache lookup using the `Core.Compiler.return_type`
+    function. It is done to avoid type instability problems. In *The **barrier function pattern*
+    section later in this chapter, we will discuss more the problem of type instability
+    and how to deal with the issue. Check out the following code example:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE51]'
+  prefs: []
+  type: TYPE_PRE
+- en: Considerations
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Memoization can only be applied to *pure* functions.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'What is a pure function? A function is called pure when it always returns the
+    same value given the same input. It may seem intuitive for every function to behave
+    that way but in practice, it is not that straightforward. Some functions are not
+    pure due to reasons such as these:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: A function uses a random number generator and is expected to return random results.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: A function relies on data from an external source that produces different data
+    at different times.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Because the memoization pattern uses function arguments as the key of the in-memory
+    cache, it will always return the same result for the same key.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Another consideration is that we should be aware of the extra memory overhead
+    due to the use of a cache. It is important to choose the right cache invalidation
+    strategy for the specific use case. Typical cache invalidation strategies include
+    **Least Recently Used** (**LRU**), **First-In, First-Out** (**FIFO**), and time-based
+    expiration.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Utilizing the Caching.jl package
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'There are several packages that can make memoization easier. Some are mentioned
+    here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '`Memoize.jl` provides a `@memoize` macro. It''s very easy to use.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`Anamnesis.jl` provides a `@anamnesis` macro. It has more functionalities than
+    `Memoize.jl`.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`Caching.jl` was created with the ambition to provide more functionalities
+    such as persistence to disk, compression, and cache size management.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Here, we can take a look at `Caching.jl` as it is developed more recently and
+    has great features.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s build a memoized CSV file reader as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/12cb7ee8-c416-4d03-b36c-c322c4bbda03.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: The `@cache` macro makes a memoized version of the `read_csv` function. To confirm
+    that a file is read only once, we inserted a `println` statement and timed the
+    file read operation.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'For demonstration purposes, we have downloaded a copy of the film permits file
+    from the City of New York. The file is available from [https://catalog.data.gov/dataset/film-permits](https://catalog.data.gov/dataset/film-permits).
+    Let''s read the data file now:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/c3aa1355-bc14-491f-9beb-8a6728f00486.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: Here, we can see that the file is read only once. If we call `read_csv` again
+    with the same filename, then the same object is returned instantly.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We can examine the cache. Before doing that, let''s see what properties `read_csv`
+    supports:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/9bb30aac-fd20-443a-a00e-9bf450e669db.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Without looking at the manual, we can guess that the `cache` property represents
+    the cache. Let''s take a quick look:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/06ccd591-911a-4a91-a157-ba8dc6e35c66.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'We can also persist the cache to disk. Let''s examine the name and size of
+    the cache file:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/fd22c071-0026-41cc-8cc2-f8cc13aea2fd.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'The location of the cache file is found in the `filename` property. The file
+    does not exist until the `@persist!` macro was used to persist data to disk. We
+    can also see how many objects are present in memory or on disk by just examining
+    the function `itself` from the REPL:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/21eedbd3-51ee-41ad-8ff3-84249d4ff7ca.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'The `@empty!` macro can be used to purge the in-memory cache:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/3f97c9cc-09ba-4765-9736-c35e380b27b4.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Interestingly, because the on-disk cache still exists, we can still utilize
+    it without having to re-populate the memory cache:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/6f8b658f-2b8f-446f-a8e5-9d61d32c9d5e.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Finally, we can synchronize the memory and disk caches:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/ac89faf5-cb75-4957-a7a7-35c7a819dad3.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: The `Caching.jl` package has more functionalities that are not shown here. Hopefully,
+    we have got an idea of what it is capable of already.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Next, we will look into a pattern that can be used to address the type-instability
+    problem, which is a common issue causing performance problems.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The barrier function pattern
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: While Julia is designed as a dynamic language, it also aims for high performance.
+    The magic comes from its state-of-the-art compiler. When the type of variables
+    is known in a function, the compiler can generate highly optimized code. However,
+    when the type of a variable is unstable, the compiler has to compile more generic
+    code that works with any data types. In some sense, Julia can be forgiving—it
+    never fails on you even when it comes with a cost against runtime performance.
+  prefs: []
+  type: TYPE_NORMAL
+- en: What makes the type of a variable *unstable*? It means that in some circumstances
+    the variable may be one type, and in other circumstances, it may be another type.
+    This section will discuss such a type instability problem, how it may arise, and
+    what we can do about it.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Barrier function is a pattern that can be used to solve performance problems
+    due to type instability. So, let's see how to achieve that.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Identifying type-unstable functions
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In Julia, there is no need to specify the type of variables. In fact, to be
+    more precise, variables are not typed. Variables are merely bindings to values,
+    and values are typed. That is what makes Julia programs dynamic. However, such
+    flexibility comes with a cost. Because the compiler must generate code that supports
+    all possible types that may come up during runtime, it is unable to generate optimized
+    code.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Consider a simple function that just returns an array of random numbers:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE52]'
+  prefs: []
+  type: TYPE_PRE
+- en: If the `n` argument is odd, then it returns an array of random `Int` values.
+    Otherwise, it returns an array of random `Float64` values.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'This innocent function is actually type-unstable. We can use the `@code_warntype`
+    facility to check:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/79870010-f89e-4e5d-9243-fb62731a99e6.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: The `@code_warntype` macro displays an **Intermediate Representation** (**IR**)
+    of the code. An IR is generated by the compiler after it understand the flow and
+    data type of every line in that code. For our purpose here, we do not need to
+    understand everything printed on screen but we can pay attention to the highlighted
+    text as related to the data types generated from the code. In general, when you
+    see red text, it would also be a red flag.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In this case, the compiler has figured that the result of this function can
+    be an array of `Float64` or an array of `Int64`. Hence, the return type is just `Union{Array{Float64,1},
+    Array{Int64,1}}`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In general, more red signs from the `@code_warntype` output indicates more type
+    instability problems in the code.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The function does exactly what we want to do. But when it's used in the body
+    of another function, the type instability problem further affects runtime performance. We
+    can use a barrier function to solve this problem.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Understanding performance impact
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: When a function is called, the type of its arguments are known and then the
+    function is compiled with the exact data types from its arguments. This is called* specialization*. What
+    exactly is a barrier function? It simply exploits Julia's function specialization
+    to *stabilize* the type of variable as part of a function call. We will continue
+    the preceding example to illustrate the technique.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'First, let''s create a simple function that makes use of the type unstable
+    function, as mentioned earlier:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE53]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The `double_sum_of_random_data` function is just a simple function that returns
+    the sum of doubled random numbers generated by the `random_data` function. If
+    we just benchmark the function with either an odd or an even number argument,
+    it comes back with the following results:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/9c281dda-c3a9-4d28-bcc0-6e8d027620ed.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'The timing is better for the call with an input value of `100001`, most likely
+    because the random number generator for `Int` is better than the one for `Float64`.
+    Let''s see what `@code_warntype` comes back for this function:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/7c4c9973-410d-4185-ab08-f6b3b767e3c7.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: As you can see, there are tons of red marks around. The type instability issue
+    of a single function has a larger impact on other functions that use it.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Developing barrier functions
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'A barrier function involves refactoring a piece of logic from an existing function
+    into a new, separate function. When it''s done, all data required by the new function
+    will be passed as function arguments. Continuing with the preceding example, we
+    can factor out the logic that calculates the doubled sum of data as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE54]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Then, we just modify the original function to make use of this function:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE55]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Does it really improve performance? Let''s run the test:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/158c750f-974c-47d4-891b-fbc4d57f1c59.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: It turns out to have a huge difference for the `Float64` case—the elapsed time
+    went from 347 to 245 microseconds. Comparing the floating-point sum versus integer
+    sum cases, the result also makes perfect sense because summing integers is generally
+    faster than summing floating-point numbers.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Dealing with a type-unstable output variable
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: What we haven't noticed is another type instability problem concerning the accumulator.
+    In the preceding example, the `double_sum` function has a `total` variable that
+    keeps track of the doubled numbers. The problem is that the variable was defined
+    as an integer, but then the array may contain floating-pointer numbers instead.
+    This problem can be easily revealed by running `@code_warntype` against both scenarios.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Here is the output of `@code_warntype` for when an array of integers is passed
+    into the function:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/89141bb9-cfe6-4a36-a9aa-a02b9182dc1f.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Compare it with the output when an array of `Float64` is passed:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/7d7a6dd4-9a34-4e2a-9c35-f4edf2f3d6e3.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: If we call the function with an array of integers, then the type is stable.
+    If we call the function with an array of floats, then we see the type instability
+    issue.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'How do we fix this? Well, there are standard `Base` functions for creating
+    type-stable zeros or ones. For example, rather than hardcoding the initial value
+    of `total` to be an integer zero, we can do the following instead:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE56]'
+  prefs: []
+  type: TYPE_PRE
+- en: If we look into the `@code_warntype` output of the `double_sum_of_random_data`
+    function, it is much better than before. I will let you do this exercise and compare
+    the `@code_warntype` output with the prior one.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'A similar solution makes use of the parametric method:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE57]'
+  prefs: []
+  type: TYPE_PRE
+- en: The `T`  type parameter is used to initialize the `total` variable to the properly
+    typed value of zero.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'This kind of performance gotcha is sometimes difficult to catch. To ensure
+    optimized code is generated, it is always a good practice to use the following
+    functions for an accumulator or an array that stores output values:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '`zero` and `zeros` create a value of 0 or an array of 0s for the desired type.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`one` and `ones` create a value of 1 or an array of 1s for the desired type.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`similar` creates an array of the same type as the array argument.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'For example, we can create a value of 0 or an array of 0s for any numeric types
+    as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/16e42dcf-9fed-4de6-9d8b-7d70389088a9.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Likewise, the `one` and `ones` functions work the same way:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/da6e68f1-dac2-42a5-9a3a-b551beef19a9.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'If we want to create an array that looks like another one (in other words,
+    has the same type, shape, and size), then we can use the `similar` function:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/944cce80-c2f4-49e5-8c01-e9a5c8918b00.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: Note that the `similar` function does not zero out the content of the array.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The `axes` function may come in handy when we need to create an array of zeros
+    that matches the same dimensions of another array:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/0efd33ad-6ce6-4dd9-ac99-e27dd2fc44af.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: Next, we will look into a way to debug type instability issues.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Using the @inferred macro
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Julia comes with a handy macro in the `Test` package that can be used to check
+    whether the return type of a function matches the *inferred* return type of the
+    function. The inferred return type is simply the type that we see from the `@code_warntype`
+    output before.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'For example, we can check the notorious `random_data` function from the beginning
+    of this section:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/dadfd917-89f6-4d9e-b427-d92337237f7a.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: The macro reports an error whenever the actual returned type differs from the
+    inferred return type. It could be a useful tool to validate the type instability
+    problem as part of an automated test suite in the continuous integration pipeline.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The primary reason to use a barrier function is to improve performance where
+    the type instability problem exists. If we think about it more deeply, it also has
+    the side benefit of forcing us to create smaller functions. Smaller functions
+    are easier to read and debug and perform better.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We have now concluded all patterns in this chapter.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Summary
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In this chapter, we explored several patterns related to performance.
+  prefs: []
+  type: TYPE_NORMAL
+- en: First, we discussed how global variables hurt performance and the technique
+    of the global constant pattern. We looked into how the compiler optimizes performance
+    by doing constant folding, constant propagation, and dead branch elimination.
+    We also learned how to create a constant placeholder for wrapping a global variable.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We discussed how to utilize the struct of arrays pattern to turn an array of
+    structs into a struct of arrays. The new layout of the data structure allows better
+    CPU optimization and, hence, better performance. We took advantage of a very useful
+    package, `StructArrays`, for automating such data structure transformation. We
+    reviewed a financial services use case where a large amount of data needs to be
+    loaded into memory and used by many parallel processes. We implemented the shared
+    array pattern and went over some tricks to configure shared memory properly in
+    the operating system.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We learned about the memoization pattern for caching function call results.
+    We did a sample implementation using a dictionary cache and made it work with
+    functions taking various arguments and keyword arguments. We also found a way
+    to support mutable objects as function arguments. Finally, we discussed the barrier
+    function pattern. We saw how performance can be degraded by type-unstable variables.
+    We learned that splitting logic into a separate function allows the compiler to
+    produce more optimal code.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the next chapter, we will examine several patterns that improve system maintainability.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Questions
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Why does the use of global variables impact performance?
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: What would be a good alternative to using a global variable when it cannot be
+    replaced by a constant?
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Why does a struct of arrays perform better than an array of structs?
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: What are the limitations of `SharedArray`?
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: What is an alternative to multi-core computation instead of using parallel processes?
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: What care must be taken when using the memoization pattern?
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: What is the magic behind barrier functions in improving performance?
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL

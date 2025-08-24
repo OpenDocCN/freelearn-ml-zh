@@ -1,0 +1,1473 @@
+- en: Robustness Patterns
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: This chapter will cover several patterns that can be used to improve software
+    robustness. By robustness, we are referring to the quality aspects, that is, can
+    the software perform its functions correctly? Are all possible scenarios handled
+    properly? This is an extremely important factor to consider when writing code
+    for mission-critical systems.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Based on the **Principle of Least Privilege** (**POLP**), we would consider
+    hiding unnecessary implementation details to the client of the interface. However,
+    Julia's data structure is transparent – all fields are automatically exposed and
+    accessible. This poses a potential problem because any improper usage or mutation
+    can break the system. Additionally, by accessing the fields directly, the code
+    becomes more tightly coupled with the underlying implementation of an object.
+    So, what if a field name needs to be changed? What if a field needs to be replaced
+    by another one? Therefore, there is a need to apply abstraction and decouple object
+    implementation from its official interface. We should adopt the more general definition –
+    not only do we want to cover as many lines of code as possible but also every
+    possible scenario as well. An increase in code coverage would give us more confidence
+    about the correctness of our code.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We have classified these techniques into the following sections:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Accessor patterns
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Property patterns
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Let block patterns
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Exception handling patterns
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: By the end of this chapter, you will be able to encapsulate data access by developing
+    your own accessor functions and property functions. You will also be able to hide
+    away global variables from unexpected access outside of the module. Finally, you
+    will also know about various exception handling techniques and understand how
+    to retry failed operations.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '*Let''s get started!*'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Technical requirements
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: The example source code for this chapter can be found at [https://github.com/PacktPublishing/Hands-on-Design-Patterns-and-Best-Practices-with-Julia/tree/master/Chapter08](https://github.com/PacktPublishing/Hands-on-Design-Patterns-and-Best-Practices-with-Julia/tree/master/Chapter08).
+  prefs: []
+  type: TYPE_NORMAL
+- en: The code is tested in a Julia 1.3.0 environment.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Accessor patterns
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Julia objects are transparent. What does that mean? Well, currently, the Julia
+    language does not have the ability to apply access control over the fields of
+    an object. Therefore, people coming from a C++ or Java background may find it
+    a little uneasy. In this section, we will explore a number of ways in which to
+    make the language more acceptable for those users who are seeking more access
+    control.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'So, perhaps we should define our requirements first. While we write up the
+    requirements, we will also ask ourselves why we want to have them in the first
+    place. Let''s just consider any object in a Julia program:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**Some fields need to be hidden from the outside world**: Some fields are considered
+    to be part of the public interface and are, therefore, fully documented and supported.
+    Other fields are considered implementation details, and they may not be used because
+    they are subject to change in the future.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Some fields require validation before being mutated**: Some fields may only accept
+    a range of values. For example, an `age` field of a `Person` object may reject
+    anything less than 0 or greater than 120! Avoiding invalid data is paramount to
+    building robust systems.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Some fields require a trigger before they can be read**: Some fields may
+    be lazily loaded, which means they are not loaded until the value is read. Another
+    reason is that some fields may contain sensitive data, and the use of such fields
+    must be logged for audit purposes.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: We will now discuss how to address these requirements.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Recognizing the implicit interface of an object
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Before we dive into the specific patterns, let's first take a quick detour and
+    discuss how and why we have a problem in the first place.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Suppose that we have defined a data type called `Simulation` to keep track
+    of some scientific experiment data and related statistics. The syntax for it is
+    as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE0]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'A `Simulation` object contains an N-dimensional array of floating-point values
+    and a named tuple of statistical values. For demonstration purposes, we will create
+    a simple function to perform a simulation and create an object, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE1]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The simulation data called `heatmap` is generated using the `rand` function
+    based on a distribution provided by the user. The `dims` argument represents the
+    number of dimensions in the array, and the value of `n` represents the size of
+    each dimension. Here''s how to simulate a normally distributed 2-dimensional heatmap
+    of size 1000 x 1000:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE2]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'At this point, we can easily access the `heatmap` and `stats` fields of the
+    object as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/43488f32-78a0-4369-aa45-06c159ccb5ef.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: Let's pause for a second. Is it OK to access the fields directly? We can argue
+    here that it is not. The primary reason is that there is an implicit assumption
+    that the field names represent the public interface of the object.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Unfortunately, such an assumption can be a little brittle in reality. As any
+    seasoned programmer would have pointed out, software is always subject to change. *Always
+    to* *change*. The world is not static, and requirements are not set in stone.
+    For example, here are some possible changes that will certainly break our programming
+    interface:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Changing the field name of `heatmap` to `heatspace` because the new name is
+    better suited for 3-dimensional or higher-dimensional data
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Changing the data type of `stats` from a named tuple to a new `struct` type
+    because it has grown to include more complex statistical measures and we want
+    to develop new functions along with that
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Removing the `stats` field altogether and computing it on the fly
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: As you can see, the programming interface cannot be taken lightly. In order
+    to build software that lasts, we need to be clear about every single interface
+    and understand how to support them in the future.
+  prefs: []
+  type: TYPE_NORMAL
+- en: One way to provide an interface to an object is to create assessor functions,
+    which are sometimes called getters and setters in other programming languages.
+    So, in the next sections, let's look at how to use them.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Implementing getter functions
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'In mainstream object-oriented languages, we often implement getters for accessing
+    the fields of an object. In Julia, we can also create getter functions. When implementing
+    getter functions, we can choose which fields to expose as part of the **application
+    programming interface** (**API**). For our example, we will implement getter functions
+    for both fields, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE3]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Our choice of function names here is somewhat non-idiomatic for the Julia language.
+    A better convention is to use the nouns directly:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE4]'
+  prefs: []
+  type: TYPE_PRE
+- en: So, when we read the code that uses the `heatmap` function, we can read it as
+    the *heatmap of the simulation*. Likewise, we can read it as the *statistics of
+    the simulation* when the `stats` function is used.
+  prefs: []
+  type: TYPE_NORMAL
+- en: These getter functions serve the purpose of defining a formal data retrieval
+    interface for the object. If we ever need to change the names (or even the types)
+    of the underlying fields, it would be fine as long as the public interface does
+    not change. Furthermore, we could even remove the `stats` field and implement
+    the statistical calculation directly in the `stats` function. Backward compatibility
+    can now be easily maintained for any program that uses this object.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Next, we will look at write access for objects.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Implementing setter functions
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'For mutable types, we may implement setters. The scope would include fields
+    that can only ever be mutated. For our simulation project, suppose that we want
+    to allow the client program to do some transformation of the heatmap and put it
+    back to the object. We can support that use case easily, as shown in the following
+    code snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE5]'
+  prefs: []
+  type: TYPE_PRE
+- en: The setter function, `heatmap!`, accepts a `Simulation` object and a new heatmap
+    array. Because the `stats` field contains the statistics of the underlying heatmap,
+    we must maintain consistency within the object by recalculating the statistics
+    and updating the field. Note that such a guarantee for consistency is only possible
+    when we provide a setter function. Otherwise, the object would be in an inconsistent
+    state if we ever to allow users to directly mutate the `heatmap` field in the
+    object.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'An additional benefit is that we can perform data validation in the setter
+    function. For example, we can control the size of the map and throw an error when
+    the size of the heatmap contains odd shapes:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE6]'
+  prefs: []
+  type: TYPE_PRE
+- en: Here, we first determine the size of `new_heatmap`, which should be returned
+    as a tuple. Then, we find out how many unique values are in this tuple. If there
+    is only a single unique number in the tuple, then we know that the array is square,
+    cubic, and so on. Otherwise, we just throw an error back to the caller.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Just like getter functions, setter functions serve as a public interface where
+    the data of an object may be mutated. After we have both getter and setter functions,
+    we can expect the caller to go through the interfaces. But the original fields
+    can still be accessed directly. So, how do we stop that from happening? Let's
+    explore that next.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Discouraging direct field access
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: While getter and setter functions are convenient, it is easy to forget about
+    these functions and so the program ends up accessing the fields directly. That
+    would be too bad, as we have just spent all that effort creating getter and setter
+    functions and they end up getting bypassed.
+  prefs: []
+  type: TYPE_NORMAL
+- en: A possible solution is to discourage direct field access by renaming the fields
+    to something that looks obviously private. A common convention is to prepend the
+    field names with underscores.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'For our example, we can redefine the struct as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE7]'
+  prefs: []
+  type: TYPE_PRE
+- en: These oddly named fields will then only be used within the implementation of
+    the `Simulation` type, and all external usages will avoid them. Such a convention
+    discourages the programmer from making the mistake of accessing the fields directly.
+  prefs: []
+  type: TYPE_NORMAL
+- en: However, some of us may not be very satisfied with this solution because the
+    use of a coding convention is a very weak method for enforcing the proper use
+    of the programming interface. Such concern is very valid especially when we hold
+    ourselves to a higher standard of software robustness. So, in the next section,
+    we will explore a stronger technique that will allow us to control access programmatically.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Property patterns
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In this section, we will take a deep dive and learn how to enforce more granular
+    control over the fields of an object by using the property interface. Julia's
+    property interface allows you to provide a custom implementation for the dot notation
+    used in field access. By overriding the standard behavior, we can apply any kind
+    of access control and validation against the field being referenced or assigned.
+    To illustrate this concept, we will tackle a new use case here – implementing
+    a lazy file loader.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Introducing the lazy file loader
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'Suppose that we are developing a file loading facility that supports lazy loading.
+    By lazy, we are talking about not loading a file until the content is required. Let''s
+    take a look at the following code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE8]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The `FileContent` struct contains three fields:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '`path`: The location of the file'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`loaded`: A Boolean value that indicates whether the file has been loaded into
+    memory'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`contents`: A byte array that contains the contents of the file'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Here''s the constructor for the same struct:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE9]'
+  prefs: []
+  type: TYPE_PRE
+- en: As with our current design, we pre-allocate memory for the file but we do not
+    read the file content until later. The size of the file is determined by a call
+    to the `lstat` function. When creating the `FileContent` object, we initialize
+    the `loaded` field with a `false` value – an indication that the file has not
+    been loaded into memory.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Eventually, we must load the file content, so we just provide a separate function
+    that reads the file into the pre-allocated byte array:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE10]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Let''s run a quick test to see how it works:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/c2055393-41c1-4d8a-981f-29c97ed5b947.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: Here, we have just created a new `FileContent` object. Clearly, the `loaded`
+    field contains a `false` value because we have not read the file yet. The `content`
+    field is also full of zeros.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s load the file content now:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/8fba08b6-09a5-48ca-b8ed-81eabeecc8e2.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: Now, the `contents` field contains some real data, and the `loaded` field has
+    the value of `true`. Of course, we are just babysitting and running the code manually
+    for now. The idea is to implement lazy loading. We need a way to intercept any
+    *read* operation into the `contents` field so that the file content can be loaded
+    just in time. Ideally, this should happen whenever someone uses the `fc.contents` expression. In
+    order to *hijack* the call to get `fc.contents`, we must first understand how
+    Julia's dot notation works. Let's take a detour and go over that now.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Understanding the dot notation for field access
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'In general, whenever we need to access a specific field of an object, we can
+    conveniently write it as `object.fieldname`. As it turns out, this notation is
+    really *syntactic sugar*, that is, some *sweet* syntax, for the `getproperty`
+    function call. To be clear, whenever we write the code in the following format:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE11]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'It is translated to a function call to `getproperty`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE12]'
+  prefs: []
+  type: TYPE_PRE
+- en: For our lazy file loader example, `fc.path` is really the same as `getproperty(fc,
+    :path)`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'All that magic is performed automatically by the Julia compiler. A great thing
+    about Julia is that this kind of magic is quite transparent. We can actually see
+    what the compiler did by using the `Meta.lower` function, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/48bcbdb0-09a0-4218-be37-12df457b886b.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Similarly, when we assign a value to a field of an object, the same kind of
+    translation takes place:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/2fc46302-5481-4d5e-a462-ed0a56208428.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: From the preceding result, we can see when the code assigns a string to `fc.path`,
+    it is just translated to a `setproperty!(fc, :path, "/etc/hosts")` function call.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s not stop there. What do the `getproperty` and `setproperty!` functions
+    do? Well, they happen to be plain Julia functions defined in the `Base` module.
+    The best place to understand how they work is by examining the Julia source code
+    itself. From the Julia REPL, we can easily bring up the source code as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/383f5807-726f-4091-bc02-ef0fcb6ccf7b.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'From the preceding code, we can see that the `@edit` macro is used to locate
+    the source code of the function being called – in this case, `getproperty`. From
+    the REPL terminal, it should open your editor and display the code as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/aaf7c948-9132-43c7-a06d-9642db881eb9.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: '*Aha!* We see that the `getproperty` function just forwards the call to `getfield`,
+    which is used to extract the data from the object. The next line in the same source
+    file shows the definition of `setproperty!`. The implementation of `setproperty!`
+    is a bit more interesting. Besides using the `setfield!` function to mutate the
+    field in the object, it also converts the `v` value to the type of the field in
+    object `x`, which is determined by a call to `fieldtype`.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The `getfield` function is a built-in function for getting any field value from
+    an existing object. It takes two arguments – an object and a symbol. For example,
+    to get the path from a `FileContent` object, we can use `getfield(fc, :path)`.
+    Likewise, the `setfield!` function is used to update any field of an existing
+    object. Both `getfield` and `setfield!` are low-level functions in the Julia implementation.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Type conversion is convenient, especially for numerical types. For example,
+    it is quite common for an object to store a `Float64` field but the code happens
+    to pass an integer instead. Of course, the conversion logic is more general than
+    just numeric types. For custom types, the same auto-conversion process would work
+    fine as long as a `convert` function is defined.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Now that we understand how the dot notation is translated to the `getproperty`
+    and `setproperty!` function calls, we can develop the lazy loading feature for
+    our file loader.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Implementing read access and lazy loading
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In order to implement lazy loading, we can extend the `getproperty` function.
+    During the call, we can check whether the file content has been loaded yet. If
+    not, we just load the file content right before returning the data back to the
+    caller.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Extending the `getproperty` function is as easy as simply defining it with
+    the `FileContent` type and a symbol as the arguments of the function. The following
+    code shows this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE13]'
+  prefs: []
+  type: TYPE_PRE
+- en: It is important that we define the function for `Base.getproperty` rather than
+    just `getproperty`. That is because the compiler will translate the dot notation
+    to `Base.getproperty` rather than the `getproperty` function in your own module.
+    If this is unclear, you are encouraged to revisit the namespace concept from the *Understanding
+    namespaces, modules, and packages* section in [Chapter 2](48061f6f-db77-4db6-9c92-d7550f4317fe.xhtml),
+    *Modules, Packages, and Data Type Concepts*.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We have chosen to put `Base` as a prefix to the function name in the definition.
+    This style of coding is preferred because it is clear from the function definition
+    that we are extending the `getproperty` function from the `Base` package.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Another way to extend functions from another package is to first import the
+    third-party package. For the preceding example, we could have written it as follows.
+    This coding style is not recommended because it is less obvious that the `getproperty`
+    function being defined is an extension of the function from `Base`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '`import Base: getproperty`'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '`function getproperty(fc::FileContent, s::Symbol)`'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '` ....`'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '`end`'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'By contrast, the `getproperty` function must handle all possible property names.
+    Let''s first consider the following section of code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/3536077d-b41a-4f7e-9e81-745554338153.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: In this case, we must support `:path` and `:contents`. If the `s` symbol is
+    one of those fields that we want to pass through directly, then we just forward
+    the call to the `getfield` function.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Now, let''s consider the next section of code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/29f338e3-569e-4384-8a97-116e021eb3cc.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: If the symbol is `:contents`, then we check the value of the `loaded` field.
+    If the `loaded` field contains `false`, then we call the `load_contents!` function
+    to load the file content into memory.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Note that we have used `getfield` all over the place in this function. If we
+    had written the code using the normal dot syntax, for example, `fc.loaded`, then
+    it would start calling the `getproperty` function again and we could end up with
+    infinite recursion.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'If the field name is not one of the supported ones, then we just raise an exception,
+    as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/01e12635-9f90-40ff-8a33-cc32779c7fb0.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: One interesting observation is that we have decided to support two property
+    names only – `path` and `contents` – and we have dropped the support for the `loaded`
+    property. The reason for this is that the `loaded` field is really used as an
+    internal state of the object. There is no reason to expose it as part of the public
+    programming interface. As we talk about software robustness in this chapter, we
+    can also appreciate developing code that only exposes necessary information.
+  prefs: []
+  type: TYPE_NORMAL
+- en: An analogy is that data is always *classified* but can be released only on a
+    *need-to-know basis, *which is how government officials usually like to describe
+    highly sensitive data.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We are almost done. The only remaining piece of work is to refactor the `load_content!`
+    function to use `getfield` and `setfield!` instead of the dot notation:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE14]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We can now test the lazy loading functionality:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/89ea2112-43ec-4f69-9099-3b01caf2ea09.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Both references to the `path` and `contents` fields are working properly. In
+    particular, a reference to `fc.contents` triggered the file load and then returned
+    the proper content. So, what happened to the `loaded` field? Let''s try it:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/5396a7f5-c50b-4a5d-b3a5-cfc8a107bb6a.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: '*Voila!* We have successfully prevented the `loaded` field from being accessed
+    directly.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The property interface has enabled us to manage read access and implement the
+    lazy loading feature. Next, we will look at how to manage write access as well.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Controlling write access to object fields
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In order to manage write access to the fields of an object, we can extend the
+    `setproperty!` function, in a similar way to how we did for read access.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s recall how the `FileContent` data type was designed:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE15]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Suppose that we want to allow the user to switch to a different file by mutating
+    the `path` field with a new file location. In addition to this, we want to prevent
+    the `loaded` and `contents` fields from being changed directly using dot notation.
+    To achieve that, we can extend the `setproperty!` function as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE16]'
+  prefs: []
+  type: TYPE_PRE
+- en: To extend the `setproperty!` function, we must use `setfield!` in the function
+    definition whenever we need to change any field in the object.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In this case, when the user tries to assign a value to the `path` field, we
+    can just reinitialize the object like how we did in the constructor function.
+    This involves setting the values of the `path` and `loaded` fields, as well as
+    pre-allocating memory space for the file content. Let''s go ahead and test it
+    now:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/ea01bf9b-ac31-46f4-af99-35477c418891.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'If the user tries to assign a value to any other field, an error is thrown:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/f4271bfb-0dfe-477b-9f92-193da206d57b.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: By extending the `setproperty!` function, we have successfully controlled write
+    access to any field for any object.
+  prefs: []
+  type: TYPE_NORMAL
+- en: While individual field access can be controlled, we cannot prevent additional
+    changes to the underlying data of a field. For example, the `contents` property
+    is just an array of bytes and the programmer should be able to change the elements
+    in the array. If we want to protect the data from being modified, we can return a
+    copy of the `contents` byte array from the `getproperty` call.
+  prefs: []
+  type: TYPE_NORMAL
+- en: By now, we know how to implement the `getproperty` and `setproperty!` functions
+    so that we can control access to the individual fields of an object. Next, we
+    will look at how to document what properties are available.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Reporting accessible fields
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'A development environment can often help a programmer to enter field names
+    correctly. In the Julia REPL, when I press the *Tab* key twice after entering
+    the dot character, it will try to autocomplete and display the available field
+    names:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/3f5a7e8f-a25b-40a6-ab61-b07108a07048.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Now that we have implemented the `getproperty` and `setproperty!` functions,
+    the list is no longer accurate. More specifically, the `loaded` field should not
+    be displayed because it can neither be accessed nor changed. In order to fix this,
+    we can simply extend the `propertynames` function, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE17]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The `propertynames` function just needs to return a tuple of valid symbols.
+    After the function is defined, the REPL will only display the valid field names,
+    as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/7f4e81eb-f9a4-491a-ad08-c14147d91c4d.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: In this section, we have learned how to leverage Julia's property interface
+    to control both read and write access to any field of an object. It is an essential
+    technique to write robust programs.
+  prefs: []
+  type: TYPE_NORMAL
+- en: While the use of the property interface seems to address most of the requirements
+    we set forth earlier, it is not bulletproof.
+  prefs: []
+  type: TYPE_NORMAL
+- en: For example, there is nothing that prevents the program from calling the `getfield`
+    and `setfield!` functions directly on any object. It would not be possible to
+    completely hide that from the programmer unless the language is updated to support
+    granular field access controls. Such a feature may be available in the future.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Next, we will look at some patterns related to limiting the scope of variables
+    so that we can minimize the exposure of private variables to the outside world.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Let block patterns
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: The recurring theme in this chapter is to learn how to improve and gain more
+    control over the visibility and accessibility of data and functions in the public
+    API. By enforcing the access of the programming interface, we can guarantee how
+    the program is utilized. Additionally, we can focus on testing the interface as
+    *advertised*.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Currently, Julia provides little help in encapsulating implementation details
+    within a module. While we can use the `export` keyword to expose certain functions
+    and variables to the other modules, it is not designed to be an access control
+    or data encapsulation feature. You can always *peek* into a module and access
+    any variable or function even when they are not exported.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In this section, we will continue the trend and go over some strategies that
+    we can use to limit access to variables or functions in a module. Here, we will
+    use a web crawler use case to illustrate the problem and a possible solution.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Introducing the web crawler use case
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'Suppose that we have to build a web crawler that can be used to index content
+    from various websites. The process of doing that involves setting up a list of
+    target sites and then kicking off the crawler. Let''s create a module with the
+    structure, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE18]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Our programming interface is quite simple. Let''s see how to do this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '`Target` is a data type that represents the website being crawled. Then, we
+    can use the `add_site!` function to add new target sites to the list.'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: When ready, we just call the `crawl_sites!` function to visit all sites.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: For convenience, the `current_sites` function can be used to review the current
+    list of target sites and their crawling status.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Finally, the `reset_crawler!` function can be used to reset the state of the
+    web crawler.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'Let''s take a look at the data structure now. The `Target` type is used to
+    maintain the URL of the target website. It also contains a Boolean variable regarding
+    the status and the time it finished crawling. The struct is defined as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE19]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'In order to keep track of the current target sites, a global variable is used:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE20]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'To complete the web crawler implementation, we have the following functions
+    defined in the module:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE21]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'To use the web crawler, first, we can add some sites, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/903d8a28-7903-4c04-a716-2f2929610f1d.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Then, we can just run the crawler and retrieve the results afterward:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/18e6b756-5470-49a7-aa26-0067eb9913cf.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'The current implementation is not bad, but it has the following two access-related
+    issues:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The global variable, `sites`, is visible to the outside world, which means that
+    anyone can get a handle of the variable and mess it up, for example, by inserting
+    a malicious website.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: The `index_site!` function should be considered a private function and should
+    not be included as part of the public API.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Now that we have set the stage, we will demonstrate how to address these problems
+    in the next section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Using closure to hide private variables and functions away
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Our goal is to hide the global constant, `sites`, and the helper function, `index_site!`,
+    such that they are not visible in the public API. To achieve that, we can utilize
+    `let` blocks.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In the body of the module, we can wrap all of the functions inside a `let`
+    block, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/44aea611-8f04-4119-ba7d-0db6f3e1c93f.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Now, let''s see what has been changed:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The `sites` constant has been replaced by a bound variable at the beginning
+    of the `let` block. The variables in a `let` block are bound only in the scope
+    of the block and are not visible to the outside world.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The functions that need to be exposed to the API are prefixed with the `global`
+    keyword. This includes `add_site!`, `crawl_sites!`, `current_sites`, and `reset_crawler!`.
+    The `index_site!` function is left as-is so that it is not exposed.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The `global` keyword allows us to expose the function names to the global scope
+    of the module, which can be exported and made accessible from the public API.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'After reloading the module, we can confirm that neither `sites` nor `index_site!`
+    are available from the API, as shown in the following output:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/dad2113a-1a01-49e0-8e2e-ae5560cdbd6d.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: As you can see, a `let` block is an effective way to control access to global
+    variables or functions in a module. We have the ability to encapsulate functions
+    or variables that we want to prevent access from outside of the module.
+  prefs: []
+  type: TYPE_NORMAL
+- en: There may be a performance overhead when wrapping functions within a `let` block.
+    You may want to run a performance test before using this pattern in any performance-critical
+    section of your code.
+  prefs: []
+  type: TYPE_NORMAL
+- en: As `let` blocks are quite useful in limiting the scope, we can often use it
+    in longer scripts and functions. Next, we will look at how it is used in practice.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Limiting the variable scope for long scripts or functions
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Another usage of the let block is to limit the scope of variables in a long
+    Julia script or function. In a long script or function, the code could be difficult
+    to follow if we declare a variable at the top and use it throughout the body.
+    Instead, we can write a series of let blocks, which operate independently with
+    their own bound variables. By limiting the bounded variables in smaller blocks,
+    we can follow the code more easily.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'While writing long script/functions is not a generally recommended practice,
+    we can find them occasionally in testing code, which tends to be quite repetitive.
+    In test scripts, we may have many test cases that are grouped in the same test
+    set. Here is an example from the `GtkUtilities` package:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE22]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We have a few observations here from the preceding code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The `c` variable is bound to a new `Canvas` object every time.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The `win` variable is bound to a new `Window` object having a different title
+    every time.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The `w`, `h`, `randcol`, and `randnum` variables are local variables that do
+    not escape from their respective let blocks.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: By using let blocks, it does not matter how long the test script is. Every let
+    block maintains its own scope and nothing should leak from one block to the next.
+    This kind of programming style immediately provides some comfort to the programmer
+    when it comes to the quality of testing code, as each testing unit is independent
+    from each other.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Next, we will go over some exception handling techniques. Although it is more
+    fun doing programming projects, exception handling is not something that we want
+    to overlook. So, let's take a look at it next.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Exception handling patterns
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Robust software requires robust error handling practice. The fact is that an
+    error can be raised at any time, sometimes, unexpectedly. As a responsible programmer,
+    we need to ensure that every path of computation is taken care of, including both
+    the *happy paths* and *unhappy paths*. Happy paths refer to program execution
+    that runs normally as expected. Unhappy paths refer to an unexpected outcome due
+    to error conditions.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In this section, we will explore several ways about to catch exceptions and
+    recover from failures effectively.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Catching and handling exceptions
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'A general technique to catch exceptions is to enclose any logic in a try-catch
+    block. This is the easiest way to ensure that unexpected errors are handled:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE23]'
+  prefs: []
+  type: TYPE_PRE
+- en: A common question, however, is where this `try-catch` block should be placed.
+    Of course, we could have just wrapped every single line of code but that would
+    be impractical. After all, not every line of code would throw an error.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We do want to be smart about choosing where to catch exceptions. We know that
+    adding exception handling increases the code size. Additionally, every line of
+    code requires maintenance. Ironically, the less code we write, the less chance
+    of introducing bugs. After all, we should not introduce more problems by trying
+    to catch problems, right?
+  prefs: []
+  type: TYPE_NORMAL
+- en: Next, we will look at what kind of scenarios we should consider doing error
+    handling for.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Dealing with various types of exceptions
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: The most obvious places to wrap a try-catch block are in the code blocks that
+    we need to acquire network resources, for example, querying a database or connecting
+    to a web server. Whenever the network is involved, there is a much higher chance
+    of encountering an issue than doing something locally on the same computer.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'It is important to understand what kind of errors can be thrown. Suppose that
+    we continue developing the web crawler use case from the previous section. The
+    `index_sites!` function is now implemented using the HTTP library as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE24]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The `HTTP.get` function is used to retrieve the content from the website. The
+    code looks pretty innocent but it does not handle any error condition. For example,
+    what happens if the site''s URL is wrong or if the site is down? In those cases,
+    we would run into a runtime exception, such as the following:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/0e573f56-ac55-4738-a2b9-48b9d2a6876c.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'So, at a minimum, we should handle `IOError`. It turns out that the HTTP library
+    actually does more than that. If the remote site returns any HTTP status code
+    in the 400- or 500-series, then it also wraps the error code and raises a `StatusError`
+    exception, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/b84bd933-2d60-4863-9bc1-2d15dd167ce2.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'So, how do we know for sure what kind of errors can ever be thrown? Well, we
+    can always *read the fine manual* or so-called RTFM. From the HTTP package''s
+    documentation, we can see that the following exceptions may be thrown when making
+    HTTP requests:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '`HTTP.ExceptionRequest.StatusError`'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`HTTP.Parsers.ParseError`'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`HTTP.IOExtras.IOError`'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`Sockets.DNSError`'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'In Julia, the try-catch block catches all exceptions regardless of the type
+    of exception. So, we should have the ability to handle any other exception even
+    when it is unknown to us. Here is an example of a function that handles exceptions
+    properly:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE25]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We can see from the preceding code that, in the body of the `catch` block,
+    we can check the type of exception and handle it appropriately. The `else` part
+    of the block ensures that all types of exceptions are caught, whether we know
+    about them or not.  Let''s hook up the `crawl_site!` function to this new function:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE26]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We can test out the error handling code now:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/7489805c-9eba-4bae-ae58-5cec05979d27.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: This works well!
+  prefs: []
+  type: TYPE_NORMAL
+- en: So, this is one instance; what other places do we want to inject exception handling
+    logic? Let's explore this next.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Handling exceptions at the top level
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Another place where you would normally handle exceptions is at the very top
+    level of the program. Why? One reason is that we may want to avoid the program
+    from crashing due to an uncaught exception. The top level of the program is the
+    very last gate to catch anything, and the program has an option to either recover
+    from the failure (such as doing a *soft reset*) or gracefully close all the resources
+    and shut down.
+  prefs: []
+  type: TYPE_NORMAL
+- en: When a computer program finishes execution, it normally returns an exit status
+    back to the shell where the program was invoked. In Unix, the usual convention
+    is to indicate successful termination with a zero status and unsuccessful termination
+    with a nonzero status.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Consider the following pseudocode:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE27]'
+  prefs: []
+  type: TYPE_PRE
+- en: We can see from the previous code that, by design, we can exit the program with
+    a specific status code for different error conditions so that the calling program
+    can handle the exception properly.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Next, we will take a look at how to determine where an exception was originally
+    raised from a deeply nested execution frame.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Walking along the stack frames
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Often, an exception is raised from a function but it is not handled in the right
+    away. The exception then travels to the parent calling function. If that function
+    does not catch the exception either, it again travels to the next parent calling
+    function. This process continues until a try-catch block catches the exception.
+    At this point, the program's current *stack frame –* an execution context of where
+    the code is currently running – handles the exception.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'It would be tremendously useful if we can see where the exception was originally
+    raised. To do that, let''s first try to understand how to retrieve a stack trace
+    that is an array of stack frames. Let''s create a simple set of nested function
+    calls such that they throw an error at the end. Consider the following code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE28]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Now, if we execute the `foo1` function, we should get an error, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/09030407-9dae-422a-9c0b-12dcd16f0e7a.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: As you can see, the stack trace shows the execution sequence in reversed order.
+    At the top of the stack trace is the `foo3` function. Because we're doing this
+    in the REPL, we do not see a source filename; however, the number 2, as in `REPL[17]:2`,
+    indicates that an error was thrown from line 2 of the `foo3` function.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s introduce the `stacktrace` function now. This function is part of the
+    `Base` package and it can be used to obtain the current stack trace. As the `stacktrace`
+    function returns an array of `StackFrame`, it would be nice if we could create
+    a function to display it nicely. We can define a function to print the stack trace,
+    as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE29]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'As we want to handle exceptions properly, we will now update the `foo1` function
+    by wrapping the call to `foo2` with a `try-catch` block. In the `catch` block,
+    we will also print the stack trace so that we can further debug the issue:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE30]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Let''s run the `foo1` function now:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/943390bd-6cfb-4959-a7e3-14e81b21f1f2.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: '*Oops!* What happened to `foo2` and `foo3`? The exception was thrown from `foo3`
+    but we can no longer see them in the stack trace. This is because we have caught
+    the exception, and from Julia''s perspective, it is already handled and the current
+    execution context is in `foo1` already.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In order to address this issue, there is another function in the `Base` package
+    called `catch_backtrace`. It gives us the backtrace of the current exception so
+    we know where the exception was originally raised. We just need to update the
+    `foo1` function as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE31]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Then, if we run `foo1` again, we get the following results, where `foo3` and
+    `foo2` are back to the stack trace:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/633eeef5-2738-4fd7-be48-9e538be8fd04.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: Note that the use of `catch_backtrace` must be within the `catch` block. If
+    it is called outside of a `catch` block, it would return an empty backtrace.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Next, we will look at a different aspect of exception handling – performance
+    impact.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Understanding the performance impact of exception handling
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: There is actually a performance overhead to use a try-catch block. In particular,
+    if the application is doing something in a tight loop, it would be a bad idea
+    to catch exceptions inside the loop. To understand the impact, let's try a simple
+    example.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Consider the following code that simply calculates the sum of the square root
+    of every number in an array:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE32]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Knowing that `sqrt` may throw `DomainError` for negative numbers, our first
+    attempt may be to catch such exceptions inside the loop:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE33]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'What would be the performance impact of doing that? Let''s use the `BenchmarkTools`
+    package to measure the performance for both functions:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/1de1690f-ad25-4112-9674-c6ed3713a7cd.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'It turns out that just wrapping the code around a try-catch block has made
+    the loop 5 times slower! Perhaps that is not a very good deal. So, what should
+    we do in this case? Well, we can always proactively check the number before calling
+    the `sqrt` function and avoid the problem with negative values. Let''s write a
+    new `sum_of_sqrt3` function as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE34]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Let''s measure the performance again:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/9c0414ee-741b-4e9b-96af-ad9d8d9af8f9.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: '*Fantastic!* We have now restored the performance. The moral of the story is
+    that we should be smart about using try-catch blocks, especially when performance
+    is a concern. If there is any way to avoid a try-catch block, then it would certainly
+    be a better option whenever a higher performance is needed.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Next, we will explore how to perform retries, a commonly-used strategy for recovering
+    from failures.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Retrying operations
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Sometimes, exceptions are thrown due to unexpected outages or so-called *hiccups*.
+    It is not an uncommon scenario for a system that is highly integrated with other
+    systems or services. For example, the trading system in a stock exchange may need
+    to publish trade execution data to a messaging system for downstream processing.
+    But if the messaging system experiences just a momentary outage, then the operation
+    could fail. In that case, the most common approach is to sleep for a while and
+    then come back and try again. If the retry fails again, then the operation will
+    be retried again later, until the system fully recovers.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Such retry logic is not difficult to write. Here, we will play with an example.
+    Suppose that we have a function that fails randomly:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE35]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'On a good day, we would see this lovely message:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/b0a6a39f-e178-42c1-9184-753bbc6d2f69.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'On a bad day, we would get this instead:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/1752398e-b12d-491d-8251-2b578c666f98.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Naively, we can develop a new function that incorporates the retry logic:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE36]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'This function just calls the `do_something` function. If it encounters an exception,
+    it will wait 2 seconds as specified in the `retry_interval` keyword argument and
+    try again. It keeps a track of a counter in `retry_count`, and so it will just
+    retry up to 3 times by default, as indicated by the `max_retry_count` keyword
+    argument:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/fe6d01e6-df13-453d-bc4b-076bc15dcba1.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Of course, this code is fairly straightforward and easy to write. But we will
+    get bored quickly if we do this over and over again for many functions. It turns
+    out that Julia comes with a `retry` function that solves this problem nicely.
+    We can achieve the exact same functionality with a single line of code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE37]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The `retry` function takes a function as the first argument. The `delays` keyword
+    argument can be any object that supports the iteration interface. In this case,
+    we have provided an array of 3 elements, each containing the number of 2.0\. The
+    return value of the `retry` function is an anonymous function that takes any number
+    of arguments. Those arguments will be *fed* into the original function that needs
+    to be called, in this case, `do_something`. Here is how it looks using the `retry`
+    function:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/bb0f8e8e-da80-40a7-ada7-e1b06359c05b.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: Since the `delays` argument can contain any number, we could utilize a different
+    strategy that comes back with a different waiting time. A common usage is that
+    we would want to retry quickly (that is, sleep less) in the beginning but slow
+    down over time. When connecting to a remote system, it is possible that the remote
+    system is just having a short hiccup, or perhaps it is undergoing an extended
+    outage. In the latter scenario, it does not make sense to flood the system with
+    quick requests as it would be a waste of system resources and get the water muddier
+    when it is already in a mess.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In fact, the default value for the `delays` argument is `ExponentialBackOff`,
+    which iterates by exponentially increasing the delay time. On a very unlucky day,
+    using `ExponentialBackOff` yields the following pattern:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/8aa79787-65c4-4daf-acf8-485426df83b0.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Let''s pay attention to the wait time between retries. The result should match
+    the default setting of `ExponentialBackOff` as seen from its signature:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE38]'
+  prefs: []
+  type: TYPE_PRE
+- en: The keyword argument, `n`, indicates the number of retries, for which we used
+    the value of 10 in the preceding code. The first retry comes after 0.05 seconds.
+    Then, for every retry, the time of delay grows by a factor of 5 up until it hits
+    a maximum of 10 seconds. The growth rate may be jittered by 10%.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The `retry` function is often overlooked but it is a very convenient and powerful
+    way to make the system more robust.
+  prefs: []
+  type: TYPE_NORMAL
+- en: It is easy to throw an exception when something goes wrong. But that's not the
+    only way to handle error conditions. In the next section, we will discuss the
+    concepts of exceptions versus normal negative conditions.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Choosing nothing over exceptions
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Given the powerful features of a try-catch block, it is sometimes tempting to
+    handle all negative scenarios with `Exception` types. In practice, we want to
+    be very clear about what is truly an exception and what is a normal negative case.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We can turn to the `match` function as an example. The `match` function from
+    the `Base` package can be used to match a regular expression against a string.
+    If there is a match, then it returns a `RegexMatch` object, which contains the
+    captured results. Otherwise, it returns `nothing`. The following example illustrates
+    this effect:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/e20d6812-ac03-463d-bc3c-f0632ff86b94.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: The first `match` function call returned a `RegexMatch` object because it found
+    that `google.com` ends with `.com`. The second call could not find any match and
+    so it returned `nothing`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'By design, the `match` function does not throw any exception. Why not? One
+    reason for this is that the function is frequently used for checking whether a
+    string contains another string and then the program decides what to do either
+    way. Doing that would require a simple `if` statement; for instance, refer to
+    the following code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE39]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'If it were to throw an exception instead, then our code would have to look
+    different, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE40]'
+  prefs: []
+  type: TYPE_PRE
+- en: As you can see, the code can get very ugly very quickly using a try-catch block.
+  prefs: []
+  type: TYPE_NORMAL
+- en: When designing a programming interface, we should always think about whether
+    an exception is truly an exception or whether it could be just a negative status.
+    In the case of the match function, a negative case is effectively represented
+    by nothing.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In this section, we learned where to place try-catch blocks in our code. Now
+    we should be able to properly catch exceptions and examine the stack frames.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We have come to understand better how performance may be impacted by the exception-handling
+    code. Based on our understanding, we should be able to design and develop more
+    robust software.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Summary
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In this chapter, we have learned about the various patterns and techniques for
+    building robust software. While Julia is a great language for quick prototypes
+    and research projects, it has all the features to build robust, mission-critical
+    systems.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We began our journey with the idea of encapsulating data with accessor functions,
+    which allow us to design a formal API that we can support. We also discussed a
+    naming convention that discourages people from accessing the internal state of
+    the object.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We looked at Julia's property interface, which allows us to implement new *meanings*
+    whenever the field access dot notation is used. By extending the `getproperty`
+    and `setproperty!` functions, we are able to control both read and write access
+    to the fields of an object.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We also learned how to hide specific variables or functions defined in a module.
+    This strategy can be utilized whenever we want to have tighter control of the
+    visibility of variables and functions of a module.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Finally, we wanted to *take exception handling seriously!* We know robust software
+    needs to be able to handle all kinds of exceptions. We dived deep into the try-catch
+    process and learned how to determine the stack trace properly. We have proved
+    that performance can be negatively impacted by the use of a try-catch block, so
+    we need to be diligent about where to apply exception handling logic. We also
+    learned how to use the standard `retry` function as a recovery strategy.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the next chapter, we will go over a few more miscellaneous patterns commonly
+    used in the Julia programs.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Questions
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: What are the benefits of developing assessor functions?
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: What would be an easy way to discourage the use of internal fields of an object?
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Which functions may to be extended as part of the property interface?
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: How can we capture the stack trace from a catch block after an exception has
+    been caught?
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: What is the best way to avoid the performance impact of a try-catch block for
+    a system that requires optimal performance?
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: What is the benefit of using the retry function?
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: How do we hide away global variables and functions that are used internally
+    in a module?
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
