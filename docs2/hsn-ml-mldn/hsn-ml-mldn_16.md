@@ -1,4 +1,4 @@
-# 使用 TensorFlow 与 ML.NET
+# 第十二章：使用 TensorFlow 与 ML.NET
 
 在本章中，我们将使用预训练的 TensorFlow 模型，特别是 Inception 模型，并将其集成到**Windows Presentation Foundation**（WPF）应用程序中。我们将使用预训练的模型并应用迁移学习，通过添加一些食物和水的图片。在迁移学习完成后，我们允许用户选择他们自己的图片。到本章结束时，你应该对将 TensorFlow 模型集成到你的 ML.NET 应用程序中所需的内容有一个牢固的掌握。
 
