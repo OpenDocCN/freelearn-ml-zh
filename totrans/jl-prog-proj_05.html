@@ -1,0 +1,905 @@
+<html><head></head><body>
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Adding a Web UI for the Wiki Game</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">Developing the backend of our game was quite a learning experience. This strong foundation will serve us well—the modular approach will allow us to easily convert the <strong class="calibre4">read-eval-print loop</strong> (<strong class="calibre4">REPL)</strong> app into a web app, while our understanding of types will prove to be priceless when dealing with Julia's web stack and its rich taxonomy.</p>
+<p class="calibre2">We're now entering the last stage of our game development journey—building a web user interface for the <em class="calibre16">Six Degrees of Wikipedia</em>. Since building a full-featured web app is no simple feat, this last part will be dedicated to this task alone. In the process, we will learn about the following topics:</p>
+<ul class="calibre10">
+<li class="calibre11">Julia's web stack; namely, the <kbd class="calibre12">HTTP</kbd> package and its main components—<kbd class="calibre12">Server</kbd>, <kbd class="calibre12">Router</kbd>, <kbd class="calibre12">HandlerFunction</kbd>, and <kbd class="calibre12">Response</kbd></li>
+<li class="calibre11">Architecting a web app to take advantage of <kbd class="calibre12">HTTP</kbd> and integrate it with existing Julia modules</li>
+<li class="calibre11">Exposing features on the web by defining routes that map URLs to Julia functions</li>
+<li class="calibre11">Spawning a web server to handle user requests and send back proper responses to the clients</li>
+</ul>
+<p class="calibre2">The end of this chapter comes with a cool reward—our game will be ready and we'll play a few rounds of <em class="calibre16">Six Degrees of Wikipedia</em>!</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Technical requirements</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">The Julia package ecosystem is under continuous development and new package versions are released on a daily basis. Most of the times this is great news, as new releases bring new features and bug fixes. However, since many of the packages are still in beta (version 0.x), any new release can introduce breaking changes. As a result, the code presented in the book can stop working. In order to ensure that your code will produce the same results as described in the book, it is recommended to use the same package versions. Here are the external packages used in this chapter and their specific versions:</p>
+<pre class="calibre17">Cascadia@v0.4.0<br class="title-page-name"/>Gumbo@v0.5.1<br class="title-page-name"/>HTTP@v0.7.1<br class="title-page-name"/>IJulia@v1.14.1</pre>
+<p class="calibre2">In order to install a specific version of a package you need to run:</p>
+<pre class="calibre17"><strong class="calibre1">pkg&gt; add PackageName@vX.Y.Z</strong> </pre>
+<p class="calibre2">For example:</p>
+<pre class="calibre17"><strong class="calibre1">pkg&gt; add IJulia@v1.14.1</strong></pre>
+<p class="calibre2">Alternatively you can install all the used packages by downloading the <kbd class="calibre12">Project.toml</kbd> file provided with the chapter and using <kbd class="calibre12">pkg&gt;</kbd> instantiate as follows:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; download("https://raw.githubusercontent.com/PacktPublishing/Julia-Programming-Projects/master/Chapter05/Project.toml", "Project.toml")</strong><br class="title-page-name"/><strong class="calibre1">pkg&gt; activate . </strong><br class="title-page-name"/><strong class="calibre1">pkg&gt; instantiate</strong></pre>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">The game plan</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">We're onto the last stage of our project—the web UI. Let's start by discussing the spec; we need to lay out the blueprint before we can proceed with the implementation.</p>
+<p class="calibre2">The player will start on the landing page. This will display the rules and will provide options for launching a new game, allowing the user to choose a difficulty level. Following this starting point, the player will be redirected to the new game page. Here, taking into account the selected difficulty level, we'll bootstrap a new game session by fetching the articles with the algorithm we wrote in the previous chapter. Once we pick the articles that represent the <em class="calibre16">Six Degrees of Wikipedia</em>, we will display a heading with the game's objective—the titles of the start and end articles. We'll also display the content of the first article, thus kickstarting the game. When the player clicks on a link in this article, we have to respond accordingly by checking if the player has found the end article and won the game. If not, render the new article and increment the number of steps taken.</p>
+<p class="calibre2">We'll also need an area to display the progress of the game—the articles that were viewed in the current session, how many steps have been taken in total, and a form of navigation to allow the players to go back and rethink their choices if they find themselves on the wrong track. Therefore, we'll need to store the player's navigation history. Finally, it would be nice to provide an option to solve the puzzle—of course, as a result, the player will lose the game.</p>
+<p class="calibre2">A very important piece of the spec is that between the stateless browser requests and the server responses, while navigating through the Wikipedia articles, we need some sort of mechanism to allow us to maintain the state of the game, that is, to retrieve a game with its corresponding data—difficulty, path (articles) and progress, navigation history, number of steps taken, and so on. This will be achieved by creating a unique game identifier at the beginning of each play session and passing it with every request as a part of the URL. </p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Learning about Julia's web stack</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">Julia's package ecosystem has long provided a variety of libraries for building web apps. Some of the most mature are <kbd class="calibre12">HttpServer</kbd>, <kbd class="calibre12">Mux</kbd>, <kbd class="calibre12">WebSockets</kbd>, and <kbd class="calibre12">JuliaWebAPI</kbd> (to name just a few; this list is not exhaustive). But as the ecosystem settled with Julia version 1, a lot of community effort has been put into a newer package, simply known as <kbd class="calibre12">HTTP</kbd>. It provides a web server, an HTTP client (which we already used in the previous chapters to fetch the web pages from Wikipedia), as well as various utilities for making web development simpler. We'll learn about key <kbd class="calibre12">HTTP</kbd> modules ,such as <kbd class="calibre12">Server</kbd>, <kbd class="calibre12">Router</kbd>, <kbd class="calibre12">Request</kbd>, <kbd class="calibre12">Response</kbd>, and <kbd class="calibre12">HandlerFunction</kbd>, and we'll put them to good use.</p>
+<p class="calibre2"/>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Beginning with a simple example – Hello World</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">Let's take a look at a simple example of employing the <kbd class="calibre12">HTTP</kbd> server stack. This will help us understand the foundational building blocks before we dive into the more complex issue of exposing our game on the web.</p>
+<p class="calibre2">If you followed the previous chapter, you should already have the <kbd class="calibre12">HTTP</kbd> package installed. If not, you know the drill—run <kbd class="calibre12">pkg&gt; add HTTP</kbd> in Julia's REPL.</p>
+<p class="calibre2">Now, somewhere on your computer, create a new file called <kbd class="calibre12">hello.jl</kbd>. Since this will be a simple piece of software contained in just one file, there's no need to define a module. Here is the full code, the whole eight lines, in all their glory. We'll go over them next:</p>
+<pre class="calibre17">using HTTP, Sockets<br class="title-page-name"/>const HOST = ip"0.0.0.0"<br class="title-page-name"/>const PORT = 9999<br class="title-page-name"/>router = HTTP.Router()<br class="title-page-name"/>server = HTTP.Server(router)<br class="title-page-name"/>HTTP.register!(router, "/", HTTP.HandlerFunction(req -&gt; HTTP.Messages.Response(200, "Hello World")))<br class="title-page-name"/>HTTP.register!(router, "/bye", HTTP.HandlerFunction(req -&gt; HTTP.Messages.Response(200, "Bye")))<br class="title-page-name"/>HTTP.register!(router, "*", HTTP.HandlerFunction(req -&gt; HTTP.Messages.Response(404, "Not found")))<br class="title-page-name"/>HTTP.serve(server, HOST, PORT) </pre>
+<p class="calibre2">The workflow for handling web requests with <kbd class="calibre12">HTTP</kbd> requires four entities—<kbd class="calibre12">Server</kbd>, <kbd class="calibre12">Router</kbd>, <kbd class="calibre12">HandlerFunction</kbd>, and <kbd class="calibre12">Response</kbd>.</p>
+<p class="calibre2">Beginning our analysis of the code with the simplest part, on the last line, we start our server by calling <kbd class="calibre12">HTTP.serve</kbd>. The <kbd class="calibre12">serve</kbd> function takes a <kbd class="calibre12">server</kbd>, an object of type <kbd class="calibre12">Server</kbd>, plus the <kbd class="calibre12">HOST</kbd> information (an IP string) and the <kbd class="calibre12">PORT</kbd> (an integer) that are used to attach to and listen to requests as arguments. We have defined <kbd class="calibre12">HOST</kbd> and <kbd class="calibre12">PORT</kbd> at the top of the file as constants. The value of <kbd class="calibre12">HOST</kbd> is defined using the non-standard <kbd class="calibre12">ip""</kbd> string literal. We learned about non-standard string literals when we discussed the <kbd class="calibre12">String</kbd> type. In this regard, the <kbd class="calibre12">ip"..."</kbd> notation is similar to regular expressions (<kbd class="calibre12">r"..."</kbd>), version strings (<kbd class="calibre12">v"..."</kbd>), or <kbd class="calibre12">Pkg</kbd> commands (<kbd class="calibre12">pkg"..."</kbd>).</p>
+<p class="calibre2">Instantiating a new <kbd class="calibre12">Server</kbd> requires a <kbd class="calibre12">Router</kbd> object, which we will name <kbd class="calibre12">router</kbd>. The job of the <kbd class="calibre12">Router</kbd> is to register a list of mappings (called <strong class="calibre4">routes</strong>) between the links (URIs) that are exposed by our app on the internet and our Julia functions (called <kbd class="calibre12">HandlerFunctions</kbd>), which provide the response. We have set up the routes using the <kbd class="calibre12">register!</kbd> function, passing the <kbd class="calibre12">router</kbd> object, the URI structures (like <kbd class="calibre12">/</kbd> or <kbd class="calibre12">/bye</kbd>) and the corresponding <kbd class="calibre12">HandlerFunction</kbd> objects as arguments.</p>
+<p class="calibre2">Now, if you look at the body of the <kbd class="calibre12">HandlerFunction</kbd>, you'll see that the root page <kbd class="calibre12">/</kbd> will display the string <kbd class="calibre12">"Hello World"</kbd>; the <kbd class="calibre12">/bye</kbd> URL will display the string <kbd class="calibre12">"Bye"</kbd>; and finally, every other URI, expressed by the star symbol <kbd class="calibre12">*</kbd>, will return a <kbd class="calibre12">"Not found"</kbd> text, accompanied by the correct <kbd class="calibre12">404 Not Found</kbd> header.</p>
+<p class="calibre2">I'm sure you can now recognize the arrow <kbd class="calibre12">-&gt;</kbd> operator, hinting to the use of lambdas. Each <kbd class="calibre12">HandlerFunction</kbd> constructor takes an anonymous function. This function is responsible for processing the request and generating the appropriate <kbd class="calibre12">Response</kbd>. As its argument, it accepts the <kbd class="calibre12">Request</kbd> object (named <kbd class="calibre12">req</kbd>), and it is expected to return an instance of <kbd class="calibre12">Response</kbd>.</p>
+<p class="calibre2">In our example code, we constructed three <kbd class="calibre12">Response</kbd> objects using two of the available HTTP status codes (<kbd class="calibre12">200</kbd> for <kbd class="calibre12">OK</kbd> and <kbd class="calibre12">404</kbd> for page not found), plus some strings for the body of the responses (the simple strings <kbd class="calibre12">"Hello World"</kbd>, <kbd class="calibre12">"Bye"</kbd>, and <kbd class="calibre12">"Not found"</kbd>, respectively).</p>
+<p class="calibre2">To conclude, when the server receives a request, it delegates it to the router, which matches the URI of the request to the most appropriately mapped URI pattern and invokes the corresponding <kbd class="calibre12">HandlerFunction</kbd>, passing in the <kbd class="calibre12">Request</kbd> as the argument. The handler function returns a <kbd class="calibre12">Response</kbd> object, which is sent by the server back to the client.</p>
+<p class="calibre2">Let's see it in action. You can use the <kbd class="calibre12">Run</kbd> functionality in your editor or you can execute <kbd class="calibre12">$ julia hello.jl</kbd> in the Terminal. Alternatively, you can run the code in this chapter's accompanying IJulia notebook:</p>
+<p class="CDPAlignCenter"><img src="assets/7a15f58c-e321-4428-9c93-e02ab12045be.png" class="calibre18"/></p>
+<p class="calibre2">The preceding screenshot shows the <kbd class="calibre12">hello.jl</kbd> file running in Juno. The REPL pane displays debugging information from the web server as requests are received and handled.</p>
+<p class="calibre2">As soon as the server is ready, you'll get a log message saying that the server is listening on the indicated socket. At this point, you can open a web browser and navigate to <kbd class="calibre12"><span>http://localhost:9999</span></kbd>. You'll be greeted by the (in)famous <strong class="calibre4">Hello World</strong> message, as follows:</p>
+<p class="CDPAlignCenter"><img src="assets/b7b0f528-967b-4b4b-9aa5-0ba49dfb1a99.png" class="calibre18"/></p>
+<p class="calibre2">Congratulations—we've just developed our first web app with Julia!</p>
+<p class="calibre2">No bonus points for guessing what happens when navigating to <kbd class="calibre12"><span>http://localhost:9999/bye</span></kbd>. </p>
+<p class="calibre2">Finally, you can confirm that any other request will result in a <kbd class="calibre12">404 Not Found</kbd> page by attempting to navigate to any other link under <span class="calibre5"><kbd class="calibre12">http://localhost:9999</kbd>—</span>for instance, <span class="calibre5"><kbd class="calibre12">http://localhost:9999/oh/no</kbd>:</span></p>
+<p class="CDPAlignCenter"><img src="assets/7a7d0203-9289-4860-aad6-d1926ff26149.png" class="calibre18"/></p>
+<p class="calibre2">Here is the <strong class="calibre4">Not Found</strong> page, correctly returning the <kbd class="calibre12">404</kbd> status code.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Developing the game's web UI</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">Please start your favorite Julia editor and open the <kbd class="calibre12">sixdegrees/</kbd> folder we used in the previous chapter. It should contain all the files that we've worked on already—<kbd class="calibre12">six_degrees.jl</kbd>, plus the <kbd class="calibre12">Articles</kbd>, <kbd class="calibre12">Database</kbd>, <kbd class="calibre12">Gameplay</kbd>, and <kbd class="calibre12">Wikipedia</kbd> modules.</p>
+<div class="packttip">If you haven't followed through the code up to this point, you can download this chapter's accompanying support files, which are available at <a href="https://github.com/PacktPublishing/Julia-Programming-Projects/tree/master/Chapter05" class="calibre19">https://github.com/PacktPublishing/Julia-Programming-Projects/tree/master/Chapter05</a>.</div>
+<p class="calibre2">Add a new file for our web app. Since the code will be more complex this time and should integrate with the rest of our modules, let's define a <kbd class="calibre12">WebApp</kbd> module within a new <kbd class="calibre12">WebApp.jl</kbd> file. Then, we can add these first few lines of code:</p>
+<pre class="calibre17">module WebApp 
+ 
+using HTTP, Sockets 
+ 
+const HOST = ip"0.0.0.0" 
+const PORT = 8888 
+const ROUTER = HTTP.Router() 
+const SERVER = HTTP.Server(ROUTER) 
+ 
+HTTP.serve(SERVER, HOST, PORT) 
+ 
+end </pre>
+<p class="calibre2">No surprises here—similar to the previous example, we define constants for <kbd class="calibre12">HOST</kbd> and <kbd class="calibre12">PORT</kbd>, and then instantiate a <kbd class="calibre12">Router</kbd> and a <kbd class="calibre12">Server</kbd> and start listening for requests. The code should work just fine, but it's not worth running it yet as it won't do anything useful. We need to define and register our routes, and then set up the handler functions for generating the game's pages.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Defining our routes</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">By reviewing the high-level spec that we defined at the beginning of the chapter, we can identify the following pages:</p>
+<ul class="calibre10">
+<li class="calibre11"><strong class="calibre1">Landing page</strong>: The starting place of our web app and the home page, where the player can begin a new game and choose the difficulty.</li>
+<li class="calibre11"><strong class="calibre1">New game page</strong>: Bootstraps a new game, taking into account the difficulty settings.</li>
+<li class="calibre11"><strong class="calibre1">Wiki article page</strong>: This will display the Wikipedia article corresponding to a link in the chain and will update the game's stats. Here, we'll also check if the current article is the goal (the end) article, which is to finish the game as a winner. If not, we'll check if the maximum number of articles has been reached, and if so finish the game as a loser.</li>
+<li class="calibre11"><strong class="calibre1">Back page</strong>: This will allow the player to go back up the chain if the solution wasn't found. We'll display the corresponding Wikipedia article while correctly updating the game's stats.</li>
+<li class="calibre11"><strong class="calibre1">Solution page</strong>: If the player gives up, this page will display the last article in the chain, together with the path to it. The game is ended as a loss.</li>
+<li class="calibre11">Any other page should end up as <kbd class="calibre12">Not Found</kbd>.</li>
+</ul>
+<p class="calibre2">Taking into account that the route handlers will be fairly complex, it's best if we <em class="calibre16">don't</em> define them inline with the route definitions. Instead, we'll use separately defined functions. Our route's definitions will look like this—please add them to the <kbd class="calibre12">WebApp</kbd> module, as follows:</p>
+<pre class="calibre17">HTTP.register!(ROUTER, "/", landingpage) # root page 
+HTTP.register!(ROUTER, "/new/*", newgamepage) # /new/$difficulty_level -- new game 
+HTTP.register!(ROUTER, "/*/wiki/*", articlepage) # /$session_id/wiki/$wikipedia_article_url -- article page 
+HTTP.register!(ROUTER, "/*/back/*", backpage) # /$session_id/back/$number_of_steps -- go back the navigation history 
+HTTP.register!(ROUTER, "/*/solution", solutionpage) # /$session_id/solution -- display the solution 
+HTTP.register!(ROUTER, "*", notfoundpage) # everything else -- not found</pre>
+<p class="calibre2">You might be wondering what's with the extra <kbd class="calibre12">*</kbd> in front of the URI patterns. We stated that we'll need a way to identify a running game session between the otherwise stateless web requests. The <kbd class="calibre12">articlepage</kbd>, <kbd class="calibre12">backpage</kbd>, and <kbd class="calibre12">solutionpage</kbd> functions will all require an existing game session. We'll pass this session ID as the first part of the URL. Effectively, their paths are to be interpreted as <kbd class="calibre12">/$session_id/wiki/*</kbd>, <kbd class="calibre12">/$session_id/back/*</kbd>, and <kbd class="calibre12">/$session_id/solution</kbd>, where the <kbd class="calibre12">$session_id</kbd> variable represents the unique game identifier. As for the trailing <kbd class="calibre12">*</kbd>, it represents different things for different routes—in the case of <kbd class="calibre12">new</kbd>, it's the difficulty level of the game; for <kbd class="calibre12">articlepage</kbd>, it's the actual Wikipedia URL, which is also our article identifier; and for the <kbd class="calibre12">backpage</kbd>, it represents the index in the navigation stack. Similar to regular expressions, for route matching as well, the <kbd class="calibre12">*</kbd> will match anything. If this sounds complicated, don't worry—seeing and running the code will make things clear.</p>
+<p class="calibre2">Let's add placeholder definitions for each handler function—please add these <em class="calibre16">before</em> the list of routes:</p>
+<pre class="calibre17">const landingpage = HTTP.HandlerFunction() do req 
+end <br class="title-page-name"/>const newgamepage = HTTP.HandlerFunction() do req 
+end <br class="title-page-name"/>const articlepage = HTTP.HandlerFunction() do req 
+end <br class="title-page-name"/>const backpage = HTTP.HandlerFunction() do req  
+end <br class="title-page-name"/>const solutionpage = HTTP.HandlerFunction() do req 
+end <br class="title-page-name"/>const notfoundpage = HTTP.HandlerFunction() do req 
+end </pre>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Preparing the landing page</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">Straight away, we can address the landing page handler. All it needs to do is display some static content describing the game's rules, as well as provide a way to start a new game with various levels of difficulty. Remember that the difficulty of the game determines the length of the article chain, and we need this information when we start a new game. We can pass it to the new game page as part of the URL, under the format <kbd class="calibre12">/new/$difficulty_level</kbd>. The difficulty levels are already defined in the <kbd class="calibre12">Gameplay</kbd> module, so don't forget to declare that we're <kbd class="calibre12">using Gameplay</kbd>.</p>
+<p class="calibre2">Taking this into account, we'll end up with the following code for our <kbd class="calibre12">WebApp</kbd> module. We're putting everything together and we're also adding the <kbd class="calibre12">landingpage</kbd> <kbd class="calibre12">HandlerFunction</kbd>. This works in correlation with the first route—<kbd class="calibre12">HTTP.register!(ROUTER, "/",landingpage)</kbd>. What this means is that when we access the <kbd class="calibre12">/</kbd> route in the browser, the <kbd class="calibre12"> <span>landingpage</span></kbd><span class="calibre5"> </span><kbd class="calibre12">HandlerFunction</kbd> will be executed and its output will be returned as the response. In this case, we're simply returning a bunch of HTML code. If you're not familiar with HTML, here's what the markup does—we include the Twitter Bootstrap CSS theme to make our page prettier, we display a few paragraphs of text explaining the rules of the game, and we display three buttons for starting a new game—one button for each level of difficulty.</p>
+<p class="calibre2">Here is the code: </p>
+<pre class="calibre17">module WebApp 
+ 
+using HTTP, Sockets 
+using ..Gameplay 
+ 
+# Configuration 
+const HOST = ip"0.0.0.0" 
+const PORT = 8888 
+const ROUTER = HTTP.Router() 
+const SERVER = HTTP.Server(ROUTER) 
+ 
+# Routes handlers 
+const landingpage = HTTP.HandlerFunction() do req 
+  html = """ 
+  &lt;!DOCTYPE html&gt; 
+  &lt;html&gt; 
+  &lt;head&gt; 
+    &lt;meta charset="utf-8" /&gt; 
+    &lt;link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.1.3/css/bootstrap.min.css" integrity="sha384-MCw98/SFnGE8fJT3GXwEOngsV7Zt27NXFoaoApmYm81iuXoPkFOJwJ8ERdknLPMO" crossorigin="anonymous"&gt; 
+    &lt;title&gt;6 Degrees of Wikipedia&lt;/title&gt; 
+  &lt;/head&gt; 
+ 
+  &lt;body&gt; 
+    &lt;div class="jumbotron"&gt; 
+      &lt;h1&gt;Six degrees of Wikipedia&lt;/h1&gt; 
+      &lt;p&gt; 
+        The goal of the game is to find the shortest path between two random Wikipedia articles.&lt;br/&gt; 
+        Depending on the difficulty level you choose, the Wiki pages will be further apart and less related.&lt;br/&gt; 
+        If you can't find the solution, you can always go back up the articles chain, but you need to find the solution within the maximum number of steps, otherwise you lose.&lt;br/&gt; 
+        If you get stuck, you can always check the solution, but you'll lose.&lt;br/&gt; 
+        Good luck and enjoy! 
+      &lt;/p&gt; 
+ 
+      &lt;hr class="my-4"&gt; 
+ 
+      &lt;div&gt; 
+        &lt;h4&gt;New game&lt;/h4&gt; 
+          &lt;a href="/new/$(Gameplay.DIFFICULTY_EASY)" class="btn btn-primary btn-lg"&gt;Easy ($(Gameplay.DIFFICULTY_EASY) links away)&lt;/a&gt; | 
+          &lt;a href="/new/$(Gameplay.DIFFICULTY_MEDIUM)" class="btn btn-primary btn-lg"&gt;Medium ($(Gameplay.DIFFICULTY_MEDIUM) links away)&lt;/a&gt; | 
+          &lt;a href="/new/$(Gameplay.DIFFICULTY_HARD)" class="btn btn-primary btn-lg"&gt;Hard ($(Gameplay.DIFFICULTY_HARD) links away)&lt;/a&gt; 
+        &lt;/div&gt; 
+    &lt;/div&gt; 
+  &lt;/body&gt; 
+  &lt;/html&gt; 
+  """ 
+ 
+  HTTP.Messages.Response(200, html) 
+end 
+ 
+const newgamepage = HTTP.HandlerFunction() do req 
+end 
+ 
+const articlepage = HTTP.HandlerFunction() do req 
+end 
+ 
+const backpage = HTTP.HandlerFunction() do req 
+end 
+ 
+const solutionpage = HTTP.HandlerFunction() do req 
+end 
+ 
+const notfoundpage = HTTP.HandlerFunction() do req 
+end 
+ 
+# Routes definitions 
+HTTP.register!(ROUTER, "/", landingpage) # root page 
+HTTP.register!(ROUTER, "/new/*", newgamepage) # /new/$difficulty_level -- new game 
+HTTP.register!(ROUTER, "/*/wiki/*", articlepage) # /$session_id/wiki/$wikipedia_article_url -- article page 
+HTTP.register!(ROUTER, "/*/back/*", backpage) # /$session_id/back/$number_of_steps -- go back the navigation history 
+HTTP.register!(ROUTER, "/*/solution", solutionpage) # /$session_id/solution -- display the solution 
+HTTP.register!(ROUTER, "*", notfoundpage) # everything else -- not found 
+ 
+# Start server 
+HTTP.serve(SERVER, HOST, PORT) 
+ 
+end </pre>
+<p class="calibre2">Let's update the <kbd class="calibre12">six_degrees.jl</kbd> file to bootstrap our web app. Please make sure that it now reads as follows:</p>
+<pre class="calibre17">using Pkg 
+pkg"activate ." 
+ 
+include("Database.jl") 
+include("Wikipedia.jl") 
+include("Gameplay.jl") 
+include("WebApp.jl") 
+ 
+using .Wikipedia, .Gameplay, .WebApp </pre>
+<p class="calibre2">Run <kbd class="calibre12">six_degrees.jl</kbd> using your preferred approach, either in the editor or the Terminal (<kbd class="calibre12">$ julia six_degrees.jl</kbd>). Look for the message <kbd class="calibre12">Info: Listening on:...</kbd>, which notifies us that the web server has been started. Visit <kbd class="calibre12">http://localhost:8888/</kbd> in your browser and feast your eyes on our landing page! I'm sure you'll notice the effect of including the Twitter Bootstrap CSS file—adding just a few CSS classes to our code makes for a great visual impact!</p>
+<p class="CDPAlignCenter"><img src="assets/c55d8dcb-0509-440e-914e-e35e4e5866c8.png" class="calibre60"/></p>
+<p class="calibre2">The preceding screenshot is of our game's landing page running on localhost at port <kbd class="calibre12">8888</kbd>.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Starting a new game</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">Excellent! Now, let's focus on the functionality for starting a new game. Here, we need to implement the following steps:</p>
+<ol class="calibre13">
+<li class="calibre11">Extract the difficulty settings from the URL.</li>
+<li class="calibre11">Start a new game. This game should have an ID, which will be our <kbd class="calibre12">session id</kbd>. Plus, it should keep track of the list of articles, progress, navigation history, the total number of steps taken, and the difficulty.</li>
+<li class="calibre11">Render the first Wikipedia article.</li>
+<li class="calibre11">Set up in-article navigation. We need to make sure that the links within the Wikipedia article will properly link back into our app, and not the Wikipedia website itself.</li>
+<li class="calibre11">Display information about the game session, such as the objective (start and end articles), number of steps taken, and so on.</li>
+</ol>
+<p class="calibre2">We'll look at all of these steps next.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Extracting the difficulty settings from the page URL</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">This is the very first step. Remember that within our <kbd class="calibre12">HandlerFunction</kbd>, we have access to the <kbd class="calibre12">Request</kbd> object, <kbd class="calibre12">req</kbd>. All the <kbd class="calibre12">Request</kbd> objects expose a field called <kbd class="calibre12">target</kbd> that references the URL of the request. The <kbd class="calibre12">target</kbd> does not include the protocol or the domain name, so it will be of the form <kbd class="calibre12">/new/$difficulty_level</kbd>. A quick way to extract the value of <kbd class="calibre12">$difficulty_level</kbd> is to simply replace the first part of the URI with an empty string, <kbd class="calibre12">""</kbd>, effectively removing it. The result will be used in a function, <kbd class="calibre12">newgamesession</kbd>, to create a new game of the indicated difficulty. Put into code, it will look like this:</p>
+<pre class="calibre17">game = parse(UInt8, (replace(req.target, "/new/"=&gt;""))) |&gt; newgamesession </pre>
+<p class="calibre2">Since we represent difficulty levels as integers (number of articles), we parse the string into an integer (specifically of type <kbd class="calibre12">UInt8</kbd>) before using it.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Starting a new game session</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">Starting a new game session is the second step. The game session manager, which should include the preceding <kbd class="calibre12">newgamesession</kbd> function, is missing entirely, so it's time we added it. We'll represent a game session as an instance of a corresponding type. Let's pack the <kbd class="calibre12">type</kbd> definition and the methods for manipulating it into a dedicated module. We can name the module <kbd class="calibre12">GameSession</kbd>, and the type <kbd class="calibre12">Game</kbd>. Please create the <kbd class="calibre12">GameSession.jl</kbd> file within the <kbd class="calibre12">"sixdegrees/"</kbd> folder.</p>
+<p class="calibre2">Our <kbd class="calibre12">Game</kbd> type will need a custom constructor. We'll provide the difficulty level, and the constructor will take care of setting all of the internals—it will fetch the right number of Wikipedia articles using the previously created <kbd class="calibre12">Gameplay.newgame</kbd> function; it will create a unique game ID (which will be our session ID); and it'll initialize the rest of the fields with default values.</p>
+<p class="calibre2">A first attempt will look like this:</p>
+<pre class="calibre17">module GameSession 
+ 
+using ..Gameplay, ..Wikipedia, ..Wikipedia.Articles 
+using Random 
+ 
+mutable struct Game 
+  id::String 
+  articles::Vector{Article} 
+  history::Vector{Article} 
+  steps_taken::UInt8 
+  difficulty::UInt8 
+ 
+  Game(game_difficulty) = <br class="title-page-name"/>    new(randstring(), newgame(game_difficulty), Article[], 0, game_difficulty) 
+end 
+ 
+const GAMES = Dict{String,Game}() 
+ 
+end</pre>
+<p class="calibre2">The <kbd class="calibre12">Random.randstring</kbd> function creates a random string. This is our game's and our session's ID.</p>
+<p class="calibre2">We've also defined a <kbd class="calibre12">GAMES</kbd> dictionary, which will store all the active games and will allow us to look them up by their <kbd class="calibre12">id</kbd> field. Remember, our game is exposed on the web, so we'll have multiple game sessions running in parallel.</p>
+<p class="calibre2">We can now add the rest of the functions. Add the following definitions before the module's closing <kbd class="calibre12">end</kbd>, as follows:</p>
+<pre class="calibre17">export newgamesession, gamesession, destroygamesession 
+ 
+function newgamesession(difficulty) 
+  game = Game(difficulty) 
+  GAMES[game.id] = game <br class="title-page-name"/>  game 
+end <br class="title-page-name"/><br class="title-page-name"/>function gamesession(id) 
+  GAMES[id] 
+end <br class="title-page-name"/><br class="title-page-name"/>function destroygamesession(id) 
+  delete!(GAMES, id) 
+end</pre>
+<p class="calibre2">This is very straightforward. The snippet defines the <kbd class="calibre12">newgamesession</kbd> function, which creates a new <kbd class="calibre12">Game</kbd> of the indicated difficulty and stores it into the <kbd class="calibre12">GAMES</kbd> dict data structure. There's also a <kbd class="calibre12">getter</kbd> function, <kbd class="calibre12">gamesession</kbd>, which retrieves a <kbd class="calibre12">Game</kbd> by <kbd class="calibre12">id</kbd>. Finally, we add a <kbd class="calibre12">destructor</kbd> function, which removes the corresponding <kbd class="calibre12">Game</kbd> from the <kbd class="calibre12">GAMES</kbd> dict, effectively making it unavailable on the frontend and leaving it up for garbage collection. All of these functions are exported.</p>
+<div class="packttip">It's worth noting that storing our games in memory is fine for the purpose of this learning project, but in production, with a lot of players, you'd risk running out of memory quickly. For production use, we'd be better off persisting each <kbd class="calibre24">Game</kbd> to the database and retrieving it as necessary.</div>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Rendering the first Wikipedia article from the chain</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">This is the third step. Going back to our <kbd class="calibre12">WebApp</kbd> module (in <kbd class="calibre12">WebApp.jl</kbd>), let's continue with the logic for the <kbd class="calibre12">newgamepage</kbd> handler. The implementation will look like this:</p>
+<pre class="calibre17">using ..GameSession, ..Wikipedia, ..Wikipedia.Articles 
+ 
+const newgamepage = HTTP.HandlerFunction() do req 
+  game = parse(UInt8, (replace(req.target, "/new/"=&gt;""))) |&gt; newgamesession 
+  article = game.articles[1] 
+  push!(game.history, article) 
+ 
+  HTTP.Messages.Response(200, wikiarticle(article)) 
+end</pre>
+<p class="calibre2">Once we create a new game, we need to reference its first article. We add the starting article to the game's history and then we render it as HTML using the following <kbd class="calibre12">wikiarticle</kbd> function:</p>
+<pre class="calibre17">function wikiarticle(article) 
+  html = """ 
+  &lt;!DOCTYPE html&gt; 
+  &lt;html&gt; 
+  &lt;head&gt; 
+    &lt;meta charset="utf-8" /&gt; 
+    &lt;link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.1.3/css/bootstrap.min.css" integrity="sha384-MCw98/SFnGE8fJT3GXwEOngsV7Zt27NXFoaoApmYm81iuXoPkFOJwJ8ERdknLPMO" crossorigin="anonymous"&gt; 
+    &lt;title&gt;6 Degrees of Wikipedia&lt;/title&gt; 
+  &lt;/head&gt; 
+ 
+  &lt;body&gt; 
+    &lt;h1&gt;$(article.title)&lt;/h1&gt; 
+    &lt;div id="wiki-article"&gt; 
+      $(article.content) 
+    &lt;/div&gt; 
+  &lt;/body&gt; 
+  &lt;/html&gt; 
+  """ 
+end<br class="title-page-name"/><br class="title-page-name"/></pre>
+<p class="calibre2">We simply display the title of the Wikipedia article as the main heading, and then the content.</p>
+<p class="calibre2">Finally, don't forget to load <kbd class="calibre12">GameSession</kbd> into our app by adding it to <kbd class="calibre12">"six_degrees.jl"</kbd>. Beware that it needs to be loaded before <kbd class="calibre12">WebApp</kbd> to be available for <kbd class="calibre12">WebApp</kbd>. The full <kbd class="calibre12">"six_degrees.jl"</kbd> file should now look like this:</p>
+<pre class="calibre17">using Pkg pkg"activate ." include("Database.jl") include("Wikipedia.jl") include("Gameplay.jl") include("GameSession.jl") include("WebApp.jl") using .Wikipedia, .Gameplay, .GameSession, .WebApp </pre>
+<p class="calibre2">If you rerun our code and navigate to <kbd class="calibre12">http://localhost:8888/new/2</kbd>, you'll see our app rendering a random Wikipedia article:</p>
+<p class="CDPAlignCenter"><img src="assets/7cf79cd6-fbb9-4938-98c3-e94cc8328470.png" class="calibre61"/></p>
+<p class="calibre2">It's a good start, but there are some problems. First, we were a bit too greedy when fetching the content from Wikipedia. It includes the full page HTML, which contains things we don't really need, like the invisible <kbd class="calibre12">&lt;head&gt;</kbd> section and the all-too visible Wikipedia content from above the article's text (the search form, the menu, and so on). This is easy to fix—all we need to do is be a bit more specific about the content we want by using a better-defined CSS selector. A bit of playing around with the browser's inspector will reveal that the desired selector is <kbd class="calibre12">#bodyContent</kbd>.</p>
+<p class="calibre2">Armed with this knowledge, we need to update the <kbd class="calibre12">Wikipedia</kbd> module. Please replace the existing <kbd class="calibre12">articleinfo</kbd> function with this one:</p>
+<pre class="calibre17">function articleinfo(content) 
+  dom = articledom(content) 
+  (extractcontent(dom.root), extractlinks(dom.root), extracttitle(dom.root), extractimage(dom.root)) 
+end </pre>
+<p class="calibre2">Instead of using the whole HTML, we will now extract just the content of the desired CSS selector:</p>
+<pre class="calibre17">function extractcontent(elem) 
+  matchFirst(Selector("#bodyContent"), elem) |&gt; string 
+end </pre>
+<p class="calibre2">Please add the definition of <kbd class="calibre12">extractcontent</kbd> to the <kbd class="calibre12">Wikipedia.jl</kbd> file, under the <kbd class="calibre12">extractimage</kbd> function.</p>
+<p class="calibre2">By revisiting our page at <kbd class="calibre12">http://localhost:8888/new/2</kbd>, we will see our efforts rewarded with a much better-looking replacement:</p>
+<p class="CDPAlignCenter"><img src="assets/2dc79e56-d94e-4ef1-97bc-3549a9756aa2.png" class="calibre62"/></p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Setting up in-article navigation</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">All right, that wasn't so hard! But the next issue is more difficult. <span class="calibre5">The fourth step is all about the setup. </span>We established that we need to capture all the internal Wikipedia links so that when the player clicks on a link, they are taken to our app instead of going to the original Wikipedia article. Half of this work is done by Wikipedia's content itself because it uses relative URLs. That is, instead of using absolute URLs in the form of <kbd class="calibre12"><span>https://en.wikipedia.org/wiki/Wikipedia:Six_degrees_of_Wikipedia</span></kbd>, it uses the relative form <kbd class="calibre12">/wiki/Wikipedia:Six_degrees_of_Wikipedia</kbd>. This means that when rendered in the browser, these links will inherit the domain name (or the <em class="calibre16">base URL</em>) of the current host. That is, when rendering the content of a Wikipedia article at <kbd class="calibre12"><span>http://localhost:8888/</span></kbd>, its relative URLs will be interpreted as <kbd class="calibre12"><span>http://localhost:8888/wiki/Wikipedia:Six_degrees_of_Wikipedia</span></kbd>. Therefore, they'll automatically point back to our web app. That's great, but one big piece of the puzzle is missing: we said that we want to maintain the state of our game by passing the session ID as part of the URL. Thus, our URLs should be of the form <kbd class="calibre12"><span>http://localhost:8888/ABCDEF/wiki/Wikipedia:Six_degrees_of_Wikipedia</span></kbd>, where <kbd class="calibre12">ABCDEF</kbd> represents the game (or session) ID. The simplest solution is to replace <kbd class="calibre12">/wiki/</kbd> with <kbd class="calibre12">/ABCDEF/wiki/</kbd> when rendering the content—of course, using the actual game ID instead of <kbd class="calibre12">ABCDEF</kbd>.</p>
+<p class="calibre2">In the definition of the <kbd class="calibre12">WebApp.wikiarticle</kbd> function, please look for this:</p>
+<pre class="calibre17">&lt;div id="wiki-article"&gt; 
+     $(article.content) 
+&lt;/div&gt; </pre>
+<p class="calibre2">Replace it with the following:</p>
+<pre class="calibre17">&lt;div id="wiki-article"&gt; 
+    $(replace(article.content, "/wiki/"=&gt;"/$(game.id)/wiki/")) 
+&lt;/div&gt; </pre>
+<p class="calibre2">Because we now need the <kbd class="calibre12">game</kbd> object, we must make sure that we pass it into the function, so its declaration should become the following:</p>
+<pre class="calibre17">function wikiarticle(game, article) </pre>
+<p class="calibre2">This means that we also need to update the <kbd class="calibre12">newgamepage</kbd> route handler to correctly invoke the updated <kbd class="calibre12">wikiarticle</kbd> function. The last line of the <kbd class="calibre12">WebApp.newgamepage</kbd> function should now be as follows:</p>
+<pre class="calibre17">HTTP.Messages.Response(200, wikiarticle(game, article))  </pre>
+<p class="calibre2">If you execute <kbd class="calibre12">six_degrees.jl</kbd> and take your browser to <kbd class="calibre12"><span>http://localhost:8888/new/2</span></kbd>, you should see a nice rendering of a Wikipedia article with all the internal links containing the game ID:</p>
+<p class="CDPAlignCenter"><img src="assets/cb4f92b0-576f-4d7c-9b87-6b61d5939b03.png" class="calibre18"/></p>
+<p class="calibre2">In the preceding screenshot, we can see <span class="calibre5"><span class="calibre5">that </span></span>all the URLs start with <kbd class="calibre12">/x2wHk2XI</kbd>—our game ID.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Displaying information about the game session</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">For the fifth and very last part of our spec, we need to display information about the game and provide a way to navigate back to the previous articles. We'll define the following functions:</p>
+<pre class="calibre17">function objective(game) 
+  """ 
+  &lt;h3&gt; 
+    Go from &lt;i&gt;$(game.articles[1].title)&lt;/i&gt;  
+    to &lt;i&gt;$(game.articles[end].title)&lt;/i&gt; 
+  &lt;/h3&gt; 
+  &lt;h5&gt; 
+    Progress: $(size(game.history, 1) - 1)  
+    out of maximum $(size(game.articles, 1) - 1) links  
+    in $(game.steps_taken) steps 
+  &lt;/h5&gt; 
+  &lt;h6&gt; 
+    &lt;a href="/$(game.id)/solution"&gt;Solution?&lt;/a&gt; |  
+    &lt;a href="/"&gt;New game&lt;/a&gt; 
+  &lt;/h6&gt;""" 
+end </pre>
+<p class="calibre2">The <kbd class="calibre12">objective</kbd> function informs the player about the start and end articles and about the current progress. It also provides a small menu so that you can view the solution or start a new game.</p>
+<p class="calibre2">For navigating back, we need to generate the game history links:</p>
+<pre class="calibre17">function history(game) 
+  html = "&lt;ol&gt;" 
+  iter = 0 
+  for a in game.history 
+    html *= """ 
+    &lt;li&gt;&lt;a href="/$(game.id)/back/$(iter + 1)"&gt;$(a.title)&lt;/a&gt;&lt;/li&gt; 
+    """ 
+    iter += 1 
+  end <br class="title-page-name"/>  <br class="title-page-name"/>  html * "&lt;/ol&gt;" 
+end</pre>
+<p class="calibre2">Finally, we need a bit of extra logic to check if the game was won or lost:</p>
+<pre class="calibre17">function puzzlesolved(game, article) 
+  article.url == game.articles[end].url 
+end</pre>
+<p class="calibre2">We have a winner if the URL of the current article is the same as the URL of the last article in the game.</p>
+<p class="calibre2">The game is lost if the player runs out of moves:</p>
+<pre class="calibre17">function losinggame(game) 
+  game.steps_taken &gt;= Gameplay.MAX_NUMBER_OF_STEPS 
+end</pre>
+<p class="calibre2">The complete code, so far, should look like this:</p>
+<pre class="calibre17">module WebApp 
+ 
+using HTTP, Sockets 
+using ..Gameplay, ..GameSession, ..Wikipedia, ..Wikipedia.Articles 
+ 
+# Configuration 
+const HOST = ip"0.0.0.0" 
+const PORT = 8888 
+const ROUTER = HTTP.Router() 
+const SERVER = HTTP.Server(ROUTER) 
+ 
+# Functions 
+function wikiarticle(game, article) 
+  html = """ 
+  &lt;!DOCTYPE html&gt; 
+  &lt;html&gt; 
+  $(head()) 
+ 
+  &lt;body&gt; 
+    $(objective(game)) 
+    $(history(game)) 
+    &lt;hr/&gt; 
+    $( 
+      if losinggame(game) 
+        "&lt;h1&gt;You Lost :( &lt;/h1&gt;" 
+      else 
+        puzzlesolved(game, article) ? "&lt;h1&gt;You Won!&lt;/h1&gt;" : "" 
+      end 
+    ) 
+ 
+    &lt;h1&gt;$(article.title)&lt;/h1&gt; 
+    &lt;div id="wiki-article"&gt; 
+      $(replace(article.content, "/wiki/"=&gt;"/$(game.id)/wiki/")) 
+    &lt;/div&gt; 
+  &lt;/body&gt; 
+  &lt;/html&gt; 
+  """ 
+end 
+ 
+function history(game) 
+  html = "&lt;ol&gt;" 
+  iter = 0 
+  for a in game.history 
+    html *= """ 
+    &lt;li&gt;&lt;a href="/$(game.id)/back/$(iter + 1)"&gt;$(a.title)&lt;/a&gt;&lt;/li&gt; 
+    """ 
+    iter += 1 
+  end 
+ 
+  html * "&lt;/ol&gt;" 
+end 
+ 
+function objective(game) 
+  """ 
+  &lt;h3&gt; 
+    Go from &lt;i&gt;$(game.articles[1].title)&lt;/i&gt;  
+    to &lt;i&gt;$(game.articles[end].title)&lt;/i&gt; 
+  &lt;/h3&gt; 
+  &lt;h5&gt; 
+    Progress: $(size(game.history, 1) - 1)  
+    out of maximum $(size(game.articles, 1) - 1) links  
+    in $(game.steps_taken) steps 
+  &lt;/h5&gt; 
+  &lt;h6&gt; 
+    &lt;a href="/$(game.id)/solution"&gt;Solution?&lt;/a&gt; |  
+    &lt;a href="/"&gt;New game&lt;/a&gt; 
+  &lt;/h6&gt;""" 
+end 
+ 
+function head() 
+  """ 
+  &lt;head&gt; 
+    &lt;meta charset="utf-8" /&gt; 
+    &lt;link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.1.3/css/bootstrap.min.css" integrity="sha384-MCw98/SFnGE8fJT3GXwEOngsV7Zt27NXFoaoApmYm81iuXoPkFOJwJ8ERdknLPMO" crossorigin="anonymous"&gt; 
+    &lt;title&gt;6 Degrees of Wikipedia&lt;/title&gt; 
+  &lt;/head&gt; 
+  """ 
+end 
+ 
+function puzzlesolved(game, article) 
+  article.url == game.articles[end].url 
+end 
+ 
+function losinggame(game) 
+  game.steps_taken &gt;= Gameplay.MAX_NUMBER_OF_STEPS 
+end 
+ 
+# Routes handlers 
+const landingpage = HTTP.HandlerFunction() do req 
+  html = """ 
+  &lt;!DOCTYPE html&gt; 
+  &lt;html&gt; 
+  $(head()) 
+ 
+  &lt;body&gt; 
+    &lt;div class="jumbotron"&gt; 
+      &lt;h1&gt;Six degrees of Wikipedia&lt;/h1&gt; 
+      &lt;p&gt; 
+        The goal of the game is to find the shortest path between two random Wikipedia articles.&lt;br/&gt; 
+        Depending on the difficulty level you choose, the Wiki pages will be further apart and less related.&lt;br/&gt; 
+        If you can't find the solution, you can always go back up the articles chain, but you need to find the solution within the maximum number of steps, otherwise you lose.&lt;br/&gt; 
+        If you get stuck, you can always check the solution, but you'll lose.&lt;br/&gt; 
+        Good luck and enjoy! 
+      &lt;/p&gt; 
+ 
+      &lt;hr class="my-4"&gt; 
+ 
+      &lt;div&gt; 
+        &lt;h4&gt;New game&lt;/h4&gt; 
+          &lt;a href="/new/$(Gameplay.DIFFICULTY_EASY)" class="btn btn-primary btn-lg"&gt;Easy ($(Gameplay.DIFFICULTY_EASY) links away)&lt;/a&gt; | 
+          &lt;a href="/new/$(Gameplay.DIFFICULTY_MEDIUM)" class="btn btn-primary btn-lg"&gt;Medium ($(Gameplay.DIFFICULTY_MEDIUM) links away)&lt;/a&gt; | 
+          &lt;a href="/new/$(Gameplay.DIFFICULTY_HARD)" class="btn btn-primary btn-lg"&gt;Hard ($(Gameplay.DIFFICULTY_HARD) links away)&lt;/a&gt; 
+        &lt;/div&gt; 
+    &lt;/div&gt; 
+  &lt;/body&gt; 
+  &lt;/html&gt; 
+  """ 
+ 
+  HTTP.Messages.Response(200, html) 
+end 
+ 
+const newgamepage = HTTP.HandlerFunction() do req 
+  game = parse(UInt8, (replace(req.target, "/new/"=&gt;""))) |&gt; newgamesession 
+  article = game.articles[1] 
+  push!(game.history, article) 
+ 
+  HTTP.Messages.Response(200, wikiarticle(game, article)) 
+end 
+ 
+const articlepage = HTTP.HandlerFunction() do req 
+end 
+ 
+const backpage = HTTP.HandlerFunction() do req 
+end 
+ 
+const solutionpage = HTTP.HandlerFunction() do req 
+end 
+ 
+const notfoundpage = HTTP.HandlerFunction() do req 
+end 
+ 
+ 
+# Routes definitions 
+HTTP.register!(ROUTER, "/", landingpage) # root page 
+HTTP.register!(ROUTER, "/new/*", newgamepage) # /new/$difficulty_level -- new game 
+HTTP.register!(ROUTER, "/*/wiki/*", articlepage) # /$session_id/wiki/$wikipedia_article_url -- article page 
+HTTP.register!(ROUTER, "/*/back/*", backpage) # /$session_id/back/$number_of_steps -- go back the navigation history 
+HTTP.register!(ROUTER, "/*/solution", solutionpage) # /$session_id/solution -- display the solution HTTP.register!(ROUTER, "*", notfoundpage) # everything else -- not found # Start server HTTP.serve(SERVER, HOST, PORT) 
+ 
+end</pre>
+<p class="calibre2">Please note that we've also refactored the <kbd class="calibre12">&lt;head&gt;</kbd> of the pages, abstracting it away into the <kbd class="calibre12">head</kbd> function, which is used by both <kbd class="calibre12">landingpage</kbd> and <kbd class="calibre12">wikiarticle</kbd>. This way, we keep our code DRY, avoiding the repetition of the same <kbd class="calibre12">&lt;head&gt;</kbd> HTML element.</p>
+<p class="calibre2">Now, let's make sure that we add <kbd class="calibre12">Gameplay.MAX_NUMBER_OF_STEPS</kbd> to <kbd class="calibre12">Gameplay.jl</kbd>. Add it at the top, under the difficulty constants:</p>
+<pre class="calibre17">const MAX_NUMBER_OF_STEPS = 10 </pre>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Displaying a Wikipedia article page</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">The player has read the starting article and clicked on a link within the content. We need to add the logic for rendering the linked article. We'll have to fetch the article (or read it from the database if it was already fetched), display it, and update the game's state.</p>
+<p class="calibre2">Here is the code:</p>
+<pre class="calibre17">const articlepage = HTTP.HandlerFunction() do req 
+  uri_parts = parseuri(req.target) 
+  game = gamesession(uri_parts[1]) 
+  article_uri = "/wiki/$(uri_parts[end])" <br class="title-page-name"/>  existing_articles = Articles.find(article_uri) 
+  article = isempty(existing_articles) ?  
+    persistedarticle(fetchpage(article_uri)...) :  
+    existing_articles[1] <br class="title-page-name"/>  push!(game.history, article) 
+  game.steps_taken += 1 <br class="title-page-name"/>  puzzlesolved(game, article) &amp;&amp; destroygamesession(game.id) <br class="title-page-name"/>  HTTP.Messages.Response(200, wikiarticle(game, article)) 
+end</pre>
+<p class="calibre2">We start by parsing the <kbd class="calibre12">Request</kbd> URI to extract all the values sent via GET. It is a string with the format <kbd class="calibre12">/$session_id/wiki/$article_name</kbd>, for example, <kbd class="calibre12">/c701b1b0b1/wiki/Buenos_Aires</kbd>. We want to break it into its parts. Since this is an operation that we'll need to perform more than once, we will abstract this functionality into the <kbd class="calibre12">parseuri</kbd> function:</p>
+<pre class="calibre17">function parseuri(uri) 
+  map(x -&gt; String(x), split(uri, "/", keepempty = false)) 
+end</pre>
+<p class="calibre2">Here, we use Julia's <kbd class="calibre12">split</kbd> function to break the URI string into an <kbd class="calibre12">Array</kbd> of <kbd class="calibre12">SubString</kbd>, corresponding to the segments between forward slashes <kbd class="calibre12">/</kbd>. Then, we convert the resulting <kbd class="calibre12">Array</kbd> of <kbd class="calibre12">SubString</kbd> to an <kbd class="calibre12">Array</kbd> of <kbd class="calibre12">String</kbd>, which is returned and stored in the <kbd class="calibre12">uri_parts</kbd> variable.</p>
+<p class="calibre2">Continuing with the definition of the <kbd class="calibre12">articlepage</kbd> handler, we use the first element of the <kbd class="calibre12">uri_parts</kbd> array, which corresponds to the session ID, to retrieve our game object, by invoking <kbd class="calibre12">gamesession(uri_parts[1])</kbd>. With the last element, we generate the Wikipedia article URL. We then look up the article by URL, and either retrieve it from the database or fetch it from the website.</p>
+<p class="calibre2">Once we have the article, we add it to the game's history and increase the <kbd class="calibre12">game.steps_taken</kbd> counter. Then, we check if we should end the game as a win:</p>
+<p class="CDPAlignCenter"><img src="assets/994e68d4-d843-4ed8-b235-25b745cc474f.png" class="calibre63"/></p>
+<p class="calibre2">This is a screenshot of the winning article page. The design is not great, but the sweet taste of victory surely is!</p>
+<p class="calibre2">Finally, similar to the new game page, we respond by rendering the article and all the game information.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Navigating back up the article chain</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">Keep in mind that a back navigation URL looks like <kbd class="calibre12">/c701b1b0b1/back/1</kbd>, where the first part is the session ID and the last part is the index of the item in the history stack. To implement it, the workflow is similar to <kbd class="calibre12">articlepage</kbd>—we parse the <kbd class="calibre12">Request</kbd> URI, retrieve the game by session ID, and get the article from the game's history stack. Since we go back in the game's history, everything beyond the current article index is to be removed from the navigation stack. When done, we respond by rendering the corresponding Wikipedia article. The code is short and readable:</p>
+<pre class="calibre17">const backpage = HTTP.HandlerFunction() do req 
+  uri_parts = parseuri(req.target) 
+  game = gamesession(uri_parts[1]) 
+  history_index = parse(UInt8, uri_parts[end]) 
+ 
+  article = game.history[history_index] 
+  game.history = game.history[1:history_index] 
+ 
+  HTTP.Messages.Response(200, wikiarticle(game, article)) 
+end </pre>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Showing the solution</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">For the solution page, the only thing we need from the <kbd class="calibre12">Request</kbd> URI is the session ID. Then, we follow the same workflow to get the current <kbd class="calibre12">Game</kbd> object. Once we have it, we copy the list of articles into the history stack to display the game's solution using the existing rendering logic. We also set the <kbd class="calibre12">steps_taken</kbd> counter to the maximum because the game is considered a loss. Finally, we display the last article:</p>
+<pre class="calibre17">const solutionpage = HTTP.HandlerFunction() do req 
+  uri_parts = parseuri(req.target) 
+  game = gamesession(uri_parts[1]) 
+  game.history = game.articles 
+  game.steps_taken = Gameplay.MAX_NUMBER_OF_STEPS 
+  article = game.articles[end]<br class="title-page-name"/>  HTTP.Messages.Response(200, wikiarticle(game, article)) 
+end</pre>
+<p class="calibre2">The solution page appears as follows, settling the game as a loss:</p>
+<p class="CDPAlignCenter"><img src="assets/53597668-7976-468f-81f3-f432d7cdf57c.png" class="calibre64"/></p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Handling any other requests</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">Similar to our <kbd class="calibre12">Hello World</kbd> example, we'll respond to any other requests with a <kbd class="calibre12">404 Not Found</kbd> response:</p>
+<pre class="calibre17">const notfoundpage = HTTP.HandlerFunction() do req 
+  HTTP.Messages.Response(404, "Sorry, this can't be found") 
+end </pre>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Wrapping it up</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">I've added a few more UI tweaks to the  <kbd class="calibre12">WebApp.jl</kbd> file to spice things up a bit. Here are the important parts—please download the full file from <a href="https://github.com/PacktPublishing/Julia-Programming-Projects/blob/master/Chapter05/sixdegrees/WebApp.jl" class="calibre9">https://github.com/PacktPublishing/Julia-Programming-Projects/blob/master/Chapter05/sixdegrees/WebApp.jl</a>:</p>
+<pre class="calibre17">module WebApp 
+ 
+# code truncated #
+ 
+function history(game) 
+  html = """&lt;ol class="list-group"&gt;""" 
+  iter = 0 
+  for a in game.history 
+    html *= """ 
+      &lt;li class="list-group-item"&gt; 
+        &lt;a href="/$(game.id)/back/$(iter + 1)"&gt;$(a.title)&lt;/a&gt; 
+      &lt;/li&gt; 
+    """ 
+    iter += 1 
+  end 
+ 
+  html * "&lt;/ol&gt;" 
+end 
+ 
+function objective(game) 
+  """ 
+  &lt;div class="jumbotron"&gt; 
+    &lt;h3&gt;Go from 
+      &lt;span class="badge badge-info"&gt;$(game.articles[1].title)&lt;/span&gt; 
+      to 
+      &lt;span class="badge badge-info"&gt;$(game.articles[end].title)&lt;/span&gt; 
+    &lt;/h3&gt; 
+    &lt;hr/&gt; 
+    &lt;h5&gt; 
+      Progress: 
+      &lt;span class="badge badge-dark"&gt;$(size(game.history, 1) - 1)&lt;/span&gt; 
+      out of maximum 
+      &lt;span class="badge badge-dark"&gt;$(size(game.articles, 1) - 1)&lt;/span&gt; 
+      links in 
+      &lt;span class="badge badge-dark"&gt;$(game.steps_taken)&lt;/span&gt; 
+      steps 
+    &lt;/h5&gt; 
+    $(history(game)) 
+    &lt;hr/&gt; 
+    &lt;h6&gt; 
+      &lt;a href="/$(game.id)/solution" class="btn btn-primary btn-lg"&gt;Solution?&lt;/a&gt; | 
+      &lt;a href="/" class="btn btn-primary btn-lg"&gt;New game&lt;/a&gt; 
+    &lt;/h6&gt; 
+  &lt;/div&gt; 
+  """ 
+end 
+ 
+# code truncated #
+ 
+end </pre>
+<p class="calibre2">You will see that I have reorganized the layout a bit and that I've added a few extra styles to make our UI prettier. Here is our game with its updated look:</p>
+<p class="CDPAlignCenter"><img src="assets/03d56710-7271-47cc-8a32-49fa8bb210a9.png" class="calibre65"/></p>
+<p class="calibre2">As for the rest of the files, if you need them, they are available for download in this chapter's GitHub repository, which is accessible at <a href="https://github.com/PacktPublishing/Julia-Programming-Projects/tree/master/Chapter05/sixdegrees" class="calibre9">https://github.com/PacktPublishing/Julia-Programming-Projects/tree/master/Chapter05/sixdegrees</a>. </p>
+<p class="calibre2">That is all we need to do to run a full game of <em class="calibre16">Six Degrees of Wikipedia</em>. Now, it's time to enjoy it!</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Summary</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">Julia focuses on scientific computing and data science. But thanks to its great qualities as a generic programming language, its native parallel computing features, and its performance, we have an excellent use case for Julia in the area of web development.</p>
+<p class="calibre2">The package ecosystem provides access to a powerful set of libraries dedicated to web programming. They are relatively low level, but still abstract away most of the complexities of working directly with the network stack. The <kbd class="calibre12">HTTP</kbd> package provides a good balance between usability, performance, and flexibility.</p>
+<p class="calibre2">The fact that we managed to build a fairly complex (albeit small) web app with so little code is a testimony to the power and expressiveness of the language and to the quality of the third-party libraries. We did a great job with our learning project—it's now time to relax a bit and enjoy a round of <em class="calibre16">Six Degrees of Wikipedia</em>, Julia style!</p>
+
+
+            </article>
+
+            
+        </section>
+    </body></html>

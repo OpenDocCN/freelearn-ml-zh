@@ -1,0 +1,1837 @@
+<html><head></head><body>
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Building the Wiki Game Web Crawler</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">Wow, <a href="3184f173-ae3d-47f9-b7e9-f677947499f2.xhtml" class="calibre9">Chapter 3</a>, <em class="calibre16">Setting Up the Wiki Game</em>, was quite a ride! Laying the foundation of our Wikipedia game took us on a real learning <em class="calibre16">tour-de-force</em>. After the quick refresher on how the web and web pages work, we dived deeper into the key parts of the language, studying the dictionary data structure and its corresponding data type, conditional expressions, functions, exception handling, and even the very handy piping operator (<kbd class="calibre12">|&gt;</kbd>). In the process, we built a short script that uses a couple of powerful third-party packages, <kbd class="calibre12">HTTP</kbd> and <kbd class="calibre12">Gumbo</kbd>, to request a web page from Wikipedia, parse it as an HTML DOM, and extract all internal links from within the page. Our script is part of a proper Julia project, which employs <kbd class="calibre12">Pkg</kbd> to efficiently manage dependencies.</p>
+<p class="calibre2">In this chapter, we'll continue the development of our game, implementing the complete workflow and the gameplay. Even if you are not a seasoned developer, it's easy to imagine that even a simple game like this will end up with multiple logical parts. We could maybe have a module for the Wikipedia page crawler, one for the gameplay itself, and one for the UI (the web app that we'll create in the next chapter). Breaking down a problem into smaller parts always makes for a simpler solution. And, that's especially true when writing code—having small, specialized functions, grouped by responsibility, makes the software easier to reason about, develop, extend, and maintain. In this chapter, we'll learn about Julia's constructs for structuring the code, and we'll discuss a few more key elements of the language: the type system, constructors, methods, and multiple dispatch.</p>
+<p class="calibre2">In this chapter, we'll cover the following topics:</p>
+<ul class="calibre10">
+<li class="calibre11"><em class="calibre55">Six Degrees of Wikipedia</em>, the gameplay</li>
+<li class="calibre11">Organizing our code using modules and loading code from multiple files (the so-called <strong class="calibre1">mixin behavior</strong>)</li>
+<li class="calibre11">Types and the type system, which are key to Julia's flexibility and performance</li>
+</ul>
+<ul class="calibre10">
+<li class="calibre11">Constructors, special functions which allow us to create new instances of our types</li>
+<li class="calibre11">Methods and multiple dispatch, some of the most important aspects of the language </li>
+<li class="calibre11">Interacting with relational databases (specifically, MySQL)</li>
+</ul>
+<p class="calibre2">I hope you are ready to dive in.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Technical requirements</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">The Julia package ecosystem is under continuous development and new package versions are released on a daily basis. Most of the times this is great news, as new releases bring new features and bug fixes. However, since many of the packages are still in beta (version 0.x), any new release can introduce breaking changes. As a result, the code presented in the book can stop working. In order to ensure that your code will produce the same results as described in the book, it is recommended to use the same package versions. Here are the external packages used in this chapter and their specific versions:</p>
+<pre class="calibre17">Cascadia@v0.4.0<br class="title-page-name"/>Gumbo@v0.5.1<br class="title-page-name"/>HTTP@v0.7.1<br class="title-page-name"/>IJulia@v1.14.1<br class="title-page-name"/>JSON@v0.20.0<br class="title-page-name"/>MySQL@v0.7.0</pre>
+<p class="calibre2">In order to install a specific version of a package you need to run:</p>
+<pre class="calibre17"><strong class="calibre1">pkg&gt; add PackageName@vX.Y.Z</strong> <br class="title-page-name"/><br class="title-page-name"/></pre>
+<p class="calibre2">For example:</p>
+<pre class="calibre17"><strong class="calibre1">pkg&gt; add IJulia@v1.14.1</strong></pre>
+<p class="calibre2">Alternatively you can install all the used packages by downloading the Project.toml file provided with the chapter and using <kbd class="calibre12">pkg&gt;</kbd> instantiate as follows:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; download("https://raw.githubusercontent.com/PacktPublishing/Julia-Programming-Projects/master/Chapter04/Project.toml", "Project.toml")</strong><br class="title-page-name"/><strong class="calibre1">pkg&gt; activate . </strong><br class="title-page-name"/><strong class="calibre1">pkg&gt; instantiate</strong></pre>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Six Degrees of Wikipedia, the gameplay</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">As we've seen in the previous chapter, the <strong class="calibre4">Six Degrees of Wikipedia game</strong> is a play on the concept of the <em class="calibre16">six degrees of separation</em> theory—the idea that all living things (and pretty much everything in the world) are six or fewer steps away from each other. For example, a chain of <em class="calibre16">a friend of a friend</em> can be made to connect any two people in a maximum of six steps. </p>
+<p class="calibre2">For our own game, the goal of the player is to link any two given Wikipedia articles, passing through six or fewer other Wikipedia pages. In order to make sure that the problem has a solution (the <em class="calibre16">six degrees of separation</em> theory has not been demonstrated) and that indeed there is a path from our starting article to the end article, we'll pre-crawl the full path. That is, we'll begin with a random Wikipedia page, which will be our starting point, and we'll link through a number of pages toward our destination, the end article. The algorithm for picking the next linked page will be the simplest—we'll just pick any random internal link.</p>
+<p class="calibre2">To make things more interesting, we will also offer a difficulty setting—easy, medium, or hard. This will affect how far apart the start page and the end page will be. For an easy game, they will be two pages away, for medium, four, and for hard, six. Of course, this logic in not super rigorous. Yes, intuitively, we can say that two articles that are further apart will be less related and harder to link. But, it's also possible that the player will find a shorter path. We won't worry about that, though.</p>
+<p class="calibre2">The game will also allow the players to go back if they can't find the solution in the maximum number of steps. </p>
+<p class="calibre2">Finally, if the player gives up, we'll add an option to show the solution—the path we found from the start article to the destination.</p>
+<p class="calibre2">This sounds exciting—let's write some code!</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Some additional requirements</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">In order to follow through this chapter, you will need the following:</p>
+<ul class="calibre10">
+<li class="calibre11">A working Julia installation</li>
+<li class="calibre11">An internet connection</li>
+<li class="calibre11">A text editor</li>
+</ul>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Organizing our code</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">Up to this point, we've been mostly coding at the REPL. Recently, in the previous chapter, we've started to rely more on the IDE to whip up short Julia files.</p>
+<p class="calibre2">But, as our skillset grows and we develop more and more ambitious projects, so will grow the complexity of our programs. This, in turn, will lead to more lines of code, more logic, and more files—and more difficulties in maintaining and understanding all these down the line. As the famous coding axiom goes, the code is read many more times than it is written—so we need to plan accordingly.</p>
+<p class="calibre2">Each language comes with its own philosophy and toolset when it comes to code organization. In Julia, we have files, modules, and packages. We'll learn about all of these next.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Using modules to tame our code</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">Modules group together related functions, variables, and other definitions. But, they are not just organizational units—they are language constructs that can be understood as variable workspaces. They allow us to define variables and functions without worrying about name conflicts. Julia's <kbd class="calibre12">Module</kbd> is one of the cornerstones of the language—a key structural and logical entity that helps make code easier to develop, understand, and maintain. We'll make good use of modules by architecting our game around them.</p>
+<p class="calibre2">A module is defined using the <kbd class="calibre12">module &lt;&lt;name&gt;&gt;...end</kbd> construct:</p>
+<pre class="calibre17">module MyModule 
+# code here 
+<strong class="calibre1">end</strong></pre>
+<p class="calibre2">Let's start a new REPL session and look at a few examples.</p>
+<p class="calibre2">Say we want to write a function that retrieves a random Wikipedia page—it's one of our game's features. We could call this function <kbd class="calibre12">rand</kbd>.</p>
+<p class="calibre2">As you may suspect, creating random <em class="calibre16">things</em> is a pretty common task, so we're not the first ones to think about it. You can see for yourself. Try this at the REPL:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; rand 
+rand (generic function with 56 methods) </strong></pre>
+<p class="calibre2">Turns out, 56 <kbd class="calibre12">rand</kbd> methods are already defined.</p>
+<p class="calibre2">This will make it difficult to add our own variant:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; function rand() 
+           # code here 
+       end 
+error in method definition: function Base.rand must be explicitly imported to be extended</strong> </pre>
+<p class="calibre2">Our attempt to define a new <kbd class="calibre12">rand</kbd> method raised an error because it was already defined and loaded.</p>
+<p class="calibre2">It's easy to see how this can lead to a nightmare scenario when choosing the names of our functions. If all the defined names would live in the same workspace, we'd get into endless name conflicts as we'd run out of relevant names for our functions and variables.</p>
+<p class="calibre2">Julia's module allows us to define separate workspaces, providing a level of encapsulation that separates our variables and functions from everybody else's. By using modules, name conflicts are eliminated.</p>
+<p class="calibre2">Modules are defined within <kbd class="calibre12">module...end</kbd> language constructs. Try this example (at the REPL), where we define our <kbd class="calibre12">rand</kbd> function within a module called <kbd class="calibre12">MyModule</kbd>:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; module MyModule 
+ 
+      function rand() 
+           println("I'll get a random Wikipedia page") 
+      end 
+ 
+      end 
+Main.MyModule</strong> </pre>
+<p class="calibre2">This snippet defines a module called <kbd class="calibre12">MyModule</kbd>—and within it, a function called <kbd class="calibre12">rand</kbd>. Here, <kbd class="calibre12">MyModule</kbd> effectively encapsulates the <kbd class="calibre12">rand</kbd> function, which no longer clashes with Julia's <kbd class="calibre12">Base.rand</kbd>.</p>
+<p class="calibre2">As you can see from its full name, <kbd class="calibre12">Main.MyModule</kbd>, our newly created module, is actually added within another existing module called <kbd class="calibre12">Main</kbd>. This module, <kbd class="calibre12">Main</kbd>, is the default module within which code executed at the REPL is evaluated.</p>
+<p class="calibre2">In order to access our newly defined function, we need to reference it within <kbd class="calibre12">MyModule</kbd>, by <em class="calibre16">dotting in</em>:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; MyModule.rand() 
+I'll get a random wikipedia page</strong> </pre>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Defining modules</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">Since modules are designed to be used with larger code bases, they're not REPL-friendly. Because once they are defined, we cannot extend them with extra definitions and we're forced to retype and redefine the whole module, and it's best to use a full-fledged editor.</p>
+<p class="calibre2">Let's create a new folder to host our code. Within it, we'll want to create a new folder called <kbd class="calibre12">modules/</kbd>. Then, within the <kbd class="calibre12">modules/</kbd> folder, add three files—<kbd class="calibre12">Letters.jl</kbd>, <kbd class="calibre12">Numbers.jl</kbd>, and <kbd class="calibre12">module_name.jl</kbd>.</p>
+<div class="packttip">Files containing Julia code use, by convention, the <kbd class="calibre24">.jl</kbd> file extension.</div>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Productive REPL sessions with Julia</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">Why not use Julia's file-wrangling powers to set up this file structure? Let's take a look at how to do this, as it will come in handy in our day-to-day work.</p>
+<p class="calibre2">Remember, you can type <kbd class="calibre12">;</kbd> into the REPL, at the beginning of the line, to trigger the shell mode. Your cursor will change from <kbd class="calibre12">julia&gt;</kbd> to <kbd class="calibre12">shell&gt;</kbd> to confirm the change of context. In IJulia/Jupyter, you have to prefix the code in the cell with <kbd class="calibre12">;</kbd> in order to be executed in shell mode.</p>
+<p class="calibre2">Now, we can perform the following:</p>
+<pre class="calibre17"><strong class="calibre1">shell&gt; mkdir modules # create a new dir called "modules" 
+shell&gt; cd modules # switch to the "modules" directory </strong></pre>
+<p class="calibre2">Don't forget that Julia's shell mode calls commands as if they run straight into the OS Terminal—so the invoked binaries must exist on that platform. Both <kbd class="calibre12">mkdir</kbd> and <kbd class="calibre12">cd</kbd> are supported on all major operating systems, so we're safe here. But, when it comes to creating the files, we're out of luck—the <kbd class="calibre12">touch</kbd> command is not available on Windows. No problem though—all we need to do in this case is to invoke the Julia function with the same name. This will create the files programmatically, in a platform-agnostic way:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; for f in ["Letters.jl", "Numbers.jl", "module_name.jl"] 
+           touch(f) 
+       end</strong> </pre>
+<p class="calibre2">If you want to make sure that the files were created, use <kbd class="calibre12">readdir</kbd>:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; readdir() 
+3-element Array{String,1}: 
+ "Letters.jl" 
+ "Numbers.jl" 
+ "module_name.jl"</strong> </pre>
+<div class="packttip">Please make sure that you name the files exactly as indicated, respecting the case.</div>
+<p class="calibre2">Another handy productivity trick is invoking <kbd class="calibre12">edit</kbd>, which opens a file or directory in your default Julia editor. The next snippet will open <kbd class="calibre12">Letters.jl</kbd> in whatever default editor you have configured:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; edit("Letters.jl") </strong> </pre>
+<p class="calibre2">If the default editor is not your favorite Julia IDE, you can change it by setting one of the <kbd class="calibre12">JULIA_EDITOR</kbd>, <kbd class="calibre12">VISUAL</kbd>, or <kbd class="calibre12">EDITOR</kbd> environment variables to point to the editor of your choice. For instance, on my Mac, I can ask for the path to the Atom editor with the following:</p>
+<pre class="calibre17"><strong class="calibre1">shell&gt; which atom 
+/usr/local/bin/atom</strong> </pre>
+<p class="calibre2">And then, I can set <kbd class="calibre12">JULIA_EDITOR</kbd> as follows:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; ENV["JULIA_EDITOR"] = "/usr/local/bin/atom"</strong> </pre>
+<p class="calibre2">The three variables have slightly different purposes, but in this case, setting any of them will have the same effect—changing the default editor for the current Julia session. Keep in mind, though, that they have different <em class="calibre16">weights</em>, with <kbd class="calibre12">JULIA_EDITOR</kbd> taking precedence over <kbd class="calibre12">VISUAL</kbd>, which takes precedence over <kbd class="calibre12">EDITOR</kbd>.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Setting up our modules</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">Let's start by editing <kbd class="calibre12">Letters.jl</kbd> to make it look like this:</p>
+<pre class="calibre17">module Letters 
+ 
+using Random 
+ 
+export randstring 
+ 
+const MY_NAME = "Letters" 
+ 
+function rand() 
+  Random.rand('A':'Z') 
+end 
+ 
+function randstring() 
+  [rand() for _ in 1:10] |&gt; join 
+end 
+ 
+include("module_name.jl") 
+ 
+end </pre>
+<p class="calibre2">Here, we have defined a module called <kbd class="calibre12">Letters</kbd>. In it, we added a <kbd class="calibre12">rand</kbd> function that uses Julia's <kbd class="calibre12">Random.rand</kbd> to return a random letter between <kbd class="calibre12">A</kbd> and <kbd class="calibre12">Z</kbd> in the form of a <kbd class="calibre12">Char</kbd>. Next, we added a function called <kbd class="calibre12">Letters.randstring</kbd>, which returns a <kbd class="calibre12">String</kbd> of <kbd class="calibre12">10</kbd> random characters. This string is generated using a <kbd class="calibre12">Char[]</kbd> array comprehension (the <kbd class="calibre12">_</kbd> variable name is perfectly legal in Julia and, by convention, it designates a variable whose value is not used) which is piped into the <kbd class="calibre12">join</kbd> function to return the string result.</p>
+<div class="packttip">Please note that this is an over complicated way to generate a random string as Julia provides the <kbd class="calibre24">Random.randstring</kbd> function. But, at this point, it's important to exploit every opportunity to practice writing code, and I just didn't want to waste the chance of using Julia's comprehension syntax and the pipe operator. Practice makes perfect!</div>
+<p class="calibre2">Switching our focus towards the first lines of code, we declared that we'll be <kbd class="calibre12">using Random</kbd>—and we instructed the compiler to make <kbd class="calibre12">randstring</kbd> public via <kbd class="calibre12">export randstring</kbd>. Finally, we have also declared a constant called <kbd class="calibre12">MY_NAME</kbd>, which points to the <kbd class="calibre12">Letters</kbd> string (which is the name of the module itself).</p>
+<p class="calibre2">The last line of the module, <kbd class="calibre12">include("module_name.jl")</kbd>, loads the contents of <kbd class="calibre12">module_name.jl</kbd> into <kbd class="calibre12">Letters</kbd>. The <kbd class="calibre12">include</kbd> function is typically used to load source code interactively, or to combine files in packages that are split into multiple source files—and we'll see how this works soon.</p>
+<p class="calibre2">Next, let's edit <kbd class="calibre12">Number.jl</kbd>. It will have a similar <kbd class="calibre12">rand</kbd> function that will return a random <kbd class="calibre12">Integer</kbd> between <kbd class="calibre12">1</kbd> and <kbd class="calibre12">1_000</kbd>. It exports <kbd class="calibre12">halfrand</kbd>, a function that gets a value from <kbd class="calibre12">rand</kbd> and divides it by <kbd class="calibre12">2</kbd>. We pass the result of the division to the <kbd class="calibre12">floor</kbd> function, which will convert it to the closest less than or equal value. And, just like <kbd class="calibre12">Letters</kbd>, it also includes <kbd class="calibre12">module_name.jl</kbd>:</p>
+<pre class="calibre17">module Numbers 
+ 
+using Random<br class="title-page-name"/><br class="title-page-name"/>export halfrand<br class="title-page-name"/><br class="title-page-name"/>const MY_NAME = "Numbers"<br class="title-page-name"/> 
+function rand() 
+  Random.rand(1:1_000) 
+end<br class="title-page-name"/>function halfrand() 
+  floor(rand() / 2) 
+end<br class="title-page-name"/><br class="title-page-name"/>include("module_name.jl")<br class="title-page-name"/>end </pre>
+<p class="calibre2">Thus, for both modules, we defined a <kbd class="calibre12">MY_NAME</kbd> constant. We'll reference it by editing the <kbd class="calibre12">module_name.jl</kbd> file to make it look like this:</p>
+<pre class="calibre17">function myname() 
+  MY_NAME 
+end </pre>
+<p class="calibre2">The code returns the corresponding value of the constant, depending on the actual module where we include the <kbd class="calibre12">module_name.jl</kbd> file. This illustrates Julia's mixin behavior, where included code acts as if it was written directly into the including file. We'll see how this works next.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Referencing modules</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">Despite the fact that we are only <em class="calibre16">now</em> formally discussing modules, we've been using them all along. The <kbd class="calibre12">using</kbd> statement which we employed so many times takes as its parameter a module name. It's a key language construct that tells the compiler to bring the module's definitions into the current scope. Referencing functions, variables, and types defined in other modules is a routine part of programming in Julia—accessing the functionality provided by a third-party package, for example, revolves around bringing its main module into scope via <kbd class="calibre12">using</kbd>. But, <kbd class="calibre12">using</kbd> is not the only tool in Julia's arsenal. We have a few more commands at our disposal, such as <kbd class="calibre12">import</kbd>, <kbd class="calibre12">include</kbd>, and <kbd class="calibre12">export</kbd>.</p>
+<p class="calibre2">The <kbd class="calibre12">using</kbd> directive allows us to reference functions, variables, types, and so on exported by other modules. This tells Julia to make the module's exported definitions available in the current workspace. If the definitions were exported by the module's author, we can invoke them without having to prefix them with the module's name (prefixing the name of the function with the module name represents the fully qualified name). But, be careful though as this is a double-edged sword—if two used modules export functions with the same name, the functions will still have to be accessed using the fully qualified name—otherwise Julia will throw an exception as it won't know which of the functions we refer to.</p>
+<p class="calibre2">As for <kbd class="calibre12">import</kbd>, it is somewhat similar, in that it also brings definitions from another module into scope. But, it differs in two important aspects. First, calling <kbd class="calibre12">import MyModule</kbd> would still require prefixing the definitions with the module's name, thereby avoiding potential name clashes. Second, if we want to extend functions defined in other modules with new methods, we <em class="calibre16">have</em> to use <kbd class="calibre12">import</kbd>.</p>
+<p class="calibre2">On the other hand, <kbd class="calibre12">include</kbd> is conceptually different. It is used to evaluate the contents of a file into the current context (that is, into the current module's <em class="calibre16">global</em> scope). It's a way to reuse code by providing mixin-like behavior, as we have already seen.</p>
+<p class="calibre2">The fact that the included file is evaluated in the module's global scope is a very important point. It means that, even if we include a file within a function's body, the contents of the file will not be evaluated within the function's scope, but within the module's scope. To see this in action, let's create a file called <kbd class="calibre12">testinclude.jl</kbd> in our <kbd class="calibre12">modules/</kbd> folder. Edit <kbd class="calibre12">testinclude.jl</kbd> and append this line of code:</p>
+<pre class="calibre17">somevar = 10</pre>
+<p class="calibre2">Now, if you run the following code in the REPL or in IJulia, you'll see what I mean:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; function testinclude() 
+             include("testinclude.jl") 
+             println(somevar) 
+       end 
+ 
+julia&gt; testinclude() 
+10</strong> </pre>
+<p class="calibre2">Apparently, it all worked fine. The <kbd class="calibre12">testinclude.jl</kbd> file was included and the <kbd class="calibre12">somevar</kbd> variable was defined. However, <kbd class="calibre12">somevar</kbd> was not created within the <kbd class="calibre12">testinclude</kbd> function, but as a global variable in the <kbd class="calibre12">Main</kbd> module. We can see that easily, as we can access the <kbd class="calibre12">somevar</kbd> variable directly:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; somevar 
+10</strong> </pre>
+<p class="calibre2">Keep this behavior in mind as it can lead to hard-to-understand bugs by exposing variables in the global scope.</p>
+<p class="calibre2">Finally, <kbd class="calibre12">export</kbd> is used by a module's author to expose definitions, much like a public interface. As we've seen, exported functions and variables are brought into scope by the module's users via <kbd class="calibre12">using</kbd>.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Setting up the LOAD_PATH</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">Let's look at some examples that illustrate scoping rules when working with modules. Please open a new Julia REPL.</p>
+<p class="calibre2">We've seen the <kbd class="calibre12">using</kbd> statement many times throughout the previous chapters, and now we understand its role—to bring another module and its definitions (variables, functions, types) into scope. Let's try it with our newly created modules:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; using Letters 
+ERROR: ArgumentError: Package Letters not found in current path: 
+- Run `Pkg.add("Letters")` to install the Letters package.</strong> </pre>
+<p class="calibre2">Ouch, an exception! Julia informs us that it doesn't know where to find the <kbd class="calibre12">Letters</kbd> module and advises us to use <kbd class="calibre12">Pkg.add("Letters")</kbd> to install it. But, since <kbd class="calibre12">Pkg.add</kbd> only works with registered packages and we haven't published our modules to Julia's registry, that won't help. Turns out we just need to tell Julia where to find our code.</p>
+<p class="calibre2">When asked to bring a module into scope via <kbd class="calibre12">using</kbd>, Julia checks a series of paths to look up the corresponding files. These lookup paths are stored in a <kbd class="calibre12">Vector</kbd> called the <kbd class="calibre12">LOAD_PATH</kbd>—and we can append our <kbd class="calibre12">modules/</kbd> folder to this collection by using the <kbd class="calibre12">push!</kbd> function:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; push!(LOAD_PATH, "modules/") 
+4-element Array{String,1}: 
+ "@" 
+ "@v#.#" 
+ "@stdlib" 
+ "modules/"</strong> </pre>
+<p class="calibre2">Your output might be different, but what matters is that after calling <kbd class="calibre12">push!</kbd>, the <kbd class="calibre12">LOAD_PATH</kbd> collection now has an extra element indicating the path to the <kbd class="calibre12">modules/</kbd> folder.</p>
+<p class="calibre2">In order for Julia to match the name of a module with its corresponding file, <em class="calibre16">the file must have exactly the same name as the module</em>, plus the <kbd class="calibre12">.jl</kbd> extension. It's OK for a file to include more than one module, but Julia will not be able to automatically find the extra ones by filename.</p>
+<p class="calibre2">In regard to naming the modules themselves, the convention is to use CamelCase. Thus, we'll end up with a module called <kbd class="calibre12">Letters</kbd> defined in a <kbd class="calibre12">Letters.jl</kbd> file, or with a <kbd class="calibre12">WebSockets</kbd> module in a file named <kbd class="calibre12">WebSockets.jl</kbd>.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Loading modules with using</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">Now that we've added our folder to the <kbd class="calibre12">LOAD_PATH</kbd>, we're ready to use our modules:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; using Letters</strong> </pre>
+<p class="calibre2">At this point, two things have happened:</p>
+<ul class="calibre10">
+<li class="calibre11">All the exported definitions are now directly callable in the REPL, in our case, <kbd class="calibre12">randstring</kbd></li>
+<li class="calibre11">The definitions that were not exported are accessible by <em class="calibre55">dotting into</em> <kbd class="calibre12">Letters</kbd>—for example, <kbd class="calibre12">Letters.rand()</kbd></li>
+</ul>
+<p class="calibre2">Let's try it:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; randstring() # has been exported and is directly accessible 
+"TCNXFLUOUU" 
+</strong><br class="title-page-name"/><strong class="calibre1">julia&gt; myname() # has not been exported so it's not available in the REPLERROR: UndefVarError: myname not defined</strong><br class="title-page-name"/><strong class="calibre1"> 
+julia&gt; Letters.myname() # but we can access it under the Letters namespace 
+"Letters"</strong><br class="title-page-name"/><strong class="calibre1"> 
+julia&gt; Letters.rand() # does not conflict with Base.rand 
+'L': ASCII/Unicode U+004c (category Lu: Letter, uppercase) </strong> </pre>
+<p class="calibre2">We can see what a module exports with the <kbd class="calibre12">names</kbd> function:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; names(Letters) 
+2-element Array{Symbol,1}: 
+ :Letters 
+ :randstring</strong> </pre>
+<p class="calibre2">If we want to get all the definitions of a module, exported or not, <kbd class="calibre12">names</kbd> takes a second parameter, <kbd class="calibre12">all</kbd>, a <kbd class="calibre12">Boolean</kbd>:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; names(Letters, all = true) 
+11-element Array{Symbol,1}: 
+ # output truncated 
+ :Letters 
+ :MY_NAME 
+ :eval 
+ :myname 
+ :rand 
+ :randstring </strong></pre>
+<p class="calibre2">We can easily recognize the variables and functions we defined.</p>
+<p class="calibre2">As we can see, for instance, <kbd class="calibre12">myname</kbd> was not brought directly into scope, since it wasn't exported in <kbd class="calibre12">Letters</kbd>. But, it turns out that we can still get the exported-like behavior if we explicitly tell Julia to use the function:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; using Letters: myname</strong><br class="title-page-name"/><strong class="calibre1">julia&gt; myname() # we no longer need to "dot into" Letters.myname() 
+"Letters"</strong> </pre>
+<p class="calibre2">If we want to bring multiple definitions from the same module directly into scope, we can pass a comma-separated list of names:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; using Letters: myname, MY_NAME</strong> </pre>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Loading modules with import</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">Now, let's look at the effects of the <kbd class="calibre12">import</kbd> function, using <kbd class="calibre12">Numbers</kbd>:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; import Numbers</strong><br class="title-page-name"/><strong class="calibre1">julia&gt; names(Numbers) 
+2-element Array{Symbol,1}: 
+ :Numbers 
+ :halfrand</strong><br class="title-page-name"/><strong class="calibre1">julia&gt; halfrand() 
+ERROR: UndefVarError: halfrand not defined</strong> </pre>
+<p class="calibre2">We can see here that, unlike <kbd class="calibre12">using</kbd>, the <kbd class="calibre12">import</kbd> function <em class="calibre16">does not bring into scope</em> the exported definitions.</p>
+<p class="calibre2">However, explicitly importing a definition itself will bring it directly into scope, disregarding whether it was exported or not:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; import Numbers.halfrand, Numbers.MY_NAME</strong> </pre>
+<p class="calibre2">This snippet is equivalent to the following:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; import Numbers: halfrand, MY_NAME 
+ 
+julia&gt; halfrand() 
+271.0</strong> </pre>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Loading modules with include</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">Manipulating the <kbd class="calibre12">LOAD_PATH</kbd> works great when developing standalone apps, like the one we're working on now. However, this approach is not available for a package developer. For such instances—and for all the cases when for one reason or another using the <kbd class="calibre12">LOAD_PATH</kbd> is not an option—a common way of loading modules is by including their files.</p>
+<p class="calibre2">For example, we can include our <kbd class="calibre12">Letters</kbd> module at the REPL, as follows (start a new REPL session):</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; include("modules/Letters.jl") 
+Main.Letters</strong> </pre>
+<p class="calibre2">This will read and evaluate the contents of the <kbd class="calibre12">modules/Letters.jl</kbd> file in the current scope. And as a result, it will define the <kbd class="calibre12">Letters</kbd> module within our current module, <kbd class="calibre12">Main</kbd>. But, this is not enough—at this point, none of the definitions within <kbd class="calibre12">Letters</kbd> were exported:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; randstring() 
+ERROR: UndefVarError: randstring not defined</strong> </pre>
+<p class="calibre2">We need to bring them into scope:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; using Letters 
+ERROR: ArgumentError: Package Letters not found in current path: 
+- Run `Pkg.add("Letters")` to install the Letters package.</strong></pre>
+<p class="calibre2">Not again! What just happened? This is an important distinction when using <kbd class="calibre12">include</kbd> with modules. The <kbd class="calibre12">Letters</kbd> module, like we just said, is included in the current module, <kbd class="calibre12">Main</kbd>, so we need to reference it accordingly:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; using Main.Letters 
+ 
+julia&gt; randstring() 
+"QUPCDZKSAH"</strong> </pre>
+<p class="calibre2">We can also reference this kind of nested module hierarchy by using relative <em class="calibre16">paths</em>. For example, a dot, <kbd class="calibre12">.</kbd>, stands for <em class="calibre16">current module</em>. So, the previous <kbd class="calibre12">Main.Letters</kbd> nesting can be expressed as <kbd class="calibre12">.Letters</kbd>— it's exactly the same thing:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; using .Letters</strong> </pre>
+<p class="calibre2">Similarly, we could use two dots, <kbd class="calibre12">..</kbd>, to reference the parent module, three dots for the parent of the parent, and so on.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Nesting modules</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">As we've just seen, sometimes, the logic of our program will dictate that a module has to be part of another module, effectively nesting them. This is used with predilection when developing our own packages. The best way to organize a package is to expose a top module and include all the other definitions (functions, variables, and other modules) within it (to encapsulate the functionality). An example should help clarify things.</p>
+<p class="calibre2">Let's make a change—in the <kbd class="calibre12">Letters.jl</kbd> file, under the line saying <kbd class="calibre12">include("module_name.jl")</kbd>, go ahead and add another line—<kbd class="calibre12">include("Numbers.jl")</kbd>.</p>
+<p class="calibre2">With this change, the <kbd class="calibre12">Numbers</kbd> module will effectively be defined within the <kbd class="calibre12">Letters</kbd> module. In order to access the functions of the nested module, we <em class="calibre16">dot into</em> as deep as necessary:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; using .Letters 
+ 
+julia&gt; Letters.Numbers.halfrand() 
+432.5</strong> </pre>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Setting up our game's architecture</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">Let's create a home for our game—make a new folder called <kbd class="calibre12">sixdegrees/</kbd>. We'll use it to organize our game's files. Each file will contain a module and each module will package related functionality. We'll make use of Julia's auto-loading features, which means that the filename of each module will be the same as the module's name, plus the <kbd class="calibre12">.jl</kbd> extension.</p>
+<p class="calibre2">The first thing we need to do, though, once we go into the <kbd class="calibre12">sixdegrees/</kbd> folder, is to initialize our project through <kbd class="calibre12">Pkg</kbd>—so we can use Julia's dependency management features:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; mkdir("sixdegrees") 
+"sixdegrees" 
+ 
+julia&gt; cd("sixdegrees/") 
+ 
+julia&gt; ] # go into pkg mode 
+ 
+(v1.0) pkg&gt; activate . 
+ 
+(sixdegrees) pkg&gt;</strong> </pre>
+<p class="calibre2">We'll be using the <kbd class="calibre12">HTTP</kbd> and the <kbd class="calibre12">Gumbo</kbd> packages, so it's a good idea to add them, now that we're dealing with dependencies:</p>
+<pre class="calibre17"><strong class="calibre1">(sixdegrees) pkg&gt; add HTTP Gumbo</strong> </pre>
+<p class="calibre2">The next thing we need is a container for Wikipedia-related code—a module that encapsulates the functionality for requesting an article and extracting the internal URLs. We already have a first iteration of the code in the <kbd class="calibre12">webcrawler.jl</kbd> file we wrote in <a href="3184f173-ae3d-47f9-b7e9-f677947499f2.xhtml" class="calibre9">Chapter 3</a>, <em class="calibre16">Setting Up the Wiki Game</em>. Now, all we need to do is create a <kbd class="calibre12">Wikipedia</kbd> module and fill it up with the contents of <kbd class="calibre12">webcrawler.jl</kbd>.</p>
+<p class="calibre2">Within the <kbd class="calibre12">sixdegrees</kbd> folder, create a new file called <kbd class="calibre12">Wikipedia.jl</kbd>. Set it up with the following code:</p>
+<pre class="calibre17">module Wikipedia<br class="title-page-name"/>using HTTP, Gumbo 
+ 
+const RANDOM_PAGE_URL = "https://en.m.wikipedia.org/wiki/Special:Random" 
+ 
+export fetchrandom, fetchpage, articlelinks 
+ 
+function fetchpage(url) 
+  response = HTTP.get(url) 
+  if response.status == 200 &amp;&amp; length(response.body) &gt; 0 
+    String(response.body) 
+  else 
+    "" 
+  end 
+end 
+ 
+function extractlinks(elem, links = String[]) 
+  if  isa(elem, HTMLElement) &amp;&amp; tag(elem) == :a &amp;&amp; in("href", collect(keys(attrs(elem)))) 
+        url = getattr(elem, "href") 
+        startswith(url, "/wiki/") &amp;&amp; ! occursin(":", url) &amp;&amp; push!(links, url) 
+  end <br class="title-page-name"/>  for child in children(elem) 
+    extractlinks(child, links) 
+  end <br class="title-page-name"/>  unique(links) 
+end 
+ 
+<strong class="calibre1">function fetchrandom() 
+  fetchpage(RANDOM_PAGE_URL) 
+end 
+ 
+function articlelinks(content) 
+  if ! isempty(content) 
+    dom = Gumbo.parsehtml(content) 
+ 
+    links = extractlinks(dom.root) 
+  end 
+end</strong>
+ 
+end</pre>
+<p class="calibre2">The preceding code should look familiar as it shares much of its logic with <kbd class="calibre12">webcrawler.jl</kbd>. But, there are some important changes.</p>
+<p class="calibre2">First of all, we wrapped everything into a <kbd class="calibre12">module</kbd> declaration.</p>
+<div class="packttip">Please note a very important convention: in Julia, we do not indent the code within modules as this would cause the whole file to be indented, which would affect readability.</div>
+<p class="calibre2">On the third line, where we used to have the link to Julia's Wikipedia entry, we now define a <kbd class="calibre12">String</kbd> constant, <kbd class="calibre12">RANDOM_PAGE_URL</kbd>, which points to a special Wikipedia URL that returns a random article. Also, we switched to the mobile version of the Wikipedia website, as indicated by the <kbd class="calibre12">en.m.</kbd> subdomains. Using the mobile pages will make our lives easier as they are simpler and have less markup.</p>
+<p class="calibre2">In the <kbd class="calibre12">fetchpage</kbd> function, we're no longer looking for the <kbd class="calibre12">Content-Length</kbd> header and we're instead checking the <kbd class="calibre12">length</kbd> of the <kbd class="calibre12">response.body</kbd> property. We're doing this because requesting the special random Wikipedia page performs a redirect and, in the process, the <kbd class="calibre12">Content-Length</kbd> header is dropped.</p>
+<p class="calibre2">We have also replaced some of the logic at the bottom of the file. Instead of automatically fetching Julia's Wikipedia page and dumping the list of internal links onto the screen, we now define two more functions: <kbd class="calibre12">fetchrandom</kbd> and <kbd class="calibre12">articlelinks</kbd>. These functions will be the public interface of the <kbd class="calibre12">Wikipedia</kbd> module, and they are exposed using the <kbd class="calibre12">export</kbd> statement. The <kbd class="calibre12">fetchrandom</kbd> function does exactly what the name says—it calls the <kbd class="calibre12">fetchpage</kbd> function passing in the <kbd class="calibre12">RANDOM_PAGE_URL</kbd> const, effectively fetching a random Wikipedia page. <kbd class="calibre12">articlelinks</kbd> returns an array of strings representing the linked articles.</p>
+<p class="calibre2">Finally, we removed the <kbd class="calibre12">LINKS</kbd> constant—global variables should be avoided. The <kbd class="calibre12">extractlinks</kbd> function has been refactored accordingly, now accepting a second parameter, <kbd class="calibre12">links</kbd>, a <kbd class="calibre12">Vector</kbd> of <kbd class="calibre12">String</kbd>, which is used to maintain state during recursion.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Checking our code</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">Let's make sure that, after this refactoring, our code still works as expected. Julia comes out of the box with unit-testing capabilities, and we'll look at these in <a href="8391f749-e95c-4ff9-ba40-d71c91b1d7fd.xhtml" class="calibre9">Chapter 11</a>, <em class="calibre16">Creating Julia Packages</em>. For now, we'll do it the old-fashioned way, by manually running the code and inspecting the output.</p>
+<p class="calibre2">We'll add a new file inside the <kbd class="calibre12">sixdegrees/</kbd> folder, called <kbd class="calibre12">six_degrees.jl</kbd>. Looking at its name, you can guess that it will be a plain Julia file and not a module. We'll use it to orchestrate the loading of our game:</p>
+<pre class="calibre17">using Pkg 
+pkg"activate ." 
+ 
+include("Wikipedia.jl") 
+using .Wikipedia 
+ 
+fetchrandom() |&gt; articlelinks |&gt; display </pre>
+<p class="calibre2">The code is straightforward and minimalistic—we use <kbd class="calibre12">Pkg</kbd> to activate the current project. Then, we include the <kbd class="calibre12">Wikipedia.jl</kbd> file in the current module, and then we ask the compiler to bring the <kbd class="calibre12">Wikipedia</kbd> module into scope. Finally, we use the previously discussed <kbd class="calibre12">fetchrandom</kbd> and <kbd class="calibre12">articlelinks</kbd> to retrieve the list of articles URLs from a random Wikipedia page and display it.</p>
+<p class="calibre2">Time to run our code! In the REPL, make sure that you <kbd class="calibre12">cd</kbd> into the <kbd class="calibre12">sixdegrees</kbd> folder and execute:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; include("six_degrees.jl") 
+21-element Array{String,1}: 
+ "/wiki/Main_Page" 
+ "/wiki/Arena" 
+ "/wiki/Saskatoon,_Saskatchewan" 
+ "/wiki/South_Saskatchewan_River" 
+ "/wiki/New_York_Rangers" 
+# ... output omitted ... #</strong></pre>
+<p class="calibre2">Since we're pulling a random Wikipedia article each time we run our code, your output will be different than in this snippet. The important thing is that you get a non-empty <kbd class="calibre12">Array{String,1}</kbd> with entries that start with <kbd class="calibre12">/wiki/</kbd>.</p>
+<p class="CDPAlignLeft1">Alternatively, you can use the run code or run file option in Visual Studio Code and Atom. Here's Atom running the <kbd class="calibre12">six_degrees.jl</kbd> file:</p>
+<p class="CDPAlignCenter"><img src="assets/254968f3-69ff-4ecc-abec-45273a13f10c.png" class="calibre56"/></p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Building our Wikipedia crawler - take two</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">Our code runs as expected, refactored and neatly packed into a module. However, there's one more thing I'd like us to refactor before moving on. I'm not especially fond of our <kbd class="calibre12">extractlinks</kbd> function.</p>
+<p class="calibre2">First of all, it naively iterates over all the HTML elements. For example, say that we also want to extract the title of the page—every time we want to process something that's not a link, we'll have to iterate over the whole document again. That's going to be resource-hungry and slow to run.</p>
+<p class="calibre2">Secondly, we're reinventing the wheel. In <a href="3184f173-ae3d-47f9-b7e9-f677947499f2.xhtml" class="calibre9">Chapter 3</a>, <em class="calibre16">Setting Up the Wiki Game</em>, we said that CSS selectors are the <em class="calibre16">lingua franca</em> of DOM parsing. We'd benefit massively from using the concise syntax of CSS selectors with the underlying optimizations provided by specialized libraries.</p>
+<p class="calibre2">Fortunately, we don't need to look too far for this kind of functionality. Julia's <kbd class="calibre12">Pkg</kbd> system provides access to <kbd class="calibre12">Cascadia</kbd>, a native CSS selector library. And, the great thing about it is that it works hand in hand with <kbd class="calibre12">Gumbo</kbd>.</p>
+<p class="calibre2">In order to use Cascadia, we need to add it to our project's list of dependencies:</p>
+<pre class="calibre17"><strong class="calibre1">(sixdegrees) pkg&gt; add Cascadia</strong></pre>
+<p class="calibre2">Next, tell Julia we'll be using it—modify <kbd class="calibre12">Wikipedia.jl</kbd> so that the third line reads as follows:</p>
+<pre class="calibre17">using HTTP, Gumbo<strong class="calibre1">, Cascadia</strong></pre>
+<p class="calibre2">With the help of <kbd class="calibre12">Cascadia</kbd>, we can now refactor the <kbd class="calibre12">extractlinks</kbd> function, as follows:</p>
+<pre class="calibre17">function extractlinks(elem) 
+  map(<strong class="calibre1">eachmatch</strong>(<strong class="calibre1">Selector</strong>("a[href^='/wiki/']:not(a[href*=':'])"), elem)) <strong class="calibre1">do e</strong> 
+    e.attributes["href"] 
+  end |&gt; unique 
+end </pre>
+<p class="calibre2">Let's take a closer look at all that happens here. The first thing that stands out is the <kbd class="calibre12">Selector</kbd> function. This is provided by <kbd class="calibre12">Cascadia</kbd> and constructs a new CSS selector object. The string that is passed to it as its only parameter is a CSS selector that reads as—all <kbd class="calibre12">&lt;a&gt;</kbd> elements that have a <kbd class="calibre12">href</kbd> attribute whose value starts with <kbd class="calibre12">'/wiki/'</kbd> and does not contain a column (<kbd class="calibre12">:</kbd>).</p>
+<p class="calibre2"><kbd class="calibre12">Cascadia</kbd> also exports the <kbd class="calibre12">eachmatch</kbd> method. More accurately, it <em class="calibre16">extends</em> the existing <kbd class="calibre12">Base.eachmatch</kbd> method that we've seen previously with regular expressions. This provides a familiar interface—and we'll see how to extend methods later in this chapter, in the <em class="calibre16">Methods</em> section. The <kbd class="calibre12">Cascadia.eachmatch</kbd> function returns a <kbd class="calibre12">Vector</kbd> of elements that match the selector.</p>
+<p class="calibre2">Once we retrieve the collection of matched elements, we pass it to the <kbd class="calibre12">map</kbd> function. The <kbd class="calibre12">map</kbd> function is one of the most used tools in the functional programming toolbox. It takes as its arguments a function, <kbd class="calibre12">f</kbd>, and a collection, <kbd class="calibre12">c</kbd>—and it transforms the collection, <kbd class="calibre12">c</kbd>, by applying <kbd class="calibre12">f</kbd> to each element, returning the modified collection as the result. Its definition is as follows:</p>
+<pre class="calibre17">map(f, c...) -&gt; collection  </pre>
+<p class="calibre2">So then, what's with the strange-looking <kbd class="calibre12">do e ... end</kbd> part in the previous snippet? That doesn't look like invoking the previous <kbd class="calibre12">map</kbd> function, it's true. But it is, in fact, the exact same function invocation, except with a more readable syntax, provided by Julia's <kbd class="calibre12">blocks</kbd>.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Using blocks</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">Because, in Julia, functions are first-class language constructs, they can be referenced and manipulated like any other type of variable. They can be passed as arguments to other functions or can be returned as the result of other function calls. The functions that take another function as their argument or return another function as their result are called <strong class="calibre4">higher-order functions</strong>.</p>
+<p class="calibre2">Let's look at a simple example using <kbd class="calibre12">map</kbd>. We'll take a <kbd class="calibre12">Vector</kbd> of <kbd class="calibre12">Int</kbd>, and we'll apply to each element of its collection a function that doubles the value. You can follow along in a new REPL session (or in the accompanying IJulia notebook):</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; double(x) = x*2 
+double (generic function with 1 method) </strong><br class="title-page-name"/><br class="title-page-name"/><strong class="calibre1">julia&gt; map(double, [1, 2, 3, 5, 8, 13]) 
+6-element Array{Int64,1}: 
+  2 
+  4 
+  6 
+ 10 
+ 16 
+ 26</strong> </pre>
+<p class="calibre2">In this snippet, you can see how we passed the reference to the <kbd class="calibre12">double</kbd> function as the argument of the higher-order function <kbd class="calibre12">map</kbd>. As a result, we got back the <kbd class="calibre12">Vector</kbd>, which was passed as the second argument, but with all the elements doubled.</p>
+<p class="calibre2">That's all good, but having to define a function just to use it as a one-off argument for another function is inconvenient and a bit wasteful. For this reason, the programming languages that support functional features, including Julia, usually support <em class="calibre16">anonymous functions</em>. An anonymous function, or a <em class="calibre16">lambda</em>, is a function definition that is not bound to an identifier.</p>
+<p class="calibre2">We can rewrite the preceding <kbd class="calibre12">map</kbd> invocation to use an anonymous function, which is defined on the spot by using the arrow <kbd class="calibre12">-&gt;</kbd> syntax:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; map(x -&gt; x*2, [1, 2, 3, 5, 8, 13]) 
+6-element Array{Int64,1}: 
+  2 
+  4 
+  6 
+ 10 
+ 16 
+ 26</strong></pre>
+<p class="calibre2">In the definition, <kbd class="calibre12">x -&gt; x*2</kbd>, the <kbd class="calibre12">x</kbd> at the left of the arrow represents the argument that is passed into the function, while <kbd class="calibre12">x*2</kbd> represents the body of the function.</p>
+<p class="calibre2">Great! We have achieved the same end result without having to separately define <kbd class="calibre12">double</kbd>. But, what if we need to use a more complex function? For instance, note the following:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; map(x -&gt; 
+           if x % 2 == 0 
+                  x * 2 
+           elseif x % 3 == 0 
+                  x * 3 
+           elseif x % 5 == 0 
+                  x * 5 
+           else 
+                  x 
+           end,  
+      [1, 2, 3, 5, 8, 13])</strong> </pre>
+<p class="calibre2">That's pretty hard to follow! Because Julia allows us to indent our code, we can enhance the readability of this example to make it more palatable, but the result is still far from great.</p>
+<p class="calibre2">Because these situations occur often, Julia provides the block syntax for defining anonymous functions. All the functions that take another function as their <em class="calibre16">first</em> argument can be used with the block syntax. Support for this kind of invocation is baked into the language, so you don't need to do anything—your functions will support it as well, out of the box, as long as the function is the first positional argument. In order to use it, we skip passing in the first argument when invoking the higher-order function—and instead, at the end of the arguments list, outside of the arguments tuple, we add a <kbd class="calibre12">do...end</kbd> block. Within this block, we define our lambda.</p>
+<p class="calibre2">So, we can rewrite the previous example as follows:</p>
+<pre class="calibre17">map([1, 2, 3, 5, 8, 13]) do x 
+       if x % 2 == 0 
+              x * 2 
+       elseif x % 3 == 0 
+              x * 3 
+       elseif x % 5 == 0 
+              x * 5 
+        else 
+              x 
+        end 
+ end </pre>
+<p class="calibre2">Much more readable!</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Implementing the gameplay</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">Our Wikipedia parser is pretty robust now, and the addition of <kbd class="calibre12">Cascadia</kbd> greatly simplifies the code. It's time to think about the actual gameplay.</p>
+<p class="calibre2">The most important thing, the core of the game, is to create the riddle—asking the player to find a path from the initial article to the end article. We previously decided that in order to be sure that a path between two articles really exists, we will pre-crawl all the pages, from the first to the last. In order to navigate from one page to the next, we'll simply randomly pick one of the internal URLs.</p>
+<p class="calibre2">We also mentioned including difficulty settings. We will use the common-sense assumption that the more links there are between the start article and the end article, the less related their subjects will be; and thus, the more difficult to identify the path between them, resulting in a more challenging level.</p>
+<p class="calibre2">All right, time to get coding! For starters, create a new file inside the <kbd class="calibre12">sixdegrees/</kbd> folder. Name it <kbd class="calibre12">Gameplay.jl</kbd> and copy and paste the following:</p>
+<pre class="calibre17">module Gameplay 
+ 
+using ..Wikipedia 
+ 
+export newgame 
+ 
+const DIFFICULTY_EASY = 2 
+const DIFFICULTY_MEDIUM = 4 
+const DIFFICULTY_HARD = 6 
+ 
+function newgame(difficulty = DIFFICULTY_HARD) 
+  articles = [] 
+ 
+  for i in 1:difficulty 
+    article = if i == 1 
+      fetchrandom() 
+    else 
+      rand(articles[i-1][:links]) |&gt; Wikipedia.fetchpage 
+    end 
+ 
+article_data = Dict(:content =&gt; article, 
+  :links =&gt; articlelinks(article)) 
+    push!(articles, article_data) 
+  end 
+ 
+  articles 
+end 
+ 
+end </pre>
+<p class="calibre2"><kbd class="calibre12">Gamplay.jl</kbd> defines a new <kbd class="calibre12">module</kbd> and brings <kbd class="calibre12">Wikipedia</kbd> into scope. Here, you can see how we reference the <kbd class="calibre12">Wikipedia</kbd> module in the parent scope by using <kbd class="calibre12">..</kbd>. It then defines three constants that map the difficulty settings to degrees of separation (named <kbd class="calibre12">DIFFICULTY_EASY</kbd>, <kbd class="calibre12">DIFFICULTY_MEDIUM</kbd>, and <kbd class="calibre12">DIFFICULTY_HARD</kbd>).</p>
+<p class="calibre2">It then defines a function, <kbd class="calibre12">newgame</kbd>, which accepts a difficulty argument, by default set to hard. In the body of the function, we loop for a number of times equal to the difficulty value. On each iteration, we check the current degree of separation—if it's the first article, we call <kbd class="calibre12">fetchrandom</kbd> to start off the crawling process. If it's not the first article, we pick a random link from the list of links of the previously crawled article (<kbd class="calibre12">rand(articles[i-1][:links])</kbd>). We then pass this URL to <kbd class="calibre12">fetchpage</kbd>. When discussing conditionals, we learned that in Julia <kbd class="calibre12">if/else</kbd> statements return the value of the last-evaluated expression. We can see it put to good use here, with the result of the evaluation being stored in the <kbd class="calibre12">article</kbd> variable.</p>
+<p class="calibre2">Once we've fetched the article, we store its content and its links within a <kbd class="calibre12">Dict</kbd> called <kbd class="calibre12">article_data</kbd>. And, <kbd class="calibre12">article_data</kbd> is in turn added to the <kbd class="calibre12">articles</kbd> array. On its last line, the <kbd class="calibre12">newgame</kbd> function returns the <kbd class="calibre12">articles</kbd> vector that now contains all the steps, from first to last. This function is also exported.</p>
+<p class="calibre2">That wasn't too hard! But, there's a small glitch. If you try to run the code now, it will fail. The reason is that the article links are <em class="calibre16">relative</em>. This means that they are not fully qualified URLs; they look like <kbd class="calibre12">/wiki/Some_Article_Title</kbd>. When <kbd class="calibre12">HTTP.jl</kbd> makes a request, it needs the full link, protocol, and domain name included. But don't worry, that's easy to fix in <kbd class="calibre12">Wikipedia.jl</kbd>. Please switch your editor to the <kbd class="calibre12">Wikipedia</kbd> module and replace the <kbd class="calibre12">const RANDOM_PAGE_URL</kbd> line with the following three lines:</p>
+<pre class="calibre17">const PROTOCOL = "https://" 
+const DOMAIN_NAME = "en.m.wikipedia.org" 
+const RANDOM_PAGE_URL = PROTOCOL * DOMAIN_NAME * "/wiki/Special:Random" </pre>
+<p class="calibre2">We broke the random page URL into its components—the protocol, the domain name, and the rest of the relative path.</p>
+<p class="calibre2">We'll use a similar approach to turn relative URLs into absolute URLs when fetching articles. For this, change the body of <kbd class="calibre12">fetchpage</kbd> and add this as its first line of code:</p>
+<pre class="calibre17">url = startswith(url, "/") <strong class="calibre1">?</strong> PROTOCOL * DOMAIN_NAME * url <strong class="calibre1">:</strong> url </pre>
+<p class="calibre2">Here, we check the <kbd class="calibre12">url</kbd> argument—if it starts with <kbd class="calibre12">"/"</kbd>, it means it's a relative URL so we need to turn it into its absolute counterpart. We used the ternary operator, as you can tell.</p>
+<p class="calibre2">Our code should work just fine now, but spreading this <kbd class="calibre12">PROTOCOL * DOMAIN_NAME * url</kbd> throughout our game is a bit of a code smell. Let's abstract this away into a function:</p>
+<pre class="calibre17">function buildurl(article_url) 
+    PROTOCOL * DOMAIN_NAME * article_url 
+end </pre>
+<div class="packttip">A <em class="calibre55">code smell</em> in programming parlance refers to a practice that violates fundamental design principles and negatively impacts quality. It is not a <em class="calibre55">bug</em> <em class="calibre55">per se</em>, but indicates weakness in design that may increase the risk of bugs or failures in the future.</div>
+<p class="calibre2">The <kbd class="calibre12">Wikipedia.jl</kbd> file should now look like this:</p>
+<pre class="calibre17">module Wikipedia 
+ 
+using HTTP, Gumbo, Cascadia 
+ 
+const PROTOCOL = "https://" 
+const DOMAIN_NAME = "en.m.wikipedia.org" 
+const RANDOM_PAGE_URL = PROTOCOL * DOMAIN_NAME * "/wiki/Special:Random" 
+ 
+export fetchrandom, fetchpage, articlelinks 
+ 
+function fetchpage(url) 
+  url = startswith(url, "/") ? buildurl(url) : url 
+  response = HTTP.get(url) 
+ 
+  if response.status == 200 &amp;&amp; length(response.body) &gt; 0 
+    String(response.body) 
+  else  
+    "" 
+  end 
+end 
+ 
+function extractlinks(elem) 
+  map(eachmatch(Selector("a[href^='/wiki/']:not(a[href*=':'])"), elem)) do e 
+    e.attributes["href"] 
+  end |&gt; unique 
+end 
+ 
+function fetchrandom() 
+  fetchpage(RANDOM_PAGE_URL) 
+end 
+ 
+function articlelinks(content) 
+  if ! isempty(content) 
+    dom = Gumbo.parsehtml(content) 
+   
+    links = extractlinks(dom.root) 
+  end 
+end 
+ 
+function buildurl(article_url) 
+  PROTOCOL * DOMAIN_NAME * article_url 
+end 
+ 
+end </pre>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Finishing touches</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">Our gameplay evolves nicely. Only a few pieces left. Thinking about our game's UI, we'll want to show the game's progression, indicating the articles the player has navigated through. For this, we'll need the titles of the articles. If we could also include an image, that would make our game much prettier.</p>
+<p class="calibre2">Fortunately, we are now using CSS selectors, so extracting the missing data should be a piece of cake. All we need to do is add the following to the <kbd class="calibre12">Wikipedia</kbd> module:</p>
+<pre class="calibre17"><strong class="calibre1">import Cascadia: matchFirst</strong> 
+ 
+function extracttitle(elem) 
+  matchFirst(Selector("<strong class="calibre1">#section_0</strong>"), elem) |&gt; <strong class="calibre1">nodeText</strong> 
+end 
+ 
+function extractimage(elem) 
+  e = matchFirst(Selector("<strong class="calibre1">.content a.image img</strong>"), elem) 
+  isa(e, Void) ? "" : e.attributes["src"] 
+end </pre>
+<p class="calibre2">The <kbd class="calibre12">extracttitle</kbd> and <kbd class="calibre12">extractimage</kbd> functions will retrieve the corresponding content from our article pages. In both cases, since we only want to select a single element, the main page heading and the first image respectively, we use <kbd class="calibre12">Cascadia.matchFirst</kbd>. The <kbd class="calibre12">matchFirst</kbd> function is not publicly exposed by <kbd class="calibre12">Cascadia</kbd>—but since it's quite useful, we <kbd class="calibre12">import</kbd> it.</p>
+<p class="calibre2">The <kbd class="calibre12">#section_0</kbd> selector identifies the main page heading, a <kbd class="calibre12">&lt;h1&gt;</kbd> element. And, because we need to extract the text between its <kbd class="calibre12">&lt;h1&gt;...&lt;/h1&gt;</kbd> tags, we invoke the <kbd class="calibre12">nodeText</kbd> method provided by <kbd class="calibre12">Cascadia</kbd>.</p>
+<p class="calibre2">You can see in the following screenshot, which shows the main heading of a Wikipedia page in Safari's inspector, how to identify the desired HTML elements and how to pick their CSS selectors by inspecting the source of the page and the corresponding DOM element. The HTML property, <kbd class="calibre12">id="section_0"</kbd>, corresponds to the <kbd class="calibre12">#section_0</kbd> CSS selector:</p>
+<p class="CDPAlignCenter"><img src="assets/09501ef3-c816-45fb-9fdf-7210a0538eec.png" class="calibre57"/></p>
+<p class="calibre2">As for <kbd class="calibre12">extractimage</kbd>, we look for the main article image, represented by the <kbd class="calibre12">".content a.image img"</kbd> selector. Since not all the pages have it, we check if we do indeed get a valid element. If the page does not have an image, we'll get an instance of <kbd class="calibre12">Nothing,</kbd> called <kbd class="calibre12">nothing</kbd>. This is an important construct—<kbd class="calibre12">nothing</kbd> is the singleton instance of <kbd class="calibre12">Nothing</kbd>, indicating the absence of an object, corresponding to <kbd class="calibre12">NULL</kbd> in other languages. If we do get an <kbd class="calibre12">img</kbd> element, we extract the value of its <kbd class="calibre12">src</kbd> attribute, which is the URL of the image.</p>
+<p class="calibre2">Here is another Wikipedia screenshot, in which I marked the image element that we're targeting. The flag is the first image on Wikipedia's <strong class="calibre4">Australia</strong> page—a perfect match:</p>
+<p class="CDPAlignCenter"><img src="assets/3db08f0a-dabc-4811-ab68-93785a2cea72.png" class="calibre58"/></p>
+<p class="calibre2">Next, we could extend the <kbd class="calibre12">Gameplay.newgame</kbd> function, to handle the new functions and values. But by now, this doesn't feel right—too much of the logic of <kbd class="calibre12">Wikipedia</kbd> would leak into the <kbd class="calibre12">Gameplay</kbd> module, coupling them; a dangerous anti-pattern. Instead, let's make the extraction of the data and setting up of the article, <kbd class="calibre12">Dict</kbd>, the full responsibility of <kbd class="calibre12">Wikipedia</kbd>, completely encapsulating the logic. Make the <kbd class="calibre12">Gameplay.newgame</kbd> function looks as shown in the following code:</p>
+<pre class="calibre17">function newgame(difficulty = DIFFICULTY_HARD) 
+  articles = [] 
+   
+  for i in 1:difficulty  
+    article = if i == 1 
+                fetchrandom() 
+              else  
+                rand(articles[i-1][:links]) |&gt; Wikipedia.fetchpage 
+              end 
+    push!(articles, articleinfo(article)) 
+  end 
+ 
+  articles 
+end </pre>
+<p class="calibre2">Then, update the <kbd class="calibre12">Wikipedia</kbd> module to read as follows:</p>
+<pre class="calibre17">module Wikipedia 
+ 
+using HTTP, Gumbo, Cascadia 
+import Cascadia: matchFirst 
+ 
+const PROTOCOL = "https://" 
+const DOMAIN_NAME = "en.m.wikipedia.org" 
+const RANDOM_PAGE_URL = PROTOCOL * DOMAIN_NAME * "/wiki/Special:Random" 
+ 
+export fetchrandom, fetchpage, articleinfo 
+ 
+function fetchpage(url) 
+  url = startswith(url, "/") ? buildurl(url) : url 
+ 
+  response = HTTP.get(url) 
+ 
+  if response.status == 200 &amp;&amp; length(response.body) &gt; 0 
+    String(response.body) 
+  else  
+    "" 
+  end 
+end 
+ 
+function extractlinks(elem) 
+  map(eachmatch(Selector("a[href^='/wiki/']:not(a[href*=':'])"), elem)) do e 
+    e.attributes["href"] 
+  end |&gt; unique 
+end 
+ 
+function extracttitle(elem) 
+  matchFirst(Selector("#section_0"), elem) |&gt; nodeText 
+end 
+ 
+function extractimage(elem) 
+  e = matchFirst(Selector(".content a.image img"), elem) 
+  isa(e, Nothing) ? "" : e.attributes["src"] 
+end 
+ 
+function fetchrandom() 
+  fetchpage(RANDOM_PAGE_URL) 
+end 
+ 
+<strong class="calibre1">function articledom(content) 
+  if ! isempty(content) 
+    return Gumbo.parsehtml(content) 
+  end 
+ 
+  error("Article content can not be parsed into DOM") 
+end</strong> 
+ 
+<strong class="calibre1">function articleinfo(content) 
+  dom = articledom(content) 
+ 
+  Dict( :content =&gt; content,  
+        :links =&gt; extractlinks(dom.root),  
+        :title =&gt; extracttitle(dom.root),  
+        :image =&gt; extractimage(dom.root) 
+  ) 
+end</strong> 
+ 
+function buildurl(article_url) 
+  PROTOCOL * DOMAIN_NAME * article_url 
+end 
+ 
+end </pre>
+<p class="calibre2">The file has a few important changes. We've removed the <kbd class="calibre12">articlelinks</kbd> function and instead added <kbd class="calibre12">articleinfo</kbd> and <kbd class="calibre12">articledom</kbd>. The new <kbd class="calibre12">articledom</kbd> function parses the HTML using <kbd class="calibre12">Gumbo</kbd> and generates the DOM, which, very importantly, is only parsed once. We don't want to parse the HTML into a DOM every time we extract a type of element, as would've been the case if we kept the previous <kbd class="calibre12">articlelinks</kbd> function. As for <kbd class="calibre12">articleinfo</kbd>, it is responsible for setting up an article, <kbd class="calibre12">Dict</kbd>, with all the relevant information—content, links, title, and image.</p>
+<p class="calibre2">We can do a test run of our code, by modifying the <kbd class="calibre12">six_degrees.jl</kbd> file, as follows:</p>
+<pre class="calibre17">using Pkg 
+pkg"activate ." 
+ 
+include("Wikipedia.jl") 
+include("Gameplay.jl") 
+ 
+using .Wikipedia, .Gameplay 
+ 
+for article in newgame(<strong class="calibre1">Gameplay.DIFFICULTY_EASY</strong>) 
+  println(article[:title]) 
+end </pre>
+<p class="calibre2">We start a new game, which goes through two articles (<kbd class="calibre12">Gameplay.DIFFICULTY_EASY</kbd>) and for each article we display its title. We can see it in action by either running it in a REPL session via <kbd class="calibre12">julia&gt; include("six_degrees.jl")</kbd>, or by simply running the file in Visual Studio Code or Atom. Here it is in the REPL:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; include("six_degrees.jl") 
+Miracle Bell 
+Indie pop </strong> </pre>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">One more thing</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">Our test run shows that our difficulty settings have a small glitch. We should crawl a certain number of articles <em class="calibre16">after</em> the starting point. Our initial article should not count. This is super easy to fix. In <kbd class="calibre12">Gameplay.newgame</kbd>, we need to replace <kbd class="calibre12">for i in 1:difficulty</kbd> with <kbd class="calibre12">for i in 1:difficulty+1</kbd> (note the <kbd class="calibre12">+1</kbd> at the end). Now, if we try again, it works as intended:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; include("six_degrees.jl") 
+John O'Brien (Australian politician) 
+Harlaxton, Queensland 
+Ballard, Queensland</strong> </pre>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Learning about Julia's type system</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">Our game works like a charm, but there is one thing we can improve—storing our article info as a <kbd class="calibre12">Dict</kbd>. Julia's dictionaries are very flexible and powerful, but they are not a good fit in every case. The <kbd class="calibre12">Dict</kbd> is a generic data structure that is optimized for search, delete, and insert operations. None of these are needed here—our articles have a fixed structure and contain data that doesn't change once created. It's a perfect use case for objects and <strong class="calibre4">object-oriented programming</strong> (<strong class="calibre4">OOP</strong>). Looks like it's time to learn about types.</p>
+<p class="calibre2">Julia's type system is the bread and butter of the language—it is all-pervasive, defining the language's syntax and being the driving force behind Julia's performance and flexibility. Julia's type system is dynamic, meaning that nothing is known about types until runtime, when the actual values manipulated by the program are available. However, we can benefit from the advantages of static typing by using type annotations—indicating that certain values are of specific types. This can greatly improve the performance of the code and also enhance readability and simplify debugging.</p>
+<p class="calibre2">It's impossible to talk about Julia and not talk about types. And sure enough, we've seen many primitive types so far—<kbd class="calibre12">Integer</kbd>, <kbd class="calibre12">Float64</kbd>, <kbd class="calibre12">Boolean</kbd>, <kbd class="calibre12">Char</kbd>, and so on. We've also been exposed to types while learning about the various data structures, such as <kbd class="calibre12">Array</kbd>, <kbd class="calibre12">Dict,</kbd> or tuple. These are all built into the language, but it turns out that Julia makes it very easy to create our own.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Defining our own types</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">Julia supports two categories of type—primitive and composite. A primitive type is a concrete type whose data consists of plain old bits. A composite type is a collection of named fields, an instance of which can be treated as a single value. In many languages, composite types are the only kind of user-definable type, but Julia lets us declare our own primitive types as well, rather than providing only a fixed set of built-in ones.</p>
+<div class="packttip">We won't talk about defining primitive types here, but you can read more about them in the official documentation at <a href="https://docs.julialang.org/en/v1/manual/types/" class="calibre19"><span>https://docs.julialang.org/en/v1/manual/types/</span></a><span>.</span></div>
+<p class="calibre2">In order to represent our articles, we're best served by an immutable composite type. Once our article object is created, its data won't change. Immutable composite types are introduced by the <kbd class="calibre12">struct</kbd> keyword followed by a block of field names:</p>
+<pre class="calibre17">struct Article 
+    content <br class="title-page-name"/>    links <br class="title-page-name"/>    title <br class="title-page-name"/>    image 
+end </pre>
+<p class="calibre2">Since we provide no type information for the fields—that is, we don't tell Julia what type we want each field to be—they will default to any, allowing to hold any type of value. But, since we already know what data we want to store, we would greatly benefit from constraining the type of each field. The <kbd class="calibre12">::</kbd> operator can be used to attach type annotations to expressions and variables. It can be read as <em class="calibre16">is an instance of</em>. Thus, we define the <kbd class="calibre12">Article</kbd> type as follows:</p>
+<pre class="calibre17">struct Article 
+    content::String 
+    links::Vector{String} 
+    title::String 
+    image::String 
+end </pre>
+<p class="calibre2">All the fields are of <kbd class="calibre12">String</kbd> type, with the exception of <kbd class="calibre12">links</kbd>, which is a one-dimensional <kbd class="calibre12">Array</kbd> of <kbd class="calibre12">String</kbd>, also called a <kbd class="calibre12">Vector{String}</kbd>.</p>
+<p class="calibre2">Type annotations can provide important performance benefits—while also eliminating a whole class of type-related bugs.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Constructing types</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">New objects of <kbd class="calibre12">Article</kbd> type are created by applying the <kbd class="calibre12">Article</kbd> type name like a function. The arguments are the values for its fields:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; julia = Article( 
+           "Julia is a high-level dynamic programming language", 
+           ["/wiki/Jeff_Bezanson", "/wiki/Stefan_Karpinski",  
+            "/wiki/Viral_B._Shah", "/wiki/Alan_Edelman"], 
+           "Julia (programming language)", 
+           "/220px-Julia_prog_language.svg.png" 
+       ) 
+Article("Julia is a high-level dynamic programming language", ["/wiki/Jeff_Bezanson", "/wiki/Stefan_Karpinski", "/wiki/Viral_B._Shah", "/wiki/Alan_Edelman"], "Julia (programming language)", "/220px-Julia_prog_language.svg.png")</strong> </pre>
+<p class="calibre2">The fields of the newly created object can be accessed using the standard <em class="calibre16">dot notation</em>:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; julia.title 
+"Julia (programming language)"</strong> </pre>
+<p class="calibre2">Because we declared our type to be immutable, the values are read-only, so they can't be changed:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; julia.title = "The best programming language, period" 
+ERROR: type Article is immutable</strong> </pre>
+<p class="calibre2">Our <kbd class="calibre12">Article</kbd> type definition won't allow us to change the <kbd class="calibre12">julia.title</kbd> property. But, immutability should not be dismissed as it does come with considerable advantages, per the official Julia documentation:</p>
+<ul class="calibre10">
+<li class="calibre11">It can be more efficient. Some structs can be packed efficiently into arrays, and in some cases, the compiler is able to avoid allocating immutable objects entirely.</li>
+<li class="calibre11">It is not possible to violate the invariants provided by the type's constructors.</li>
+<li class="calibre11">Code using immutable objects can be easier to reason about.</li>
+</ul>
+<p class="calibre2">But, that's not the whole story. An immutable object can have fields that reference mutable objects, such as, for instance, <kbd class="calibre12">links</kbd>, which points to an <kbd class="calibre12">Array{String, 1}</kbd>. This array is still mutable:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; push!(julia.links, "/wiki/Multiple_dispatch") 
+5-element Array{String,1}: 
+ "/wiki/Jeff_Bezanson" 
+ "/wiki/Stefan_Karpinski" 
+ "/wiki/Viral_B._Shah" 
+ "/wiki/Alan_Edelman" 
+ "/wiki/Multiple_dispatch"</strong> </pre>
+<p class="calibre2">We can see that there is no error when trying to alter the <kbd class="calibre12">links</kbd> property, by pushing one more URL to the underlying collection. If a property points to a mutable type, that type can be mutated, as long as its type stays the same:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; julia.links = [1, 2, 3] 
+MethodError: Cannot `convert` an object of type Int64 to an object of type String</strong> </pre>
+<p class="calibre2">We are not allowed to change the type of the <kbd class="calibre12">links</kbd> field—Julia tries to accommodate and attempts to convert the values we provided from <kbd class="calibre12">Int</kbd> to <kbd class="calibre12">String</kbd>, but fails.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Mutable composite types</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">It is also possible (and equally easy) to construct mutable composite types. The only thing we need to do is to use the <kbd class="calibre12">mutable struct</kbd> statement, instead of just <kbd class="calibre12">struct</kbd>:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; mutable struct Player 
+           username::String 
+           score::Int 
+       end</strong> </pre>
+<p class="calibre2">Our <kbd class="calibre12">Player</kbd> object should be mutable, as we'll need to update the <kbd class="calibre12">score</kbd> property after each game:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; me = Player("adrian", 0) 
+Player("adrian", 0) 
+ 
+julia&gt; me.score += 10 
+10 
+ 
+julia&gt; me 
+Player("adrian", 10)</strong> </pre>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Type hierarchy and inheritance</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">Like all programming languages that implement OOP features, Julia allows developers to define rich and expressive type hierarchies. However, unlike most OOP languages, there is a very important difference—<em class="calibre16">only the final (upper) type in the hierarchy can be instantiated in Julia</em>. All its parents are just nodes in the type graph, and we can't create instances of them. They are <em class="calibre16">abstract types</em> and are defined using the <kbd class="calibre12">abstract</kbd> type keywords:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; abstract type Person end</strong> </pre>
+<p class="calibre2">We can use the <kbd class="calibre12">&lt;:</kbd> operator to indicate that a type is a subtype of an existing <em class="calibre16">parent</em>:</p>
+<pre class="calibre17">julia&gt; abstract type Mammal end 
+julia&gt; abstract type Person &lt;: Mammal end 
+julia&gt; mutable struct Player &lt;: Person 
+           username::String 
+           score::Int 
+       end </pre>
+<p class="calibre2">Or, in another example, this is Julia's numerical types hierarchy:</p>
+<pre class="calibre17">abstract type Number end 
+abstract type Real     &lt;: Number end 
+abstract type AbstractFloat &lt;: Real end 
+abstract type Integer  &lt;: Real end 
+abstract type Signed   &lt;: Integer end 
+abstract type Unsigned &lt;: Integer end </pre>
+<p class="calibre2">The fact that super-types can't be instantiated can seem limiting, but they have a very powerful role. We can define functions that take a super-type as their argument, in effect accepting all its subtypes:</p>
+<pre class="calibre17">julia&gt; struct User &lt;: Person 
+           username::String 
+           password::String 
+       end 
+ 
+julia&gt; sam = User("sam", "password") 
+User("sam", "password") 
+ 
+julia&gt; function getusername(p::Person) 
+           p.username 
+      end 
+ 
+julia&gt; getusername(me) 
+"adrian" 
+ 
+julia&gt; getusername(sam) 
+"sam" 
+ 
+julia&gt; getusername(julia) 
+ERROR: MethodError: no method matching getusername(::Article) 
+Closest candidates are: 
+  getusername(::Person) at REPL[25]:2 </pre>
+<p class="calibre2">Here, we can see how we defined a <kbd class="calibre12">getusername</kbd> function, which accepts an argument of (abstract) type, <kbd class="calibre12">Person</kbd>. As both <kbd class="calibre12">User</kbd> and <kbd class="calibre12">Player</kbd> are subtypes of <kbd class="calibre12">Person</kbd>, their instances are accepted as arguments.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Type unions</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">Sometimes, we might want to allow a function to accept a set of types that are not necessarily part of the same type hierarchy. We could, of course, allow the function to accept any type, but depending on the use case, it could be desirable to strictly limit the arguments to a well-defined subset of types. For such cases, Julia provides <em class="calibre16">type unions</em>.</p>
+<p class="calibre2">A type union is a special abstract type that includes as objects all instances of any of its argument types, constructed using the special <kbd class="calibre12">Union</kbd> function:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; GameEntity = Union{Person,Article} 
+Union{Article, Person}</strong> </pre>
+<p class="calibre2">Here, we have defined a new type union, <kbd class="calibre12">GameEntity</kbd>, which includes two types—<kbd class="calibre12">Person</kbd> and <kbd class="calibre12">Article</kbd>. Now, we can define functions that know how to handle <kbd class="calibre12">GameEntities</kbd>:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; function entityname(e::GameEntity) 
+           isa(e, Person) ? e.username : e.title 
+       end 
+entityname (generic function with 1 method) 
+ 
+julia&gt; entityname(julia) 
+"Julia (programming language)" 
+ 
+julia&gt; entityname(me) 
+"adrian"</strong> </pre>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Using article types</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">We can refactor our code to eliminate the generic <kbd class="calibre12">Dict</kbd> data structure and represent our articles with specialized <kbd class="calibre12">Article</kbd> composite types.</p>
+<p class="calibre2">Let's create a new file in our <kbd class="calibre12">sixdegrees/</kbd> work folder, and name it <kbd class="calibre12">Articles.jl</kbd>. Edit the file by typing in the corresponding <kbd class="calibre12">module</kbd> declaration. Then, add the definition of our type and <kbd class="calibre12">export</kbd> it:</p>
+<pre class="calibre17">module Articles 
+ 
+export Article 
+ 
+struct Article 
+  content::String 
+  links::Vector{String} 
+  title::String 
+  image::String 
+end 
+ 
+end </pre>
+<p class="calibre2">We could've added the <kbd class="calibre12">Article</kbd> type definition to the <kbd class="calibre12">Wikipedia.jl</kbd> file, but chances are this will grow and it's better to keep them separated instead.</p>
+<p class="calibre2">Another thing to note is that both the <kbd class="calibre12">module</kbd> and the <kbd class="calibre12">type</kbd> are Julia entities that are loaded in the same scope. For this reason, we can't use the name <kbd class="calibre12">Article</kbd> for both the <kbd class="calibre12">module</kbd> and the <kbd class="calibre12">type</kbd>—we'd end up with a name clash. However, the pluralized name <kbd class="calibre12">Articles</kbd> is a good name for the module, since it will encapsulate the logic for dealing with <em class="calibre16">articles</em> in general, while the <kbd class="calibre12">Article</kbd> type represents an <em class="calibre16">article</em> entity—hence the singular form.</p>
+<p class="calibre2">However, since conceptually an <kbd class="calibre12">Article</kbd> object references a Wikipedia page, it should be part of the <kbd class="calibre12">Wikipedia</kbd> namespace. That's easy, we just need to include it into the <kbd class="calibre12">Wikipedia</kbd> module. Add this after the <kbd class="calibre12">import Cascadia: matchFirst</kbd> line:</p>
+<pre class="calibre17">include("Articles.jl") 
+using .Articles </pre>
+<p class="calibre2">We're including the <kbd class="calibre12">Articles</kbd> module file and bringing it into scope.</p>
+<p class="calibre2">Next, in the same <kbd class="calibre12">Wikipedia.jl</kbd> file, we need to modify the <kbd class="calibre12">articleinfo</kbd> function. Please make sure it reads as follows:</p>
+<pre class="calibre17">function articleinfo(content) 
+  dom = articledom(content) 
+  Article(content,  
+          extractlinks(dom.root),  
+          extracttitle(dom.root),  
+          extractimage(dom.root)) 
+end </pre>
+<p class="calibre2">Instead of creating a generic <kbd class="calibre12">Dict</kbd> object, we're now instantiating an instance of <kbd class="calibre12">Article</kbd>.</p>
+<p class="calibre2">We also need to make a few changes to <kbd class="calibre12">Gameplay.jl</kbd> to use the <kbd class="calibre12">Article</kbd> types instead of <kbd class="calibre12">Dict</kbd>. It should now look like this:</p>
+<pre class="calibre17">module Gameplay 
+ 
+using ..Wikipedia, ..Wikipedia.Articles 
+ 
+export newgame 
+ 
+const DIFFICULTY_EASY = 2 
+const DIFFICULTY_MEDIUM = 4 
+const DIFFICULTY_HARD = 6 
+ 
+function newgame(difficulty = DIFFICULTY_HARD) 
+  articles = Article[] 
+   
+  for i in 1:difficulty+1 
+    article = if i == 1 
+                fetchrandom() 
+              else  
+                rand(articles[i-1].links) |&gt; fetchpage 
+              end 
+    push!(articles, articleinfo(article)) 
+  end 
+ 
+  articles 
+end 
+ 
+end </pre>
+<p class="calibre2">Note that on the third line we bring <kbd class="calibre12">Wikipedia.Articles</kbd> into scope. Then, in the <kbd class="calibre12">newgame</kbd> function, we initiate the <kbd class="calibre12">articles</kbd> array to be of <kbd class="calibre12">Vector{<span>Article}</span></kbd> type. And then, we update the code in the <kbd class="calibre12">for</kbd> loop to deal with <kbd class="calibre12">Article</kbd> objects—<kbd class="calibre12">rand(articles[i-1].links)</kbd>.</p>
+<p class="calibre2">The last change is in <kbd class="calibre12">six_degrees.jl</kbd>. Since <kbd class="calibre12">newgame</kbd> now returns a vector of <kbd class="calibre12">Article</kbd> objects instead of a <kbd class="calibre12">Dict</kbd>, we print the title by accessing the <kbd class="calibre12">title</kbd> field:</p>
+<pre class="calibre17">using Pkg 
+pkg"activate ." 
+ 
+include("Wikipedia.jl") 
+include("Gameplay.jl") 
+ 
+using .Wikipedia, .Gameplay 
+ 
+articles = newgame(Gameplay.DIFFICULTY_EASY) 
+ 
+for article in articles 
+  println(article.title) 
+end </pre>
+<p class="calibre2">A new test run should confirm that all works as expected (your output will be different since, remember, we're pulling random articles):</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; include("six_degrees.jl") 
+Sonpur Bazari 
+Bengali language 
+Diacritic</strong> </pre>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Inner constructors</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">The external constructor (where we invoke the <kbd class="calibre12">type</kbd> as a function) is a default constructor where we provide the values for all the fields, in the right order—and get back an instance of the corresponding type. But, what if we want to provide additional constructors, that maybe impose certain constraints, perform validations, or are simply more user-friendly? For this purpose, Julia provides <em class="calibre16">internal constructors</em>. I've got a good use case for them.</p>
+<p class="calibre2">I'm not especially fond of our <kbd class="calibre12">Article</kbd> constructor—it takes too many arguments that need to be passed in the exact right order. It's hard to remember how to instantiate it. We've learned earlier about keyword arguments—and it would be awesome to provide an alternative constructor that takes keyword arguments. Inner constructors are what we need.</p>
+<p class="calibre2">Inner constructors are very much like the outer constructors, but with two major differences:</p>
+<ul class="calibre10">
+<li class="calibre11">They are declared inside the block of a type declaration, rather than outside of it like normal methods.</li>
+<li class="calibre11">They have access to a special locally existent function called <kbd class="calibre12">new</kbd> that creates objects of the same type.</li>
+</ul>
+<p class="calibre2">On the other hand, external constructors have a clear limitation (by design)—we can create as many as we want, but they can only instantiate objects by invoking the existing internal constructors (they do not have access to the <kbd class="calibre12">new</kbd> function). This way, if we define internal constructors that implement some business logic constraints, <em class="calibre16">Julia guarantees that the external constructors cannot go around them</em>.</p>
+<p class="calibre2">Our inner constructor with keyword arguments will look like this:</p>
+<pre class="calibre17">Article(; content = "", links = String[], title = "", image = "") = new(content, links, title, image) </pre>
+<p class="calibre2">Note the use of <kbd class="calibre12">;</kbd>, which separates the empty list of positional arguments from the list of keyword arguments.</p>
+<p class="calibre2">This constructor allows us to instantiate <kbd class="calibre12">Article</kbd> objects using keyword arguments, which we can provide in any order:</p>
+<pre class="calibre17"><strong class="calibre1">julia = Article( 
+          title = "Julia (programming language)", 
+          content = "Julia is a high-level dynamic programming language", 
+          links = ["/wiki/Jeff_Bezanson", "/wiki/Stefan_Karpinski",  
+                  "/wiki/Viral_B._Shah", "/wiki/Alan_Edelman"], 
+          image = "/220px-Julia_prog_language.svg.png" 
+        )</strong> </pre>
+<p class="calibre2">However, there's a small problem. When we don't provide any internal constructor, Julia provides the default one. But, if any inner constructor is defined, no default constructor method is provided anymore—it is presumed that we have supplied ourselves all the necessary inner constructors. In this case, if we want to get back the default constructor with the positional arguments, we'll have to also define it ourselves as an internal one:</p>
+<pre class="calibre17">Article(content, links, title, image) = new(content, links, title, image) </pre>
+<p class="calibre2">The final version of the <kbd class="calibre12">Articles.jl</kbd> file should now be the following, with the two internal constructors:</p>
+<pre class="calibre17">module Articles 
+ 
+export Article 
+ 
+struct Article 
+  content::String 
+  links::Vector{String} 
+  title::String 
+  image::String 
+ 
+  <strong class="calibre1">Article(; content = "", links = String[], title = "", image = "") = new(content, links, title, image) 
+  Article(content, links, title, image) = new(content, links, title, image) 
+</strong>end 
+ 
+end </pre>
+<div class="packttip">It is worth pointing out that, in this case, our keyword constructor could've been equally added as an external constructor and defined outside the <kbd class="calibre24">struct...end</kbd> body. What kind of constructor you use is an architectural decision that has to be taken on a case-by-case basis, taking into account the differences between the internal and the external constructors.</div>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Methods</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">If you come from an OOP background, you may have noticed a very interesting aspect throughout our discussion of types. Unlike other languages, objects in Julia do not define behavior. That is, Julia's types only define fields (properties) but do not encapsulate functions.</p>
+<p class="calibre2">The reason is Julia's implementation of <em class="calibre16">multiple dispatch</em><em class="calibre16">, </em>a distinctive feature of the language.</p>
+<p class="calibre2">Multiple dispatch is explained in the official documentation as follows:</p>
+<div class="mce-root1">"The choice of which method to execute when a function is applied is called dispatch. Julia allows the dispatch process to choose which of a function's methods to call based on the number of arguments given, and on the types of all of the function's arguments. This is different than traditional object-oriented languages, where dispatch occurs based only on the first argument [<kbd class="calibre24">...</kbd>]. Using all of a function's arguments to choose which method should be invoked, rather than just the first, is known as multiple dispatch. Multiple dispatch is particularly useful for mathematical code, where it makes little sense to artificially deem the operations to <em class="calibre55">belong </em>to one argument more than any of the others."</div>
+<p class="calibre2">Julia allows us to define functions that provide specific behavior for certain combinations of argument types. A definition of one possible behavior for a function is called a <strong class="calibre4">method</strong>. The signatures of method definitions can be annotated to indicate the types of arguments, in addition to their number, and more than a single method definition may be provided. An example will help.</p>
+<p class="calibre2">Let's say we have our previously defined <kbd class="calibre12">Player</kbd> type, as follows:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; mutable struct Player 
+           username::String 
+           score::Int 
+       end</strong> </pre>
+<p class="calibre2">And here, we see a corresponding <kbd class="calibre12">getscore</kbd> function:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; function getscore(p) 
+           p.score 
+       end 
+getscore (generic function with 1 method)</strong> </pre>
+<p class="calibre2">So far, so good. But, as our game grows incredibly successful, we could end up adding an app store to offer in-app purchases. This will lead us to also define a <kbd class="calibre12">Customer</kbd> type that could have a homonymous <kbd class="calibre12">credit_score</kbd> field, which stores their credit score:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; mutable struct Customer 
+           name::String 
+           total_purchase_value::Float64 
+           credit_score::Float64 
+       end</strong> </pre>
+<p class="calibre2">Of course, we'd need a corresponding <kbd class="calibre12">getscore</kbd> function:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; function getscore(c) 
+           c.credit_score 
+      end 
+getscore (generic function with 1 method)</strong> </pre>
+<p class="calibre2">Now, how would Julia know which function to use? It wouldn't. As both functions are defined to accept any type of argument, the last-defined function overwrites the previous one. We need to specialize the two <kbd class="calibre12">getscore</kbd> declarations on the type of their arguments:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; function getscore(p::Player) 
+           p.score 
+       end 
+getscore (generic function with 1 method) </strong><br class="title-page-name"/><br class="title-page-name"/><strong class="calibre1">julia&gt; function getscore(c::Customer) 
+           c.credit_score 
+       end 
+getscore (generic function with 2 methods)</strong> </pre>
+<p class="calibre2">If you look closely at the output for each function declaration, you'll see something interesting. After the definition of <kbd class="calibre12">getscore(p::Player)</kbd>, it says <kbd class="calibre12">getscore (generic function with 1 method)</kbd>. But, after defining <kbd class="calibre12">getscore(c::Customer)</kbd>, it shows <kbd class="calibre12">getscore (generic function with 2 methods)</kbd>. So now, we have defined two methods for the <kbd class="calibre12">getscore</kbd> function, each specializing on its argument type.</p>
+<p class="calibre2">But, what if we add the following?</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; function getscore(t::Union{Player,Customer}) 
+           isa(t, Player) ? t.score : t.credit_score 
+       end 
+getscore</strong> (<strong class="calibre1">generic function with 3 methods</strong>) </pre>
+<p class="calibre2">Or, alternatively, note the following that we might add:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; function getscore(s) 
+            if in(:score, fieldnames(typeof(s))) 
+            s.score 
+       elseif in(:credit_score, fieldnames(typeof(s))) 
+            s.credit_score 
+       else 
+            error("$(typeof(s)) does not have a score property") 
+       end 
+end</strong> 
+<strong class="calibre1">getscore</strong> (<strong class="calibre1">generic function with 4 methods</strong>) </pre>
+<p class="calibre2">Can you guess which methods will be used when invoking <kbd class="calibre12">getscore</kbd> with a <kbd class="calibre12">Player</kbd>, a <kbd class="calibre12">Customer</kbd>, and an <kbd class="calibre12">Article</kbd> object? I'll give you a hint: when a function is applied to a particular set of arguments, the most specific method applicable to those arguments is invoked.</p>
+<p class="calibre2">If we want to see which method is called for a given set of arguments, we can use <kbd class="calibre12">@which</kbd>:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; me = Player("adrian", 10) 
+Player("adrian", 10) </strong><br class="title-page-name"/><br class="title-page-name"/><strong class="calibre1">julia&gt; @which getscore(me) 
+getscore(p::Player) in Main at REPL[58]:2</strong></pre>
+<p class="calibre2">The same goes for <kbd class="calibre12">Customer</kbd> types:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; sam = Customer("Sam", 72.95, 100) 
+Customer("Sam", 72.95, 100.0) </strong><br class="title-page-name"/><br class="title-page-name"/><strong class="calibre1">julia&gt; @which getscore(sam) 
+getscore(c::Customer) in Main at REPL[59]:2</strong> </pre>
+<p class="calibre2">We can see how the most specialized method is invoked— <kbd class="calibre12">getscore(t::Union{Player,Customer})</kbd>, which is more generic, is actually never used.</p>
+<p class="calibre2">However, what about the following?</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; @which getscore(julia) 
+getscore(s) in Main at REPL[61]:2</strong> </pre>
+<p class="calibre2">Passing an <kbd class="calibre12">Article</kbd> type will invoke the last definition of <kbd class="calibre12">getscore</kbd>, the one accepting <kbd class="calibre12">Any</kbd> type of argument:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; getscore(julia) 
+ERROR: Article does not have a score property</strong> </pre>
+<p class="calibre2">Since the <kbd class="calibre12">Article</kbd> type does not have a <kbd class="calibre12">score</kbd> or a <kbd class="calibre12">credit_score</kbd> property, the <kbd class="calibre12">ErrorException</kbd> we defined is being thrown.</p>
+<p class="calibre2">To find out what methods are defined for a function, use <kbd class="calibre12">methods()</kbd>:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; methods(getscore) 
+# 4 methods for generic function "get_score": 
+getscore(c::Customer) in Main at REPL[59]:2 
+getscore(p::Player) in Main at REPL[58]:2 
+getscore(t::Union{Customer, Player}) in Main at REPL[60]:2 
+getscore(s) in Main at REPL[61]:2</strong> </pre>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Working with relational databases</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">Our web crawler is quite performant—using CSS selectors is very efficient. But, as it is right now, if we end up with the same Wikipedia article in different game sessions, we'll have to fetch it, parse it, and extract its contents multiple times. This is a time-consuming and resource-expensive operation—and, more importantly, one we can easily eliminate if we just store the article information once we fetch it the first time.</p>
+<p class="calibre2">We could use Julia's serialization features, which we've already seen, but since we're building a fairly complex game, we would benefit from adding a database backend. Besides storing articles' data, we could also persist information about players, scores, preferences, and whatnot.</p>
+<p class="calibre2">We have already seen how to interact with MongoDB. In this case, though, a relational database is the better choice, as we'll work with a series of related entities: articles, games (referencing articles), players (referencing games), and more.</p>
+<p class="calibre2">Julia's package ecosystem provides a good range of options for interacting with relational databases, from generic ODBC and JDBC libraries to dedicated packages for the main backends—MySQL/MariaDB, SQLite, and Postgres, to name just a few. For our game, we'll use MySQL. If you don't already have MySQL installed on your system, please follow the instructions at <a href="https://dev.mysql.com/downloads/mysql/" class="calibre9"><span>https://dev.mysql.com/downloads/mysql/</span></a>. Alternatively, if you're using Docker, you can get the official MySQL Docker image from <a href="https://hub.docker.com/r/library/mysql/" class="calibre9"><span>https://hub.docker.com/r/library/mysql/</span></a>.</p>
+<p class="calibre2">On Julia's side, <kbd class="calibre12">(sixdegrees) pkg&gt;<span>add MySQL</span></kbd> is all we need in order to add support for MySQL. Make sure you're within the <kbd class="calibre12">sixdegrees/</kbd> project before adding MySQL. You can confirm this by looking at the prefix of the <kbd class="calibre12">pkg&gt;</kbd> cursor; it should look like this: <kbd class="calibre12">(sixdegrees) pkg&gt;</kbd>. If that is not the case, just execute <kbd class="calibre12">pkg&gt; activate .</kbd> while making sure that you're within the <kbd class="calibre12">sixdegrees/</kbd> folder.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Adding MySQL support</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">When working with SQL databases, it's a good practice to abstract away the DB-related logic and to avoid littering all the codebase with SQL strings and database-specific commands. It will make our code more predictable and manageable and will provide a safe level of abstraction if we ever need to change or upgrade the database system. I'm a big fan of using ORM systems, but in this case, as a learning device, we'll be adding this functionality ourselves.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Connecting to the database</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">For starters, let's instruct our application to connect to and disconnect from our MySQL database. Let's extend our game by adding a new <kbd class="calibre12">Database</kbd> module within its corresponding file:</p>
+<pre class="calibre17">module Database 
+ 
+using MySQL 
+ 
+const HOST = "localhost" 
+const USER = "root" 
+const PASS = "" 
+const DB = "six_degrees" 
+ 
+const CONN = MySQL.connect(HOST, USER, PASS, db = DB) 
+ 
+export CONN 
+ 
+<strong class="calibre1">disconnect() = MySQL.disconnect(CONN)</strong> 
+ 
+<strong class="calibre1">atexit(disconnect)</strong> 
+ 
+end </pre>
+<p class="calibre2">Your <kbd class="calibre12">Database.jl</kbd> file should look like the snippet—with the exception maybe of the actual connection data. Please set up the <kbd class="calibre12">HOST</kbd>, <kbd class="calibre12">USER</kbd>, and <kbd class="calibre12">PASS</kbd> constants with your correct MySQL connection info. Also, please don't forget to create a new, empty database called <kbd class="calibre12">six_degrees</kbd>—otherwise the connection will fail. I suggest using <kbd class="calibre12">utf8</kbd> for the encoding and <kbd class="calibre12">utf8_general_ci</kbd> for the collation, in order to accommodate all the possible characters we might get from Wikipedia.</p>
+<p class="calibre2">Calling <kbd class="calibre12">MySQL.connect</kbd> returns a connection object. We'll need it in order to interact with the database, so we'll reference it via the <kbd class="calibre12">CONN</kbd> constant:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; Main.Database.CONN 
+MySQL Connection 
+------------ 
+Host: localhost 
+Port: 3306 
+User: root 
+DB:   six_degrees</strong> </pre>
+<p class="calibre2">Since various parts of our code will access this connection object in order to perform queries against the database, we <kbd class="calibre12">export</kbd> it. Equally importantly, we need to set up some cleanup mechanism, to automatically disconnect from the database when we're done. We've defined a <kbd class="calibre12">disconnect</kbd> function that can be manually called. But, it's safer if we make sure that the cleanup function is automatically invoked. Julia provides an <kbd class="calibre12">atexit</kbd> function, which registers a zero-argument function <kbd class="calibre12">f</kbd> to be called at process exit. The <kbd class="calibre12">atexit</kbd> hooks are called in <strong class="calibre4">last-in-first-out</strong> (<strong class="calibre4">LIFO</strong>) order.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Setting up our Article module</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">The next step is to add a few more functions to the <kbd class="calibre12">Article</kbd> module to enable database persistence and retrieval functionality. Since it will need access to our DB connection object, let's give it access to the <kbd class="calibre12">Database</kbd> module. We'll also want to use <kbd class="calibre12">MySQL</kbd> functions. So, under the <kbd class="calibre12">export Article</kbd> line, add <kbd class="calibre12">using..Database, MySQL</kbd>.</p>
+<p class="calibre2">Next, we'll add a <kbd class="calibre12">createtable</kbd> method. This will be a one-off function that will create the corresponding database table. We use this instead of just typing <kbd class="calibre12">CREATE TABLE</kbd> queries in the MySQL client, in order to have a consistent and reproducible way of (re)creating the table. In general, I prefer the use of a fully fledged database migration library, but for now, better to keep things simple (you can read about schema migrations at <a href="https://en.wikipedia.org/wiki/Schema_migration" class="calibre9"><span>https://en.wikipedia.org/wiki/Schema_migration</span></a>).</p>
+<p class="calibre2">Without further ado, here's our function:</p>
+<pre class="calibre17">function createtable() 
+  sql = """ 
+    CREATE TABLE `articles` ( 
+      `title` varchar(1000), 
+      `content` text, 
+      `links` text, 
+      `image` varchar(500), 
+      `url` varchar(500), 
+      UNIQUE KEY `url` (`url`) 
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8 
+  """ 
+ 
+  MySQL.execute!(CONN, sql) 
+end </pre>
+<p class="calibre2">Here, we define an <kbd class="calibre12">sql</kbd> variable, which references the MySQL <kbd class="calibre12">CREATE TABLE</kbd> query, in the form of a <kbd class="calibre12">String</kbd>. The table will have four columns corresponding to the four fields of our <kbd class="calibre12">Article</kbd> type. Then, there's a fifth column, <kbd class="calibre12">url</kbd>, which will store the article's Wikipedia URL. We'll identify articles by URL—and for this reason, we add a unique index on the <kbd class="calibre12">url</kbd> column.</p>
+<p class="calibre2">At the end of the function, we pass the query string to <kbd class="calibre12">MySQL.execute!</kbd> to be run against the DB connection. Please append the <kbd class="calibre12">createtable</kbd> definition to the end of the <kbd class="calibre12">Articles</kbd> module (within the module, above the closing <kbd class="calibre12">end</kbd>).</p>
+<p class="calibre2">Now, let's see it in action. Open a new REPL session in the <kbd class="calibre12">sixdegrees/</kbd> folder and run the following:</p>
+<pre class="calibre17"><strong class="calibre1">julia&gt; using Pkg 
+julia&gt; pkg"activate ." 
+julia&gt; include("Database.jl") 
+julia&gt; include("Articles.jl") 
+julia&gt; using .Articles 
+julia&gt; Articles.createtable()</strong> </pre>
+<p class="calibre2">That's it, our table is ready!</p>
+<p class="calibre2">The workflow should be pretty clear—we made sure we're loading our project's dependencies, we included the <kbd class="calibre12">Database.jl</kbd> and <kbd class="calibre12">Articles.jl</kbd> files, we brought <kbd class="calibre12">Articles</kbd> into scope, and then invoked its <kbd class="calibre12">createtable</kbd> method.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Adding the persistence and retrieval methods</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">We said that when an article is fetched and parsed, we want to store its data in the database. Thus, before fetching an article, we'll first want to check our database. If the article was previously persisted, we'll retrieve it. If not, we'll perform the original fetch-and-parse workflow. We use the <kbd class="calibre12">url</kbd> property to uniquely identify articles.</p>
+<p class="calibre2">Let's start by adding the <kbd class="calibre12">Articles.save(a::Article)</kbd> method for persisting an article object:</p>
+<pre class="calibre17">function save(a::Article) 
+  sql = "INSERT IGNORE INTO articles (title, content, links, image, url) VALUES (?, ?, ?, ?, ?)" 
+  stmt = MySQL.Stmt(CONN, sql) 
+  result = MySQL.execute!(stmt, [a.title, a.content, JSON.json(a.links), a.image, a.url]) 
+end </pre>
+<p class="calibre2">Here, we use <kbd class="calibre12">MySQL.Stmt</kbd> to create a MySQL prepared statement. The query itself is very simple, using MySQL's <kbd class="calibre12">INSERT IGNORE</kbd> statement, which makes sure that the <kbd class="calibre12">INSERT</kbd> operation is performed only if there is no article with the same <kbd class="calibre12">url</kbd>. If there is already an article with the same <kbd class="calibre12">url</kbd>, the query is ignored.</p>
+<p class="calibre2">The prepared statement accepts a specially formatted query string, in which the actual values are replaced with placeholders, designated by question marks—<kbd class="calibre12">?</kbd>. We can then execute the prepared statement by passing it to <kbd class="calibre12">MySQL.execute!</kbd>, together with an array of corresponding values. The values are passed directly from the <kbd class="calibre12">article</kbd> object, with the exception of <kbd class="calibre12">links</kbd>. Since this represents a more complex data structure, a <kbd class="calibre12">Vector{String}</kbd>, we'll first serialize it using <kbd class="calibre12">JSON</kbd> and store it in MySQL as a string. To access functions from the <kbd class="calibre12">JSON</kbd> package, we'll have to add it to our project, so please execute <kbd class="calibre12">(sixdegrees) pkg&gt; add JSON</kbd> in the REPL.</p>
+<p class="calibre2">Prepared statements provide a safe way to execute queries because the values are automatically escaped, eliminating a common source of MySQL injection attacks. In our case, MySQL injections are less of a worry since we're not accepting user-generated input. But, the approach is still valuable, avoiding insert errors caused by improper escaping.</p>
+<p class="calibre2">Next, we need a retrieval method. We'll call it <kbd class="calibre12">find</kbd>. As its only attribute, it will take an article URL in the form of a <kbd class="calibre12">String</kbd>. It will return an <kbd class="calibre12">Array</kbd> of <kbd class="calibre12">Article</kbd> objects. By convention, if no corresponding article is found, the array will be empty:</p>
+<pre class="calibre17">function find(url) <strong class="calibre1">:: Vector{Article}</strong> 
+  articles = Article[] 
+ 
+  result = MySQL.query(CONN, "SELECT * FROM `articles` WHERE url = '$url'") 
+ 
+  isempty(result.url) &amp;&amp; return articles 
+ 
+  for i in eachindex(result.url) 
+    push!(articles, Article(result.content[i], JSON.parse(result.links[i]), result.title[i], 
+                            result.image[i], result.url[i])) 
+  end 
+ 
+  articles 
+end </pre>
+<p class="calibre2">In this function's declaration, we can see another Julia feature: return value types. After the regular function declaration, <kbd class="calibre12">function find(url)</kbd>, we appended <kbd class="calibre12">:: Vector{Article}</kbd>. This constrains the return value of <kbd class="calibre12">find</kbd> to an array of <kbd class="calibre12">Article</kbd>. If our function won't return that, an error will be thrown.</p>
+<p class="calibre2">The rest of the code, although very compact, has quite a lot of functionality. First, we create <kbd class="calibre12">articles</kbd>, a vector of <kbd class="calibre12">Article</kbd> objects, which will be the return value of our function. Then, we execute a <kbd class="calibre12">SELECT</kbd> query against the MySQL database through the <kbd class="calibre12">MySQL.query</kbd> method, attempting to find rows that match the <kbd class="calibre12">url</kbd>. The result of the query is stored in the <kbd class="calibre12">result</kbd> variable, which is a <kbd class="calibre12">NamedTuple</kbd> (each field in the <kbd class="calibre12">result</kbd> <kbd class="calibre12">NamedTuple</kbd> references an array of values corresponding to the database column of the same name). Next, we peek into our query <kbd class="calibre12">result</kbd> to see if we got anything—we chose to sample the <kbd class="calibre12">result.url</kbd> field—if it's empty, it means our query didn't find anything and we can just exit the function, returning an empty <kbd class="calibre12">articles</kbd> vector.</p>
+<p class="calibre2">On the other hand, if <kbd class="calibre12">result.url</kbd> does contain entries, it means our query brought at least one row; so we iterate over the <kbd class="calibre12">result.url</kbd> array using <kbd class="calibre12">eachindex</kbd>, and for each iteration we construct an <kbd class="calibre12">Article</kbd> object with the corresponding values. Finally, we <kbd class="calibre12">push!</kbd> this new <kbd class="calibre12">Article</kbd> object into the <kbd class="calibre12">articles</kbd> vector which is returned, at the end of the loop.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Putting it all together</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">The last thing we need to do is update the rest of the code to work with the changes we've made so far.</p>
+<p class="calibre2">First of all, we need to update the <kbd class="calibre12">Article</kbd> type to add the extra <kbd class="calibre12">url</kbd> field. We need it in the list of fields and in the two constructors. Here is the final version of <kbd class="calibre12">Articles.jl</kbd>:</p>
+<pre class="calibre17">module Articles 
+ 
+export Article, save, find 
+ 
+using ...Database, MySQL, JSON 
+ 
+struct Article 
+  content::String 
+  links::Vector{String} 
+  title::String 
+  image::String 
+  url::String 
+ 
+  Article(; content = "", links = String[], title = "", image = "", url = "") = <br class="title-page-name"/>        new(content, links, title, image, url) 
+  Article(content, links, title, image, url) = new(content, links, title, image, url) 
+end 
+ 
+function find(url) :: Vector{Article} 
+  articles = Article[] 
+   
+  result = MySQL.query(CONN, "SELECT * FROM `articles` WHERE url = '$url'") 
+ 
+  isempty(result.url) &amp;&amp; return articles 
+ 
+  for i in eachindex(result.url) 
+    push!(articles, Article(result.content[i], JSON.parse(result.links[i]), result.title[i], 
+                            result.image[i], result.url[i])) 
+  end 
+ 
+  articles 
+end 
+ 
+function save(a::Article) 
+  sql = "INSERT IGNORE INTO articles (title, content, links, image, url) VALUES (?, ?, ?, ?, ?)" 
+  stmt = MySQL.Stmt(CONN, sql) 
+  result = MySQL.execute!(stmt, [ a.title, a.content, JSON.json(a.links), a.image, a.url]) 
+end 
+ 
+function createtable() 
+  sql = """ 
+    CREATE TABLE `articles` ( 
+      `title` varchar(1000), 
+      `content` text, 
+      `links` text, 
+      `image` varchar(500), 
+      `url` varchar(500), 
+      UNIQUE KEY `url` (`url`) 
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8 
+  """ 
+ 
+  MySQL.execute!(CONN, sql) 
+end 
+ 
+end  </pre>
+<p class="calibre2">We also need to make a few important changes to <kbd class="calibre12">Wikipedia.jl</kbd>. First, we'll remove <kbd class="calibre12">Article</kbd> instantiation from <kbd class="calibre12">Wikipedia.articleinfo</kbd> since creating <kbd class="calibre12">Article</kbd> objects should now also take into account database persistence and retrieval. Instead, we'll return a tuple representing the article data:</p>
+<pre class="calibre17">function articleinfo(content) 
+  dom = articledom(content) 
+  (content, extractlinks(dom.root), extracttitle(dom.root), extractimage(dom.root)) 
+end </pre>
+<p class="calibre2">We can now add a new function, <kbd class="calibre12">persistedarticle</kbd>, which will accept as arguments the article content plus the article URL. It will instantiate a new <kbd class="calibre12">Article</kbd> object, save it to the database, and return it. In a way, <kbd class="calibre12">persistedarticle</kbd> can be considered a database-backed constructor, hence the name:</p>
+<pre class="calibre17">function persistedarticle(article_content, url) 
+  article = Article(articleinfo(article_content)<strong class="calibre1">...</strong>, url) 
+  save(article) 
+ 
+  article 
+end </pre>
+<p class="calibre2">Here, you can see the <em class="calibre16">splat</em> operator <kbd class="calibre12">...</kbd> in action—it decomposes the <kbd class="calibre12">articleinfo</kbd> result <kbd class="calibre12">Tuple</kbd> into its corresponding elements so they can be passed into the <kbd class="calibre12">Article</kbd> constructor as individual arguments.</p>
+<p class="calibre2">Also, we have to deal with a minor complication. When we start a new game and call the <kbd class="calibre12">/wiki/Special:Random</kbd> URL, Wikipedia automatically performs a redirect to a random article. When we fetch the page, we get the redirected page content—but we don't have its URL.</p>
+<p class="calibre2">So, we need to do two things. Firstly, we need to check if our request has been redirected and, if so, get the redirection URL. In order to do this, we can check the <kbd class="calibre12">request.parent</kbd> field of the <kbd class="calibre12">response</kbd> object. In the case of a redirect, the <kbd class="calibre12">response.request.parent</kbd> object will be set and will present a <kbd class="calibre12">headers</kbd> collection. The collection will include a <kbd class="calibre12">"Location"</kbd> item—and that's what we're after.</p>
+<p class="calibre2">Secondly, we also need to return the URL together with the HTML content of the page. This is easy—we'll return a tuple.</p>
+<p class="calibre2">Here is the updated <kbd class="calibre12">fetchpage</kbd> function:</p>
+<pre class="calibre17">function fetchpage(url) 
+  url = startswith(url, "/") ? buildurl(url) : url 
+  response = HTTP.get(url) 
+  content = if response.status == 200 &amp;&amp; length(response.body) &gt; 0 
+              String(response.body) 
+            else 
+              "" 
+            end 
+  relative_url = collect(eachmatch(r"/wiki/(.*)$",  
+(response.request.parent == nothing ? url : Dict(response.request.parent.headers)["Location"])))[1].match 
+ 
+  content, relative_url 
+end </pre>
+<p class="calibre2">Note that we also use <kbd class="calibre12">eachmatch</kbd> to extract the part corresponding to the relative URL out of the absolute URL.</p>
+<p class="calibre2">Here is the whole <kbd class="calibre12">Wikipedia.jl</kbd> file:</p>
+<pre class="calibre17">module Wikipedia 
+using HTTP, Gumbo, Cascadia 
+import Cascadia: matchFirst 
+ 
+include("Articles.jl") 
+using .Articles 
+ 
+const PROTOCOL = "https://" 
+const DOMAIN_NAME = "en.m.wikipedia.org" 
+const RANDOM_PAGE_URL = PROTOCOL * DOMAIN_NAME * "/wiki/Special:Random" 
+ 
+export fetchrandom, fetchpage, articleinfo, persistedarticle 
+ 
+function fetchpage(url) 
+  url = startswith(url, "/") ? buildurl(url) : url 
+  response = HTTP.get(url) 
+  content = if response.status == 200 &amp;&amp; length(response.body) &gt; 0 
+              String(response.body) 
+            else 
+              "" 
+            end 
+  relative_url = collect(eachmatch(r"/wiki/(.*)$", (response.request.parent == nothing ? url : Dict(response.request.parent.headers)["Location"])))[1].match 
+ 
+  content, relative_url 
+end 
+ 
+function extractlinks(elem) 
+  map(eachmatch(Selector("a[href^='/wiki/']:not(a[href*=':'])"), elem)) do e 
+    e.attributes["href"] 
+  end |&gt; unique 
+end 
+ 
+function extracttitle(elem) 
+  matchFirst(Selector("#section_0"), elem) |&gt; nodeText 
+end 
+ 
+function extractimage(elem) 
+  e = matchFirst(Selector(".content a.image img"), elem) 
+  isa(e, Nothing) ? "" : e.attributes["src"] 
+end 
+ 
+function fetchrandom() 
+  fetchpage(RANDOM_PAGE_URL) 
+end 
+ 
+function articledom(content) 
+  if ! isempty(content) 
+    return Gumbo.parsehtml(content) 
+  end 
+ 
+  error("Article content can not be parsed into DOM") 
+end 
+ 
+function articleinfo(content) 
+  dom = articledom(content) 
+  (content, extractlinks(dom.root), extracttitle(dom.root), extractimage(dom.root)) 
+end 
+ 
+function persistedarticle(article_content, url) 
+  article = Article(articleinfo(article_content)..., url) 
+  save(article) 
+ 
+  article 
+end 
+ 
+function buildurl(article_url) 
+  PROTOCOL * DOMAIN_NAME * article_url 
+end 
+ 
+end 
+ </pre>
+<p class="calibre2">Now, let's focus on <kbd class="calibre12">Gameplay.jl</kbd>. We need to update the <kbd class="calibre12">newgame</kbd> function to take advantage of the newly available methods from the <kbd class="calibre12">Wikipedia</kbd> module:</p>
+<pre class="calibre17">module Gameplay 
+ 
+using ..Wikipedia, ..Wikipedia.Articles 
+ 
+export newgame 
+ 
+const DIFFICULTY_EASY = 2 
+const DIFFICULTY_MEDIUM = 4 
+const DIFFICULTY_HARD = 6 
+ 
+function newgame(difficulty = DIFFICULTY_HARD) 
+  articles = Article[] 
+ 
+  for i in 1:difficulty+1 
+    article = if i == 1 
+                article = persistedarticle(fetchrandom()...) 
+              else 
+                url = rand(articles[i-1].links) 
+                existing_articles = Articles.find(url) 
+ 
+                article = isempty(existing_articles) ? persistedarticle(fetchpage(url)...) : existing_articles[1] 
+              end 
+ 
+    push!(articles, article) 
+  end 
+ 
+  articles 
+end 
+ 
+end </pre>
+<p class="calibre2">If it's the first article, we fetch a random page and persist its data. Otherwise, we pick a random URL from the previously crawled page and check if a corresponding article already exists. If not, we fetch the page, making sure it's also persisted to the DB.</p>
+<p class="calibre2">Lastly, our point of entry into the app, the <kbd class="calibre12">six_degrees.jl</kbd> file, needs to look like this:</p>
+<pre class="calibre17">using Pkg 
+pkg"activate ." 
+ 
+include("Database.jl") 
+include("Wikipedia.jl") 
+include("Gameplay.jl") 
+ 
+using .Wikipedia, .Gameplay 
+ 
+articles = newgame(Gameplay.DIFFICULTY_EASY) 
+ 
+for article in articles 
+  println(article.title) 
+end </pre>
+<p class="calibre2">A final test run should confirm that all is good:</p>
+<pre class="calibre17"><strong class="calibre1">$ julia six_degrees.jl                                                                                                                                                               
+Hillary Maritim 
+Athletics at the 2000 Summer Olympics - Men's 400 metres hurdles 
+Zahr-el-Din El-Najem</strong> </pre>
+<p class="calibre2">Running the <kbd class="calibre12">six_degrees.jl</kbd> file with the <kbd class="calibre12">julia</kbd> binary in a terminal will output three Wikipedia article titles. And we can check the database to confirm that the data has been saved:</p>
+<p class="CDPAlignCenter"><img src="assets/468c724e-157a-4188-a63d-d722a5197c3e.png" class="calibre59"/></p>
+<p class="calibre2">The data for the three previously crawled pages has been safely persisted.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Summary</h1>
+                </header>
+            
+            <article>
+                
+<p class="calibre2">Congratulations, this was quite a journey! We've learned about three key Julia concepts—modules, types and their constructors, and methods. We've applied all this knowledge to develop the backend of our <em class="calibre16">Six Degrees of Wikipedia</em> game, and in the process we've seen how to interact with MySQL databases, persisting and retrieving our <kbd class="calibre12">Article</kbd> objects.</p>
+<p class="calibre2">At the end of the next chapter, we'll get the chance to enjoy the fruits of our hard work: after we add a web UI to our <em class="calibre16">Six degrees of Wikipedia</em> backend, we'll relax by playing a few rounds. Let's see if you can beat my best score!</p>
+
+
+            </article>
+
+            
+        </section>
+    </body></html>
