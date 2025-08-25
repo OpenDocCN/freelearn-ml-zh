@@ -1,0 +1,1234 @@
+<html><head></head><body>
+        <section>
+
+                            <header>
+                    </header><h1 class="header-title" id="calibre_pb_0">Operationalizing R Code</h1>
+                
+            
+            <article>
+                
+<div class="title-page-name">
+<p class="calibre2">As you learned the essentials of predictive modeling and explored advanced predictive algorithms available in <kbd class="calibre11">RevoScaleR</kbd> package in the previous chapter, now is a good time to learn how to operationalize it. This chapter discusses how you can operationalize R Prediction models in both SQL Server 2016 and SQL Server 2017.</p>
+<p class="calibre2">The idea of marrying SQL Server and machine learning is to keep analytics close to the data and eliminate costs, as well as security risks. In addition, using Microsoft R libraries helps to improve the scale and performance of your R solutions.</p>
+<p class="calibre2">This chapter outlines the steps for operationalizing your R prediction models into a powerful workflow integrated in SQL Server. First, we'll discuss the concept of integrating an existing R model into SQL Server using the extensibility framework, native scoring (SQL Server 2017), and real-time scoring. Then, we'll talk about how to manage roles and permissions to run an R model in SQL Server. You will also learn how to use the right tools to operationalize the R model in SQL Server, and how to execute R model as part of workflows, PowerShell, SQL Server Agent jobs, and SSIS.</p>
+</div>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    </header><h1 class="header-title" id="calibre_pb_0">Integrating an existing R model</h1>
+                
+            
+            <article>
+                
+<p class="calibre2">This section takes an existing R code that generates the R model and runs against the SQL Server dataset into a workflow, where the model can be refreshed and evaluated on a regular basis, then used for predictive analysis. The following figure shows a typical predictive modeling workflow in an R script:</p>
+<div class="packt_figure"><img src="../images/00108.jpeg" class="calibre73"/></div>
+<div class="cdpaligncenter">Figure 7.1: Typical predictive modeling workflow</div>
+<p class="calibre2">To integrate this script in SQL Server, you'll need to organize the workflow into three steps:</p>
+<ol class="calibre14">
+<li value="1" class="calibre8">Prepare the data for training</li>
+<li value="2" class="calibre8">Train and save the model using T-SQL</li>
+<li value="3" class="calibre8">Operationalize the model</li>
+</ol>
+<p class="calibre2">In this section, the last two steps will use <kbd class="calibre11">sp_execute_external_script</kbd>, which invokes an R process. These steps are using the SQL Server extensibility framework, described later on.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    </header><h1 class="header-title" id="calibre_pb_0">Prerequisite – prepare the data</h1>
+                
+            
+            <article>
+                
+<p class="calibre2">We will use the NYC Taxi sample data from the <em class="calibre12">R: In-Database Analytics for SQL Developers</em> tutorial, as referred to at <a href="https://github.com/Microsoft/sql-server-samples/blob/master/samples/features/r-services/predictive-analytics/scripts/Lab.md" class="calibre10">https://github.com/Microsoft/sql-server-samples/blob/master/samples/features/r-services/predictive-analytics/scripts/Lab.md</a>.</p>
+<p class="calibre2">You can also download the <kbd class="calibre11">nyctaxi_sample.csv</kbd> file from the Packt code file repository, and execute the following <kbd class="calibre11">bcp</kbd> command:</p>
+<pre class="calibre19"><strong class="calibre1">bcp &lt;database name&gt;.dbo.nyctaxi_sample in &lt;file path&gt; -c -t, -T -S&lt;server name&gt;</strong></pre>
+<p class="calibre2">where:</p>
+<ul class="calibre7">
+<li class="calibre8"><kbd class="calibre11">&lt;database name&gt;</kbd> is the name of the database</li>
+<li class="calibre8"><kbd class="calibre11">&lt;file path&gt;</kbd> is the location to the <kbd class="calibre11">nyctaxi_sample.csv</kbd> file</li>
+<li class="calibre8"><kbd class="calibre11">&lt;server name&gt;</kbd> is your server name.</li>
+</ul>
+<p class="calibre2">As an example:</p>
+<pre class="calibre19"><strong class="calibre1">bcp NYCTaxi.dbo.nyctaxi_sample in c:\nyctaxi_sample.csv -c -t, -T -SMsSQLGirl</strong></pre>
+<p class="calibre2">In this scenario, the goal is to predict the likelihood of tipping. As part of the process, we will create a logistic regression model, along with the model's <strong class="calibre1">Receiver Operating Characteristic</strong> (<strong class="calibre1">ROC</strong>) curve and its <strong class="calibre1">Area Under Curve</strong> (<strong class="calibre1">AUC</strong>). An ROC is a plot of the true positive rate against the false positive rate for various threshold points of a diagnostic test. The closer the curve comes to the diagonal of the ROC space, the less accurate the test.</p>
+<p class="calibre2">The closer the curve comes to the left and top borders, the more accurate it is. AUC provides the test of accuracy in numerical form. Luckily, both the ROC plot and AUC value can be easily calculated in R.</p>
+<p class="calibre2">Once we are comfortable that the model is accurate enough, we can then share it and reuse it for predicting if a taxi driver will be tipped, based on the inputs provided.</p>
+<p class="calibre2">Here's the table definition of the NYC Taxi dataset that we will use for training:</p>
+<pre class="calibre19"><strong class="calibre1">CREATE TABLE [dbo].[nyctaxi_sample]( 
+   [medallion] [varchar](50) NOT NULL, 
+   [hack_license] [varchar](50) NOT NULL, 
+   [vendor_id] [char](3) NULL, 
+   [rate_code] [char](3) NULL, 
+   [store_and_fwd_flag] [char](3) NULL, 
+   [pickup_datetime] [datetime] NOT NULL, 
+   [dropoff_datetime] [datetime] NULL, 
+   [passenger_count] [int] NULL, 
+   [trip_time_in_secs] [bigint] NULL, 
+   [trip_distance] [float] NULL, 
+   [pickup_longitude] [varchar](30) NULL, 
+   [pickup_latitude] [varchar](30) NULL, 
+   [dropoff_longitude] [varchar](30) NULL, 
+   [dropoff_latitude] [varchar](30) NULL, 
+   [payment_type] [char](3) NULL, 
+   [fare_amount] [float] NULL, 
+   [surcharge] [float] NULL, 
+   [mta_tax] [float] NULL, 
+   [tolls_amount] [float] NULL, 
+   [total_amount] [float] NULL, 
+   [tip_amount] [float] NULL, 
+   [tipped] [int] NULL, 
+   [tip_class] [int] NULL 
+) ON [PRIMARY] 
+GO</strong> </pre>
+<p class="calibre2">There are a few variables that we can start using to analyze the likelihood of a taxi driver being tipped. As you learned in the previous chapter, you'll want to try out a few variables and algorithms to determine which one is more accurate. This can involve a few iterative processes, and that's the beauty of data science—you keep experimenting.</p>
+<p class="calibre2">To start with, let's use the following variables:</p>
+<table class="table">
+<tbody class="calibre20">
+<tr class="calibre21">
+<td class="calibre22">
+<p class="calibre2"><strong class="calibre1">Variable</strong></p>
+</td>
+<td class="calibre22">
+<p class="calibre2"><strong class="calibre1">Type</strong></p>
+</td>
+<td class="calibre22">
+<p class="calibre2"><strong class="calibre1">Column Name</strong></p>
+</td>
+</tr>
+<tr class="calibre21">
+<td class="calibre22">
+<p class="calibre2">Taxi driver is tipped (yes/no)</p>
+</td>
+<td class="calibre22">
+<p class="calibre2">Output</p>
+</td>
+<td class="calibre22">
+<p class="calibre2"><kbd class="calibre11">tipped</kbd></p>
+</td>
+</tr>
+<tr class="calibre21">
+<td class="calibre22">
+<p class="calibre2">Passenger count</p>
+</td>
+<td class="calibre22">
+<p class="calibre2">Input</p>
+</td>
+<td class="calibre22">
+<p class="calibre2"><kbd class="calibre11">passenger_count</kbd></p>
+</td>
+</tr>
+<tr class="calibre21">
+<td class="calibre22">
+<p class="calibre2">Trip time in seconds</p>
+</td>
+<td class="calibre22">
+<p class="calibre2">Input</p>
+</td>
+<td class="calibre22">
+<p class="calibre2"><kbd class="calibre11">trip_time_in_seconds</kbd></p>
+</td>
+</tr>
+<tr class="calibre21">
+<td class="calibre22">
+<p class="calibre2">Trip distance as per the taxi meter</p>
+</td>
+<td class="calibre22">
+<p class="calibre2">Input</p>
+</td>
+<td class="calibre22">
+<p class="calibre2"><kbd class="calibre11">trip_distance</kbd></p>
+</td>
+</tr>
+<tr class="calibre21">
+<td class="calibre22">
+<p class="calibre2">The direct distance based on the longitudes and the latitudes between the two locations</p>
+</td>
+<td class="calibre22">
+<p class="calibre2">Input</p>
+</td>
+<td class="calibre22">
+<p class="calibre2"><kbd class="calibre11">pickup_longitude</kbd></p>
+<p class="calibre2"><kbd class="calibre11">pickup_latitude</kbd></p>
+<p class="calibre2"><kbd class="calibre11">dropoff_longitude</kbd></p>
+<p class="calibre2"><kbd class="calibre11">dropoff_latitude</kbd></p>
+</td>
+</tr>
+</tbody>
+</table>
+<p class="calibre2"> </p>
+<p class="calibre2">In order to make it easier to calculate the direct distance, let's define the following function:</p>
+<pre class="calibre19"><strong class="calibre1">CREATE FUNCTION [dbo].[fnCalculateDistance]  
+(@Lat1 FLOAT, @Long1 FLOAT, @Lat2 FLOAT, @Long2 FLOAT) 
+-- User-defined function calculate the direct distance  
+-- between two geographical coordinates. 
+RETURNS FLOAT 
+AS 
+BEGIN 
+  DECLARE @distance DECIMAL(28, 10) 
+  -- Convert to radians 
+  SET @Lat1 = @Lat1 / 57.2958 
+  SET @Long1 = @Long1 / 57.2958 
+  SET @Lat2 = @Lat2 / 57.2958 
+  SET @Long2 = @Long2 / 57.2958 
+  -- Calculate distance 
+  SET @distance = (SIN(@Lat1) * SIN(@Lat2)) + (COS(@Lat1) * COS(@Lat2) * COS(@Long2 - @Long1)) 
+  --Convert to miles 
+  IF @distance &lt;&gt; 0 
+  BEGIN 
+    SET @distance = 3958.75 * ATAN(SQRT(1 - POWER(@distance, 2)) / @distance); 
+  END 
+  RETURN @distance 
+END</strong> </pre>
+<p class="calibre2">Here's the table definition of the trained prediction model(s) that we want to store in the database. One of the advantages in storing the trained prediction model(s) in a table is that we can easily reuse it later and can version control our experiments.</p>
+<p class="calibre2">Please note that there is a column called <kbd class="calibre11">IsRealTimeScoring</kbd>. SQL Server 2017 adds a new capability for real-time scoring, which will be discussed in the <em class="calibre12">Integrating the R model for real-time scoring</em> section. If you are using SQL Server 2016, ignore this value:</p>
+<pre class="calibre19"><strong class="calibre1">CREATE TABLE [dbo].[NYCTaxiModel]( 
+   [Model] VARBINARY(MAX) NOT NULL, 
+   [AUC] FLOAT NULL, 
+   [CreatedOn] DATETIME NOT NULL 
+         CONSTRAINT DF_NYCTaxiModel_CreatedOn DEFAULT (GETDATE()), 
+   [IsRealTimeScoring] BIT NOT NULL  
+         CONSTRAINT DF_NYCTaxiModel_IsRealTimeScoring DEFAULT (0) 
+) ON [PRIMARY] </strong> </pre>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    </header><h1 class="header-title" id="calibre_pb_0">Step 1 – Train and save a model using T-SQL</h1>
+                
+            
+            <article>
+                
+<p class="calibre2">In this step, you can create a predictive model (and optionally, the score), into a table via a stored procedure. The motive behind this is that instead of creating a new model every time an intelligent application needs to do prediction, we want to save the model for reuse:</p>
+<div class="packt_figure"><img src="../images/00109.jpeg" class="calibre74"/></div>
+<div class="cdpaligncenter">Figure 7.2: Create predictive model and store it in SQL Server</div>
+<p class="calibre2">In <em class="calibre12">Figure 7.2</em> we assume that the data munging part is already done, and the input dataset is ready for the R computation to consume in order to train and score a model.</p>
+<p class="calibre2">Here's an example of a stored procedure that produces the predictive model based on the NYC Taxi sample dataset, and saves it in a table. The model predicts the likelihood of tipping. Both the model and the AUC of the model are saved in the <kbd class="calibre11">dbo.nyc_taxi_models_v2</kbd> table:</p>
+<pre class="calibre19"><strong class="calibre1">CREATE PROCEDURE [dbo].[uspTrainTipPredictionModel] 
+AS 
+BEGIN 
+   DECLARE @auc FLOAT; 
+   DECLARE @model VARBINARY(MAX); 
+ 
+   -- The data to be used for training 
+   DECLARE @inquery NVARCHAR(MAX) = N' 
+         SELECT  
+               tipped,  
+               fare_amount,  
+               passenger_count, 
+               trip_time_in_secs, 
+               trip_distance, 
+               pickup_datetime,  
+               dropoff_datetime, 
+               dbo.fnCalculateDistance(pickup_latitude,  
+                     pickup_longitude,   
+                     dropoff_latitude,  
+                     dropoff_longitude) as direct_distance 
+         FROM dbo.nyctaxi_sample 
+         TABLESAMPLE (10 PERCENT) REPEATABLE (98052)' 
+ 
+  -- Calculate the model based on the trained data and the AUC. 
+  EXEC sp_execute_external_script @language = N'R', 
+                                  @script = N' 
+         ## Create model 
+         logitObj &lt;- rxLogit(tipped ~ passenger_count +  
+                           trip_distance +  
+                           trip_time_in_secs +  
+                           direct_distance,  
+                           data = InputDataSet); 
+         summary(logitObj) 
+ 
+         ## Serialize model             
+         model &lt;- serialize(logitObj, NULL); 
+         predOutput &lt;- rxPredict(modelObject = logitObj,  
+                     data = InputDataSet, outData = NULL,  
+                     predVarNames = "Score", type = "response",  
+                     writeModelVars = FALSE, overwrite = TRUE); 
+                                        
+         library(''ROCR''); 
+         predOutput &lt;- cbind(InputDataSet, predOutput); 
+           
+         auc &lt;- rxAuc(rxRoc("tipped", "Score", predOutput)); 
+         print(paste0("AUC of Logistic Regression Model:", auc)); 
+         ', 
+     @input_data_1 = @inquery,      
+     @output_data_1_name = N'trained_model', 
+     @params = N'@auc FLOAT OUTPUT, @model VARBINARY(MAX) OUTPUT', 
+     @auc = @auc OUTPUT, 
+     @model = @model OUTPUT; 
+   
+  -- Store the train model output and its AUC  
+  INSERT INTO [dbo].[NYCTaxiModel] (Model, AUC) 
+  SELECT @model, @auc; 
+ 
+END 
+GO</strong> </pre>
+<p class="calibre2">Once you have this stored procedure defined, you can then execute it to generate the model and the AUC. For example:</p>
+<pre class="calibre19"><strong class="calibre1">EXEC [dbo].[uspTrainTipPredictionModel]</strong> </pre>
+<p class="calibre2">Then, view the content of the <kbd class="calibre11">NYCTaxiModel</kbd> table by executing the following statement:</p>
+<pre class="calibre19"><strong class="calibre1">SELECT [Model], [AUC], [CreatedOn], [IsRealTimeScoring] 
+FROM [dbo].[NYCTaxiModel]</strong> </pre>
+<p class="calibre2">If the stored procedure executed properly, you should see a record similar to the following:</p>
+<div class="packt_figure"><img src="../images/00110.jpeg" class="calibre75"/></div>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    </header><h1 class="header-title" id="calibre_pb_0">Step 2 – Operationalize the model</h1>
+                
+            
+            <article>
+                
+<p class="calibre2">Once the model is created and stored in a table as part of the previous step, we are now ready to create a stored procedure where an intelligent application can call it to predict tipping:</p>
+<div class="packt_figure"><img src="../images/00111.jpeg" class="calibre76"/></div>
+<div class="cdpaligncenter">Figure 7.3: Get predictions in the SQL Server</div>
+<p class="calibre2"><em class="calibre12">Figure 7.3</em> illustrates what the workflow of a stored procedure that operationalizes a predictive model looks like.</p>
+<p class="calibre2">Here's an example of a stored procedure where we use one of the saved models, and the dataset that we want to predict against. We are using the latest model that has been created:</p>
+<pre class="calibre19"><strong class="calibre1">CREATE PROCEDURE [dbo].[uspPredictTipSingleMode]  
+   @passenger_count int = 0, 
+   @trip_distance float = 0, 
+   @trip_time_in_secs int = 0, 
+   @pickup_latitude float = 0, 
+   @pickup_longitude float = 0, 
+   @dropoff_latitude float = 0, 
+   @dropoff_longitude float = 0 
+AS 
+BEGIN 
+ 
+  DECLARE @inquery nvarchar(max) = N' 
+   SELECT  
+         @passenger_count as passenger_count, 
+         @trip_distance as trip_distance, 
+         @trip_time_in_secs as trip_time_in_secs, 
+         [dbo].[fnCalculateDistance] ( 
+               @pickup_latitude, 
+               @pickup_longitude, 
+               @dropoff_latitude, 
+               @dropoff_longitude) as direct_distance'; 
+ 
+  DECLARE @lmodel2 varbinary(max); 
+   
+  -- Get the latest non-real-time scoring model 
+  SET @lmodel2 = (SELECT TOP 1 
+               [Model] 
+               FROM [dbo].[NYCTaxiModel] 
+               WHERE IsRealTimeScoring = 0 
+               ORDER BY [CreatedOn] DESC); 
+ 
+  EXEC sp_execute_external_script @language = N'R', 
+   @script = N' 
+         mod &lt;- unserialize(as.raw(model)); 
+         print(summary(mod)) 
+         OutputDataSet&lt;-rxPredict(modelObject = mod,  
+data = InputDataSet,  
+                           outData = NULL, predVarNames = "Score",  
+                           type = "response",  
+writeModelVars = FALSE,  
+overwrite = TRUE); 
+               str(OutputDataSet) 
+               print(OutputDataSet)', 
+         @input_data_1 = @inquery, 
+         @params = N'@model varbinary(max), 
+@passenger_count int, 
+@trip_distance float, 
+                           @trip_time_in_secs INT , 
+                           @pickup_latitude FLOAT , 
+                           @pickup_longitude FLOAT , 
+                           @dropoff_latitude FLOAT , 
+                           @dropoff_longitude FLOAT',</strong></pre>
+<pre class="calibre19"><strong class="calibre1">        @model = @lmodel2, 
+         @passenger_count =@passenger_count , 
+         @trip_distance=@trip_distance, 
+         @trip_time_in_secs=@trip_time_in_secs, 
+         @pickup_latitude=@pickup_latitude, 
+         @pickup_longitude=@pickup_longitude, 
+         @dropoff_latitude=@dropoff_latitude, 
+         @dropoff_longitude=@dropoff_longitude 
+  WITH RESULT SETS ((Score FLOAT)); 
+ 
+END 
+GO</strong> </pre>
+<p class="calibre2">Once <kbd class="calibre11">[dbo].[uspPredictTipSingleMode]</kbd> is created, your application can now use this stored procedure to get the score (probability of tipping); for example:</p>
+<pre class="calibre19"><strong class="calibre1">EXEC [dbo].[uspPredictTipSingleMode]  
+    @passenger_count = 2 
+   ,@trip_distance   = 10 
+   ,@trip_time_in_secs     = 1950 
+   ,@pickup_latitude = 47.643272 
+   ,@pickup_longitude      = -122.127235 
+   ,@dropoff_latitude      = 47.620529 
+   ,@dropoff_longitude     = -122.349297  </strong></pre>
+<p class="calibre2">The output should be similar to the following. In this case, the value 0.64 shows the probability of getting tipped—that is, 64%:</p>
+<pre class="calibre19"><strong class="calibre1">Score 
+---------------------- 
+0.640058591034195 </strong></pre>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    </header><h1 class="header-title" id="calibre_pb_0">Fast batch prediction</h1>
+                
+            
+            <article>
+                
+<p class="calibre2">As seen in the previous section, both the model training step and the prediction step call <kbd class="calibre11">sp_execute_external_script</kbd>, which invokes the R process. Real-time scoring and native scoring allow you to do predictions without invoking an R process. Therefore, these scoring methods improve the performance of prediction operations.</p>
+<p class="calibre2">In addition, real-time scoring and native scoring let you use a machine learning model without having to install R. As long as you obtain a pretrained model in a compatible format and save it in an SQL Server database, you can call prediction operations easily.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    </header><h1 class="header-title" id="calibre_pb_0">Prerequisites</h1>
+                
+            
+            <article>
+                
+<ul class="calibre7">
+<li class="calibre8">There is no prerequisite when using the <kbd class="calibre11">PREDICT</kbd> function in SQL Server 2017. More information about <kbd class="calibre11">PREDICT</kbd> is covered in the <em class="calibre12">Native scoring</em> section later.</li>
+<li class="calibre8"><kbd class="calibre11">sp_rxPredict</kbd> requires some additional steps, as outlined in <em class="calibre12">Enable real-time scoring model </em>at <a href="https://docs.microsoft.com/en-us/sql/advanced-analytics/r/how-to-do-realtime-scoring#bkmk_enableRtScoring" target="_blank" class="calibre10">https://docs.microsoft.com/en-us/sql/advanced-analytics/r/how-to-do-realtime-scoring#bkmk_enableRtScoring</a><span>.</span></li>
+</ul>
+<ul class="calibre7">
+<li class="calibre8">Currently, both real-time scoring and native scoring in SQL Server 2016 and SQL Server 2017 only support RevoScaleR and MicrosoftML compatible models. For the most up-to-date list of supported algorithms, see <em class="calibre12">Real-time scoring</em> at <a href="https://docs.microsoft.com/en-us/sql/advanced-analytics/real-time-scoring" class="calibre10">https://docs.microsoft.com/en-us/sql/advanced-analytics/real-time-scoring</a>.</li>
+</ul>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    </header><h1 class="header-title" id="calibre_pb_0">Real-time scoring</h1>
+                
+            
+            <article>
+                
+<p class="calibre2">Both SQL Server 2016 and SQL Server 2017 support real-time scoring using <kbd class="calibre11">sp_rxPredict</kbd>.</p>
+<div class="packt_tip">This stored procedure is a CLR stored procedure using an <kbd class="calibre31">UNSAFE</kbd> assembly, and requires you to set the database to <kbd class="calibre31">TRUSTWORTHY</kbd>.</div>
+<p class="calibre2">Here's an example of calling the <kbd class="calibre11">PREDICT</kbd> function as part of the <kbd class="calibre11">SELECT</kbd> statement:</p>
+<pre class="calibre19"><strong class="calibre1">EXEC dbo.sp_rxPredict @model, 
+@inputData = @query;</strong> </pre>
+<p class="calibre2">In this case:</p>
+<ul class="calibre7">
+<li class="calibre8"><kbd class="calibre11">@model</kbd>: Consists of the real-time scoring model that was previously prepared</li>
+<li class="calibre8"><kbd class="calibre11">@query</kbd>: The query definition of the data to be scored</li>
+</ul>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    </header><h1 class="header-title" id="calibre_pb_0">Native scoring</h1>
+                
+            
+            <article>
+                
+<p class="calibre2">SQL Server 2017 introduces a new function, <kbd class="calibre11">PREDICT</kbd>, allowing you to get a predicted value using native scoring. Instead of using <kbd class="calibre11">sp_execute_external_script</kbd> with R script to do prediction, you can call it as part of the <kbd class="calibre11">FROM</kbd> clause of a <kbd class="calibre11">SELECT</kbd> statement, making operationalization of prediction analytics much easier. In addition, using <kbd class="calibre11">PREDICT</kbd> means that you no longer have to invoke an additional R process every time you want to do prediction.</p>
+<div class="packt_tip">This <kbd class="calibre31">PREDICT</kbd> function is new to T-SQL and is not to be confused with the existing DMX's <kbd class="calibre31">PREDICT</kbd> function.</div>
+<p class="calibre2">Here's an example of calling the <kbd class="calibre11">PREDICT</kbd> function as part of the <kbd class="calibre11">SELECT</kbd> statement:</p>
+<pre class="calibre19"><strong class="calibre1">SELECT  d.Input1, d.Input2, p.Output_Pred 
+FROM PREDICT( MODEL = @model,  DATA = d)  
+     WITH (Output_Pred FLOAT) p;</strong> </pre>
+<p class="calibre2">In this case:</p>
+<ul class="calibre7">
+<li class="calibre8"><kbd class="calibre11">d</kbd>: Data source, such as a table, a view, or a Common Table Expression.</li>
+<li class="calibre8"><kbd class="calibre11">Input1, Input2</kbd>: Columns from the data source.</li>
+<li class="calibre8"><kbd class="calibre11">@model</kbd>: Consists of the real-time scoring model that has been previously prepared.</li>
+<li class="calibre8"><kbd class="calibre11">Output_Pred</kbd>: The output value that is being predicted. Usually, the column name is constructed from the column name of the predicted value followed by a <kbd class="calibre11">_Pred</kbd> suffix; for example, <kbd class="calibre11">Tipped_Pred</kbd>, where <kbd class="calibre11">Tipped</kbd> is the name of the column being predicted.</li>
+</ul>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    </header><h1 class="header-title" id="calibre_pb_0">Integrating the R model for fast batch prediction</h1>
+                
+            
+            <article>
+                
+<p class="calibre2">Before continuing to the next steps, please follow the <em class="calibre12">Prerequisite - Prepare the data</em> section.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    </header><h1 class="header-title" id="calibre_pb_0">Step 1 – Train and save a real-time scoring model using T-SQL</h1>
+                
+            
+            <article>
+                
+<p class="calibre2">In this step, you can create a predictive model for real-time scoring and native scoring, and optionally for the AUC, into a table via a stored procedure. The goal is to build a model that is reusable. You can skip this step if there is an existing compatible model that was created and stored in a table in SQL Server already.</p>
+<p class="calibre2">The following stored procedure uses <kbd class="calibre11">rxSerializeModel</kbd>, which lets you serialize an R model in raw format. This then allows you to save the model in the <kbd class="calibre11">VARBINARY</kbd> format, which can be loaded into SQL Server for real-time scoring. To reverse the serialization for use in R, you could use <kbd class="calibre11">rxUnserializeModel</kbd>:</p>
+<pre class="calibre19"><strong class="calibre1">CREATE PROCEDURE [dbo].[uspTrainTipPredictionModelWithRealTimeScoring] 
+AS 
+BEGIN 
+   DECLARE @auc FLOAT; 
+   DECLARE @model VARBINARY(MAX); 
+ 
+   -- The data to be used for training 
+   DECLARE @inquery NVARCHAR(MAX) = N' 
+         SELECT  
+               tipped,  
+               fare_amount,  
+               passenger_count, 
+               trip_time_in_secs, 
+               trip_distance, 
+               pickup_datetime,  
+               dropoff_datetime, 
+               dbo.fnCalculateDistance(pickup_latitude,  
+                     pickup_longitude,   
+                     dropoff_latitude,  
+                     dropoff_longitude) as direct_distance 
+         FROM dbo.nyctaxi_sample 
+         TABLESAMPLE (10 PERCENT) REPEATABLE (98052)' 
+ 
+  -- Calculate the model based on the trained data and the AUC. 
+  EXEC sp_execute_external_script @language = N'R', 
+                                   @script = N' 
+         ## Create model 
+         logitObj &lt;- rxLogit(tipped ~ passenger_count +  
+                           trip_distance +  
+                           trip_time_in_secs +  
+                           direct_distance,  
+                           data = InputDataSet); 
+         summary(logitObj) 
+ 
+         ## Serialize model             
+         ## model &lt;- serialize(logitObj, NULL); 
+         model &lt;- rxSerializeModel(logitObj,  
+realtimeScoringOnly = TRUE); 
+         predOutput &lt;- rxPredict(modelObject = logitObj,  
+                     data = InputDataSet, outData = NULL,  
+                     predVarNames = "Score", type = "response",  
+                     writeModelVars = FALSE, overwrite = TRUE); 
+                                        
+         library(''ROCR''); 
+         predOutput &lt;- cbind(InputDataSet, predOutput); 
+           
+         auc &lt;- rxAuc(rxRoc("tipped", "Score", predOutput)); 
+         print(paste0("AUC of Logistic Regression Model:", auc)); 
+         ', 
+     @input_data_1 = @inquery,      
+     @output_data_1_name = N'trained_model', 
+     @params = N'@auc FLOAT OUTPUT, @model VARBINARY(MAX) OUTPUT', 
+     @auc = @auc OUTPUT, 
+     @model = @model OUTPUT; 
+   
+  -- Store the train model output and its AUC  
+  INSERT INTO [dbo].[NYCTaxiModel] (Model, AUC, IsRealTimeScoring) 
+  SELECT @model, @auc, 1; 
+ 
+END 
+GO</strong> </pre>
+<div class="packt_tip"><span class="calibre36">To store a model created in R in an SQL Server table, you must serialize it first. In R, a serialized model must be unserialized before we can use it for prediction.</span></div>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    </header><h1 class="header-title" id="calibre_pb_0">Step 2a – Operationalize the model using real-time scoring</h1>
+                
+            
+            <article>
+                
+<p class="calibre2">The following is a sample script where we use <kbd class="calibre11">sp_rxPredict</kbd> with a real-time scoring model to predict the likelihood of tipping:</p>
+<pre class="calibre19"><strong class="calibre1">DECLARE @logit_model VARBINARY(MAX) =  
+   (SELECT TOP 1 [Model]  
+   FROM [dbo].[NYCTaxiModel] 
+   WHERE [IsRealTimeScoring] = 1 
+   ORDER BY [CreatedOn] DESC); 
+ 
+ 
+EXEC dbo.sp_rxPredict @model = @logit_model, 
+@inputData = N'SELECT 
+                     2 AS passenger_count,  
+                     10 AS trip_distance,  
+                     1950 AS trip_time_in_secs,  
+                     dbo.fnCalculateDistance(47.643272,  
+                           -122.127235,   
+                           47.620529,  
+                           -122.349297) AS direct_distance';</strong> </pre>
+<p class="calibre2">The output should only give you the prediction value for the rows that are pushed through:</p>
+<pre class="calibre19"><strong class="calibre1">tipped_Pred</strong>
+<strong class="calibre1">----------------------</strong>
+<strong class="calibre1">0.640058591034195</strong>
+    
+<strong class="calibre1">(1 row affected)</strong>
+  </pre>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    </header><h1 class="header-title" id="calibre_pb_0">Step 2b – Operationalize the model using native scoring</h1>
+                
+            
+            <article>
+                
+<p class="calibre2">The following is a sample script where we use the <kbd class="calibre11">PREDICT</kbd> function with an R real-time scoring model to predict the likelihood of tipping. The <kbd class="calibre11">PREDICT</kbd> function in SQL Server 2017 can read the stored serialized model for predictive analysis from the previous step:</p>
+<pre class="calibre19"><strong class="calibre1">DECLARE @logit_model VARBINARY(MAX) =  
+   (SELECT TOP 1 [Model]  
+   FROM [dbo].[NYCTaxiModel] 
+   WHERE [IsRealTimeScoring] = 1 
+   ORDER BY [CreatedOn] DESC); 
+ 
+WITH d AS ( 
+   SELECT      2 AS passenger_count,  
+               10 AS trip_distance,  
+               1950 AS trip_time_in_secs,  
+               dbo.fnCalculateDistance(47.643272,  
+                     -122.127235,   
+                     47.620529,  
+                     -122.349297) AS direct_distance) 
+SELECT  * 
+FROM PREDICT( MODEL = @logit_model, DATA = d)  
+WITH (tipped_Pred FLOAT) p;</strong> </pre>
+<p class="calibre2">The output should include any columns that you specify in the <kbd class="calibre11">SELECT</kbd> statement, and should look like this:</p>
+<pre class="calibre19"><strong class="calibre1">tipped_Pred passenger_count trip_distance trip_time_in_secs direct_distance</strong>
+<strong class="calibre1">----------- --------------- ------------- ----------------- ---------------</strong>
+<strong class="calibre1">0.640058591 2               10            1950              10.4581575644</strong>
+    
+<strong class="calibre1">(1 row affected)</strong>
+  </pre>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    </header><h1 class="header-title" id="calibre_pb_0">Managing roles and permissions for workloads</h1>
+                
+            
+            <article>
+                
+<p class="calibre2">Operationalizing an R script as part of the extensibility framework workloads, as well as prediction operations using real-time scoring and native scoring, require that a few roles and permissions be set up first.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    </header><h1 class="header-title" id="calibre_pb_0">Extensibility framework workloads</h1>
+                
+            
+            <article>
+                
+<p class="calibre2">This section outlines the typical security requirements for operationalizing R from SQL Server using <kbd class="calibre11">sp_execute_external_script</kbd>. An SQL Server login or Windows user account can be used to run R scripts directly from SQL Server using stored procedures. The following are the steps to set up this account, such that it has sufficient privileges:</p>
+<ol class="calibre14">
+<li value="1" class="calibre8">Allow permission to access the database where the R scripts will be run from.</li>
+<li value="2" class="calibre8">Allow permission to read data from secured objects, such as tables. This includes (but is not limited to) the table where the model might have been stored from and the table/view to be used to train the model or input to the prediction.</li>
+<li value="3" class="calibre8">If the R script needs to write new data to a table, such as a model or a scoring result, allow permission to write the new data.</li>
+<li value="4" class="calibre8">If the R script needs to install R packages during runtime, allow permission to install new packages.</li>
+</ol>
+<p class="calibre2">In general, it is easier to create roles to manage sets of permissions, and then assign users to those roles, instead of individually setting user permissions.</p>
+<p class="calibre2">The following is an example of how to create a role and assign it to a login called <kbd class="calibre11">JulieGuest2</kbd>, as per steps 1, 2, and 3:</p>
+<pre class="calibre19"><strong class="calibre1">-- Create a new role  
+CREATE ROLE TutorialDBRUser AUTHORIZATION dbo 
+GO 
+ 
+-- Assign the role to a new member JulieGuest2 so that the login 
+-- can connect to the database Tutorial DB. 
+ALTER ROLE TutorialDBRUser ADD MEMBER JulieGuest2 
+GO 
+ 
+-- Allow members of TutorialDBRUser to read and write.  
+ALTER ROLE db_datareader ADD MEMBER TutorialDBRUser 
+GO 
+ 
+ALTER ROLE db_datareader ADD MEMBER TutorialDBRUser 
+GO 
+ 
+-- Allow members of TutorialDBRUser to run external script 
+GRANT EXECUTE ANY EXTERNAL SCRIPT TO [TutorialDBRUser] 
+GO 
+ 
+-- Allow members of TutorialDBRUser to run a specific  
+-- stored procedure. 
+GRANT EXECUTE ON [dbo].[predict_rentals] TO [TutorialDBRUser] 
+GO </strong></pre>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    </header><h1 class="header-title" id="calibre_pb_0">Fast batch prediction workloads</h1>
+                
+            
+            <article>
+                
+<p class="calibre2">Follow the following steps only if you are using real-time scoring or native scoring:</p>
+<ul class="calibre7">
+<li class="calibre8">For real-time scoring using <kbd class="calibre11">sp_rxPredict</kbd>, you will need to add the user who will execute this stored procedure to <kbd class="calibre11">rxpredict_users</kbd></li>
+<li class="calibre8">For native scoring using the new <kbd class="calibre11">PREDICT</kbd> syntax available in SQL Server 2017, you will need to grant <kbd class="calibre11">EXECUTE</kbd> permission on the database</li>
+</ul>
+<p class="calibre2">The preceding steps assume that the users have read access to the real-time scoring model and the input data set for the prediction operation.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    </header><h1 class="header-title" id="calibre_pb_0">External packages</h1>
+                
+            
+            <article>
+                
+<p class="calibre2">From SQL Server 2017, you can also add an external library through <kbd class="calibre11">CREATE EXTERNAL LIBRARY</kbd>, as long as you have the <kbd class="calibre11">ALTER ANY EXTERNAL LIBRARY</kbd> permission:</p>
+<pre class="calibre19"><strong class="calibre1">GRANT ALTER ANY EXTERNAL LIBRARY TO [TutorialDBRUser] 
+GO</strong> </pre>
+<p class="calibre2">You'll have to download the package from the source first; for example, <kbd class="calibre11">ggplot2</kbd> from CRAN (<a href="https://cran.r-project.org/web/packages/ggplot2/index.html" class="calibre10"><span>https://cran.r-project.org/web/packages/ggplot2/index.html</span></a>) to a path SQL Server has access to:</p>
+<pre class="calibre19"><strong class="calibre1">CREATE EXTERNAL LIBRARY ggplot2pkg  
+FROM  
+  (CONTENT = 'C:\Program Files\Microsoft SQL Server\MSSQL14.MSSQLSERVER\ggplot2.zip')  
+WITH (LANGUAGE = 'R');</strong> </pre>
+<p class="calibre2">If you are using SQL Server 2016, to install a new R package, you'll need to have administrative access on the machine. The installation steps are outside of SQL Server and directly on the R that is associated to the SQL Server R Services. The detailed steps are outlined in <a target="_blank" href="part0039.html#1565U0-e3f81285367248f4bbc6431bcd4f926d" class="calibre10"><span>Chapter 3</span></a>, <em class="calibre12">Managing Machine Learning Services for SQL Server 2017 and R</em>.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    </header><h1 class="header-title" id="calibre_pb_0">Tools</h1>
+                
+            
+            <article>
+                
+<p class="calibre2">There are three main options for operationalizing R code embedded in T-SQL. All of these tools are free:</p>
+<ul class="calibre7">
+<li class="calibre8"><strong class="calibre1">SQL Server Management Studio</strong> (<strong class="calibre1">SSMS</strong>)</li>
+<li class="calibre8"><strong class="calibre1">R Tools for Visual Studio</strong> (<strong class="calibre1">RTVS</strong>)</li>
+<li class="calibre8"><strong class="calibre1">SQL Server Data Tools</strong> (<strong class="calibre1">SSDT</strong>)</li>
+</ul>
+<p class="calibre2">This section provides an overview of how the tools can help you operationalize R code in SQL Server as part of workflows.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    </header><h1 class="header-title" id="calibre_pb_0">Using SSMS as part of operationalizing R script</h1>
+                
+            
+            <article>
+                
+<p class="calibre2">SSMS is a powerful tool that allows you to operationalize your prediction analytics from the previous section. SSMS also provides the ability for you to manage various administrative tasks related to operationalizing R code in SQL Server and maintaining it, such as:</p>
+<ul class="calibre7">
+<li class="calibre8">Managing permissions, as described earlier in this chapter.</li>
+<li class="calibre8">Managing R packages (in SQL Server 2017), as described earlier in this chapter.</li>
+<li class="calibre8">Managing stored procedures that integrate R code, as described in an earlier section.</li>
+<li class="calibre8">Managing resources for SQL Server R Services, as described in <a target="_blank" href="part0039.html#1565U0-e3f81285367248f4bbc6431bcd4f926d" class="calibre10"><span>Chapter 3</span></a>, <em class="calibre12">Managing Machine Learning Services for SQL Server 2017 and R.</em></li>
+<li class="calibre8">Monitoring SQL Server R services using built-in custom reports and via DMVs, as described in <em class="calibre12">Using custom reports for SQL Server R Services.</em></li>
+<li class="calibre8">Creating and managing jobs that execute R Scripts. See <em class="calibre12">Scheduling training and prediction operations</em> later in this chapter.</li>
+</ul>
+<div class="packt_tip">To get the latest version of SSMS to help you develop and manage workflows with SQL Server R services, go to <a href="https://docs.microsoft.com/en-us/sql/ssms/download-sql-server-management-studio-ssms" class="calibre40"><span class="calibre36">https://docs.microsoft.com/en-us/sql/ssms/download-sql-server-management-studio-ssms</span></a>.</div>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    </header><h1 class="header-title" id="calibre_pb_0">Using custom reports for SQL Server R Services</h1>
+                
+            
+            <article>
+                
+<p class="calibre2">There are custom reports for SQL Server R Services available on GitHub: <a href="https://github.com/Microsoft/sql-server-samples/tree/master/samples/features/r-services/ssms-custom-reports" class="calibre10">https://github.com/Microsoft/sql-server-samples/tree/master/samples/features/r-services/ssms-custom-reports</a></p>
+<p class="calibre2">The following is a list of the custom reports and what they can help you achieve:</p>
+<table class="table">
+<tbody class="calibre20">
+<tr class="calibre21">
+<td class="calibre22">
+<p class="calibre2"><strong class="calibre1">Reports</strong></p>
+</td>
+<td class="calibre22">
+<p class="calibre2"><strong class="calibre1">Purpose</strong></p>
+</td>
+</tr>
+<tr class="calibre21">
+<td class="calibre22">
+<p class="calibre2"><kbd class="calibre11">R Services - Configuration.rdl</kbd></p>
+</td>
+<td class="calibre22">
+<p class="calibre2">View installation settings of R Services and properties of the R runtime.</p>
+<p class="calibre2">Configure R Services after installation.</p>
+</td>
+</tr>
+<tr class="calibre21">
+<td class="calibre22">
+<p class="calibre2"><kbd class="calibre11">R Services - Packages.rdl</kbd></p>
+</td>
+<td class="calibre22">
+<p class="calibre2">View R packages installed on the SQL Server instance, as well as their properties, such as name and version.</p>
+</td>
+</tr>
+<tr class="calibre21">
+<td class="calibre22">
+<p class="calibre2"><kbd class="calibre11">R Services - Resource Usage.rdl</kbd></p>
+</td>
+<td class="calibre22">
+<p class="calibre2">View resource consumption of SQL Server and R scripts execution.</p>
+<p class="calibre2">View memory setting of external resource pools.</p>
+</td>
+</tr>
+<tr class="calibre21">
+<td class="calibre22">
+<p class="calibre2"><kbd class="calibre11">R Services - Extended Events.rdl</kbd></p>
+</td>
+<td class="calibre22">
+<p class="calibre2">View the extended events to understand more about R script execution.</p>
+</td>
+</tr>
+<tr class="calibre21">
+<td class="calibre22">
+<p class="calibre2"><kbd class="calibre11">R Services - Execution Statistics.rdl</kbd></p>
+</td>
+<td class="calibre22">
+<p class="calibre2">View the execution statistics of R Services, including but not limited to the number of R script executions, the number of parallel executions, and <kbd class="calibre11">RevoScaleR</kbd> functions.</p>
+</td>
+</tr>
+</tbody>
+</table>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    </header><h1 class="header-title" id="calibre_pb_0">Adding the custom reports for the first time</h1>
+                
+            
+            <article>
+                
+<p class="calibre2">Once you have downloaded the custom reports from the preceding GitHub location, follow the following steps to add custom reports for the first time:</p>
+<ol class="calibre14">
+<li value="1" class="calibre8">Go to <span>SSMS</span> | <span>Object Explorer.</span></li>
+<li value="2" class="calibre8">Right-click on the SQL Server instance's name in <span>Object Explorer</span>, and choose <span>Reports</span> | <span>Custom Reports...</span></li>
+<li value="3" class="calibre8">Add the RDL files from the download location.</li>
+</ol>
+<p class="calibre34">After adding, you might be presented with the following warning dialog box:</p>
+<div class="packt_figure"><img class="aligncenter58" src="../images/00112.jpeg"/></div>
+<div class="cdpaligncenter">Figure 7.4: Run Custom Report warning from SSMS</div>
+<p class="calibre34">Clicking <span>Run</span> means that you acknowledge that you wish to run these reports.</p>
+<p class="calibre34"><em class="calibre12">Figure 7.5</em> illustrates a successfully imported R Services - Execution Statistics report. It says that there are 24 R script execution errors from 38 executions, and the most popular <kbd class="calibre11">RevoScaleR</kbd> function is <kbd class="calibre11">rxPredict_rxLogit</kbd>:</p>
+<div class="packt_figure"><img src="../images/00113.jpeg" class="calibre27"/></div>
+<div class="cdpaligncenter">Figure 7.5: SQL Server R Services - Execution Statistics report in SSMS</div>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    </header><h1 class="header-title" id="calibre_pb_0">Viewing an R Services custom report</h1>
+                
+            
+            <article>
+                
+<p class="calibre2">Once you've added an R Services custom report for the first time, you can revisit it again. Here are the steps:</p>
+<ol class="calibre14">
+<li value="1" class="calibre8">Go to <span>SSMS</span> | <span>Object Explorer.</span></li>
+<li value="2" class="calibre8">Right-click on the SQL Server instance's name.</li>
+</ol>
+<p class="calibre2"> </p>
+<ol start="3" class="calibre14">
+<li value="3" class="calibre8">Choose <span>Reports</span> | <span>Custom Reports</span>. If you have added all the custom reports, you should see something like this:</li>
+</ol>
+<div class="packt_figure"><img class="aligncenter59" src="../images/00114.jpeg"/></div>
+<div class="cdpaligncenter">Figure 7.6: Viewing Custom Reports in SSMS</div>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    </header><h1 class="header-title" id="calibre_pb_0">Managing SQL Server Machine Learning Services with DMVs</h1>
+                
+            
+            <article>
+                
+<p class="calibre2">There are various DMVs that are available to help you monitor the R script that you have operationalized. This section splits the DMVs for SQL Server Machine Learning Services into the following two categories, as specified.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    </header><h1 class="header-title" id="calibre_pb_0">System configuration and system resources</h1>
+                
+            
+            <article>
+                
+<p class="calibre2">You may be familiar with <kbd class="calibre11">sys.dm_exec_sessions</kbd> and <kbd class="calibre11">sys.dm_os_performance_counter</kbd> for understanding active sessions and system performance counters, respectively. The following is a list of DMVs that you should get to know more to track and monitor performance and usage of R script executions in SQL Server:</p>
+<ul class="calibre7">
+<li class="calibre8"><kbd class="calibre11">sys.dm_exec_sessions</kbd>: View details on user sessions and system sessions, identified as <kbd class="calibre11">with session_id &gt;= 51</kbd> and <kbd class="calibre11">&lt; 51</kbd>, respectively.</li>
+<li class="calibre8"><kbd class="calibre11">sys.dm_os_performance_counters</kbd>: View details on each system performance counter, including those that are related to R script. Here's an example of the script specifically related to SQL Server R Services:</li>
+</ul>
+<pre class="calibre33"><strong class="calibre1">SELECT *  
+FROM sys.dm_os_performance_counters  
+WHERE object_name LIKE '%External Scripts%'</strong> </pre>
+<ul class="calibre7">
+<li class="calibre8"><kbd class="calibre11">sys.dm_external_script_requests</kbd>: View active external scripts on the current instance:</li>
+</ul>
+<pre class="calibre33"><strong class="calibre1">SELECT  
+   [external_script_request_id]  
+  , [language] 
+  , [degree_of_parallelism] 
+  , [external_user_name] 
+FROM sys.dm_external_script_requests;</strong> </pre>
+<ul class="calibre7">
+<li class="calibre8"><kbd class="calibre11">sys.dm_external_script_execution_stats</kbd>: View the overall usage of the new external script through counters.</li>
+</ul>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    </header><h1 class="header-title" id="calibre_pb_0">Resource governor</h1>
+                
+            
+            <article>
+                
+<p class="calibre2">In SQL Server 2016, two new DMVs have been added to help monitor external resource pools: <kbd class="calibre11">sys.resource_governor_external_resource_pools</kbd> and <kbd class="calibre11">sys.dm_resource_governor_external_resource_pool_affinity</kbd>. If you are familiar with tracking and managing resource governors in general, you are likely to know the other two DMVs that are listed as follows:</p>
+<ul class="calibre7">
+<li class="calibre8"><kbd class="calibre11">sys.resource_governor_resource_pools</kbd>: View the current resource pool state, the current configuration of resource pools, and their statistics.</li>
+<li class="calibre8"><kbd class="calibre11">sys.resource_governor_workload_groups</kbd>: View the workload group statistics and the current configuration of the workload group. This DMV has been enhanced with a new column to show the ID of the external pool associated with the workload group.</li>
+<li class="calibre8"><kbd class="calibre11">sys.resource_governor_external_resource_pools</kbd>: View the current configuration values for external resource pools. At the time of writing, SQL Server 2016/2017 Enterprise Edition allows you to configure additional resource pools, such that resources for R jobs running in SQL Server will be isolated from those that originate from a remote client.</li>
+<li class="calibre8"><kbd class="calibre11">sys.dm_resource_governor_external_resource_pool_affinity</kbd>: This DMV allows you to see the processors and resources that are affinitized to a particular resource pool.</li>
+</ul>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    </header><h1 class="header-title" id="calibre_pb_0">Operationalizing R code with Visual Studio</h1>
+                
+            
+            <article>
+                
+<p class="calibre2">Developing R script, or T-SQL that uses R script, is now made easy with <strong class="calibre1">R Tools for Visual Studio</strong> (<strong class="calibre1">RTVS</strong>). If you are already using SQL Server Data Tools as your IDE for your SQL Server database projects, you can simply add a new R project in the solution. This integration has improved in Visual Studio 2017.</p>
+<div class="packt_tip">If you don't have Visual Studio installed, go to <a href="https://www.visualstudio.com/downloads/" class="calibre40">https://www.visualstudio.com/downloads/</a>.<br class="calibre30"/>
+<br class="calibre30"/>
+RTVS is installed as part of the Data science and analytical applications workload.</div>
+<p class="calibre2">From the Visual Studio installer, you can add the <span>Data science and analytics applications</span> workload to your Visual Studio 2017 installation, as shown in <em class="calibre12">Figure 7.7</em>:</p>
+<div class="packt_figure"><img src="../images/00115.jpeg" class="calibre27"/></div>
+<div class="cdpaligncenter">Figure 7.7: Selecting the Data science and analytical applications option in the Visual Studio installer for Visual Studio 2017</div>
+<p class="calibre2">The following are additional tips to get started using RTVS:</p>
+<ol class="calibre14">
+<li value="1" class="calibre8">Create a new R project in RTVS by selecting <span>File</span> | <span>New</span> | <span>Project</span>. The provided name of the project and file path are similar to the following:</li>
+</ol>
+<div class="packt_figure"><img class="aligncenter60" src="../images/00116.jpeg"/></div>
+<div class="cdpaligncenter">Figure 7.8: Creating a new R project</div>
+<ol start="2" class="calibre14">
+<li value="2" class="calibre8">In RTVS, you can choose workspaces that you can run the R script against. If you have already installed SQL Server with R Services as mentioned in <a target="_blank" href="part0057.html#1MBG20-e3f81285367248f4bbc6431bcd4f926d" class="calibre10"><span>Chapter 4</span></a>, <em class="calibre12">Data Exploration and Data Visualization</em>, you'll see something like this:</li>
+</ol>
+<div class="packt_figure"><img src="../images/00117.jpeg" class="calibre77"/></div>
+<div class="cdpaligncenter">Figure 7.9: Displaying all workspaces available for RTVS to connect to</div>
+<p class="calibre34">Go to <span>R Tools</span> | <span>Windows</span> | <span>Workspaces</span> or press <em class="calibre12">Ctrl</em> + <em class="calibre12">9</em> to display the <span>Workspaces</span> window.</p>
+<ol start="3" class="calibre14">
+<li value="3" class="calibre8">You can run R code from the <span>R Interactive</span> window or save R files within the R project. You can refer to <a href="https://docs.microsoft.com/en-us/visualstudio/rtvs/" class="calibre10">https://docs.microsoft.com/en-us/visualstudio/rtvs/</a> to learn more about RTVS features.</li>
+</ol>
+<p class="calibre2"> </p>
+<ol start="4" class="calibre14">
+<li value="4" class="calibre8">You can also use add an <span>SQL Query</span> file within the project by right-clicking on the project and choosing <span>Add New Item</span>, then selecting <span>SQL Query,</span> shown as follows:</li>
+</ol>
+<div class="packt_figure"><img class="aligncenter61" src="../images/00118.jpeg"/></div>
+<div class="cdpaligncenter">Figure 7.10: Selecting a new item/file to add to the R project</div>
+<ol start="5" class="calibre14">
+<li value="5" class="calibre8">RTVS also allows you to develop the R code integration to SQL Server stored procedure via a template. To access this, simply click <span>Add New</span> <span>Item,</span> similar to the previous step, and then select <span>SQL Stored Procedure</span>. For more information about this, go to <a href="https://docs.microsoft.com/en-us/visualstudio/rtvs/sql-server" class="calibre10">https://docs.microsoft.com/en-us/visualstudio/rtvs/sql-server</a>.</li>
+</ol>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    </header><h1 class="header-title" id="calibre_pb_0">Integrating R workloads and prediction operations beyond SQL Server</h1>
+                
+            
+            <article>
+                
+<p class="calibre2">In this section, you will learn how to include R workloads and prediction operations that you have created in the previous sections beyond SQL Server. We will discuss how to run the workloads and operations in PowerShell, SQL Agent Job, and <strong class="calibre1">SQL Server Integration Services</strong> (<strong class="calibre1">SSIS</strong>).</p>
+<div class="packt_tip">Please note that you can also execute these workloads/prediction operations using SQLCMD, C# within SSIS, Azure, and also Bash on Linux. This discussion is beyond the scope of this chapter.</div>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    </header><h1 class="header-title" id="calibre_pb_0">Executing SQL Server prediction operations via PowerShell</h1>
+                
+            
+            <article>
+                
+<p class="calibre2">Assuming that you have already created the stored procedure that executes R script from SQL Server, such as <kbd class="calibre11">[dbo].[uspTrainTipPredictionModel]</kbd> from the earlier example, you can execute this command easily as part of your PowerShell workflows.</p>
+<p class="calibre2">Here's a simple example of calling the stored procedure from PowerShell:</p>
+<pre class="calibre19"><strong class="calibre1">$SqlConnection = New-Object System.Data.SqlClient.SqlConnection</strong>
+<strong class="calibre1">$SqlConnection.ConnectionString = "Server=.;Database=Taxi;Integrated Security=True"</strong>
+<strong class="calibre1">$SqlCmd = New-Object System.Data.SqlClient.SqlCommand</strong>
+<strong class="calibre1">$SqlCmd.CommandText = "EXEC [dbo].[uspPredictTipSingleMode] </strong>
+<strong class="calibre1">    @passenger_count    = 2</strong>
+<strong class="calibre1">      ,@trip_distance   = 10</strong>
+<strong class="calibre1">      ,@trip_time_in_secs     = 35</strong>
+<strong class="calibre1">      ,@pickup_latitude = 47.643272</strong>
+<strong class="calibre1">      ,@pickup_longitude      = -122.127235</strong>
+<strong class="calibre1">      ,@dropoff_latitude      = 47.620529</strong>
+<strong class="calibre1">      ,@dropoff_longitude     = -122.349297</strong>
+<strong class="calibre1">      "</strong>
+<strong class="calibre1">$SqlCmd.Connection = $SqlConnection</strong>
+<strong class="calibre1">$SqlAdapter = New-Object System.Data.SqlClient.SqlDataAdapter</strong>
+<strong class="calibre1">$SqlAdapter.SelectCommand = $SqlCmd</strong>
+<strong class="calibre1">$DataSet = New-Object System.Data.DataSet</strong>
+<strong class="calibre1">$SqlAdapter.Fill($DataSet)</strong>
+<strong class="calibre1">$SqlConnection.Close()</strong>
+<strong class="calibre1">$DataSet.Tables[0] </strong>
+  </pre>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    </header><h1 class="header-title" id="calibre_pb_0">Scheduling training and prediction operations</h1>
+                
+            
+            <article>
+                
+<p class="calibre2">In SSMS, you can create a new SQL Server job that allows you to run R code as a one-off or with a specific schedule.</p>
+<p class="calibre2">As an example, you can do a scheduled offline predictive analytics workload. To do this, simply create a job through SSMS:</p>
+<ol class="calibre14">
+<li value="1" class="calibre8">To create a job, you'll need to be a member of one of the SQL Server Agent fixed database roles or the sysadmin fixed server role. Only the job owner or a member of the sysadmin role can update the definition of the job.</li>
+<li value="2" class="calibre8">In <span>Object Explorer</span> of SSMS, expand the SQL Server instance where you want to create an SQL Server Agent job.</li>
+<li value="3" class="calibre8">Expand <span>SQL Server Agent</span> and right-click on the <kbd class="calibre11">Jobs</kbd> folder, then select <span>New Job...</span>:</li>
+</ol>
+<div class="packt_figure"><img src="../images/00119.jpeg" class="calibre78"/></div>
+<div class="cdpaligncenter">Figure 7.11: Creating a new SQL Server Agent job using SSMS</div>
+<ol start="4" class="calibre14">
+<li value="4" class="calibre8">Provide details on the <span>General</span> page:</li>
+</ol>
+<div class="packt_figure"><img class="aligncenter62" src="../images/00120.jpeg"/></div>
+<div class="cdpaligncenter">Figure 7.12: Adding more details in the New Job window</div>
+<ol start="5" class="calibre14">
+<li value="5" class="calibre8">Click on <span>Steps</span> from the left-hand menu of the <span>New Job</span> window, then click on <span>New...</span> on the bottom of the <span>New Job</span> window.</li>
+</ol>
+<p class="calibre2"> </p>
+<ol start="6" class="calibre14">
+<li value="6" class="calibre8">Provide the details in the <span>New Job Step</span> to execute. In this example, we want to update the NYC Taxi Training Model. Then click <span>OK</span>:</li>
+</ol>
+<div class="packt_figure"><img class="aligncenter63" src="../images/00121.jpeg"/></div>
+<div class="cdpaligncenter">Figure 7.13: Calling an R-integrated stored procedure as a step in an SQL Server Agent job</div>
+<ol start="7" class="calibre14">
+<li value="7" class="calibre8">In the <span>New Job</span> window, select <span>Schedules</span> from the left-hand menu.</li>
+<li value="8" class="calibre8">Click on <span>New...</span> from the bottom of the <span>New Job</span> window.</li>
+<li value="9" class="calibre8">Provide the details of the schedule that you'd like this job to be subject to.</li>
+</ol>
+<p class="calibre2"> </p>
+<ol start="10" class="calibre14">
+<li value="10" class="calibre8">Click on <span>OK</span> in the <span>New Schedule</span> window, then click on the <span>New Job</span> window to save the changes.</li>
+</ol>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    </header><h1 class="header-title" id="calibre_pb_0">Operationalizing R script as part of SSIS</h1>
+                
+            
+            <article>
+                
+<p class="calibre2">R Script can easily be integrated as part of SSIS workflows. The two main ways are by running as part of Execute Process Task and running as part of Execute SQL Task:</p>
+<ol class="calibre14">
+<li value="1" class="calibre8">Running R code (not as a part of SQL Server R Services) in Execute Process Task can be simply done by calling <kbd class="calibre11">Rscript.exe</kbd>. If you already have an R file that is ready to be executed, then simply add Execute Process Task in an SSIS package. You can also weave the input/output in Execute Process Task within the SSIS package into the R file:</li>
+</ol>
+<div class="packt_figure"><img class="aligncenter64" src="../images/00122.jpeg"/></div>
+<div class="cdpaligncenter">Figure 7.14: Executing R script externally within SSIS Execute Process Task</div>
+<ol start="2" class="calibre14">
+<li value="2" class="calibre8">Running prediction operations in SQL Server using Execute SQL Task in SSIS: if you already have a stored procedure that does prediction (or a training model), then simply call this stored procedure from Execute SQL Task in SSIS. It is also possible to weave the input/output in Execute SQL Task with the SSIS package:</li>
+</ol>
+<div class="packt_figure"><img src="../images/00123.jpeg" class="calibre79"/></div>
+<div class="cdpaligncenter">Figure 7.15: Executing an R-integrated stored procedure as an Execute SQL Task step in SSIS</div>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    </header><h1 class="header-title" id="calibre_pb_0">Summary</h1>
+                
+            
+            <article>
+                
+<p class="calibre2">In this chapter, you learned the steps required to integrate an existing predictive analytics R code into resides outside of SQL Server R with the Extensibility Framework. You have also seen the simplicity and the power of the new <kbd class="calibre11">PREDICT</kbd> function in SQL Server 2017, which allows native scoring without having to install R. Managing the security required to run predictive analytics workloads is also important in prediction operations. You have learned how to add SQL queries to R projects using RTVS. Finally, you've discovered the different possibilities for integrating R code and prediction operations into your existing workflows as SQL Server stored procedures, SQL Server Agent jobs, PowerShell scripts, and SSIS projects.</p>
+<p class="calibre2">With these new skills, we are ready for the next building block in managing data science solutions as part of database lifecycle: management practices. In the next chapter, you'll learn about managing data science solutions in <strong class="calibre1">Continuous Integration/Continuous Delivery</strong> (<strong class="calibre1">CI/CD</strong>) and continuous model performance monitoring.</p>
+
+
+            </article>
+
+            
+        </section>
+    </body></html>

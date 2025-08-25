@@ -1,0 +1,193 @@
+<html><head></head><body>
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Optimizing Models in Spark and SageMaker</h1>
+                </header>
+            
+            <article>
+                
+<p>The models that are trained on AWS can be further optimized by modifying the training directives or hyperparameters. In this chapter, we will discuss various techniques that our readers can use to improve the performance of their algorithms.</p>
+<p>In this chapter, we will cover the following topics:</p>
+<ul>
+<li>The importance of model optimization</li>
+<li>Automatic hyperparameter tuning</li>
+<li>Hyperparameter tuning in Apache Spark and SageMaker</li>
+</ul>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">The importance of model optimization</h1>
+                </header>
+            
+            <article>
+                
+<p>Very few algorithms produce optimized models on a first attempt. This is because the algorithm might need some parameter tuning from the data scientist to improve their accuracy or performance. For example, the learning rate we mentioned in <a href="c832a5c1-d877-4c90-bfb5-e3a0fe99d19a.xhtml">Chapter 7</a>, <span class="cdp-organizer-chapter-title"><span class="cdp-organize-title-label"><em>Implementing Deep Learning Algorithms</em>, </span></span>for deep neural networks needs to be manually tuned. A low learning rate may lead the algorithm to take longer (and hence be more expensive if we're running on a cloud), whereas a high learning rate might miss the optimal set of weights. Likewise, a tree with more levels may take more time to train, but could create a model with better predictive capabilities (though it could also cause the tree to overfit). These parameters that direct the learning of the algorithms are called <strong>hyperparameters</strong>, and contrary to the model parameters (for example, the weights of a network), these are not learned throughout the training process. Some hyperparameters are not just used to optimize or tune the model, but also to define or constrain the problem. For example, the number of clusters is also considered a hyperparameter, though it's not really about optimization here, but rather is used to define the problem being solved.</p>
+<p class="mce-root"/>
+<p class="mce-root"/>
+<p>It is not trivial to adjust these hyperparameters for best performance, and in many cases it requires understanding the data at hand, as well as how the underlying algorithm works. So why not learn these hyperparameters? Many data scientists use algorithms that tweak the values of these hyperparameters to see whether they produce more accurate results. The problem with this approach is that we could be finding the hyperparameters that are optimal on the testing dataset, and we might think our model has a better accuracy when we're just overfitting the testing dataset. For this reason, we typically split the dataset into three partitions: the training dataset, which is used for training the model, the validation dataset, which is used to perform parameter tuning, and the testing dataset, which is just used to assess the final accuracy of the model once the parameter tuning is complete.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Automatic hyperparameter tuning</h1>
+                </header>
+            
+            <article>
+                
+<p>The simplest way to perform hyperparameter tuning is called grid search. We define different values we would like to try for each hyperparameter. For example, if we are training trees, we may want to try depths of 5, 10, and 15. At the same time, we'd like to see whether the best impurity measure is information gain or gini. This creates a total of six combinations that have to be tested for accuracy. As you might be anticipating, the number of combinations will grow exponentially with the number of hyperparameters to consider. For this reason, other techniques are used to avoid testing all possible combinations. A simple approach is to randomize the combinations be tried. Some combinations will be missed, but some variations will be tested without an inductive bias.</p>
+<p>AWS SageMaker provides a service for hyperparameter tuning that is smart in choosing the hyperparameters to test. In both grid search and randomization, each training run doesn't use information about the accuracy obtained in previous runs. SageMaker uses a technique called <strong>Bayesian optimization</strong> that is able to select the next set of hyperparameter combinations to test based on the accuracy values of previously tested combinations. The main idea behind this algorithm is to construct a probability distribution over the hyperparameter space. Each time we obtain the accuracy of a given combination, the probability distribution is adjusted to reflect the new information. A successful optimization will exploit information of known combinations that yielded good accuracy, as well as sufficient exploration of new combinations that could lead to potential improvements. You will appreciate that this is an extremely hard problem to solve, as each training run is slow and probably expensive. We usually can't afford to test too many combinations.</p>
+<p class="mce-root"/>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Hyperparameter tuning in Apache Spark</h1>
+                </header>
+            
+            <article>
+                
+<p>Recall our regression problem from <a href="eeb8abad-c8a9-40f2-8639-a9385d95f80f.xhtml">Chapter 3</a>, <em><span class="cdp-organizer-chapter-title"><span class="cdp-organize-title-label">Predicting House Value with Regression Algorithms</span></span></em>, in which we constructed a linear regression to estimate the value of houses. At that point, we used a few arbitrary values for our hyperparameters.</p>
+<p>In the following code block, we will show how Apache Spark can test 18 different hyperparameter combinations for <kbd>elasticNetParam</kbd>, <kbd>regParam</kbd>, and <kbd>solver</kbd>:</p>
+<pre>from pyspark.ml.tuning import CrossValidator, ParamGridBuilder<br/>from pyspark.ml import Pipeline<br/><br/>linear = LinearRegression(featuresCol="features", labelCol="medv")<br/>param_grid = ParamGridBuilder() \<br/>  .addGrid(linear.elasticNetParam, [0.01, 0.02, 0.05]) \<br/>  .addGrid(linear.solver, ['normal', 'l-bfgs']) \<br/>  .addGrid(linear.regParam, [0.4, 0.5, 0.6]).build()<br/><br/>pipeline = Pipeline(stages=[vector_assembler, linear])<br/>crossval = CrossValidator(estimator=pipeline,<br/>                        estimatorParamMaps=param_grid,<br/>                        evaluator=evaluator,<br/>                        numFolds=10)<br/>optimized_model = crossval.fit(housing_df)</pre>
+<p>We will start by constructing our classifier as usual, without providing any hyperparameters. We store the regressor in the <kbd>linear</kbd> variable. Next, we define the different values to test for each hyperparameter by defining a parameter grid. The functional reference to the methods that set the values is passed to a <kbd>ParamGridBuilder</kbd> which is responsible for keeping the combinations to test out.</p>
+<p>As usual, we can define our pipeline with any preprocessing stages (in this case, we use a vector assembler). <kbd>CrossValidator</kbd> takes the pipeline, parameter grid, and evaluator. Recall that the evaluator was used to obtain a specific score using a test dataset:</p>
+<pre>evaluator = RegressionEvaluator(labelCol="medv", predictionCol="prediction", metricName="r2")</pre>
+<p><span>In this case, we will be using the R2 metric as we did in <a href="eeb8abad-c8a9-40f2-8639-a9385d95f80f.xhtml">Chapter 3</a>, <em>Predicting House Value with Regression Algorithms</em>. <kbd>CrossValidator</kbd>, upon the call to <kbd>fit()</kbd></span>, <span>will run all combinations and find the hyperparameter that achieves the highest R2 value.</span></p>
+<p class="mce-root"/>
+<p class="mce-root"/>
+<p>Once it completes, we can inspect the underlying best model by accessing it through the <kbd>optimized_model.bestModel</kbd> reference. Through it, we can show the actual set of hyperparameters used in the best model found:</p>
+<pre>[(k.name, v) for (k, v) in optimized_model.bestModel.stages[1].extractParamMap().items()]</pre>
+<p class="mce-root">The output of the above statement is as follows:</p>
+<pre>[('epsilon', 1.35),<br/>('featuresCol', 'features'),<br/>('predictionCol', 'prediction'),<br/>('loss', 'squaredError'),<br/>('elasticNetParam', 0.02),<br/>('regParam', 0.6),<br/>('maxIter', 100),<br/>('labelCol', 'medv'),<br/>('tol', 1e-06),<br/>('standardization', True),<br/>('aggregationDepth', 2),<br/>('fitIntercept', True),<br/>('solver', 'l-bfgs')]</pre>
+<p><span>However, more interesting than the actual parameters used is to see the accuracy changes across the different combinations tested. The <kbd>optimized_model.avgMetrics</kbd> values will show the accuracy values for all 18 combinations of hyperparameters:</span></p>
+<div><kbd>[0.60228046689935, 0.6022857524897973, ... 0.6034106428627964, 0.6034118340373834]</kbd></div>
+<p>We can use the <kbd>optimized_model</kbd>, returned by <kbd>CrossValidator</kbd>, to obtain predictions using the best model, as it is also a transformer:</p>
+<pre>_, test_df = housing_df.randomSplit([0.8, 0.2], seed=17)<br/>evaluator.evaluate(optimized_model.transform(test_df))</pre>
+<p>In this case, we obtain an R2 of 0.72, which is slightly better than what we got with our arbitrary set of hyperparameters in <a href="eeb8abad-c8a9-40f2-8639-a9385d95f80f.xhtml">Chapter 3</a><span>, </span><em><span class="cdp-organizer-chapter-title"><span class="cdp-organize-title-label">Predicting House Value with Regression Algorithms</span></span></em>.</p>
+<p class="mce-root"/>
+<p class="mce-root"/>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Hyperparameter tuning in SageMaker</h1>
+                </header>
+            
+            <article>
+                
+<p>As we mentioned in the previous section,  <em>Automatic hyperparameter tuning</em>,  SageMaker has a library for smart parameter tuning using Bayesian Optimization. In this section, we will show how we can further tune the model we created in <a href="af506fc8-f482-453e-8162-93a676b2e737.xhtml">Chapter 4</a>, <em>Predicting User Behavior with Tree-based Methods</em>. Recall from that chapter that we posed a binary classification problem for trying to predict whether a user would click on an advertisement. We had used an <kbd>xgboost</kbd> model, but at that point we hadn't performed any parameter tuning.</p>
+<p>We will start by creating the SageMaker session and choosing the <kbd>xgboost:</kbd></p>
+<pre>import boto3<br/>import sagemaker<br/>from sagemaker import get_execution_role<br/><br/>sess = sagemaker.Session()<br/>role = get_execution_role()<br/>container = sagemaker.amazon.amazon_estimator.get_image_uri('us-east-1', "xgboost", "latest")<br/><br/>s3_validation_data = 's3://mastering-ml-aws/chapter4/test-vector-csv/'<br/>s3_train_data = 's3://mastering-ml-aws/chapter4/training-vector-csv/'<br/>s3_output_location = 's3://mastering-ml-aws/chapter14/output/'<br/><br/></pre>
+<p>Next, we define the estimator just as we did in <a href="https://cdp.packtpub.com/mastering_machine_learning_on_aws/wp-admin/post.php?post=39&amp;action=edit#post_27">Chapter 4</a><span>, </span><em>Predicting User Behavior with Tree-Based Methods</em>:</p>
+<pre>sagemaker_model = sagemaker.estimator.Estimator(container,<br/>                                                role,<br/>                                                train_instance_count=1,<br/>                                                train_instance_type='ml.c4.4xlarge',<br/>                                                train_volume_size=30,<br/>                                                train_max_run=360000,<br/>                                                input_mode='File',<br/>                                                output_path=s3_output_location,<br/>                                                sagemaker_session=sess)<br/><br/>sagemaker_model.set_hyperparameters(objective='binary:logistic',<br/>                                    max_depth=5,<br/>                                    eta=0.2,<br/>                                    gamma=4,<br/>                                    min_child_weight=6,<br/>                                    subsample=0.7,<br/>                                    silent=0,<br/>                                    num_round=50)<br/><br/></pre>
+<p class="mce-root"/>
+<p class="mce-root"/>
+<p>As we always do with SageMaker service calls, we define the location and format of the input data for training and validation:</p>
+<pre>train_data = sagemaker.session.s3_input(s3_train_data, distribution='FullyReplicated',<br/>                                        content_type='text/csv', s3_data_type='S3Prefix')<br/><br/>validation_data = sagemaker.session.s3_input(s3_validation_data, distribution='FullyReplicated',<br/>                                             content_type='text/csv', s3_data_type='S3Prefix')<br/><br/>data_channels = {'train': train_data, 'validation': validation_data}</pre>
+<p>With the base estimator defined and the input data determined, we can now construct a training job that will take this estimator, and run a series of training jobs varying the hyperparameters:</p>
+<pre>from sagemaker.tuner import HyperparameterTuner, ContinuousParameter,IntegerParameter<br/><br/>tree_tuner = HyperparameterTuner<br/>(estimator=sagemaker_model, <br/>                              objective_metric_name='validation:auc',<br/>max_jobs=10,<br/>max_parallel_jobs=3,<br/>hyperparameter_ranges={'lambda': <br/>ContinuousParameter(0, 1000),<br/>                                                               'max_depth': IntegerParameter(3,7),<br/>                                                       'eta':ContinuousParameter(0.1, 0.5)})<br/><br/><br/>tree_tuner.fit(inputs=data_channels, logs=True)</pre>
+<div class="packt_quote packt_infobox">SageMaker: Creating hyperparameter tuning job with name: <kbd>xgboost-190407-1532</kbd></div>
+<p class="mce-root"/>
+<p class="mce-root"/>
+<p>The first step is to create an instance of <kbd>HyperparameterTuner</kbd> in which we set the following:</p>
+<ul>
+<li>The base estimator upon which the hyperparameters will be varied.</li>
+<li>The objective metric, which will be used to find the best possible combination of hyperparameters. Since we're dealing with a binary classification problem, using the area under the curve metric on the validation data is a good choice. </li>
+<li>The different ranges we'd like to test for each hyperparameter. These ranges can be specified for parameters that vary continuously using <kbd>ContinuousParameter</kbd>, or discretely using <kbd>IntegerParameter</kbd> or <kbd>CategoricalParameter</kbd>.</li>
+<li>The number of jobs to run, as well as the maximum amount of jobs to run in parallel. There is a trade off here between accuracy and speed. The more parallel jobs you run, the less data about prior job metrics will be used to inform the next set of hyperparameters to try. This leads to a sub-optimal range search. However, it will complete the tuning faster. In this example, we just run 10 jobs. We typically want to run more than that to obtain significant improvements. Here we just present a low value so that the reader can get fast results.</li>
+</ul>
+<p>The fitting can be monitored through the AWS console (<a href="https://console.aws.amazon.com/sagemaker/home?region=us-east-1#/hyper-tuning-jobs">https://console.aws.amazon.com/sagemaker/home?region=us-east-1#/hyper-tuning-jobs</a>) or through methods in the python SDK, we can see the status of the jobs.</p>
+<p class="mce-root"/>
+<p class="mce-root"/>
+<p>Once it's complete, the AWS Console should look like the following screenshot; in it, you can see the different jobs that ran and the different performance metrics that were obtained:</p>
+<p class="CDPAlignCenter CDPAlign"><img class="aligncenter size-full wp-image-662 image-border" src="assets/9a2b965a-7b43-4a80-9ab7-852c603113da.png" style="width:162.50em;height:105.67em;"/></p>
+<p><span>Let us inspect which training job yields the best performance using the SDK. The first thing is to find the name of the best job:</span></p>
+<pre><span>tree_tuner.best_training_job()</span></pre>
+<p class="mce-root">'xgboost-190407-1342-001-5c7e2a26'</p>
+<p>Using the methods in the session object, we can show the values of the hyperparameters for the optimal training job:</p>
+<pre>sess.sagemaker_client.describe_training_job(TrainingJobName=tree_tuner.best_training_job())</pre>
+<p>The output of the previous describe command is as follows:</p>
+<pre class="mce-root">{'TrainingJobName': 'xgboost-190407-1532-005-0e830ada',<br/> 'TrainingJobArn': 'arn:aws:sagemaker:us-east-1:095585830284:training-job/xgboost-190407-1532-005-0e830ada',<br/> 'TuningJobArn': 'arn:aws:sagemaker:us-east-1:095585830284:hyper-parameter-tuning-job/xgboost-190407-1532',<br/> 'ModelArtifacts': {'S3ModelArtifacts': 's3://mastering-ml-aws/chapter14/output/xgboost-190407-1532-005-0e830ada/output/model.tar.gz'},<br/> 'TrainingJobStatus': 'Completed',<br/> 'SecondaryStatus': 'Completed',<br/> 'HyperParameters': {'_tuning_objective_metric': 'validation:auc',<br/> 'eta': '0.4630125855085939',<br/> 'gamma': '4',<br/> 'lambda': '29.566673825272677',<br/> 'max_depth': '7',<br/> 'min_child_weight': '6',<br/> 'num_round': '50',<br/> 'objective': 'binary:logistic',<br/> 'silent': '0',<br/> 'subsample': '0.7'},....}</pre>
+<p>Using the <kbd>describe_hyper_parameter_tuning_job()</kbd> method, we can also get the final value of the optimal AUC metric:</p>
+<pre>sess.sagemaker_client.describe_hyper_parameter_tuning_job(HyperParameterTuningJobName='xgboost-190407-1532')</pre>
+<p class="mce-root">The following output is the result of the preceding command:</p>
+<pre class="mce-root">{'HyperParameterTuningJobName': 'xgboost-190407-1532',<br/> 'HyperParameterTuningJobArn': 'arn:aws:sagemaker:us-east-1:095585830284:hyper-parameter-tuning-job/xgboost-190407-1532',<br/> 'HyperParameterTuningJobConfig': {'Strategy': 'Bayesian',<br/> 'HyperParameterTuningJobObjective': {'Type': 'Maximize',<br/> 'MetricName': 'validation:auc'},<br/> 'ResourceLimits': {'MaxNumberOfTrainingJobs': 10,<br/> 'MaxParallelTrainingJobs': 3},<br/> ....<br/> 'FinalHyperParameterTuningJobObjectiveMetric': {'MetricName': 'validation:auc',<br/> 'Value': 0.6545940041542053},<br/> '<br/> ...}</pre>
+<p>You should explore the full API and Python SDK for a complete set of features and options regarding the automatic tuning. Please check out:<a href="https://github.com/aws/sagemaker-python-sdk"> https://github.com/aws/sagemaker-python-sdk </a> We hope this introduction can help to get started on how to fine-tune the models. </p>
+<p class="mce-root"/>
+<p class="mce-root"/>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Summary</h1>
+                </header>
+            
+            <article>
+                
+<p>In this chapter, we covered the importance of model tuning through hyperparameter optimization. We provided examples of doing grid search in Apache Spark, as well as how to use SageMaker's advanced parameter tuning. </p>
+<p>In the next chapter we will focus on optimizing the hardware and cluster set up upon which we train and apply models. Both model optimization and hardware optimization are important for successful and cost-effective AI processes.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Exercises</h1>
+                </header>
+            
+            <article>
+                
+<ol>
+<li>Regarding ways to find the best hyperparameters, compare the advantages and disadvantages of grid search, random search, and Bayesian optimization as they apply to hyperparameter tuning.</li>
+<li>Why do we typically need three splits of data when we do hyperparameter tuning?</li>
+<li>Which metric do you think would be best for our <kbd>xgboost</kbd> example: <kbd>validation:auc</kbd> or <kbd>training:auc</kbd>?</li>
+</ol>
+
+
+            </article>
+
+            
+        </section>
+    </body></html>
