@@ -1,0 +1,498 @@
+<html><head></head><body><div id="sbo-rt-content"><section>
+
+                            <header>
+                    <h1 class="header-title">Basic Facial Detection</h1>
+                </header>
+            
+            <article>
+                
+<p class="mce-root">The previous chapters can best be described as trying to read an image. This is a subfield in machine learning called <strong>computer vision</strong> (<strong>CV</strong>). With convolutional neural networks (<a href="4c71e400-fde5-467f-a1ee-52300e326504.xhtml" target="_blank">Chapter 7</a>, <em>Convolutional Neural Networks – MNIST Handwriting Recognition</em>), we found that the convolutional layers learned how to filter an image.</p>
+<p class="mce-root">There is a common misconception that any <strong>machine learning</strong> (<strong>ML</strong>) worth doing has to come from neural networks and deep learning. This is decidedly not the case. Instead, one should view deep learning as a technique to get to one's goals; deep learning is not the end-all. The purpose of this chapter is to expose readers to some of the insights into making ML algorithms work better in production. The code for this chapter is exceedingly simple. The topic is trivial and widely considered by many to be solved. However, the insights are not trivial. It is my hope that this chapter propels the reader to think more deeply about the problems that they face.</p>
+<p class="mce-root">To that end, the algorithms that will be introduced in this chapter began their life in academia. However, the invention of these algorithms was driven by a highly practical requirement, and one can learn quite a lot by analyzing how these algorithms were invented.</p>
+<p class="mce-root">In this chapter, w<span>e're going to further improve our knowledge about what can be done with computer vision, by building multiple facial detection systems in Go</span>. We will be using <kbd>GoCV</kbd> and <kbd>Pigo</kbd>. What we will be building is a program that detects faces from a live webcam. However, this chapter will be different from the previous ones, in that we will be comparing two kinds of algorithms. The purpose is to allow the reader to think more about the actual problems faced, rather than just copy-pasting code.</p>
+
+
+            </article>
+
+            
+        </section>
+    </div>
+
+
+
+  
+<div id="sbo-rt-content"><section>
+
+                            <header>
+                    <h1 class="header-title">What is a face? </h1>
+                </header>
+            
+            <article>
+                
+<p class="mce-root">In order to detect faces, we need to understand what a face is, specifically what a human face is. Think about a typical human face. A typical human face has two eyes, a nose, and a mouth. But having these features isn't enough to define a human face. Dogs also have two eyes, a nose, and a mouth. We are, after all, products of mammalian evolution.</p>
+<p class="mce-root">I encourage the reader to think more carefully about what makes a human face. We instinctively know what a face is, but to really quantify exactly what constitutes a face takes work. Often, it may lead to philosophical ruminations about essentialism.</p>
+<p class="mce-root">If you watch terrible procedural TV shows, you might see faces being drawn with dots and lines when the detectives on TV are doing facial recognition across a database. These dots and lines are primarily due to the work of Woodrow Bledsoe, Helen Chan, and Charles Bisson in the 1960s. They were among the first people to study automated facial detection. One of the first things noticed is that the standard features of the face—hairline, browlines, gauntness of eyes, height of nose bridge, and so on—are all dynamically definable; that is to say that these features are measured relative to one another. This made automatically detecting features a little bit more challenging than expected.</p>
+<p class="mce-root">Their solution was novel: using a device that is an ancestor to today's drawing tablets, annotate the location of eyes, nose, mouth, and other facial features. The distances between these annotations are then used as features for facial recognition. The process today is no different, except a lot more automatic. The works of Bledsoe, Chan, and gang led to an immense effort to quantify how pixels would co-occur to form facial features.</p>
+<p class="mce-root">In order to understand the features that make up a face, abstract. What is the minimum possible number of dots and lines required to depict a face? It is instructive to note abstractions in the use of kaomoji. Consider the following kaomoji:</p>
+<p><img src="Images/ad935efb-80ae-4768-9ae2-3835a66890e0.png" style="width:6.08em;height:6.17em;" width="212" height="214"/></p>
+<p class="mce-root">It's quite easy to see that these depict faces. Contrast them with kaomojis that depict other things (fish, spider, gun, and bomb respectively):</p>
+<p class="mce-root"><img src="Images/6f6fb6b1-cf8f-4b9b-a16c-f0a3a5e8c0be.png" style="width:16.25em;height:6.42em;" width="439" height="173"/></p>
+<p class="mce-root">The process of abstraction—the act of removing details until only the ones that matter remain—allows one to think more clearly about a subject matter. This is true in art, as it is in mathematics. It is equally true of software engineering, though careful implementation of the abstractions needs to be made. Going back to the kaomojis, note that, even in their highly abstract form, they are capable of displaying emotions. In order of display, the kaomojis show happiness, indifference, love, dissatisfaction, and anger. These abstract depictions offer us a path to think about the facial features in pictures. To determine whether a face exists, we simply determine if those lines are there. The question now becomes how do we take a photo and draw lines?</p>
+<p class="mce-root">Start with the facial structure and assume an evenly-lit room. Barring diseases such as Graves which cause proptosis, eyes are generally sunken. This causes the area of the eyes to be shadowed by the brow ridge of the face, as well as cheekbones. In pictures of an evenly-lit face, eyes would appear in shadow. Noses, on the other hand, would appear more brightly lit, because noses are raised compared with the rest of the face. Likewise, lips have a dark area and a bright area, separated by a dark line. These are all useful features to consider when thinking about detecting faces.</p>
+
+
+            </article>
+
+            
+        </section>
+    </div>
+
+
+
+  
+<div id="sbo-rt-content"><section>
+
+                            <header>
+                    <h1 class="header-title">Viola-Jones</h1>
+                </header>
+            
+            <article>
+                
+<p class="mce-root">Fast forward to the early 2000s. Facial detection methodologies leaped forwards with Viola and Jones introducing a very fast method of detecting objects. The <kbd>Viola-Jones</kbd> method, while generic enough for the detection of any object, was primarily geared to detecting faces. The key genius to the Viola-Jones method is that it used many small classifiers to classify a region of an image, in a staged fashion. This is called the <strong>cascade classifier</strong>.</p>
+<div class="mce-root packt_infobox">To make the explanation clearer, whenever <em>classifier</em> is used in the context of the Viola-Jones method, I mean the small classifiers in the cascade classifier. When referring to the cascade classifier, it will be explicitly mentioned as such.</div>
+<p class="mce-root">A cascade classifier is made up of many small classifiers. Each classifier is made up of multiple filters. For a brief introduction to filters, see the previous chapter (How Instagram filters work). To detect faces, first start with a small section (called a <strong>window</strong>) of the image. Run the classifiers one by one. If the sum of the result of applying all the filters in the classifier exceeds a predefined threshold for the classifier, then it's considered to be part of a face. Then, the cascade classifier moves on to the next classifier. This is the <em>cascading</em> part of the cascading classifier. Once all the classifiers are done, the window slides to the next pixel, and the process begins anew. Should a classifier in the cascade classifier fail to identify something as part of the face, the entire region is rejected and the sliding window slides on.</p>
+<p class="mce-root">The filters work by detecting the aforementioned light and dark areas of the face. Take, for example, the fact that the areas around the eyes are typically sunken and therefore shadowed. If we are to apply a filter to an area, we would highlight only the eyes:</p>
+<p class="mce-root CDPAlignCenter CDPAlign"><img class="alignnone size-full wp-image-433 image-border" src="Images/0e8d31e7-0b40-4472-ba28-1944360cc496.png" style="width:34.25em;height:10.50em;" width="1015" height="310"/></p>
+<p class="mce-root">A classifier for eyes would have multiple filters, configured to test against the possible configurations of eyes. A classifier for the nose would have multiple filters specific to the nose. In a cascading classifier, we could arrange the importance; perhaps we define the eyes as the most important part of the face (they are after all windows to the soul). We could arrange it so that the cascade classifier first classifies a region for eyes. If there are eyes, we then look for the nose, then the mouth. Otherwise, the sliding window should slide on:</p>
+<p class="CDPAlignCenter CDPAlign"><img class="alignnone size-full wp-image-434 image-border" src="Images/7c046b65-f1ce-4af1-937f-852c6459bd41.png" style="width:34.33em;height:10.67em;" width="1005" height="311"/></p>
+<p class="mce-root">Another point of innovation with Viola-Jones is that the method was designed to work on an image pyramid. What is an image pyramid? Imagine you have yourself a large 1024 x 768 image. This image has two faces of multiple scales. There is one person standing very close to the camera, and one person standing far away. Anyone with any familiarity with the optics of cameras would instantly realize that the person standing close to the camera will have a much larger face in the image compared to the person standing far away from the camera. The question is, how would we be able to detect both faces at different scales?</p>
+<p class="mce-root">One possible answer is to design multiple filters, one for each possible scale. But that leaves a lot of room for error. Instead of designing multiple filters, the same filters can be reused, if the image is resized multiple times:</p>
+<p class="mce-root CDPAlignCenter CDPAlign"><img class="alignnone size-full wp-image-463 image-border" src="Images/5d447976-f901-4f10-89ed-324b22650208.png" style="width:31.33em;height:39.42em;" width="1549" height="1950"/></p>
+<p class="mce-root">The face that is very close to the camera wouldn't be detected by a filter designed to detect a small face. Instead, in the original resolution, the classifier will detect the smaller face. Then, the image is resized so that the resolution is now smaller, say 640 x 480. The big face is now small, and the small faces are now single dots. The classifier will now be able to detect the large face and not the small faces. But in total, the classifier would have detected all the faces in the image. Because the images are directly resized, coordinates in the smaller image can be easily translated into coordinates in the original image. This allows for detection in the smaller scale to be directly translated into detections in the original scale.</p>
+<p class="mce-root">At this point, if you have read the previous chapter, this starts to feel somewhat familiar. <strong>Convolutional Neural Networks</strong> (<strong>CNNs</strong>) work in a remarkably similar way. In a CNN, multiple filters are applied to a sub-region, producing a filtered image. The filtered image is then passed through a reduction layer (max-pooling, or some other reduction method). The key in CNNs is to learn what the filters would be. In fact, the first layer of each CNN learns filters that are extremely similar to the filters used in the Viola-Jones method.</p>
+<p class="mce-root">The primary similarities are that Viola-Jones essentially amounts to having a sliding window and applying filters to the section of the image. This is comparable to convolutions in a CNN. Where CNNs have an advantage is that they are capable of learning those filters, whereas in the Viola-Jones method the filters are manually created. The Viola-Jones method on the other hand has the benefit of cascading: it may terminate searching a section for faces early if one of the classifiers fails. This saves a lot of computation. Indeed, such was the influence of the Viola-Jones method that it inspired the <em>Joint Face Detection and Alignment Using Multitask Cascaded Convolutional Networks</em> by Zhang et al. in 2016, which used three neural networks in cascading fashion to recognize faces.</p>
+<p class="mce-root">It would be tempting to equate the image pyramid with what the pooling layers do in a CNN. This wouldn't be correct. Multi-scale detection in the Viola-Jones method is a neat trick, while pooling layers in a CNN lead to the learning of higher order features. CNNs learn higher order features such as eyes, noses, and mouths, whereas the Viola Jones method doesn't.</p>
+<p class="mce-root">In light of this, one may wonder if CNNs may be better. They do detect faces the way humans do—by identifying eyes, noses, and mouths as features, as opposed to filtering patterns on pixels. There are still reasons to use Viola-Jones today. At this point in time, the Viola-Jones method is well understood and well optimized in libraries. It comes built into GoCV, which is what we'll use. The method is also faster than deep learning-based models, at some expense of flexibility. Most Viola-Jones models only detect faces if those faces are front-facing. Additionally, the Viola-Jones method may not detect rotated faces (terrible if you want to detect the face of a head-turning demon as proof to give an exorcist).</p>
+<p class="mce-root">Depending on use cases, one might not need deep learning-based systems to perform facial detection at all!</p>
+
+
+            </article>
+
+            
+        </section>
+    </div>
+
+
+
+  
+<div id="sbo-rt-content"><section>
+
+                            <header>
+                    <h1 class="header-title">PICO </h1>
+                </header>
+            
+            <article>
+                
+<p class="mce-root">Another technique we'll be using is <strong>Pixel Intensity Comparison-based Object detection</strong> (<strong>PICO</strong>), originally developed by Markus, Frljak, et al. in 2014. It uses the same broad principles as the Viola-Jones method, in that there is a cascade classifier. It differs in two ways. First, a sliding window is not used. This is due to the latter differences. Second, the classifiers of the cascade classifier are different from that of Viola-Jones. In Viola-Jones, a method of applying filters repeatedly and then summing the result is used as a classifier. By contrast, in PICO, decision trees are used.</p>
+<p class="mce-root">A decision tree is a tree where each node is a feature, and the branching of the feature is defined by a threshold. In the case of PICO, the decision tree applies for each pixel in the photo. For each pixel considered, the intensity is compared against the intensity of another pixel at another location. These locations are generated from a uniform distribution, obviating the need for a sliding window.</p>
+<p class="mce-root">The PICO method also does away with needing image pyramids and integral images. The classifiers are capable of detecting faces straight away from an image. This makes it very fast.</p>
+<p class="mce-root">Nonetheless, the legacy of Viola-Jones is evident. The classifiers are applied in stages. First, the simpler classifiers are used. This would eliminate areas where the probability of faces existing is low. Next, more complex classifiers are used on the reduced search areas. This is repeated until the last stage is reached. The results of each classifier are retained for later use.</p>
+<p class="mce-root">The reader might come to realize that areas in a picture that definitely has a face will be searched by more classifiers. It is with this intuition that the authors introduced a final clustering step in the PICO classifier. The rule is simple: if there is an overlap of areas searched by the classifier, and the overlap percentage is greater than 30%, it's considered to be part of the same cluster. Thus, the final result is robust to small changes.</p>
+
+
+            </article>
+
+            
+        </section>
+    </div>
+
+
+
+  
+<div id="sbo-rt-content"><section>
+
+                            <header>
+                    <h1 class="header-title">A note on learning </h1>
+                </header>
+            
+            <article>
+                
+<p class="mce-root">You may have noted that in describing the algorithms previously, I have neglected to mention the training procedures for how these models learn. This omission is rather deliberate. As we will not be training any models, how the Viola-Jones method and the PICO method are trained to produce models will be left as an exercise for the reader.</p>
+<p class="mce-root">Instead, in this chapter we wish to use already created<span> </span><span>models</span><span>. These models are commonly used in practice. We will </span><span>then</span><span> </span><span>compare and contrast the methods to find out their pros and cons.</span></p>
+
+
+            </article>
+
+            
+        </section>
+    </div>
+
+
+
+  
+<div id="sbo-rt-content"><section>
+
+                            <header>
+                    <h1 class="header-title">GoCV </h1>
+                </header>
+            
+            <article>
+                
+<p class="mce-root">In this chapter, we will be using GoCV. GoCV is a binding for OpenCV and comes with a suite of features from OpenCV that can be used. One of the features from OpenCV is the Viola-Jones classifier, which we will use to our advantage.</p>
+<p class="mce-root">Installing GoCV is a little tricky, however. It requires OpenCV to be installed beforehand. At the time of writing, the version supported by GoCV is OpenCV 3.4.2. Installing OpenCV can be quite a painful experience. Perhaps the best place to find out <em>how</em> to install OpenCV is a website called <strong>Learn OpenCV</strong>. They have great guides on installing OpenCV on all platforms:</p>
+<ul>
+<li class="mce-root">Installing OpenCV on Ubuntu: <a href="https://www.learnopencv.com/install-opencv3-on-ubuntu/" target="_blank">https://www.learnopencv.com/install-opencv3-on-ubuntu/</a></li>
+<li>Installing OpenCV on Windows: <a href="https://www.learnopencv.com/install-opencv3-on-windows/" target="_blank">https://www.learnopencv.com/install-opencv3-on-windows/</a></li>
+<li>Installing OpenCV on MacOS: <a href="https://www.learnopencv.com/install-opencv3-on-macos/" target="_blank">https://www.learnopencv.com/install-opencv3-on-macos/</a></li>
+</ul>
+<p class="mce-root">After the daunting process of installing OpenCV is done, installing GoCV is a piece of cake. Simply run <kbd>go get -u gocv.io.x.gocv</kbd>, and Bob's your uncle.</p>
+
+
+            </article>
+
+            
+        </section>
+    </div>
+
+
+
+  
+<div id="sbo-rt-content"><section>
+
+                            <header>
+                    <h1 class="header-title">API </h1>
+                </header>
+            
+            <article>
+                
+<p class="mce-root">The API of GoCV matches the API of OpenCV quite well. A particularly good API to showcase is the display window. With the display window, one is able to display the image the webcam is receiving live. It's also a very useful tool for debugging, in cases where one might want to write a new classifier.</p>
+<p class="mce-root">I have developed programs for many years. It's fair to say I've seen many design patterns and packages. Among the prickliest problems to have for almost all programming languages is the foreign function interface, when a program has to call a library written in another language. Not many are well done. Most are shoddily done, as if something is plastered over the underlying <strong>foreign function interface</strong> (<strong>FFI</strong>). In Go, FFI is handled by cgo.</p>
+<p class="mce-root">Very often, library authors (myself included) get too smart, and attempt to manage resources on behalf of the users. While at first blush this may seem to be good UX, good customer service even, this ultimately leads to much pain. At the time of writing, Gorgonia itself had just undergone a series of refactors to make the resource metaphors more clear, specifically with regards to CUDA usage.</p>
+<p class="mce-root">With all this said, GoCV is probably one of the most consistent Go libraries with regards to its cgo usage. The part where GoCV is consistent is in its treatment of foreign objects. Everything is treated as a resource; hence, most types have a <kbd>.Close()</kbd> method. There are certainly other beauties of GoCV, including the <kbd>customenv</kbd> build tags, which allow library users to define where OpenCV is installed, but the chief compliment I have for GoCV is in its consistency with regards to treating OpenCV objects as an external resource.</p>
+<p class="mce-root">The treatment of objects with the resource metaphor guides us in our use of the GoCV API. All objects must be closed after use,which is a  simple rule to abide by.</p>
+
+
+            </article>
+
+            
+        </section>
+    </div>
+
+
+
+  
+<div id="sbo-rt-content"><section>
+
+                            <header>
+                    <h1 class="header-title">Pigo</h1>
+                </header>
+            
+            <article>
+                
+<p class="mce-root">Pigo is a Go library for detecting faces by using the PICO algorithm. Compared to the Viola-Jones method, PICO is fast. Naturally, PIGO is fast too. Add this to the fact that GoCV uses cgo, which adds a penalty for speed, and PIGO may seem to be a better option overall. However, it must be noted that the PICO algorithm is more prone to false positives than the original Viola-Jones method.</p>
+<p class="mce-root">Using the PIGO library is simple. The provided documentation is clear. However, PIGO was designed to run within the author's workflow. Differing from that workflow will require some tiny amount of extra work. Specifically, the author draws images using external helpers such as <kbd>github.com/fogleman/gg</kbd>. We shan't. However, the work isn't much.</p>
+<p class="mce-root">To install <kbd>pigo</kbd>, simply run <kbd>go get -u github.com/esimov/pigo/...</kbd>.</p>
+
+
+            </article>
+
+            
+        </section>
+    </div>
+
+
+
+  
+<div id="sbo-rt-content"><section>
+
+                            <header>
+                    <h1 class="header-title">Face detection program </h1>
+                </header>
+            
+            <article>
+                
+<p class="mce-root">What we want to do is build a program that reads an image from a webcam, passes the image into a face detector and then draws rectangles in the image. Finally, we want to display the image with the rectangles drawn on.</p>
+
+
+            </article>
+
+            
+        </section>
+    </div>
+
+
+
+  
+<div id="sbo-rt-content"><section>
+
+                            <header>
+                    <h1 class="header-title">Grabbing an image from the webcam </h1>
+                </header>
+            
+            <article>
+                
+<p class="mce-root">First, we'll open a connection to the webcam:</p>
+<pre class="mce-root">```<br/> func main() {<br/> // open webcam<br/> webcam, err := gocv.VideoCaptureDevice(0)<br/> if err != nil {<br/> log.Fatal(err)<br/> }<br/> defer webcam.Close()<br/> }<br/> ```</pre>
+<p class="mce-root">Here, I used <kbd>VideoCaptureDevice(0)</kbd> because, on my computer, which runs Ubuntu, the webcam is device <kbd>0</kbd>. Your webcam may differ in device numbering. Also, do note <kbd>defer webcam.Close()</kbd>. This is the aforementioned resource metaphor that GoCV sticks very strongly to. A webcam (specifically, a <kbd>VideoCaptureDevice</kbd>) is a resource, much like a file. In fact in Linux, this is true; the webcam on my computer is mounted in the <kbd>/dev/video0</kbd> directory and I can access raw bytes from it by just using a variant of <kbd>cat</kbd>. But I digress. The point is that <kbd>.Close()</kbd> has to be called on resources to free up usage.</p>
+<div class="mce-root packt_infobox"><br/>
+The talk about closing resources to free up usage naturally raises a question, given we program in Go. Is a channel a resource? The answer is no. <kbd>close(ch)</kbd> of a channel  merely informs every sender that this channel is no longer receiving data.</div>
+<p class="mce-root">Having access to the webcam is nice and all, but we also want to be able to grab images off it. I had mentioned one can read raw streams off the file of a webcam. We can do the same with GoCV as well:</p>
+<pre class="mce-root">```<br/> img := gocv.NewMat()<br/> defer img.Close()<br/>width := int(webcam.Get(gocv.VideoCaptureFrameWidth))<br/> height := int(webcam.Get(gocv.VideoCaptureFrameHeight))<br/>fmt.Printf("Webcam resolution: %v, %v", width, height)<br/>if ok := webcam.Read(&amp;amp;img); !ok {<br/> log.Fatal("cannot read device 0")<br/> }<br/> ```</pre>
+<p class="mce-root">First, we create a new matrix, representing an image. Again, the matrix is treated like a resource, because it is owned by the foreign function interface. Thus, <kbd>defer img.Close()</kbd> is written. Next, we query the webcam for information about the resolution. This is not as important right now, but it will be later. Nonetheless, it's quite nice to know what resolution a webcam runs at. Last, we read the webcam's image into the matrix.</p>
+<p class="mce-root">At this point, if you are already familiar with Gorgonia's tensor libraries, this pattern may seem familiar, and yet feels funny. <kbd>img := gocv.NewMat()</kbd> does not define a size. How does GoCV know how much space to allocate for the matrix? Well, the answer is that the magic happens in <kbd>webcam.Read</kbd>. The underlying matrix will be resized as necessary by OpenCV. In this way, the Go part of the program does no real memory allocation.</p>
+
+
+            </article>
+
+            
+        </section>
+    </div>
+
+
+
+  
+<div id="sbo-rt-content"><section>
+
+                            <header>
+                    <h1 class="header-title">Displaying the image </h1>
+                </header>
+            
+            <article>
+                
+<p class="mce-root">So, the image has been magically read into the matrix. How do we get anything out of it?</p>
+<p class="mce-root">The answer is that we have to copy the data from the data structure controlled by OpenCV into a Go-native data structure. Fortunately, GoCV handles that as well. Here, we write it out to a file:</p>
+<pre class="mce-root"> goImg, err := img.ToImage()<br/> if err != nil {<br/> log.Fatal(err)<br/> }<br/> outFile, err := os.OpenFile("first.png", os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0644)<br/> if err != nil {<br/> log.Fatal(err)<br/> }<br/> png.Encode(outFile, goImg)</pre>
+<p class="mce-root">First, the matrix has to be converted to <kbd>image.Image</kbd>. To do that, <kbd>img.ToImage()</kbd> is called. Then, it is encoded as a PNG by using <kbd>png.Encode</kbd>.</p>
+<p class="mce-root">And you will have a test image. This was mine:</p>
+<p class="mce-root CDPAlignCenter CDPAlign"><img class="alignnone size-full wp-image-435 image-border" src="Images/617e5f17-6a1f-4b93-9b32-2144890f51c9.png" style="width:27.50em;height:20.67em;" width="640" height="480"/></p>
+<p class="mce-root">In the picture, I'm holding a box with a photo of Ralph Waldo Emerson, famed American author. Readers who are familiar with writing instruments may note that it's actually a brand of inks I use for my writing.</p>
+<p class="mce-root">So, now we have the basic pipeline of getting an image from the webcam and writing out the image to a file. A webcam continuously captures images, but we're only reading a single image to a matrix, and then writing the matrix into a file. If we put this in a loop, we would have the ability to continuously read images from a webcam and write to file.</p>
+<p class="mce-root">Analogously to having a file, we could write it to the screen instead. The GoCV integration with OpenCV is so complete that this is trivial. Instead of writing to a file, we can display a window instead.</p>
+<p class="mce-root">To do so, we need to first create a window object, with the title <kbd>Face Detection Window</kbd>:</p>
+<pre class="mce-root"> window := gocv.NewWindow("Face Detection Window")<br/> defer window.Close()</pre>
+<p class="mce-root">Then, to show the image in the window, simply replace the parts where we write out to a file with this:</p>
+<pre class="mce-root"> window.IMShow(img)</pre>
+<p class="mce-root">When the program is run, a window will pop up, showing you the image captured by the webcam.</p>
+
+
+            </article>
+
+            
+        </section>
+    </div>
+
+
+
+  
+<div id="sbo-rt-content"><section>
+
+                            <header>
+                    <h1 class="header-title">Doodling on images </h1>
+                </header>
+            
+            <article>
+                
+<p class="mce-root">At some point, we would also like to draw on an image, preferably before we output it, either to the display or a file. GoCV handles that admirably. For our purposes in this chapter, we'll just be drawing rectangles to denote where a face might be. GoCV interfaces well with the standard library's <kbd>Rectangle</kbd> type.</p>
+<p class="mce-root">To draw a rectangle on an image with GoCV, we first define a rectangle:</p>
+<pre class="mce-root"> r := image.Rect(50, 50, 100, 100)</pre>
+<p class="mce-root">Here, I defined a rectangle that starts at location (<kbd>50, 50</kbd>) and is 100 pixels wide and 100 pixels tall.</p>
+<p class="mce-root">Then, a color needs to be defined. Again, GoCV plays very nicely with <kbd>image</kbd>/<kbd>color</kbd>, found in the standard library. So, here's the definition of the color <kbd>blue</kbd>:</p>
+<pre class="mce-root"> blue := color.RGBA{0, 0, 255, 0}</pre>
+<p class="mce-root">And now, onward to draw the rectangle on the image!:</p>
+<pre class="mce-root"> gocv.Rectangle(&amp;amp;img, r, blue, 3)</pre>
+<p class="mce-root">This draws a blue rectangle with the top left of the rectangle at (50, 50) in the image.</p>
+<p class="mce-root">At this point, we have the components necessary to build two different pipelines. One writes an image to a file. One creates a window to display the image. There are two ways the input from the webcam may be processed: one-off or continuously. And, we are also able to modify the image matrix before outputting. This gives us a lot of flexibility as scaffolding in the process of building the program.</p>
+
+
+            </article>
+
+            
+        </section>
+    </div>
+
+
+
+  
+<div id="sbo-rt-content"><section>
+
+                            <header>
+                    <h1 class="header-title">Face detection 1 </h1>
+                </header>
+            
+            <article>
+                
+<p class="mce-root">The first face detection algorithm we want to use is the Viola-Jones method. It comes built into GoCV, so we can just use that. The consistency of GoCV gives us a hint as to what to do next. We need a classifier object (and remember to close it!)</p>
+<p class="mce-root">This is how to create a classifier object:</p>
+<pre class="mce-root">```<br/> classifier := gocv.NewCascadeClassifier()<br/> if !classifier.Load(haarCascadeFile) {<br/> log.Fatalf("Error reading cascade file: %v\n", haarCascadeFile)<br/> }<br/> defer classifier.Close()<br/> ```</pre>
+<p class="mce-root">Note that at this point, it is not enough to just create a classifier. We need to load it with the model to use. The model used is very well established. It was first created by Rainer Lienhart in the early 2000s. Like most products of the 2000s, the model is serialized as an XML file.</p>
+<p class="mce-root">The file can be downloaded from the GoCV GitHub repository: <a href="https://github.com/hybridgroup/gocv/blob/master/data/haarcascade_frontalface_default.xml" target="_blank">https://github.com/hybridgroup/gocv/blob/master/data/haarcascade_frontalface_default.xml</a></p>
+<p class="mce-root">In the preceding code, <kbd>haarCascadeFile</kbd> is a string denoting the path to the file. GoCV handles the rest.</p>
+<p class="mce-root">To detect faces, it is a simple one-liner:</p>
+<pre class="mce-root">```<br/> rects := classifier.DetectMultiScale(img)<br/> ```</pre>
+<p class="mce-root">In this single line of code, we are telling OpenCV to use Viola-Jones' multiscale detection to detect faces. Internally, OpenCV builds an image pyramid of integral images, and runs the classifiers on the image pyramids. At each stage, rectangles representing where the algorithm thinks the faces are, produced. These rectangles are what is returned. They can then be drawn on the image before being output to a file or window.</p>
+<p class="mce-root">Here's what a full windowed pipeline looks like:</p>
+<pre class="mce-root">```<br/> var haarCascadeFile = "Path/To/CascadeFile.xml"<br/>var blue = color.RGBA{0, 0, 255, 0}<br/> func main() {<br/> // open webcam<br/> webcam, err := gocv.VideoCaptureDevice(0)<br/> if err != nil {<br/> log.Fatal(err)<br/> }<br/> defer webcam.Close()<br/>var err error<br/> // open display window<br/> window := gocv.NewWindow("Face Detect")<br/> defer window.Close()<br/>// prepare image matrix<br/> img := gocv.NewMat()<br/> defer img.Close()<br/>// color for the rect when faces detected<br/>// load classifier to recognize faces<br/> classifier := gocv.NewCascadeClassifier()<br/> if !classifier.Load(haarCascadeFile) {<br/> log.Fatalf("Error reading cascade file: %v\n", haarCascadeFile)<br/> }<br/> defer classifier.Close()<br/>for {<br/> if ok := webcam.Read(&amp;amp;img); !ok {<br/> fmt.Printf("cannot read device %d\n", deviceID)<br/> return<br/> }<br/> if img.Empty() {<br/> continue<br/> }<br/> rects := classifier.DetectMultiScale(img)<br/>for _, r := range rects {<br/> gocv.Rectangle(&amp;amp;img, r, blue, 3)<br/> }<br/>window.IMShow(img)<br/> if window.WaitKey(1) &amp;gt;= 0 {<br/> break<br/> }<br/> }<br/> }<br/><br/> ```</pre>
+<p class="mce-root">The program is now able to get an image from the webcam, detect faces, draw rectangles around the faces, and then display the image. You may note that it is quite quick at doing that.</p>
+
+
+            </article>
+
+            
+        </section>
+    </div>
+
+
+
+  
+<div id="sbo-rt-content"><section>
+
+                            <header>
+                    <h1 class="header-title">Face detection 2</h1>
+                </header>
+            
+            <article>
+                
+<p>In one fell swoop, GoCV has provided us with everything necessary to do real-time face detection. But is it easy to use with other face detection algorithms? The answer is yes, but some work is required.</p>
+<p>The algorithm we want to use is the PICO algorithm. Recall that images in GoCV are in the <kbd>gocv.Mat</kbd> type. In order for PIGO to use that, we would need to convert that into a format readable by PICO. Incidentally, such a shared format is the <kbd>image.Image</kbd> of the standard library.</p>
+<p>Recall once again that the <kbd>gocv.Mat</kbd> type has a method <kbd>.ToImage()</kbd>, which returns an <kbd>image.Image</kbd>. That's our bridge!</p>
+<p>Before crossing it, let's look at how to create a PIGO classifier. Here's a function to do so:</p>
+<pre>```<br/>func pigoSetup(width, height int) (*image.NRGBA, []uint8, *pigo.Pigo,   <br/>               pigo.CascadeParams, pigo.ImageParams) {<br/> goImg := image.NewNRGBA(image.Rect(0, 0, width, height))<br/> grayGoImg := make([]uint8, width*height)<br/> cParams := pigo.CascadeParams{<br/>                               MinSize: 20,<br/>                               MaxSize: 1000,<br/>                               ShiftFactor: 0.1,<br/>                               ScaleFactor: 1.1,<br/> }<br/> imgParams := pigo.ImageParams{<br/>                               Pixels: grayGoImg,<br/>                               Rows: height,<br/>                               Cols: width,<br/>                               Dim: width,<br/> }<br/> classifier := pigo.NewPigo()<br/> <br/> var err error<br/> if classifier, err = classifier.Unpack(pigoCascadeFile); err != nil {<br/>                log.Fatalf("Error reading the cascade file: %s", err)<br/> }<br/> return goImg, grayGoImg, classifier, cParams, imgParams<br/>}<br/>```</pre>
+<p>This function is quite dense. Let's unpack it. We'll do it in a logical fashion as opposed to in a top-down linear fashion.</p>
+<p>First, a <kbd>pigo.Pigo</kbd> is created with <kbd>classifier := pigo.NewPigo()</kbd>. This creates a new classifier. Like the Viola-Jones method, a model is required to be supplied.</p>
+<p>Unlike in GoCV, the model is in a binary format which needs to be unpacked. Additionally, <kbd>classifier.Unpack</kbd> takes a <kbd>[]byte</kbd>, instead of a string denoting the path to the file. The provided model can be acquired on GitHub: <kbd>https://github.com/esimov/pigo/blob/master/data/facefinder</kbd>.</p>
+<p>Once the file has been acquired, it needs to be read as <kbd>[]byte</kbd>, as shown in the snippet below (which is wrapped in an <kbd>init</kbd> function):</p>
+<pre>```<br/>  pigoCascadeFile, err = ioutil.ReadFile("path/to/facefinder")<br/>  if err != nil {<br/>    log.Fatalf("Error reading the cascade file: %v", err)<br/>  }<br/>```</pre>
+<p>Once the <kbd>pigoCascadeFile</kbd> is available, we can now unpack it into the classifier by using <kbd>classifier.Unpack(pigoCascadeFile)</kbd>. Usual error handling applies.</p>
+<p>But what of the earlier parts of the section? Why is this necessary?</p>
+<p>To understand this, let's look at how PIGO does its classification. It looks roughly like this:</p>
+<pre>dets := pigoClass.RunCascade(imgParams, cParams)<br/>dets = pigoClass.ClusterDetections(dets, 0.3)</pre>
+<p>When PIGO runs the classifier, it takes two parameters which determine its behavior: the <kbd>ImageParam</kbd> and the <kbd>CascadeParams</kbd>. In particular, the details <kbd>ImageParam</kbd> is illuminating our process. It's defined thus:</p>
+<pre>// ImageParams is a struct for image related settings.<br/>// Pixels: contains the grayscale converted image pixel data.<br/>// Rows: the number of image rows.<br/>// Cols: the number of image columns.<br/>// Dim: the image dimension.<br/>type ImageParams struct {<br/>  Pixels []uint8<br/>  Rows int<br/>  Cols int<br/>  Dim int<br/>}<br/><br/></pre>
+<p>It is with this in mind that the <kbd>pigoSetup</kbd> function has the extra functionalities. The <kbd>goImg</kbd> is not strictly required, but it's useful when considering our bridge between GoCV and PIGO.</p>
+<p>PIGO requires images to be in <kbd>[]uint8</kbd>, representing a grayscale image. GoCV reads a webcam image into a <kbd>gocv.Mat</kbd>, which has a <kbd>.ToImage()</kbd> method. The method returns a <kbd>image.Image</kbd>. Most webcams capture color images. These are the steps required in order to make GoCV and PIGO play nicely together:</p>
+<ol>
+<li>Capture an image from the webcam.</li>
+<li>Convert the image into an <kbd>image.Image</kbd>.</li>
+<li>Convert that image into a gray scale image.</li>
+<li>Extract the <kbd>[]uint8</kbd> from the gray scale image.</li>
+<li>Perform face detection on the <kbd>[]uint8</kbd>.</li>
+</ol>
+<p>For our preceding pipeline, the image parameters and the cascade parameters are more or less static. Processing of the image is done in a linear fashion. A frame from the webcam doesn't get captured until the face detection is done, and the rectangles drawn, and the final image displayed in the window.</p>
+<p>Hence, it would be perfectly all right to allocate an image once, and then overwrite the image in each loop. The <kbd>.ToImage()</kbd> method allocates a new image every time it's called. Rather, we can have a naughty version, where an already-allocated image is reused.</p>
+<p>Here's how to do it:</p>
+<pre>func naughtyToImage(m *gocv.Mat, imge image.Image) error {<br/>                    typ := m.Type()<br/>  if typ != gocv.MatTypeCV8UC1 &amp;amp;&amp;amp; typ != gocv.MatTypeCV8UC3 &amp;amp;&amp;amp; typ != <br/>            gocv.MatTypeCV8UC4 {<br/>    return errors.New("ToImage supports only MatType CV8UC1, CV8UC3 and <br/>                       CV8UC4")<br/>  }<br/><br/>  width := m.Cols()<br/>  height := m.Rows()<br/>  step := m.Step()<br/>  data := m.ToBytes()<br/>  channels := m.Channels()<br/><br/>  switch img := imge.(type) {<br/>  case *image.NRGBA:<br/>    c := color.NRGBA{<br/>      R: uint8(0),<br/>      G: uint8(0),<br/>      B: uint8(0),<br/>      A: uint8(255),<br/>    }<br/>    for y := 0; y &amp;lt; height; y++ {<br/>      for x := 0; x &amp;lt; step; x = x + channels {<br/>        c.B = uint8(data[y*step+x])<br/>        c.G = uint8(data[y*step+x+1])<br/>        c.R = uint8(data[y*step+x+2])<br/>        if channels == 4 {<br/>          c.A = uint8(data[y*step+x+3])<br/>        }<br/>        img.SetNRGBA(int(x/channels), y, c)<br/>      }<br/>    }<br/><br/>  case *image.Gray:<br/>    c := color.Gray{Y: uint8(0)}<br/>    for y := 0; y &amp;lt; height; y++ {<br/>      for x := 0; x &amp;lt; width; x++ {<br/>        c.Y = uint8(data[y*step+x])<br/>        img.SetGray(x, y, c)<br/>      }<br/>    }<br/>  }<br/>  return nil<br/>}<br/><br/></pre>
+<p>This function allows one to reuse an existing image. We simply loop through the bytes of the <kbd>gocv.Mat</kbd> and overwrite the underlying bytes of the image.</p>
+<p>With the same logic, we can also create a naughty version of a function that converts the image into gray scale:</p>
+<pre>func naughtyGrayscale(dst []uint8, src *image.NRGBA) []uint8 {<br/>  rows, cols := src.Bounds().Dx(), src.Bounds().Dy()<br/>  if dst == nil || len(dst) != rows*cols {<br/>    dst = make([]uint8, rows*cols)<br/>  }<br/>  for r := 0; r &amp;lt; rows; r++ {<br/>    for c := 0; c &amp;lt; cols; c++ {<br/>      dst[r*cols+c] = uint8(<br/>        0.299*float64(src.Pix[r*4*cols+4*c+0]) +<br/>          0.587*float64(src.Pix[r*4*cols+4*c+1]) +<br/>          0.114*float64(src.Pix[r*4*cols+4*c+2]),<br/>      )<br/>    }<br/>  }<br/>  return dst<br/>}</pre>
+<p>The differences in function signature are stylistic. The latter signature is better—it's better to return the type. This allows for error correction as follows:</p>
+<pre>if dst == nil || len(dst) != rows*cols {<br/>    dst = make([]uint8, rows*cols)<br/>  }</pre>
+<p>And so our pipeline looks like this:</p>
+<pre>var haarCascadeFile = "Path/To/CascadeFile.xml"<br/>var blue = color.RGBA{0, 0, 255, 0}<br/>var green = color.RGBA{0, 255, 0, 0}<br/>func main() {<br/>var err error<br/>  // open webcam<br/>  if webcam, err = gocv.VideoCaptureDevice(0); err != nil {<br/>    log.Fatal(err)<br/>  }<br/>  defer webcam.Close()<br/>  width := int(webcam.Get(gocv.VideoCaptureFrameWidth))<br/>  height := int(webcam.Get(gocv.VideoCaptureFrameHeight))<br/><br/>  // open display window<br/>  window := gocv.NewWindow("Face Detect")<br/>  defer window.Close()<br/><br/>  // prepare image matrix<br/>  img := gocv.NewMat()<br/>  defer img.Close()<br/><br/>  // set up pigo<br/>  goImg, grayGoImg, pigoClass, cParams, imgParams := pigoSetup(width, <br/>                                                     height)<br/>  <br/>  for {<br/>    if ok := webcam.Read(&amp;amp;img); !ok {<br/>      fmt.Printf("cannot read device %d\n", deviceID)<br/>      return<br/>    }<br/>    if img.Empty() {<br/>      continue<br/>    }<br/>    if err = naughtyToImage(&amp;amp;img, goImg); err != nil {<br/>      log.Fatal(err)<br/>    }<br/>    grayGoImg = naughtyGrayscale(grayGoImg, goImg)<br/>    imgParams.Pixels = grayGoImg<br/>    dets := pigoClass.RunCascade(imgParams, cParams)<br/>    dets = pigoClass.ClusterDetections(dets, 0.3)<br/><br/><br/>    for _, det := range dets {<br/>      if det.Q &amp;lt; 5 {<br/>        continue<br/>      }<br/>      x := det.Col - det.Scale/2<br/>      y := det.Row - det.Scale/2<br/>      r := image.Rect(x, y, x+det.Scale, y+det.Scale)<br/>      gocv.Rectangle(&amp;amp;img, r, green, 3)<br/>    }<br/><br/>    window.IMShow(img)<br/>    if window.WaitKey(1) &amp;gt;= 0 {<br/>      break<br/>    }<br/>  }<br/>}<br/><br/></pre>
+<p>There are some things to note here. If you follow the logic, you will note that the only things that really changed are the data in <kbd>imgParams.Pixels</kbd>. The rest of the things didn't really change as much.</p>
+<p>Recall from the earlier explanation of the PICO algorithm—that there may be overlaps in detection's. A final clustering step is required for final detections. This explains the following two lines:</p>
+<pre>dets := pigoClass.RunCascade(imgParams, cParams)<br/>dets = pigoClass.ClusterDetections(dets, 0.3)</pre>
+<p>The <kbd>0.3</kbd> value is chosen based on the original paper. In the documentation of PIGO, the value <kbd>0.2</kbd> is recommended.</p>
+<p>Another thing that is different is that PIGO does not return rectangles as detections. Instead, it returns its own <kbd>pigo.Detection</kbd> type. To translate from these to standard <kbd>image.Rectangle</kbd> is simply done with these lines:</p>
+<pre>x := det.Col - det.Scale/2<br/>y := det.Row - det.Scale/2<br/>r := image.Rect(x, y, x+det.Scale, y+det.Scale)</pre>
+<p>Running the program yields a window showing the webcam image, with green rectangles around faces.</p>
+
+
+            </article>
+
+            
+        </section>
+    </div>
+
+
+
+  
+<div id="sbo-rt-content"><section>
+
+                            <header>
+                    <h1 class="header-title">Putting it all together</h1>
+                </header>
+            
+            <article>
+                
+<p>Now we have two different uses of two different algorithms to detect faces.</p>
+<p>Here are some observations:</p>
+<ul>
+<li>The images using PIGO are smoother—there are fewer jumps and lags.</li>
+<li>The PIGO algorithm jitters a little more than the standard Viola-Jones method.</li>
+<li>The PIGO algorithm is more robust to rotations—I could tilt my head more and still have my face detected compared to the standard Viola-Jones method.</li>
+</ul>
+<p>We can of course put both of them together:</p>
+<pre>var haarCascadeFile = "Path/To/CascadeFile.xml"<br/>var blue = color.RGBA{0, 0, 255, 0}<br/>var green = color.RGBA{0, 255, 0, 0}<br/>func main() {<br/>var err error<br/>  // open webcam<br/>  if webcam, err = gocv.VideoCaptureDevice(0); err != nil {<br/>    log.Fatal(err)<br/>  }<br/>  defer webcam.Close()<br/>  width := int(webcam.Get(gocv.VideoCaptureFrameWidth))<br/>  height := int(webcam.Get(gocv.VideoCaptureFrameHeight))<br/><br/>  // open display window<br/>  window := gocv.NewWindow("Face Detect")<br/>  defer window.Close()<br/><br/>  // prepare image matrix<br/>  img := gocv.NewMat()<br/>  defer img.Close()<br/><br/>  // set up pigo<br/>  goImg, grayGoImg, pigoClass, cParams, imgParams := pigoSetup(width, <br/>                                                       height)<br/><br/>  // create classifier and load model<br/>  classifier := gocv.NewCascadeClassifier()<br/>  if !classifier.Load(haarCascadeFile) {<br/>    log.Fatalf("Error reading cascade file: %v\n", haarCascadeFile)<br/>  }<br/>  defer classifier.Close()<br/>  <br/>  for {<br/>    if ok := webcam.Read(&amp;amp;img); !ok {<br/>      fmt.Printf("cannot read device %d\n", deviceID)<br/>      return<br/>    }<br/>    if img.Empty() {<br/>      continue<br/>    }<br/>    // use PIGO<br/>    if err = naughtyToImage(&amp;amp;img, goImg); err != nil {<br/>      log.Fatal(err)<br/>    }<br/><br/>    grayGoImg = naughtyGrayscale(grayGoImg, goImg)<br/>    imgParams.Pixels = grayGoImg<br/>    dets := pigoClass.RunCascade(imgParams, cParams)<br/>    dets = pigoClass.ClusterDetections(dets, 0.3)<br/><br/><br/>    for _, det := range dets {<br/>      if det.Q &amp;lt; 5 {<br/>        continue<br/>      }<br/>      x := det.Col - det.Scale/2<br/>      y := det.Row - det.Scale/2<br/>      r := image.Rect(x, y, x+det.Scale, y+det.Scale)<br/>      gocv.Rectangle(&amp;amp;img, r, green, 3)<br/>    }<br/><br/>    // use GoCV<br/>    rects := classifier.DetectMultiScale(img)<br/>    for _, r := range rects {<br/>      gocv.Rectangle(&amp;amp;img, r, blue, 3)<br/>    }<br/><br/>    window.IMShow(img)<br/>    if window.WaitKey(1) &amp;gt;= 0 {<br/>      break<br/>    }<br/>  }<br/>}</pre>
+<p>Here we see PIGO and GoCV both managed to detect them rather accurately, and that they agree with each other quite a lot.</p>
+<p>Additionally we can see that there is now a fairly noticeable lag between actions and when the actions are displayed on screen. This is because there is more work to be done.</p>
+
+
+            </article>
+
+            
+        </section>
+    </div>
+
+
+
+  
+<div id="sbo-rt-content"><section>
+
+                            <header>
+                    <h1 class="header-title">Evaluating algorithms</h1>
+                </header>
+            
+            <article>
+                
+<p>There are many dimensions upon which we can evaluate the algorithms. This section explores how to evaluate algorithms.</p>
+<p>Assuming we want to have fast face detection—which algorithm would be better?</p>
+<p>The only way to understand the performance of an algorithm is to measure it. Thankfully Go comes with benchmarking built in. That is what we are about to do.</p>
+<p>To build benchmarks we must be very careful about what we're benchmarking. In this case, we want to benchmark the performance of the detection algorithm. This means comparing  <kbd>classifier.DetectMultiScale</kbd> versus, <kbd>pigoClass.RunCascade</kbd> and <kbd>pigoClass.ClusterDetections</kbd>.</p>
+<p>Also, we have to compare apples to apples—it would be unfair if we compare one algorithm with a 3840 x 2160 image and the other algorithm with a 640 x 480 image. There are simply more pixels in the former compared to the latter:</p>
+<pre>func BenchmarkGoCV(b *testing.B) {<br/>  img := gocv.IMRead("test.png", gocv.IMReadUnchanged)<br/>  if img.Cols() == 0 || img.Rows() == 0 {<br/>    b.Fatalf("Unable to read image into file")<br/>  }<br/><br/>  classifier := gocv.NewCascadeClassifier()<br/>  if !classifier.Load(haarCascadeFile) {<br/>    b.Fatalf("Error reading cascade file: %v\n", haarCascadeFile)<br/>  }<br/><br/>  var rects []image.Rectangle<br/>  b.ResetTimer()<br/><br/>  for i := 0; i &amp;lt; b.N; i++ {<br/>    rects = classifier.DetectMultiScale(img)<br/>  }<br/>  _ = rects<br/>}</pre>
+<p>There are a few things to note—the set up is made early on in the function. Then <kbd>b.ResetTimer()</kbd> is called. This resets the timer so that setups are not counted towards the benchmark. The second thing to note is that the classifier is set to detect faces on the same image over and over again. This is so that we can get an accurate idea of how well the algorithm performs. The last thing to note is the rather weird <kbd>_ = rects</kbd> line at the end. This is done to prevent Go from optimizing away the calls. Technically, it is not needed, as I am quite certain that the <kbd>DetectMultiScale</kbd> function is complicated enough as to never have been optimized away, but that line is just there for insurance.</p>
+<p>A similar set up can be done for PIGO:</p>
+<pre>func BenchmarkPIGO(b *testing.B) {<br/>  img := gocv.IMRead("test.png", gocv.IMReadUnchanged)<br/>  if img.Cols() == 0 || img.Rows() == 0 {<br/>    b.Fatalf("Unable to read image into file")<br/>  }<br/>  width := img.Cols()<br/>  height := img.Rows()<br/>  goImg, grayGoImg, pigoClass, cParams, imgParams := pigoSetup(width, <br/>                                                     height)<br/><br/>  var dets []pigo.Detection<br/>  b.ResetTimer()<br/><br/>  for i := 0; i &amp;lt; b.N; i++ {<br/>    grayGoImg = naughtyGrayscale(grayGoImg, goImg)<br/>    imgParams.Pixels = grayGoImg<br/>    dets = pigoClass.RunCascade(imgParams, cParams)<br/>    dets = pigoClass.ClusterDetections(dets, 0.3)<br/>  }<br/>  _ = dets<br/>}</pre>
+<p>This time the set up is more involved than the GoCV benchmark. It may seem that these two functions are benchmarking different things—the GoCV benchmark takes a <kbd>gocv.Mat</kbd> while the PIGO benchmark takes a <kbd>[]uint8</kbd>. But remember that we're interested in the performance of the algorithms on an image.</p>
+<p>The main reason why the gray scaling is also added into the benchmark is because, although GoCV takes a color image, the actual Viola-Jones method uses a gray scale image. Internally, OpenCV converts the image into a gray scale before detection. Because we're unable to separate the detection part by itself, the only alternative is to consider conversion to gray scale as part of the detection process.</p>
+<p>To run the benchmark, both functions are added into <kbd>algorithms_test.go</kbd>. Then <kbd>go test -run=^$ -bench=. -benchmem</kbd> is run. The result is as follows:</p>
+<pre>goos: darwin<br/>goarch: amd64<br/>pkg: chapter9<br/>BenchmarkGoCV-4 20 66794328 ns/op 32 B/op 1 allocs/op<br/>BenchmarkPIGO-4 30 47739076 ns/op 0 B/op 0 allocs/op<br/>PASS<br/>ok chapter9 3.093s</pre>
+<p>Here we can see that GoCV is about 1/3 slower than PIGO. A key reason for this is due to the cgo calls made in order to interface with OpenCV. However, it should also be noted that the PICO algorithm is faster than the original Viola-Jones algorithm. That PIGO can exceed the performance of a highly tuned and optimized Viola-Jones algorithm found in OpenCV, is rather impressive.</p>
+<p class="mce-root">However, speed is not the only thing that matters. There are other dimensions that matter. The following are things that matter when considering face detection algorithms. Tests for them are suggested but left as an exercise for the reader:</p>
+<pre class="mce-root">| Consideration | Test |<br/>|:---:          |:---:|<br/>| Performance in detecting many faces | Benchmark with image of crowd |<br/>| Correctness in detecting many faces | Test with image of crowd, with  <br/>                                        known numbers |<br/>| No racial discrimination | Test with images of multi-ethnic peoples  <br/>                             with different facial features |</pre>
+<p class="mce-root">The last one is of particular interest. For many years, ML algorithms have not served people of color well. I myself had some issues when using a Viola-Jones model (a different model from the one in the repository) to detect eyes. In a facial feature detection project I did about five years ago, I was trying to detect eyes on a face.</p>
+<p class="mce-root">The so-called <strong>Asian</strong> eyes are composed of two major features—an upward slant away from the nose to the outside of the face; and eyes that have epicanthic folds, giving the illusion of a <em>single</em> eyelid—that is, an eyelid without crease. The model I was working on couldn't detect where my eyes were on occasion because the filter looked for the crease of the eyelid, and the creases on my eyelids are not that obvious.</p>
+<p class="mce-root">On that front, some algorithms and models may appear accidentally exclusionary. To be clear, I am NOT saying that the creators of such algorithms and models are racist. However there are some assumptions that were made in the design of the algorithms that did not include considerations of all the possible cases—nor could they ever. For example, any contrast-based detection of facial landmarks will fare poorly with people who have darker skin tones. On the flipside, contrast-based detection systems are usually very fast, because there is a minimal amount of calculation required. Here, there is a tradeoff to be made—do you need to detect everyone, or do you need to be fast?</p>
+<p class="mce-root">This chapter aims to encourage readers to think more about use cases of machine learning algorithms and the tradeoffs required in using the algorithms. This book has mostly been about thinking about the tradeoffs. I highly encourage the reader to think deeply about the use cases of the machine learning algorithms. Understand all the tradeoffs required. Once the appropriate tradeoffs are understood, implementation is usually a piece of cake.</p>
+
+
+            </article>
+
+            
+        </section>
+    </div>
+
+
+
+  
+<div id="sbo-rt-content"><section>
+
+                            <header>
+                    <h1 class="header-title">Summary</h1>
+                </header>
+            
+            <article>
+                
+<p>In this chapter, we learned about <span>using GoCV and PIGO, and built a program that detects faces from a live webcam. At the end of the chapter, we implemented a usable facial recognition system, got familiar with notions of hashing of facial features, and saw how to make fast inferences using the Gorgonia suite of libraries as well as GoCV, which is a binding for OpenCV.</span></p>
+<p>In saying that, in the next chapter, we'll look at some of the implications of not having built your algorithm by yourself.</p>
+
+
+            </article>
+
+            
+        </section>
+    </div>
+
+
+
+  </body></html>
