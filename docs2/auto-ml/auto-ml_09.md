@@ -1,4 +1,4 @@
-# *第七章*：使用 Amazon SageMaker Autopilot 进行自动机器学习
+# 第七章：使用 Amazon SageMaker Autopilot 进行自动机器学习
 
 "机器学习的圣杯之一就是自动化越来越多的特征工程过程。"
 

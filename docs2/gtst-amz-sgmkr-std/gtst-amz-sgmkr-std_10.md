@@ -1,4 +1,4 @@
-# *第八章*：使用 SageMaker JumpStart 和 Autopilot 快速启动机器学习
+# 第八章：使用 SageMaker JumpStart 和 Autopilot 快速启动机器学习
 
 **SageMaker JumpStart** 作为 Amazon SageMaker 机器学习（**ML**）世界入门套件，为选定的用例提供完整解决方案，无需任何代码开发。SageMaker JumpStart 还为您整理了流行的预训练 **计算机视觉**（**CV**）和 **自然语言处理**（**NLP**）模型，以便您轻松部署或微调到您的数据集。**SageMaker Autopilot** 是一种 AutoML 解决方案，它探索您的数据，代表您构建特征，并从各种算法和超参数中训练最优模型。您无需编写任何代码：Autopilot 会为您完成，并返回笔记本以展示它是如何做到的。
 

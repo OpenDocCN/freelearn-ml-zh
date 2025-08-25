@@ -1,4 +1,4 @@
-# *第十二章*：DataRobot Python API
+# 第十二章：DataRobot Python API
 
 用户可以通过使用 DataRobot 的 Python 客户端包来访问 DataRobot 的功能。这使得我们可以摄取数据，创建机器学习项目，从模型中进行预测，并编程管理模型。API 为用户提供的优势很容易看出。Python 和 DataRobot 的集成使用使我们能够利用 DataRobot 提供的 AutoML 功能，同时利用 Python 所具有的程序灵活性和潜力。
 

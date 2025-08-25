@@ -1,4 +1,4 @@
-# *第二章*：启用和操作化
+# 第二章：启用和操作化
 
 我们刚刚学习了 Elastic ML 的基本功能，它能够实现无监督的自动异常检测和监督数据帧分析。现在，是时候详细了解 Elastic ML 在 Elastic Stack（Elasticsearch 和 Kibana）内部的工作原理了。
 

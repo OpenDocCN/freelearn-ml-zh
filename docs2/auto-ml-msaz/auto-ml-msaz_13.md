@@ -1,4 +1,4 @@
-# *第十章*：创建端到端 AutoML 解决方案
+# 第十章：创建端到端 AutoML 解决方案
 
 现在你已经创建了机器学习（ML）管道，你可以学习如何在 Azure 的其他产品中使用它们，而不仅仅是 **Azure Machine Learning Service**（AMLS）。最有用的是 Azure Data Factory。
 

@@ -1,4 +1,4 @@
-# *第十三章*：使用 BigQuery ML 运行 TensorFlow 模型
+# 第十三章：使用 BigQuery ML 运行 TensorFlow 模型
 
 TensorFlow 是最常用且相关的机器学习（ML）框架之一。它允许数据科学家和机器学习工程师开发高级模型，同时也提供了极大的灵活性和丰富的数学函数集。
 
