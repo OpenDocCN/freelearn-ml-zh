@@ -1,6 +1,6 @@
-# Python 应用监督学习
+# ML.NET 机器学习实用指南
 
-> 原文：[`annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47`](https://annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47)
+> 原文：[`annas-archive.org/md5/33e1ce66b918ce1fb5ef8f09832c0dab`](https://annas-archive.org/md5/33e1ce66b918ce1fb5ef8f09832c0dab)
 > 
 > 译者：[飞龙](https://github.com/wizardforcel)
 > 

@@ -1,6 +1,6 @@
-# Python 应用监督学习
+# BigQueryML 机器学习
 
-> 原文：[`annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47`](https://annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47)
+> 原文：[`annas-archive.org/md5/129c41c69917f87275f2c178adc5dd48`](https://annas-archive.org/md5/129c41c69917f87275f2c178adc5dd48)
 > 
 > 译者：[飞龙](https://github.com/wizardforcel)
 > 

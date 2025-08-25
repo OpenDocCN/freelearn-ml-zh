@@ -1,6 +1,6 @@
-# Python 应用监督学习
+# 亚马逊 Sagemaker 机器学习秘籍
 
-> 原文：[`annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47`](https://annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47)
+> 原文：[`annas-archive.org/md5/ec0e40f9231d8bf8063b0b53abbdd2cf`](https://annas-archive.org/md5/ec0e40f9231d8bf8063b0b53abbdd2cf)
 > 
 > 译者：[飞龙](https://github.com/wizardforcel)
 > 

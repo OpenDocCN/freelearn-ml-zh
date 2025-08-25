@@ -1,6 +1,6 @@
-# Python 应用监督学习
+# 亚马逊 Sagemaker Studio 入门指南
 
-> 原文：[`annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47`](https://annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47)
+> 原文：[`annas-archive.org/md5/afbd2b4d91c08d0ea2b8e3d77eaaa2ac`](https://annas-archive.org/md5/afbd2b4d91c08d0ea2b8e3d77eaaa2ac)
 > 
 > 译者：[飞龙](https://github.com/wizardforcel)
 > 
