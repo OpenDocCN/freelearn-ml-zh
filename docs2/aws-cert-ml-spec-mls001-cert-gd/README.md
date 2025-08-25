@@ -1,6 +1,6 @@
-# Python 应用监督学习
+# AWS 认证机器学习专项 MLS001 认证指南
 
-> 原文：[`annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47`](https://annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47)
+> 原文：[`annas-archive.org/md5/94141408700b7dc2a64f2827465b2daf`](https://annas-archive.org/md5/94141408700b7dc2a64f2827465b2daf)
 > 
 > 译者：[飞龙](https://github.com/wizardforcel)
 > 
