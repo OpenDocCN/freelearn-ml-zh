@@ -1,0 +1,1347 @@
+- en: Assisted Drawing with CNNs
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: So far, we have seen how we can leverage Core ML and, in general, **machine
+    learning** (**ML**) to better understand the physical world we live in (perceptual
+    tasks). From the perspective of designing user interfaces, this allows us to reduce
+    the friction between the user and the system. For example, if you are able to
+    identify the user from a picture of their face, you can remove the steps required
+    for authentication, as demonstrated with Apple's Face ID feature which is available
+    on iPhone X. With Core ML, we have the potential to have devices better serve
+    us rather than us serving them. This adheres to a rule stated by developer Eric
+    Raymond that *a* *computer should never ask the user for any information that
+    it can auto detect, copy, or deduce*.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We can take this idea even further; given sufficient amounts of data, we can
+    anticipate what the user is trying to do and assist them in achieving their tasks.
+    This is the premise of this chapter. Largely inspired and influenced by Google's
+    AutoDraw AI experiment, we will implement an application that will attempt to
+    guess what the user is trying to draw and provide pre-drawn drawings that the
+    user can subtitute with (image search).
+  prefs: []
+  type: TYPE_NORMAL
+- en: In this chapter, we'll explore this idea by looking at how we can try to predict
+    what the user is trying to draw, and find suggestions for them to substitute it
+    with. We will be exploring two techniques. The first is using a **convolutional
+    neural network** (**CNN**), which we are becoming familiar with, to make the prediction,
+    and then look at how we can apply a context-based similarity sorting strategy
+    to better align the suggestions with what the user is trying to sketch. In the
+    next chapter, we will continue our exploration by looking at how we can use a
+    **recurrent neural network** (**RNN**) for the same task.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'By the end of this chapter, you will have:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Applied CNNs to the task of sketch recognition
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Gained further experience preparing input for a model
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Learned how feature maps can be extracted from CNNs and used to measure how
+    similar two images are
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: There is a lot to cover, so let's get started by building a simple drawing application.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Towards intelligent interfaces
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Before jumping into how, let's quickly discuss the why in order to motivate
+    us as well as encourage creative exploration of this concept. As alluded to in
+    the introduction, the first motivator is to reduce friction. Consider the soft
+    keyboard (keyboard with no physical buttons) on your phone; due to the constraints
+    of the medium, such as lack of space and feedback, inputting text without predictive
+    text would be cumbersome to the point of rendering it unusable. Similarly, despite the
+    convenience of drawing with our fingers, our fingers are not that accurate, which
+    makes things difficult to draw.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The other reason why this concept (augmentation) is advantageous is its ability
+    to democratize the technical skill of drawing. It's common for people to not even
+    attempt to draw because they have convinced themselves that it is beyond their
+    abilities, or possibly that we can enhance one's ability to draw. This was the
+    motivation behind the research project *ShadowDraw* presented at SIGGRAPH in 2011
+    by Yong Jae Lee, Larry Zitnick, and Michael Cohen. Their project had shown that
+    guiding the user with a shadow image underlying the user's stroke significantly
+    improved the quality of the output.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Finally, the last reason I want to highlight as to why this concept is interesting
+    is providing a way for users to work at a higher level of abstraction. For example,
+    imagine you were tasked with sketching out the storyboard for a new animation.
+    As you sketch out your scene, the system would substitute your sketches with their
+    associated characters and props as they were being worked on, allowing you to
+    design at a higher level of fidelity without sacrificing speed.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Hopefully, by now, I have convinced you of the potential opportunity of integrating
+    artificial intelligence into the user interface. Let's shift our focus to the how,
+    which we will begin to do in the next section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Drawing
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In this section, we will start off by inspecting an existing starter application
+    and implement the drawing functionality. Then, in the next section, we will look
+    at how we can augment the user by predicting what they are trying to draw and
+    providing substitutes they can swap with.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'If you haven''t done so, pull down the latest code from the accompanying repository
+    at [https://github.com/packtpublishing/machine-learning-with-core-ml](https://github.com/packtpublishing/machine-learning-with-core-ml).
+    Once downloaded, navigate to the `Chapter7/Start/QuickDraw/` directory and open
+    the project `QuickDraw.xcodeproj`. Once loaded, you will see the starter project
+    for this chapter, as shown in the following screenshot:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/ee8848b5-3cae-4787-ad88-f0bd5555414d.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: In the previous screenshot, you can see the application in its entirety; the
+    interface consists of a single view, which contains a simple toolbar down on the
+    left, allowing the user to toggle between sketch and move. There is a button for
+    clearing everything. The area to the right of the toolbar is the canvas, which
+    will be responsible for rendering what the user has drawn and any substituted
+    images. Finally, the top area consists of a label and collection view. The collection
+    view will make the suggested images that the user can substitute with available,
+    while the label is simply something that is made visible to make the user aware
+    of the purpose of the images presented to them via the collection view.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Our first task, as previously mentioned, will be to implement the functionality
+    of drawing. Some of the plumbing has already been done but a majority is left
+    out, giving us the opportunity to walk through the code to better understand the
+    architecture of the application and how ML has been integrated. Before jumping
+    into the code, let''s briefly discuss the purpose of each relevant source file
+    within the project. Like a contents page of a book, this will give you a better
+    sense of how things are stitched together and help you become more familiar with
+    the project:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '`SketchView`: This is a custom `UIControl` that will be responsible for capturing
+    the user''s touches and converting them to drawings. It will also be responsible
+    for rendering these drawings and substituted drawings, that is, sketches that
+    have been replaced. As seen earlier, this control has already been added to the
+    view. In this section, we will be implementing the functionality of touch events.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`SketchViewController`: The controller behind the main view, and it is responsible
+    for listening for when the user finishes editing (lifts their finder) and passing
+    the current sketch to the `QueryFacade` for processing. This controller is also
+    responsible for handling mode switches (sketching, moving, or clearing everything)
+    and dragging the sketches around the screen when in the move mode.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`BingService`: We will be using Microsoft''s Bing Image Search API to find
+    our suggested images. Bing provides a simple RESTful service to allow for image
+    searches, along with relevant parameters for fine-tuning of your search. Note:
+    we won''t be editing this.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`SketchPreviewCell`: A simple extension of the `UICollectionViewCell` class
+    that makes the `UIImageView` nested within the cell available. Note: we won''t
+    be editing this.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`CIImage`: This should look familiar to you—something we implemented back in
+    [Chapter 3](5cf26de5-5f92-4d1d-8b83-3e28368df233.xhtml), *Recognizing Objects
+    in the World*. We''ll use it extensively in this chapter for resizing and getting
+    access to raw data of the images (including the sketch).'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`Sketch`: This is our model of a sketch; we will implement two versions of
+    this. One is for rendering sketches from the user, created by strokes, and the
+    other is for encapsulating a `UIImage`, which has substituted a sketch (of strokes).'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`Stroke`: A data object that describes part of a sketch, essentially encoding
+    the path the user draws so that we can render it.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`QueryFacade`: This is the class that will do all the heavy lifting. Once the
+    user has finished editing, the view controller will export the sketch and pass
+    it to `QueryFacade`, which will be responsible for three things: guessing what
+    the user is trying to draw, fetching and downloading relevant suggestions, and
+    sorting them before passing back to the view controller to present to the user
+    via the collection view. An illustration of this process can be seen here:'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '![](img/9185a2cc-6f90-4294-8ae9-771fc9f21e0f.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Hopefully, you now have a better sense of how everything fits together; let''s
+    bring it to life, starting at the bottom and working our way up. Click on the
+    `Stroke.swift` file to focus the file in the main area; once open, you will be
+    greeted by an unassuming amount of code, as shown in this snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE0]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Just to recap, the purpose of a `Stroke` is to encapsulate a single path the
+    user has drawn such as to be able to recreate it when rendering it back onto the
+    screen. A path is nothing more than a list of points that are captured as the
+    user moves their finger along the screen. Along with the path, we will also store
+    a color and width of the stroke; these determine the visual aesthetics of the
+    stroke. Add the following properties to the `Stroke` class along with the class''s
+    constructor:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE1]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Next, we will add some computed properties to our `Stroke` class that we will
+    make use of when rendering and exporting the sketch. Starting with the property
+    to assist with rendering, we''ll be using the Core Graphics framework to render
+    the path of each stroke associated with a sketch. Rendering is done using a Core
+    Graphics context (`CGContext`), which conveniently exposes methods for rendering
+    a path using the methods `addPath` and `drawPath`, as we''ll see soon. The `addPath`
+    method expects a type of `CGPath`, which is nothing more than a series of drawing
+    instructions describing how to draw the path, something we can easily derive from
+    our stroke''s points. Let''s do that now; add the `path` property to the `Stroke`
+    class:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE2]'
+  prefs: []
+  type: TYPE_PRE
+- en: As mentioned previously, a `CGPath` is made up of a series of drawing instructions.
+    In the preceding snippet, we are creating a path using the points associated with
+    `Stroke`. All except the first connects each point by a line while the first simply
+    moves it into position.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The Core Graphics framework is a lightweight and low-level 2D drawing engine.
+    It includes drawing functionality, such as path-based drawing, transformations,
+    color management, off-screen rendering, patterns and shadings, image creation,
+    and image masking.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Our next two properties are used to obtain the bounding box of the sketch,
+    that is, the bounds that would encompass the minimum and maximum `x` and `y` positions
+    of all strokes. Implementing these within the stroke itself will make our task
+    easier later on. Add the properties `minPoint` and `maxPoint` to your `Stroke`
+    class, as shown in the following code block:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE3]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'For each property, we simply map each axis (*x* and *y*) into its own array
+    and then find either the minimum or maximum with respect to their method. This
+    now completes our `Stroke` class. Let''s move our way up the layers and implement
+    the functionality of the `Sketch` class. Select `Sketch.swift` from the left-hand-side
+    panel to open in the editing window. Before making amendments, let''s inspect
+    what is already there and what''s left to do:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE4]'
+  prefs: []
+  type: TYPE_PRE
+- en: Currently, no concrete class exists and this will be our task for this part
+    of this section. Before we start coding, let's review the responsibility of the
+    `Sketch`. As implied earlier, our `Sketch` will be responsible for rendering either
+    the collection of strokes associated with the user's drawing or an image that
+    the user has selected to substitute their own drawing with. For this reason, we
+    will be using two implementations of the `Stroke` class, one specifically for
+    dealing with strokes and the other for images; we'll start with the one responsible
+    for managing and rendering strokes.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Each implementation is expected to expose a `draw` and `exportSketch` method
+    and the properties `boundingBox` and `center`. Let's now briefly describe each
+    of these methods, starting with the most obvious: `draw`. We are expecting `Sketch`
+    to be responsible for rendering itself, either drawing each stroke or rendering
+    the assigned image depending on the type of sketch. The `exportSketch` method
+    will be used to obtain a rasterized version of the sketch and is dependent on
+    the `boundingBox` property, using it to determine what area of the canvas contains
+    information (that is, drawings). Then, it proceeds to rasterize the sketch to
+    a `CIImage`, which can then be used to feed the model. The last property, `center`,
+    returns and sets the center and is used when the user drags it around the screen
+    while in move mode, as described earlier.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s now proceed to implement a concrete version of a `Sketch` for dealing
+    with strokes. Add the following code in the `Sketch` class, still within the `Sketch.swift`
+    file:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE5]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Here, we have defined a new class, `StrokeSketch`, adhering to the `Sketch`
+    protocol. We have defined two properties: a list for holding all the strokes and
+    a string we can use to annotate the sketch. We have also exposed two helper methods.
+    One is for returning the current stroke, which will be used while the user is
+    drawing, and another is a convenient method for adding a new stroke.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s now implement the functionality that will be responsible for rendering
+    the sketch; add the following code to the `StrokeSketch` class:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE6]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We will implement the protocol''s `draw` method but delegate the task of drawing
+    to the methods `drawStrokes` and `drawStroke`. The `drawStrokes` method simply
+    iterates over all strokes currently held by our sketch class and passes them to
+    the `drawStoke` method, passing a reference of the Core Graphics context and current
+    `Stroke`. Within the `drawStroke` method, we first update the context''s stroke
+    color and line width, and then we proceed to add and draw the associated path.
+    With this now implemented, we have enough functionality for the user to draw.
+    But for completeness, let''s implement the functionality for obtaining the bounding
+    box, obtaining and updating the sketches, center, and rasterizing the sketch to
+    a `CIImage`. We start with the `boundingBox` property and associated methods.
+    Add the following code to the `StrokeSketch` class:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE7]'
+  prefs: []
+  type: TYPE_PRE
+- en: We first implement the properties `minPoint` and `maxPoint`; they resemble our
+    `minPoint` and `maxPoint` in our `Stroke` class. But instead of operating on a
+    collection of points, they operate on a collection of strokes and utilize their
+    counterparts (the `minPoint` and `maxPoint` properties of the `Stroke` class).
+    Next, we implement the `boundingBox` property, which creates a `CGRect` that encapsulates
+    these minimum and maximum points with the addition of some padding to avoid cropping
+    the stroke itself.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Now, we will implement the `center` property declared within the `Stroke` protocol.
+    The protocol of this is expecting both `get` and `set` blocks to be implemented.
+    The getter will simply return the center of the bounding box, which we have just
+    implemented, while the setter will iterate over all strokes and translate each
+    point using the difference of the previous center and new center value. Let''s
+    implement this now. Add the following code to your `StrokeSketch` class; here,
+    the `boundingBox` property is a good place:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE8]'
+  prefs: []
+  type: TYPE_PRE
+- en: Here, we first obtain the current center and then calculate the difference between
+    this and the new center assigned to the property. After that, we iterate over
+    all strokes and their corresponding points, adding this offset.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The final method we need to implement to adhere to the Sketch protocol is `exportSketch`.
+    The purpose of this method is to rasterize the sketch into an image (`CIImage`)
+    along with scaling it in accordance to the `size` argument, if available; otherwise
+    it defaults to the actual size of the sketch itself. The method itself is fairly
+    long but does nothing overly complicated. We have already implemented the functionality
+    to render the sketch (via the `draw` method). But rather than rendering to a Core
+    Graphic context that has been passed in by the view, we want to create a new context,
+    adjust the scale with respect to the size argument and the actual sketch size,
+    and finally create a `CIImage` instance from it.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'To make it more readable, let''s break the method down into these parts, starting
+    with calculating the scale. Then we''ll look at creating and rendering to a `context`,
+    and finally wrap it in a `CIImage`; add the following code to your `StrokeSketch`
+    class:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE9]'
+  prefs: []
+  type: TYPE_PRE
+- en: In this code block, we declare our method and implement the functionality that
+    determines the export size and scale. If no size is passed in, we simply fall
+    back to the size of the sketch's bounding box property. Finally, we ensure that
+    we have something to export.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Now our task is to create the `context` and render out our sketch with respect
+    to the derived scale; append the following code to the `exportSketch` method:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE10]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We use `UIGraphicsBeginImageContextWithOptions` from Core Graphics to create
+    a new `context` and obtain reference to this `context` using the `UIGraphicsGetCurrentContext`
+    method. `UIGraphicsBeginImageContextWithOptions` creates a temporary rendering
+    context, where the first argument is the target size for this context, the second
+    determines whether we are using an opaque or transparent background, and the final
+    argument determines the display scale factor. We then fill the `context` with
+    white and update the context''s `CGAffineTransform` property using the `scaleBy`
+    method. Subsequent draw methods, such as moving and drawing, will be transformed
+    by this, which nicely takes care of scaling for us. We then pass in this `context`
+    to our sketch''s `draw` method, which takes care of rendering the sketch to the
+    context. Our final task is obtaining the image from the `context` and wrapping
+    it in an instance of `CIImage`. Let''s do that now; append the following code
+    to your `exportSketch` method:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE11]'
+  prefs: []
+  type: TYPE_PRE
+- en: Thanks to the Core Graphics method `UIGraphicsGetImageFromCurrentImageContext`,
+    the task is painless. `UIGraphicsGetImageFromCurrentImageContext` returns an instance
+    of `CGImage` with a rasterized version of the context. To create an instance of
+    `CIImage`, we simply pass in our image to the constructor and return it.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We have finished the `Sketch` class—for now—and slowly we''re making our way
+    up the layers. Next, we will flesh our the `SketchView` class, which will be responsible for
+    facilitating the creation and drawing of the sketches. Select the `SketchView.swift`
+    file from the left-hand panel to bring it up in the editing window, and let''s
+    quickly review the existing code. `SketchView` has been broken down into chunks
+    using extensions; to make the code more legible, we will present each of the chunks
+    along with its core functionality:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE12]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The majority of the previous code should be self-explanatory, but I do want
+    to quickly draw your attention to the `currentSketch` property; we will use this
+    getter to provide a convenient way for us to get access to the last sketch, which
+    we will consider the currently active sketch. The setter is a little more ambiguous;
+    it provides us with an easy way of replacing the currently active (last) sketch,
+    which we will use when we come to handling the replacement of a user''s sketch
+    with an image suggested to them. The next chunk implements the drawing functionality,
+    which should look familiar to you; here, we simply clear the `context` and iterate
+    over all sketches, delegating the drawing to them:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE13]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Our final chunk will be responsible for implementing the drawing functionality;
+    currently, we have just stubbed out the methods to intercept the touch events.
+    Fleshing these methods out will be our next task:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE14]'
+  prefs: []
+  type: TYPE_PRE
+- en: Before we proceed with writing the code, let's briefly review what we are trying
+    to achieve here. As mentioned previously, `SketchView` will be responsible for
+    the functionality, allowing the user to sketch using their finger. We have spent
+    the past few pages building the data objects (`Stroke` and `Sketch`) to support
+    this functionality and it is here that we will make use of them.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'A touch begins when the user first touches the view (`beginTracking`). When
+    we detect this, we want to first check whether we have a currently active and
+    appropriate sketch; if not, then we will create one and set it as the current
+    sketch. Next, we will create a stroke that will be used to track the user''s finger
+    as they drag it around the screen. It is considered complete once the user has
+    either lifted their finger or their finger is dragged outside the bounds of the
+    view. We will then request the view to redraw itself and finally notify any listening
+    parties by broadcasting the event `UIControlEvents.editingDidBegin` action. Let''s
+    put this into code; append the following code to `beginTracking` within the `SketchView`
+    class:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE15]'
+  prefs: []
+  type: TYPE_PRE
+- en: As described in the iOS documentation, here, we are adhering to the target-action
+    mechanism, common in controls, by which we broadcast interesting events to simplify
+    how other classes can integrate with this control.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Next, we will implement the body of the `continueTracking` method; here, we
+    simply append a new point to the current sketches current stroke. As we did before,
+    we request that the view to redraw itself and broadcast the `UIControlEvents.editingChanged`
+    action. Append the following code to the body of the `continueTracking` method:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE16]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The previous code resembles much of what we need when the user lifts their
+    finger, with the exception of returning true (which tells the platform that this
+    view wishes to continue consuming events) and replacing the `UIControlEvents.editingChanged`
+    event with `UIControlEvents.editingDidEnd`. Add the following code to the body
+    of your `endTracking` method:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE17]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The final piece of code we need to add to the `SketchView` class is for dealing
+    with when the current finger tracking is canceled (triggered when the finger moves
+    off the current view or out of the device''s tracking range, that is, off the
+    screen). Here, we are simply treating it as if the tracking has finished, with
+    the exception of not adding the last point. Append the following code to the body
+    of your `cancelTracking` method:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE18]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'With our `SketchView` finished, our application now supports the functionality
+    of sketching. Now would be a good time to build and run the application on either
+    the simulator or device and check that everything is working correctly. If it
+    is, then you should be able to draw onto the screen, as shown in the following
+    image:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/51a522b4-2f37-42e4-9721-a5c2528ab43c.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: The functionality of moving and clearing the canvas has already been implemented;
+    tap on the Move button to drag your sketch around, and tap on the Trash button
+    to clear the canvas. Our next task will be to import a trained Core ML model and
+    implement the functionality of classifying and suggesting images to the user.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Recognizing the user's sketch
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In this section, we will first review the dataset and model we will use to guess
+    what the user is drawing. We will then proceed to integrate it into the workflow
+    of the user who is sketching, and implement the functionality to support swapping
+    out the user's sketch with a selected image.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Reviewing the training data and model
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'For this chapter, a CNN was trained on the dataset that was used and made available
+    from the research paper *How Do Humans Sketch Objects?* by Mathias Eitz, James
+    Hays, and Marc Alexa. The paper, presented at SIGGRAPH in 2012, compares the performance
+    of humans classifying sketches to that of a machine. The dataset consists of 20,000
+    sketches evenly distributed across 250 object categories, ranging from airplanes
+    to zebras; a few examples are shown here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/4070f2c9-8baa-4b34-8861-9dd706d5bdf7.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: From a perceptual study, they found that humans correctly identified the object
+    category (such as snowman, grapes, and many more) of a sketch 73% of the time.
+    The competitor, their ML model, got it right 56% of the time. Not bad! You can
+    find out more about the research and download the accompanying dataset here at
+    the official web page: [http://cybertron.cg.tu-berlin.de/eitz/projects/classifysketch/](http://cybertron.cg.tu-berlin.de/eitz/projects/classifysketch/).
+  prefs: []
+  type: TYPE_NORMAL
+- en: In this project, we will be using a slightly smaller set, with 205 out of the
+    250 categories; the exact categories can be found in the CSV file `/Chapter7/Training/sketch_classes.csv`,
+    along with the Jupyter Notebooks used to prepare the data and train the model.
+    The original sketches are available in SVG and PNG formats. Because we're using
+    a CNN, rasterized images (PNG) were used but rescaled from 1111 x 1111 to 256
+    x 256; this is the expected input of our model. The data was then split into a
+    training and a validation set, using 80% (64 samples from each category) for training
+    and 20% (17 samples from each category) for validation.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The architecture of the network was not too dissimilar to what has been used
+    in previous chapters, with the exception of a larger kernel window used in the
+    first layer to extract the spare features of the sketch, as presented here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/51fd8cbe-382a-45a9-8556-fc90861c62c2.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Recall that stacking convolution layers on top of each other allows the model
+    to build up a shared set of high-level patterns that can then be used to perform
+    classification, as opposed to using the raw pixels. The last convolution layer
+    is flattened and then fed into a fully connected layer, where the prediction is
+    finally made. You can think of these fully connected nodes as switches that turn
+    on when certain (high-level) patterns are present in the input, as illustrated
+    in the following diagram. We will return to this concept later on in this chapter
+    when we implement sorting:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/0dfa0a19-ff7b-422b-b116-4a951b3fde8b.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'After 68 iterations (epochs), the model was able to achieve an accuracy of
+    approximately 65% on the validation data. Not exceptional, but if we consider
+    the top two or three predictions, then this accuracy increases to nearly 90%.
+    The following diagram shows the plots comparing training and validation accuracy,
+    and loss during training:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/79e0e42a-6233-4050-b0c7-48826ad7c30d.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: With our model trained, our next step is to export it using the Core ML Tools
+    made available by Apple (as discussed in previous chapters) and imported into
+    our project.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Classifying sketches
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In this section, we will walk though importing the Core ML model into our project
+    and hooking it up, including using the model to perform inference on the user's
+    sketch and also searching and suggesting substitute images for the user to swap
+    their sketch with. Let's get started with importing the Core ML model into our
+    project.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Locate the model in the project repositories folder `/CoreMLModels/Chapter7/cnnsketchclassifier.mlmodel`;
+    with the model selected, drag it into your Xcode project, leaving the defaults
+    for the Import options. Once imported, select the model to inspect the details,
+    which should look similar to the following screenshot:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/9be8dc44-63da-4ee5-9107-3beb970920b6.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: As with all our models, we verify that the model is included in the target by
+    verifying that the appropriate Target Membership is checked, and then we turn
+    our attention to the inputs and outputs, which should be familiar by now. We can
+    see that our model is expecting a single-channel (grayscale) 256 x 256 image and
+    it returns the dominate class via the classLabel property of the output, along
+    with a dictionary of probabilities of all classes via the classLabelProbs property.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'With our model now imported, let''s discuss the details of how we will be integrating
+    it into our project. Recall that our `SketchView` emits the events `UIControlEvents.editingDidStart`,
+    `UIControlEvents.editingChanged`, and `UIControlEvents.editingDidEnd` as the user
+    draws. If you inspect the `SketchViewController`, you will see that we have already
+    registered to listen for the `UIControlEvents.editingDidEnd` event, as shown in
+    the following code snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE19]'
+  prefs: []
+  type: TYPE_PRE
+- en: Each time the user ends a stroke, we will start the process of trying to guess
+    what the user is sketching and search for suitable substitutes. This functionality
+    is triggered via the `.editingDidEnd` action method `onSketchViewEditingDidEnd`,
+    but will be delegated to the class `QueryFacade`, which will be responsible for
+    implementing this functionality. This is where we will spend the majority of our
+    time in this section and the next section. It's also probably worth highlighting
+    the statement `queryFacade.delegate = self` in the previous code snippet. `QueryFacade`
+    will be performing most of its work off the main thread and will notify this delegate
+    of the status and results once finished, which we will get to in a short while.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s start by implementing the functionality of the `onSketchViewEditingDidEnd`
+    method, before turning our attention to the `QueryFacade` class. Within the `SketchViewController`
+    class, navigate to the `onSketchViewEditingDidEnd` method and append the following
+    code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE20]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Here, we are getting the current sketch, and returning it if no sketch is available
+    or if it''s not a `StrokeSketch`; we hand it over to our `queryFacade` (an instance
+    of the `QueryFacade` class). Let''s now turn our attention to the `QueryFacade`
+    class; select the `QueryFacade.swift` file from the left-hand panel within Xcode
+    to bring it up in the editor area. A lot of plumbing has already been implemented
+    to allow us to focus our attention on the core functionality of predicting, searching,
+    and sorting. Let''s quickly discuss some of the details, starting with the properties:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE21]'
+  prefs: []
+  type: TYPE_PRE
+- en: '`QueryFacade` is only concerned with the most current sketch. Therefore, each
+    time a new sketch is assigned using the `currentSketch` property, `queryCanceled`
+    is set to `true`. During each task (such as performing prediction, search, and
+    downloading), we check the `isInterrupted` property, and if `true`, we will exit
+    early and proceed to process the latest sketch.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'When you pass the sketch to the `asyncQuery` method, the sketch is assigned
+    to the `currentSketch` property and then proceeds to call `queryCurrentSketch` to
+    do the bulk of the work, unless there is one currently being processed:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE22]'
+  prefs: []
+  type: TYPE_PRE
+- en: Eventually, we end up in the `queryCurrentSketch` method, where we will now
+    turn our attention and implement the required functionality. But before doing
+    so, let's quickly discuss what we'll be doing.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Recall that our goal is to assist the user in quickly sketching out a scene;
+    we plan on achieving this by anticipating what the user is trying to draw and
+    suggesting images, which the user can swap with their sketch. Prediction is a
+    major component of this system and is made using the trained model we have just
+    imported, but recall that we achieved approximately 65% accuracy on the validation
+    dataset. This leaves a lot of room for errors, potentially inhibiting the user
+    rather than augmenting them. To mitigate this and provide more utility, we will
+    take the top 3-4 predictions and pull down the relevant images rather than relying
+    on a single classification.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We pass these predicted classes to Microsoft's Bing Image Search API to find
+    relevant images and then proceed to download each of them (admittedly not the
+    most optimized approach, but sufficient for realizing this prototype). Once we
+    have downloaded the images, we will perform some further processing by sorting
+    the images based on how similar each image is to what the user has sketched; we
+    will return to this in the next section, but for now we will concentrate on the
+    steps preceding this. Let's move on to guessing what the user is trying to do.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'As we have done previously, let''s work bottom-up by implementing all the supporting
+    methods before we tie everything together within the `queryCurrentSketch` method.
+    Let''s start by declaring an instance of our model; add the following variable
+    within the `QueryFacade` class near the top:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE23]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Now, with our model instantiated and ready, we will navigate to the `classifySketch`
+    method of the `QueryFacade` class; it is here that we will make use of our imported
+    model to perform inference, but let''s first review what already exists:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE24]'
+  prefs: []
+  type: TYPE_PRE
+- en: Here, we see that the `classifySketch` is overloaded, with one method accepting
+    a `Sketch` and the other a `CIImage`. The former, when called, will obtain the
+    rasterize version of the sketch using the `exportSketch` method. If successful,
+    it will resize the rasterized image using the `targetSize` property. Then, it
+    will rescale the pixels before passing the prepared `CIImage` along to the alternative `classifySketch`
+    method.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Pixel values are in the range of 0-255 (per channel; in this case, it's just
+    a single channel). Typically, you try to avoid having large numbers in your network.
+    The reason is that they make it more difficult for your model to learn (converge)—somewhat
+    analogous to trying to drive a car whose steering wheel can only be turned hard
+    left or hard right. These extremes would cause a lot of over-steering and make
+    navigating anywhere extremely difficult.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The second `classifySketch` method will be responsible for performing the actual
+    inference; we have already seen how we can do this in [Chapter 3](5cf26de5-5f92-4d1d-8b83-3e28368df233.xhtml), *Recognizing
+    Objects in the world*. Add the following code within the `classifySketch(image:CIImage)`
+    method:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE25]'
+  prefs: []
+  type: TYPE_PRE
+- en: Here, we use the images, `toPixelBuffer` method, an extension we added to the
+    `CIImage` class back in [Chapter 3](5cf26de5-5f92-4d1d-8b83-3e28368df233.xhtml),
+    *Recognizing Objects in the World*, to obtain a grayscale `CVPixelBuffer` representation
+    of itself. Now, with reference to its buffer, we pass it onto the `prediction`
+    method of our model instance, `sketchClassifier`, to obtain the probabilities
+    for each label. We finally sort these probabilities from the most likely to the
+    least likely before returning the sorted results to the caller.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Now, with some inkling as to what the user is trying to sketch, we will proceed
+    to search and download the ones we are most confident about. The task of searching
+    and downloading will be the responsibility of the `downloadImages` method within
+    the `QueryFacade` class. This method will make use of an existing `BingService`
+    that exposes methods for searching and downloading images. Let''s hook this up
+    now; jump into the `downloadImages` method and append the following highlighted
+    code to its body:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE26]'
+  prefs: []
+  type: TYPE_PRE
+- en: The `downloadImages` method takes the arguments `searchTerms`, `searchTermsCount`,
+    and `searchResultsCount`. The `searchTerms` is a sorted list of labels returned
+    by our `classifySketch` method, from which the `searchTermsCount` determines how
+    many of these search terms we use (defaulting to 4). Finally, `searchResultsCount`
+    limits the results returned for each search term.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The preceding code performs a sequential search using the search terms passed
+    into the method. And as mentioned previously, here we are using Microsoft's Bing
+    Image Search API, which requires registration, something we will return to shortly.
+    After each search, we check the property `isInterrupted` to see whether we need
+    to exit early; otherwise, we continue on to the next search.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The result returned by the search includes a URL referencing an image; we will
+    use this next to download the image with each of the results, before returning
+    an array of `CIImage` to the caller. Let''s add this now. Append the following
+    code to the `downloadImages` method:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE27]'
+  prefs: []
+  type: TYPE_PRE
+- en: As before, the process is synchronous and after each download, we check the
+    `isInterrupted` property to see if we need to exit early, otherwise returning
+    the list of downloaded images to the caller.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'So far, we have implemented the functionality to support prediction, searching,
+    and downloading; our next task is to hook all of this up. Head back to the `queryCurrentSketch`
+    method and add the following code within the `queryQueue.async` block. Ensure
+    that you replace the `DispatchQueue.main.async` block:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE28]'
+  prefs: []
+  type: TYPE_PRE
+- en: It's a large block of code but nothing complicated; let's quickly walk our way
+    through it. We start by calling the `classifySketch` method we just implemented.
+    As you may recall, this method returns a sorted list of label and probability
+    peers unless interrupted, in which case `nil` will be returned. We should handle
+    this by notifying the delegate before exiting the method early (a check we apply
+    to all of our tasks).
+  prefs: []
+  type: TYPE_NORMAL
+- en: Once we've obtained the list of sorted labels, we pass them to the `downloadImages`
+    method to receive the associated images, which we then pass to the `sortByVisualSimilarity`
+    method. This method currently returns just the list of images, but it's something
+    we will get back to in the next section. Finally, the method passes the status
+    and sorted images wrapped in a `QueryResult` instance to the delegate via the
+    main thread, before checking whether it needs to process a new sketch (by calling
+    the `processNextQuery` method).
+  prefs: []
+  type: TYPE_NORMAL
+- en: At this stage, we have implemented all the functionality required to download
+    our substitute images based on our guess as to what the user is currently sketching.
+    Now, we just need to jump into the `SketchViewController` class to hook this up,
+    but before doing so, we need to obtain a subscription key to use Bing's Image
+    Search.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Within your browser, head to [https://azure.microsoft.com/en-gb/services/cognitive-services/bing-image-search-api/](https://azure.microsoft.com/en-gb/services/cognitive-services/bing-image-search-api/)
+    and click on the Try Bing Image Search API, as shown in the following screenshot:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/a7e42186-fa61-40fd-a2c0-8054baed9ee7.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'After clicking on Try Bing Image Search API, you will be presented with a series
+    of dialogs; read, and once (if) agreed, sign in or register. Continue following
+    the screens until you reach a page informing you that the Bing Search API has
+    been successfully added to your subscription, as shown in the following screenshot:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/ef546e09-8bd5-4d38-b920-8c5387185db8.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'On this page, scroll down until you come across the entry Bing Search APIs
+    v7\. If you inspect this block, you should see a list of Endpoints and Keys. Copy
+    and paste one of these keys within the `BingService.swift` file, replacing the
+    value of the constant `subscriptionKey`; the following screenshot shows the web
+    page containing the service key:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/13940879-843b-4e07-b6fa-e1c5a76483be.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Return to the `SketchViewController` by selecting the `SketchViewController.swift`
+    file from the left-hand panel, and locate the method `onQueryCompleted`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE29]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Recall that this is a method signature defined in the `QueryDelegate` protocol,
+    which the `QueryFacade` uses to notify the delegate if the query fails or completes.
+    It is here that we will present the matching images we have found through the
+    process we just implemented. We do this by first checking the status. If deemed
+    successful (greater than zero), we remove every item that is referenced in the `queryImages`
+    array, which is the data source for our `UICollectionView` used to present the
+    suggested images to the user. Once emptied, we iterate through all the images
+    referenced within the `QueryResult` instance, adding them to the `queryImages`
+    array before requesting the `UICollectionView` to reload the data. Add the following
+    code to the body of the `onQueryCompleted` method:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE30]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'There we have it; everything is in place to handle guessing of what the user
+    draws and present possible suggestions. Now is a good time to build and run the
+    application on either the simulator or the device to check whether everything
+    is working correctly. If so, then you should see something similar to the following:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/dc92b5f4-4c43-459a-9714-ad6669acfa16.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: There is one more thing left to do before finishing off this section. Remembering
+    that our goal is to assist the user to quickly sketch out a scene or something
+    similar, our hypothesis is that guessing what the user is drawing and suggesting
+    ready-drawn images will help them achieve their task. So far, we have performed
+    prediction and provided suggestions to the user, but currently the user is unable
+    to replace their sketch with any of the presented suggestions. Let's address this
+    now.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Our `SketchView` currently only renders `StrokeSketch` (which encapsulates
+    the metadata of the user''s drawing). Because our suggestions are rasterized images,
+    our choice is to either extend this class (to render strokes and rasterized images)
+    or create a new concrete implementation of the `Sketch` protocol. In this example,
+    we will opt for the latter and implement a new type of `Sketch` capable of rendering
+    a rasterized image. Select the `Sketch.swift` file to bring it to focus in the
+    editor area of Xcode, scroll to the bottom, and add the following code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE31]'
+  prefs: []
+  type: TYPE_PRE
+- en: We have defined a simple class that is referencing an image, origin, size, and
+    label. The origin determines the top-left position where the image should be rendered,
+    while the size determines its, well, size! To satisfy the `Sketch` protocol, we
+    must implement the properties `center` and `boundingBox` along with the methods
+    `draw` and `exportSketch`. Let's implement each of these in turn, starting with
+    `boundingBox`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The `boundingBox` property is a computed property derived from the properties
+    `origin` and `size`. Add the following code to your `ImageSketch` class:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE32]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Similarly, `center` will be another computed property derived from the origin
+    and size properties, simply translating the `origin` with respect to the `size`.
+    Add the following code to your `ImageSketch` class:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE33]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The `draw` method will simply use the passed-in `context` to render the assigned
+    `image` within the `boundingBox`; append the following code to your `ImageSketch` class:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE34]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Our last method, `exportSketch`, is also fairly straightforward. Here, we create
+    an instance of `CIImage`, passing in the `image` (of type `UIImage`). Then, we
+    resize it using the extension method we implemented back in [Chapter 3](5cf26de5-5f92-4d1d-8b83-3e28368df233.xhtml),
+    *Recognizing Objects in the World*. Add the following code to finish off the `ImageSketch`
+    class:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE35]'
+  prefs: []
+  type: TYPE_PRE
+- en: We now have an implementation of `Sketch` that can handle rendering of rasterized
+    images (like those returned from our search). Our final task is to swap the user's
+    sketch with an item the user selects from the `UICollectionView`. Return to `SketchViewController`
+    class by selecting the `SketchViewController.swift` from the left-hand-side panel
+    in Xcode to bring it up in the editor area. Once loaded, navigate to the method
+    `collectionView(_ collectionView:, didSelectItemAt:)`; this should look familiar
+    to most of you. It is the delegate method for handling cells selected from a `UICollectionView`
+    and it's where we will handle swapping of the user's current sketch with the selected
+    item.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s start by obtaining the current sketch and associated image that was
+    selected. Add the following code to the body of the `collectionView(_collectionView:,didSelectItemAt:)`
+    method:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE36]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Now, with reference to the current sketch and image, we want to try and keep
+    the size relatively the same as the user''s sketch. We will do this by simply
+    obtaining the sketch''s bounding box and scaling the dimensions to respect the
+    aspect ratio of the selected image. Add the following code, which handles this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE37]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Next, we obtain the origin (top left of the image) by obtaining the center
+    of the sketch and offsetting it relative to its width and height. Do this by appending
+    the following code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE38]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We can now use the image, size, and origin to create an `ImageSketch`, and
+    replace it with the current sketch simply by assigning it to the `currentSketch`
+    property of the `SketchView` instance. Add the following code to do just that:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE39]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Finally, some housekeeping; we''ll clear the `UICollectionView` by removing
+    all images from the `queryImages` array (its data source) and request it to reload
+    itself. Add the following block to complete the `collectionView(_ collectionView:,didSelectItemAt:)` method:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE40]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Everything is now hooked up; we have implemented all of the functionality that
+    guesses what the user is drawing, presents suggestions, and allows the user to
+    swap their rough sketch with an alternative. Now is a good time to build and run
+    to ensure that everything is working as planned. If so then, you should be able
+    to swap out your sketch with one of the suggestions presented at the top, as shown
+    in the following screenshot:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/46e73980-ff72-45ff-a499-9b7c0a43bc23.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: One last section before wrapping this chapter up. In this section, we will look
+    at a technique to fine-tune our search results to better match what the user has
+    drawn.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Sorting by visual similarity
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: So far, we have achieved what we set out to do, that is, inferring what the
+    user is trying to draw and providing them with suggestions that they can swap
+    their sketch with. But our solution currently falls short of understanding the
+    user. Sure, it may predict correctly and provide the correct category of what
+    the user is drawing, but it dismisses any style or details of the user's drawing.
+    For example, if the user is drawing, and only wanting, a cats head, our model
+    may predict correctly that the user is drawing a cat but ignore the fact that
+    their drawing lacks a body. It is likely to suggest images of full-bodied cats.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In this section, we will look at a technique to be more sensitive with respect
+    to the user''s input, and provide a very rudimentary solution but one that can
+    be built upon. This approach will attempt to sort images by how similar they are
+    with the user''s sketch. Before jumping into the code, let''s take a quick detour
+    to discuss similarity metrics, by looking at how we can measure the similarity
+    between something in a different domain, such as sentences. The following are
+    three sentences we will base our discussion on:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**"the quick brown fox jumped over the lazy dog"**'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**"the quick brown fox runs around the lazy farm dog" **'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**"machine learning creates new opportunities for interacting with computers" **'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'This exercise will be familiar to those withttps://packt-type-cloud.s3.amazonaws.com/uploads/sites/1956/2018/06/B09544_08_14.pngal
+    representation. Here, we will create a vocabulary with all words that exist in
+    our corpus (the three sentences, in this instance) and then create vectors for
+    each sentence by incrementing the sentences words with their corresponding index
+    in the vocabulary, as shown in the following screenshot:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/67898693-ff13-4279-996c-b20e8f0c25fa.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'With our sentences now encoded as vectors, we can measure the similarity between
+    each sentence by performing distance operations such as **Euclidean Distance**
+    and **Cosine Distance**. The equations for each of these are as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/ddb57d2f-f085-4302-aa51-7df5ee99d794.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Let''s now calculate the distances between each of the sentences and compare
+    the results. See the following screenshot for the results:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/1430e9fd-3ceb-460b-9e98-1765d1101a2d.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: As you would expect, the sentences **"the quick brown fox jumped over the lazy
+    dog"** and **"the quick brown fox ran around the lazy farm dog"** have a smaller
+    distance between them compared to that for the sentence **"machine learning creates
+    new opportunities for interacting with computers"**. If you were to build a recommendation
+    engine, albeit a naive one, you would likely rank the sentences with more words
+    in common higher than the ones with less words in common. The same is true for
+    images, but unlike sentences, where we are using words as features, we use the
+    features derived from layers of the network.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Recall that our network for classifying sketches consists of a stack of convolution
+    layers, with each layer building higher level patterns based on the patterns from
+    the layers below it. Intuitively, we can think of these higher level patterns
+    as our words (features) and the fully connected network as the sentences representing
+    what words are present for a given image. To make this clearer, a simple illustration
+    is shown here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/9e694871-cf9c-422e-8aa3-5bb4c45f2186.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: Examining the figure, we can see the set of feature maps on the left, which
+    can be thought of as convolutional kernels used to extract horizontal, vertical,
+    left, and right diagonal edges from the images.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the middle are the samples from which we will be extracting these features.
+    Finally, on the far right, we have the extracted features (histogram) of each
+    of the samples. We use these extracted features as our feature vectors and can
+    use them to calculate the distance between them, as we saw in the previous figure.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'So, if we are able to extract this type of feature vector from an image, then
+    we will also be able to sort them relative to the user''s sketch (using its extracted
+    feature vectors). But how do we get this feature vector? Recall that we already
+    have a network that has learned high-level feature maps. If we are able to obtain
+    a vector indicating which of these features are most active for a given image,
+    then we can use this vector as our feature vector and use it to calculate the
+    distance between other images, such as the user''s sketch and downloaded images.
+    This is exactly what we will do; instead of feeding the network through a softmax
+    activation layer (to perform prediction on the classes), we will remove this layer
+    from our network, leaving the last fully connected layer as the new output layer.
+    This essentially provides us with a feature vector that we can then use to compare
+    with other images. The following figure shows how the updated network looks diagrammatically:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/834497fa-4925-47df-bb6c-78269ebd85cd.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: If you compare this with the network presented in the previous section, you
+    will notice that the only change is the absence of the fully connected layer.
+    The output of this network is now a feature vector of size 512\. Let's make this
+    concept more concrete by playing with it.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'I assume you have already pulled down the accompanying code from the repository [https://github.com/packtpublishing/machine-learning-with-core-ml](https://github.com/packtpublishing/machine-learning-with-core-ml).
+    Navigate to the `Chapter7/Start/QuickDraw/` directory and open the playground
+    `FeatureExtraction.playground`. This playground includes the generated code and
+    compiled model described earlier, along with some views and helper methods that
+    we will make use of; all should be fairly self-explanatory. Let''s begin by importing
+    some dependencies and declaring some variables by adding the following code to
+    the top of the playground:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE41]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Here, we declare two rectangles; they will determine the frame of the views
+    we will create later and, most importantly, instantiate our model, which we will
+    use to extract features from each image. Talking about this, if you expand the
+    `Resources` folder on the left-hand panel, then again in the `Images` folder,
+    you''ll see the images we will be using, as shown here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/dd2707ae-53ab-4857-8a6f-16e9ce4bf209.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'As we discussed, we want to be able to sort the images so that the suggested
+    images closely match what the user is drawing. Continuing on from our example
+    from the user drawing just a cat''s head, we want a way to sort out the images
+    so that those with just a cat''s head show up before those with a cat and its
+    body. Let''s continue on with our experiment; add the following methods, which
+    we will use to extract the features from a given image:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE42]'
+  prefs: []
+  type: TYPE_PRE
+- en: Most of the code should look familiar to you; we have an overloaded method for
+    handling `UIImage`, which simply creates a `CIImage` instance of it before passing
+    it to the other method. This will handle preparing the image and finally feed
+    it into the model. Once inference has been performed, we return the model's property
+    `classActiviations` as discussed previously. This is the output from the last
+    fully connected layer, which we'll use as our feature vector for comparison.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Next, we will load all of our images and extract the features from each of
+    them. Add the following code to your playground:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE43]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'With our images and features now available, let''s inspect a few of the images
+    and their feature maps. We can do this by creating an instance of `HistogramView`
+    and passing in the features. Here is the code to do just that:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE44]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'You can manually inspect each of them by clicking on the eye icon within the
+    preview view associated with the state, as shown in the following screenshot:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/454353fc-845b-47b1-a7e4-d2d52c49cb66.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Inspecting each of them individually doesn''t provide much insight. So in this
+    figure, I have presented three images that we can inspect:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/22bb497d-0132-458b-bee8-8c3d0c2cefc2.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: Without too much focus, you get a sense that the cat heads' feature vectors
+    are more closely aligned than the feature vector of the side on view of the cat,
+    especially on the right-hand of the plot.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s further explore this by calculating the cosine distance between each
+    of the images and plotting them on a heat map. Start by adding the following code;
+    it will be used to calculate the cosine distance:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE45]'
+  prefs: []
+  type: TYPE_PRE
+- en: The details of the equation were presented before and this is just a translation
+    of these into Swift; what is important is the use of the **vector Digital Signal
+    Processing** (**vDSP **) functions available within iOS's Accelerate framework.
+    As described in the documentation, the vDSP API provides mathematical functions
+    for applications such as speech, sound, audio, video processing, diagnostic medical
+    imaging, radar signal processing, seismic analysis, and scientific data processing.
+    Because it's built on top of Accelerate, it inherits the performance gains achieved
+    through **single instruction, multiple data** (**SIMD**) running the same instruction
+    concurrently across a vector of data—something very important when dealing with
+    large vectors such as those from neural networks. Admittedly, at first it seems
+    unintuitive, but the documentation provides most of what you'll need to make good
+    use of it; let's inspect the `magnitude` method to get a feel for it.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We use the `vDSP_svsD` function to calculate the magnitude of our feature vectors;
+    the function is expecting these arguments (in order): a pointer to the data (`UnsafePointer<Double>`),
+    strides (`vDSP_Stride`), a pointer to the output variable (`UnsafeMutablePointer<Double>`),
+    and finally the length (`vDSP_Length`). Most of the work is in preparing these
+    arguments, as shown in this code snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE46]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'After this function returns, we will have the calculated the magnitude of a
+    given vector stored in the `output` variable. Let''s now make use of this and
+    calculate the distance between each of the images. Add the following code to your
+    playground:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE47]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Here, we are iterating through each of the images twice to create a matrix
+    (multi-dimensional array, in this case) to store the distances (similarities)
+    between each of the images. We will now feed this, along with the associated images,
+    to an instance of `HeatmapView`, which will visualize the distances between each
+    of the images. Add the following code and then expand the view by clicking on
+    the eye icon within the results panel to see the result:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE48]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'As mentioned previously, by previewing the view, you should see something similar
+    to the following figure:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/14695986-814c-4877-bbda-7c1ef8f298e0.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'This visualization shows the distance between each of the images; the darker
+    the cell, the closer they are. For example, if you look at cell 1 x 1, cell 2
+    x 2, and so on, you will see that each of these cells are darker (a distance of
+    0 because they are the same image). You''ll also notice another pattern form:
+    clusters of four cells diagonally down the plot. This, consequently, was our goal—to
+    see whether we could sort sketches by their similarities, such as cats drawn front
+    on, cat heads, and cats drawn side on.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Armed with our new knowledge, let's return to the iPhone project `QuickDraw.xcodeproj`,
+    where we will copy this code across and implement sorting.
+  prefs: []
+  type: TYPE_NORMAL
+- en: With the `QuickDraw` project now open, locate the feature extractor model from the
+    project repositories folder `/CoreMLModels/Chapter7/cnnsketchfeatureextractor.mlmodel`.
+    With the model selected, drag it onto your Xcode project, leaving the defaults
+    for the import options.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'With the model now imported, select the file `QueryFacade.swift` from the left-hand
+    panel (within Xcode) to bring it up in the editor area. With the class open, add
+    an instance variable to the top of the `QueryFacade` class, as shown here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE49]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Next, copy across the methods `extractFeaturesFromImage`, `cosineSimilarity`,
+    `dot`, and `magnitude` from your playground to the `QueryFacade` class, as shown
+    here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE50]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'With our methods now it place, it''s time to make use of them. Locate the method `sortByVisualSimilarity(images:[CIImage],
+    sketchImage:CIImage)`; this method is already called within the `queryCurrentSketch`
+    method, but currently it just returns the list that was passed in. It''s within
+    this method that we want to add some order by sorting the list so that the images
+    most similar to the user''s sketch are first. Let''s build this up in chunks,
+    starting with extracting the image features of the user''s sketch. Add the following
+    code to the body of the `sortByVisualSimilarity` method, replacing its current
+    contents:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE51]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Next, we want the features of all the other images, which we do simply by iterating
+    over the list and storing them in an array. Add the following code to do just
+    that:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE52]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'As we did previously, after each image, we check whether the process has been
+    interrupted by checking the property `isInterrupted`, before moving on to the
+    next image. Our final task is to sort and return this images; add the following
+    code to the body of the method `sortByVisualSimilarity`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE53]'
+  prefs: []
+  type: TYPE_PRE
+- en: With that implemented, now is a good time to build and run your project to see
+    that is everything is working, and compare the results with the previous build.
+  prefs: []
+  type: TYPE_NORMAL
+- en: And this concludes the chapter; we will briefly wrap up in the summary before
+    moving on to the next chapter.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Summary
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: You are still here. I'm impressed, and congratulations! It was a long but fruitful
+    chapter. We saw another example of how we can apply CNNs, and in doing so, we
+    further developed our understanding of how they work, how to tune them, and ways
+    in which we can modify them. We saw how we could use the learned features not
+    just for classification but ranking, a technique used in many domains such as
+    fashion discovery and recommendation engines. We also spent a significant amount
+    of time building a drawing application, which we will continue to use in the next
+    chapter. There, we will again explore how to perform sketch classification using
+    a RNN trained on Google's `QuickDraw` dataset. Lots of fun ahead, so let's get
+    started.
+  prefs: []
+  type: TYPE_NORMAL

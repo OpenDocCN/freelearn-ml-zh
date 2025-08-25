@@ -1,0 +1,1055 @@
+- en: Operationalizing R Code
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: As you learned the essentials of predictive modeling and explored advanced predictive
+    algorithms available in `RevoScaleR` package in the previous chapter, now is a
+    good time to learn how to operationalize it. This chapter discusses how you can
+    operationalize R Prediction models in both SQL Server 2016 and SQL Server 2017.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The idea of marrying SQL Server and machine learning is to keep analytics close
+    to the data and eliminate costs, as well as security risks. In addition, using
+    Microsoft R libraries helps to improve the scale and performance of your R solutions.
+  prefs: []
+  type: TYPE_NORMAL
+- en: This chapter outlines the steps for operationalizing your R prediction models
+    into a powerful workflow integrated in SQL Server. First, we'll discuss the concept
+    of integrating an existing R model into SQL Server using the extensibility framework,
+    native scoring (SQL Server 2017), and real-time scoring. Then, we'll talk about
+    how to manage roles and permissions to run an R model in SQL Server. You will
+    also learn how to use the right tools to operationalize the R model in SQL Server,
+    and how to execute R model as part of workflows, PowerShell, SQL Server Agent
+    jobs, and SSIS.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Integrating an existing R model
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'This section takes an existing R code that generates the R model and runs against
+    the SQL Server dataset into a workflow, where the model can be refreshed and evaluated
+    on a regular basis, then used for predictive analysis. The following figure shows
+    a typical predictive modeling workflow in an R script:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/00108.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 7.1: Typical predictive modeling workflow'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'To integrate this script in SQL Server, you''ll need to organize the workflow
+    into three steps:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Prepare the data for training
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Train and save the model using T-SQL
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Operationalize the model
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: In this section, the last two steps will use `sp_execute_external_script`, which
+    invokes an R process. These steps are using the SQL Server extensibility framework,
+    described later on.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Prerequisite – prepare the data
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'We will use the NYC Taxi sample data from the *R: In-Database Analytics for
+    SQL Developers* tutorial, as referred to at [https://github.com/Microsoft/sql-server-samples/blob/master/samples/features/r-services/predictive-analytics/scripts/Lab.md](https://github.com/Microsoft/sql-server-samples/blob/master/samples/features/r-services/predictive-analytics/scripts/Lab.md).'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'You can also download the `nyctaxi_sample.csv` file from the Packt code file
+    repository, and execute the following `bcp` command:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE0]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'where:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '`<database name>` is the name of the database'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`<file path>` is the location to the `nyctaxi_sample.csv` file'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`<server name>` is your server name.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'As an example:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE1]'
+  prefs: []
+  type: TYPE_PRE
+- en: In this scenario, the goal is to predict the likelihood of tipping. As part
+    of the process, we will create a logistic regression model, along with the model's
+    **Receiver Operating Characteristic** (**ROC**) curve and its **Area Under Curve**
+    (**AUC**). An ROC is a plot of the true positive rate against the false positive
+    rate for various threshold points of a diagnostic test. The closer the curve comes
+    to the diagonal of the ROC space, the less accurate the test.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The closer the curve comes to the left and top borders, the more accurate it
+    is. AUC provides the test of accuracy in numerical form. Luckily, both the ROC
+    plot and AUC value can be easily calculated in R.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Once we are comfortable that the model is accurate enough, we can then share
+    it and reuse it for predicting if a taxi driver will be tipped, based on the inputs
+    provided.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Here''s the table definition of the NYC Taxi dataset that we will use for training:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE2]'
+  prefs: []
+  type: TYPE_PRE
+- en: There are a few variables that we can start using to analyze the likelihood
+    of a taxi driver being tipped. As you learned in the previous chapter, you'll
+    want to try out a few variables and algorithms to determine which one is more
+    accurate. This can involve a few iterative processes, and that's the beauty of
+    data science—you keep experimenting.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'To start with, let''s use the following variables:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '| **Variable** | **Type** | **Column Name** |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Taxi driver is tipped (yes/no) | Output | `tipped` |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Passenger count | Input | `passenger_count` |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Trip time in seconds | Input | `trip_time_in_seconds` |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Trip distance as per the taxi meter | Input | `trip_distance` |'
+  prefs: []
+  type: TYPE_TB
+- en: '| The direct distance based on the longitudes and the latitudes between the
+    two locations | Input | `pickup_longitude``pickup_latitude``dropoff_longitude``dropoff_latitude`
+    |'
+  prefs: []
+  type: TYPE_TB
+- en: 'In order to make it easier to calculate the direct distance, let''s define
+    the following function:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE3]'
+  prefs: []
+  type: TYPE_PRE
+- en: Here's the table definition of the trained prediction model(s) that we want
+    to store in the database. One of the advantages in storing the trained prediction
+    model(s) in a table is that we can easily reuse it later and can version control
+    our experiments.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Please note that there is a column called `IsRealTimeScoring`. SQL Server 2017
+    adds a new capability for real-time scoring, which will be discussed in the *Integrating
+    the R model for real-time scoring* section. If you are using SQL Server 2016,
+    ignore this value:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE4]'
+  prefs: []
+  type: TYPE_PRE
+- en: Step 1 – Train and save a model using T-SQL
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'In this step, you can create a predictive model (and optionally, the score),
+    into a table via a stored procedure. The motive behind this is that instead of
+    creating a new model every time an intelligent application needs to do prediction,
+    we want to save the model for reuse:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/00109.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 7.2: Create predictive model and store it in SQL Server'
+  prefs: []
+  type: TYPE_NORMAL
+- en: In *Figure 7.2* we assume that the data munging part is already done, and the
+    input dataset is ready for the R computation to consume in order to train and
+    score a model.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Here''s an example of a stored procedure that produces the predictive model
+    based on the NYC Taxi sample dataset, and saves it in a table. The model predicts
+    the likelihood of tipping. Both the model and the AUC of the model are saved in
+    the `dbo.nyc_taxi_models_v2` table:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE5]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Once you have this stored procedure defined, you can then execute it to generate
+    the model and the AUC. For example:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE6]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Then, view the content of the `NYCTaxiModel` table by executing the following
+    statement:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE7]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'If the stored procedure executed properly, you should see a record similar
+    to the following:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/00110.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Step 2 – Operationalize the model
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'Once the model is created and stored in a table as part of the previous step,
+    we are now ready to create a stored procedure where an intelligent application
+    can call it to predict tipping:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/00111.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 7.3: Get predictions in the SQL Server'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '*Figure 7.3* illustrates what the workflow of a stored procedure that operationalizes
+    a predictive model looks like.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Here''s an example of a stored procedure where we use one of the saved models,
+    and the dataset that we want to predict against. We are using the latest model
+    that has been created:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE8]'
+  prefs: []
+  type: TYPE_PRE
+- en: '[PRE9]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Once `[dbo].[uspPredictTipSingleMode]` is created, your application can now
+    use this stored procedure to get the score (probability of tipping); for example:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE10]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The output should be similar to the following. In this case, the value 0.64
+    shows the probability of getting tipped—that is, 64%:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE11]'
+  prefs: []
+  type: TYPE_PRE
+- en: Fast batch prediction
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: As seen in the previous section, both the model training step and the prediction
+    step call `sp_execute_external_script`, which invokes the R process. Real-time
+    scoring and native scoring allow you to do predictions without invoking an R process.
+    Therefore, these scoring methods improve the performance of prediction operations.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In addition, real-time scoring and native scoring let you use a machine learning
+    model without having to install R. As long as you obtain a pretrained model in
+    a compatible format and save it in an SQL Server database, you can call prediction
+    operations easily.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Prerequisites
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: There is no prerequisite when using the `PREDICT` function in SQL Server 2017\.
+    More information about `PREDICT` is covered in the *Native scoring* section later.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`sp_rxPredict` requires some additional steps, as outlined in *Enable real-time
+    scoring model *at [https://docs.microsoft.com/en-us/sql/advanced-analytics/r/how-to-do-realtime-scoring#bkmk_enableRtScoring](https://docs.microsoft.com/en-us/sql/advanced-analytics/r/how-to-do-realtime-scoring#bkmk_enableRtScoring).'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Currently, both real-time scoring and native scoring in SQL Server 2016 and
+    SQL Server 2017 only support RevoScaleR and MicrosoftML compatible models. For
+    the most up-to-date list of supported algorithms, see *Real-time scoring* at [https://docs.microsoft.com/en-us/sql/advanced-analytics/real-time-scoring](https://docs.microsoft.com/en-us/sql/advanced-analytics/real-time-scoring).
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Real-time scoring
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Both SQL Server 2016 and SQL Server 2017 support real-time scoring using `sp_rxPredict`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: This stored procedure is a CLR stored procedure using an `UNSAFE` assembly,
+    and requires you to set the database to `TRUSTWORTHY`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Here''s an example of calling the `PREDICT` function as part of the `SELECT`
+    statement:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE12]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'In this case:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '`@model`: Consists of the real-time scoring model that was previously prepared'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`@query`: The query definition of the data to be scored'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Native scoring
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: SQL Server 2017 introduces a new function, `PREDICT`, allowing you to get a
+    predicted value using native scoring. Instead of using `sp_execute_external_script`
+    with R script to do prediction, you can call it as part of the `FROM` clause of
+    a `SELECT` statement, making operationalization of prediction analytics much easier.
+    In addition, using `PREDICT` means that you no longer have to invoke an additional
+    R process every time you want to do prediction.
+  prefs: []
+  type: TYPE_NORMAL
+- en: This `PREDICT` function is new to T-SQL and is not to be confused with the existing
+    DMX's `PREDICT` function.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Here''s an example of calling the `PREDICT` function as part of the `SELECT`
+    statement:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE13]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'In this case:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '`d`: Data source, such as a table, a view, or a Common Table Expression.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`Input1, Input2`: Columns from the data source.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`@model`: Consists of the real-time scoring model that has been previously
+    prepared.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`Output_Pred`: The output value that is being predicted. Usually, the column
+    name is constructed from the column name of the predicted value followed by a
+    `_Pred` suffix; for example, `Tipped_Pred`, where `Tipped` is the name of the
+    column being predicted.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Integrating the R model for fast batch prediction
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Before continuing to the next steps, please follow the *Prerequisite - Prepare
+    the data* section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Step 1 – Train and save a real-time scoring model using T-SQL
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In this step, you can create a predictive model for real-time scoring and native
+    scoring, and optionally for the AUC, into a table via a stored procedure. The
+    goal is to build a model that is reusable. You can skip this step if there is
+    an existing compatible model that was created and stored in a table in SQL Server
+    already.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The following stored procedure uses `rxSerializeModel`, which lets you serialize
+    an R model in raw format. This then allows you to save the model in the `VARBINARY`
+    format, which can be loaded into SQL Server for real-time scoring. To reverse
+    the serialization for use in R, you could use `rxUnserializeModel`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE14]'
+  prefs: []
+  type: TYPE_PRE
+- en: To store a model created in R in an SQL Server table, you must serialize it
+    first. In R, a serialized model must be unserialized before we can use it for
+    prediction.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Step 2a – Operationalize the model using real-time scoring
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'The following is a sample script where we use `sp_rxPredict` with a real-time
+    scoring model to predict the likelihood of tipping:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE15]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The output should only give you the prediction value for the rows that are
+    pushed through:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE16]'
+  prefs: []
+  type: TYPE_PRE
+- en: Step 2b – Operationalize the model using native scoring
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'The following is a sample script where we use the `PREDICT` function with an
+    R real-time scoring model to predict the likelihood of tipping. The `PREDICT`
+    function in SQL Server 2017 can read the stored serialized model for predictive
+    analysis from the previous step:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE17]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The output should include any columns that you specify in the `SELECT` statement,
+    and should look like this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE18]'
+  prefs: []
+  type: TYPE_PRE
+- en: Managing roles and permissions for workloads
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Operationalizing an R script as part of the extensibility framework workloads,
+    as well as prediction operations using real-time scoring and native scoring, require
+    that a few roles and permissions be set up first.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Extensibility framework workloads
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'This section outlines the typical security requirements for operationalizing
+    R from SQL Server using `sp_execute_external_script`. An SQL Server login or Windows
+    user account can be used to run R scripts directly from SQL Server using stored
+    procedures. The following are the steps to set up this account, such that it has
+    sufficient privileges:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Allow permission to access the database where the R scripts will be run from.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Allow permission to read data from secured objects, such as tables. This includes
+    (but is not limited to) the table where the model might have been stored from
+    and the table/view to be used to train the model or input to the prediction.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: If the R script needs to write new data to a table, such as a model or a scoring
+    result, allow permission to write the new data.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: If the R script needs to install R packages during runtime, allow permission
+    to install new packages.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: In general, it is easier to create roles to manage sets of permissions, and
+    then assign users to those roles, instead of individually setting user permissions.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The following is an example of how to create a role and assign it to a login
+    called `JulieGuest2`, as per steps 1, 2, and 3:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE19]'
+  prefs: []
+  type: TYPE_PRE
+- en: Fast batch prediction workloads
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'Follow the following steps only if you are using real-time scoring or native
+    scoring:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: For real-time scoring using `sp_rxPredict`, you will need to add the user who
+    will execute this stored procedure to `rxpredict_users`
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: For native scoring using the new `PREDICT` syntax available in SQL Server 2017,
+    you will need to grant `EXECUTE` permission on the database
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The preceding steps assume that the users have read access to the real-time
+    scoring model and the input data set for the prediction operation.
+  prefs: []
+  type: TYPE_NORMAL
+- en: External packages
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'From SQL Server 2017, you can also add an external library through `CREATE
+    EXTERNAL LIBRARY`, as long as you have the `ALTER ANY EXTERNAL LIBRARY` permission:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE20]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'You''ll have to download the package from the source first; for example, `ggplot2`
+    from CRAN ([https://cran.r-project.org/web/packages/ggplot2/index.html](https://cran.r-project.org/web/packages/ggplot2/index.html))
+    to a path SQL Server has access to:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE21]'
+  prefs: []
+  type: TYPE_PRE
+- en: If you are using SQL Server 2016, to install a new R package, you'll need to
+    have administrative access on the machine. The installation steps are outside
+    of SQL Server and directly on the R that is associated to the SQL Server R Services.
+    The detailed steps are outlined in [Chapter 3](part0039.html#1565U0-e3f81285367248f4bbc6431bcd4f926d),
+    *Managing Machine Learning Services for SQL Server 2017 and R*.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Tools
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'There are three main options for operationalizing R code embedded in T-SQL.
+    All of these tools are free:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**SQL Server Management Studio** (**SSMS**)'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**R Tools for Visual Studio** (**RTVS**)'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**SQL Server Data Tools** (**SSDT**)'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: This section provides an overview of how the tools can help you operationalize
+    R code in SQL Server as part of workflows.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Using SSMS as part of operationalizing R script
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'SSMS is a powerful tool that allows you to operationalize your prediction analytics
+    from the previous section. SSMS also provides the ability for you to manage various
+    administrative tasks related to operationalizing R code in SQL Server and maintaining
+    it, such as:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Managing permissions, as described earlier in this chapter.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Managing R packages (in SQL Server 2017), as described earlier in this chapter.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Managing stored procedures that integrate R code, as described in an earlier
+    section.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Managing resources for SQL Server R Services, as described in [Chapter 3](part0039.html#1565U0-e3f81285367248f4bbc6431bcd4f926d),
+    *Managing Machine Learning Services for SQL Server 2017 and R.*
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Monitoring SQL Server R services using built-in custom reports and via DMVs,
+    as described in *Using custom reports for SQL Server R Services.*
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Creating and managing jobs that execute R Scripts. See *Scheduling training
+    and prediction operations* later in this chapter.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: To get the latest version of SSMS to help you develop and manage workflows with
+    SQL Server R services, go to [https://docs.microsoft.com/en-us/sql/ssms/download-sql-server-management-studio-ssms](https://docs.microsoft.com/en-us/sql/ssms/download-sql-server-management-studio-ssms).
+  prefs: []
+  type: TYPE_NORMAL
+- en: Using custom reports for SQL Server R Services
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'There are custom reports for SQL Server R Services available on GitHub: [https://github.com/Microsoft/sql-server-samples/tree/master/samples/features/r-services/ssms-custom-reports](https://github.com/Microsoft/sql-server-samples/tree/master/samples/features/r-services/ssms-custom-reports)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The following is a list of the custom reports and what they can help you achieve:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '| **Reports** | **Purpose** |'
+  prefs: []
+  type: TYPE_TB
+- en: '| `R Services - Configuration.rdl` | View installation settings of R Services
+    and properties of the R runtime.Configure R Services after installation. |'
+  prefs: []
+  type: TYPE_TB
+- en: '| `R Services - Packages.rdl` | View R packages installed on the SQL Server
+    instance, as well as their properties, such as name and version. |'
+  prefs: []
+  type: TYPE_TB
+- en: '| `R Services - Resource Usage.rdl` | View resource consumption of SQL Server
+    and R scripts execution.View memory setting of external resource pools. |'
+  prefs: []
+  type: TYPE_TB
+- en: '| `R Services - Extended Events.rdl` | View the extended events to understand
+    more about R script execution. |'
+  prefs: []
+  type: TYPE_TB
+- en: '| `R Services - Execution Statistics.rdl` | View the execution statistics of
+    R Services, including but not limited to the number of R script executions, the
+    number of parallel executions, and `RevoScaleR` functions. |'
+  prefs: []
+  type: TYPE_TB
+- en: Adding the custom reports for the first time
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'Once you have downloaded the custom reports from the preceding GitHub location,
+    follow the following steps to add custom reports for the first time:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Go to SSMS | Object Explorer.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Right-click on the SQL Server instance's name in Object Explorer, and choose
+    Reports | Custom Reports...
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Add the RDL files from the download location.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'After adding, you might be presented with the following warning dialog box:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/00112.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 7.4: Run Custom Report warning from SSMS'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Clicking Run means that you acknowledge that you wish to run these reports.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '*Figure 7.5* illustrates a successfully imported R Services - Execution Statistics
+    report. It says that there are 24 R script execution errors from 38 executions,
+    and the most popular `RevoScaleR` function is `rxPredict_rxLogit`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/00113.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 7.5: SQL Server R Services - Execution Statistics report in SSMS'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Viewing an R Services custom report
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'Once you''ve added an R Services custom report for the first time, you can
+    revisit it again. Here are the steps:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Go to SSMS | Object Explorer.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Right-click on the SQL Server instance's name.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'Choose Reports | Custom Reports. If you have added all the custom reports,
+    you should see something like this:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![](img/00114.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 7.6: Viewing Custom Reports in SSMS'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Managing SQL Server Machine Learning Services with DMVs
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: There are various DMVs that are available to help you monitor the R script that
+    you have operationalized. This section splits the DMVs for SQL Server Machine
+    Learning Services into the following two categories, as specified.
+  prefs: []
+  type: TYPE_NORMAL
+- en: System configuration and system resources
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'You may be familiar with `sys.dm_exec_sessions` and `sys.dm_os_performance_counter`
+    for understanding active sessions and system performance counters, respectively.
+    The following is a list of DMVs that you should get to know more to track and
+    monitor performance and usage of R script executions in SQL Server:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '`sys.dm_exec_sessions`: View details on user sessions and system sessions,
+    identified as `with session_id >= 51` and `< 51`, respectively.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`sys.dm_os_performance_counters`: View details on each system performance counter,
+    including those that are related to R script. Here''s an example of the script
+    specifically related to SQL Server R Services:'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '[PRE22]'
+  prefs: []
+  type: TYPE_PRE
+- en: '`sys.dm_external_script_requests`: View active external scripts on the current
+    instance:'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '[PRE23]'
+  prefs: []
+  type: TYPE_PRE
+- en: '`sys.dm_external_script_execution_stats`: View the overall usage of the new
+    external script through counters.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Resource governor
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'In SQL Server 2016, two new DMVs have been added to help monitor external resource
+    pools: `sys.resource_governor_external_resource_pools` and `sys.dm_resource_governor_external_resource_pool_affinity`.
+    If you are familiar with tracking and managing resource governors in general,
+    you are likely to know the other two DMVs that are listed as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '`sys.resource_governor_resource_pools`: View the current resource pool state,
+    the current configuration of resource pools, and their statistics.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`sys.resource_governor_workload_groups`: View the workload group statistics
+    and the current configuration of the workload group. This DMV has been enhanced
+    with a new column to show the ID of the external pool associated with the workload
+    group.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`sys.resource_governor_external_resource_pools`: View the current configuration
+    values for external resource pools. At the time of writing, SQL Server 2016/2017
+    Enterprise Edition allows you to configure additional resource pools, such that
+    resources for R jobs running in SQL Server will be isolated from those that originate
+    from a remote client.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`sys.dm_resource_governor_external_resource_pool_affinity`: This DMV allows
+    you to see the processors and resources that are affinitized to a particular resource
+    pool.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Operationalizing R code with Visual Studio
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Developing R script, or T-SQL that uses R script, is now made easy with **R
+    Tools for Visual Studio** (**RTVS**). If you are already using SQL Server Data
+    Tools as your IDE for your SQL Server database projects, you can simply add a
+    new R project in the solution. This integration has improved in Visual Studio
+    2017.
+  prefs: []
+  type: TYPE_NORMAL
+- en: If you don't have Visual Studio installed, go to [https://www.visualstudio.com/downloads/](https://www.visualstudio.com/downloads/).
+  prefs: []
+  type: TYPE_NORMAL
+- en: RTVS is installed as part of the Data science and analytical applications workload.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'From the Visual Studio installer, you can add the Data science and analytics
+    applications workload to your Visual Studio 2017 installation, as shown in *Figure
+    7.7*:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/00115.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 7.7: Selecting the Data science and analytical applications option in
+    the Visual Studio installer for Visual Studio 2017'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The following are additional tips to get started using RTVS:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Create a new R project in RTVS by selecting File | New | Project. The provided
+    name of the project and file path are similar to the following:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![](img/00116.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 7.8: Creating a new R project'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In RTVS, you can choose workspaces that you can run the R script against. If
+    you have already installed SQL Server with R Services as mentioned in [Chapter
+    4](part0057.html#1MBG20-e3f81285367248f4bbc6431bcd4f926d), *Data Exploration and
+    Data Visualization*, you''ll see something like this:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![](img/00117.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 7.9: Displaying all workspaces available for RTVS to connect to'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Go to R Tools | Windows | Workspaces or press *Ctrl* + *9* to display the Workspaces
+    window.
+  prefs: []
+  type: TYPE_NORMAL
+- en: You can run R code from the R Interactive window or save R files within the
+    R project. You can refer to [https://docs.microsoft.com/en-us/visualstudio/rtvs/](https://docs.microsoft.com/en-us/visualstudio/rtvs/)
+    to learn more about RTVS features.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'You can also use add an SQL Query file within the project by right-clicking
+    on the project and choosing Add New Item, then selecting SQL Query, shown as follows:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![](img/00118.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 7.10: Selecting a new item/file to add to the R project'
+  prefs: []
+  type: TYPE_NORMAL
+- en: RTVS also allows you to develop the R code integration to SQL Server stored
+    procedure via a template. To access this, simply click Add New Item, similar to
+    the previous step, and then select SQL Stored Procedure. For more information
+    about this, go to [https://docs.microsoft.com/en-us/visualstudio/rtvs/sql-server](https://docs.microsoft.com/en-us/visualstudio/rtvs/sql-server).
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Integrating R workloads and prediction operations beyond SQL Server
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In this section, you will learn how to include R workloads and prediction operations
+    that you have created in the previous sections beyond SQL Server. We will discuss
+    how to run the workloads and operations in PowerShell, SQL Agent Job, and **SQL
+    Server Integration Services** (**SSIS**).
+  prefs: []
+  type: TYPE_NORMAL
+- en: Please note that you can also execute these workloads/prediction operations
+    using SQLCMD, C# within SSIS, Azure, and also Bash on Linux. This discussion is
+    beyond the scope of this chapter.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Executing SQL Server prediction operations via PowerShell
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Assuming that you have already created the stored procedure that executes R
+    script from SQL Server, such as `[dbo].[uspTrainTipPredictionModel]` from the
+    earlier example, you can execute this command easily as part of your PowerShell
+    workflows.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Here''s a simple example of calling the stored procedure from PowerShell:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE24]'
+  prefs: []
+  type: TYPE_PRE
+- en: Scheduling training and prediction operations
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In SSMS, you can create a new SQL Server job that allows you to run R code as
+    a one-off or with a specific schedule.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'As an example, you can do a scheduled offline predictive analytics workload.
+    To do this, simply create a job through SSMS:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: To create a job, you'll need to be a member of one of the SQL Server Agent fixed
+    database roles or the sysadmin fixed server role. Only the job owner or a member
+    of the sysadmin role can update the definition of the job.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: In Object Explorer of SSMS, expand the SQL Server instance where you want to
+    create an SQL Server Agent job.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'Expand SQL Server Agent and right-click on the `Jobs` folder, then select New
+    Job...:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![](img/00119.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 7.11: Creating a new SQL Server Agent job using SSMS'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Provide details on the General page:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![](img/00120.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 7.12: Adding more details in the New Job window'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Click on Steps from the left-hand menu of the New Job window, then click on
+    New... on the bottom of the New Job window.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'Provide the details in the New Job Step to execute. In this example, we want
+    to update the NYC Taxi Training Model. Then click OK:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![](img/00121.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 7.13: Calling an R-integrated stored procedure as a step in an SQL Server
+    Agent job'
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the New Job window, select Schedules from the left-hand menu.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Click on New... from the bottom of the New Job window.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Provide the details of the schedule that you'd like this job to be subject to.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Click on OK in the New Schedule window, then click on the New Job window to
+    save the changes.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Operationalizing R script as part of SSIS
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'R Script can easily be integrated as part of SSIS workflows. The two main ways
+    are by running as part of Execute Process Task and running as part of Execute
+    SQL Task:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Running R code (not as a part of SQL Server R Services) in Execute Process
+    Task can be simply done by calling `Rscript.exe`. If you already have an R file
+    that is ready to be executed, then simply add Execute Process Task in an SSIS
+    package. You can also weave the input/output in Execute Process Task within the
+    SSIS package into the R file:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![](img/00122.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 7.14: Executing R script externally within SSIS Execute Process Task'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Running prediction operations in SQL Server using Execute SQL Task in SSIS:
+    if you already have a stored procedure that does prediction (or a training model),
+    then simply call this stored procedure from Execute SQL Task in SSIS. It is also
+    possible to weave the input/output in Execute SQL Task with the SSIS package:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![](img/00123.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 7.15: Executing an R-integrated stored procedure as an Execute SQL Task
+    step in SSIS'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Summary
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In this chapter, you learned the steps required to integrate an existing predictive
+    analytics R code into resides outside of SQL Server R with the Extensibility Framework.
+    You have also seen the simplicity and the power of the new `PREDICT` function
+    in SQL Server 2017, which allows native scoring without having to install R. Managing
+    the security required to run predictive analytics workloads is also important
+    in prediction operations. You have learned how to add SQL queries to R projects
+    using RTVS. Finally, you've discovered the different possibilities for integrating
+    R code and prediction operations into your existing workflows as SQL Server stored
+    procedures, SQL Server Agent jobs, PowerShell scripts, and SSIS projects.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'With these new skills, we are ready for the next building block in managing
+    data science solutions as part of database lifecycle: management practices. In
+    the next chapter, you''ll learn about managing data science solutions in **Continuous
+    Integration/Continuous Delivery** (**CI/CD**) and continuous model performance
+    monitoring.'
+  prefs: []
+  type: TYPE_NORMAL

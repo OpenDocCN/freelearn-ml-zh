@@ -1,0 +1,848 @@
+- en: Adding a Web UI for the Wiki Game
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Developing the backend of our game was quite a learning experience. This strong
+    foundation will serve us well—the modular approach will allow us to easily convert
+    the **read-eval-print loop** (**REPL)** app into a web app, while our understanding
+    of types will prove to be priceless when dealing with Julia's web stack and its
+    rich taxonomy.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We''re now entering the last stage of our game development journey—building
+    a web user interface for the *Six Degrees of Wikipedia*. Since building a full-featured
+    web app is no simple feat, this last part will be dedicated to this task alone.
+    In the process, we will learn about the following topics:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Julia's web stack; namely, the `HTTP` package and its main components—`Server`,
+    `Router`, `HandlerFunction`, and `Response`
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Architecting a web app to take advantage of `HTTP` and integrate it with existing
+    Julia modules
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Exposing features on the web by defining routes that map URLs to Julia functions
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Spawning a web server to handle user requests and send back proper responses
+    to the clients
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The end of this chapter comes with a cool reward—our game will be ready and
+    we'll play a few rounds of *Six Degrees of Wikipedia*!
+  prefs: []
+  type: TYPE_NORMAL
+- en: Technical requirements
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'The Julia package ecosystem is under continuous development and new package
+    versions are released on a daily basis. Most of the times this is great news,
+    as new releases bring new features and bug fixes. However, since many of the packages
+    are still in beta (version 0.x), any new release can introduce breaking changes.
+    As a result, the code presented in the book can stop working. In order to ensure
+    that your code will produce the same results as described in the book, it is recommended
+    to use the same package versions. Here are the external packages used in this
+    chapter and their specific versions:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE0]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'In order to install a specific version of a package you need to run:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE1]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'For example:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE2]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Alternatively you can install all the used packages by downloading the `Project.toml`
+    file provided with the chapter and using `pkg>` instantiate as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE3]'
+  prefs: []
+  type: TYPE_PRE
+- en: The game plan
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: We're onto the last stage of our project—the web UI. Let's start by discussing
+    the spec; we need to lay out the blueprint before we can proceed with the implementation.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The player will start on the landing page. This will display the rules and will
+    provide options for launching a new game, allowing the user to choose a difficulty
+    level. Following this starting point, the player will be redirected to the new
+    game page. Here, taking into account the selected difficulty level, we'll bootstrap
+    a new game session by fetching the articles with the algorithm we wrote in the
+    previous chapter. Once we pick the articles that represent the *Six Degrees of
+    Wikipedia*, we will display a heading with the game's objective—the titles of
+    the start and end articles. We'll also display the content of the first article,
+    thus kickstarting the game. When the player clicks on a link in this article,
+    we have to respond accordingly by checking if the player has found the end article
+    and won the game. If not, render the new article and increment the number of steps
+    taken.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We'll also need an area to display the progress of the game—the articles that
+    were viewed in the current session, how many steps have been taken in total, and
+    a form of navigation to allow the players to go back and rethink their choices
+    if they find themselves on the wrong track. Therefore, we'll need to store the
+    player's navigation history. Finally, it would be nice to provide an option to
+    solve the puzzle—of course, as a result, the player will lose the game.
+  prefs: []
+  type: TYPE_NORMAL
+- en: A very important piece of the spec is that between the stateless browser requests
+    and the server responses, while navigating through the Wikipedia articles, we
+    need some sort of mechanism to allow us to maintain the state of the game, that
+    is, to retrieve a game with its corresponding data—difficulty, path (articles)
+    and progress, navigation history, number of steps taken, and so on. This will
+    be achieved by creating a unique game identifier at the beginning of each play
+    session and passing it with every request as a part of the URL.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Learning about Julia's web stack
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Julia's package ecosystem has long provided a variety of libraries for building
+    web apps. Some of the most mature are `HttpServer`, `Mux`, `WebSockets`, and `JuliaWebAPI`
+    (to name just a few; this list is not exhaustive). But as the ecosystem settled
+    with Julia version 1, a lot of community effort has been put into a newer package,
+    simply known as `HTTP`. It provides a web server, an HTTP client (which we already
+    used in the previous chapters to fetch the web pages from Wikipedia), as well
+    as various utilities for making web development simpler. We'll learn about key
+    `HTTP` modules ,such as `Server`, `Router`, `Request`, `Response`, and `HandlerFunction`,
+    and we'll put them to good use.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Beginning with a simple example – Hello World
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Let's take a look at a simple example of employing the `HTTP` server stack.
+    This will help us understand the foundational building blocks before we dive into
+    the more complex issue of exposing our game on the web.
+  prefs: []
+  type: TYPE_NORMAL
+- en: If you followed the previous chapter, you should already have the `HTTP` package
+    installed. If not, you know the drill—run `pkg> add HTTP` in Julia's REPL.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Now, somewhere on your computer, create a new file called `hello.jl`. Since
+    this will be a simple piece of software contained in just one file, there''s no
+    need to define a module. Here is the full code, the whole eight lines, in all
+    their glory. We''ll go over them next:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE4]'
+  prefs: []
+  type: TYPE_PRE
+- en: The workflow for handling web requests with `HTTP` requires four entities—`Server`,
+    `Router`, `HandlerFunction`, and `Response`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Beginning our analysis of the code with the simplest part, on the last line,
+    we start our server by calling `HTTP.serve`. The `serve` function takes a `server`,
+    an object of type `Server`, plus the `HOST` information (an IP string) and the
+    `PORT` (an integer) that are used to attach to and listen to requests as arguments.
+    We have defined `HOST` and `PORT` at the top of the file as constants. The value
+    of `HOST` is defined using the non-standard `ip""` string literal. We learned
+    about non-standard string literals when we discussed the `String` type. In this
+    regard, the `ip"..."` notation is similar to regular expressions (`r"..."`), version
+    strings (`v"..."`), or `Pkg` commands (`pkg"..."`).
+  prefs: []
+  type: TYPE_NORMAL
+- en: Instantiating a new `Server` requires a `Router` object, which we will name `router`.
+    The job of the `Router` is to register a list of mappings (called **routes**)
+    between the links (URIs) that are exposed by our app on the internet and our Julia
+    functions (called `HandlerFunctions`), which provide the response. We have set
+    up the routes using the `register!` function, passing the `router` object, the
+    URI structures (like `/` or `/bye`) and the corresponding `HandlerFunction` objects
+    as arguments.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Now, if you look at the body of the `HandlerFunction`, you'll see that the root
+    page `/` will display the string `"Hello World"`; the `/bye` URL will display
+    the string `"Bye"`; and finally, every other URI, expressed by the star symbol
+    `*`, will return a `"Not found"` text, accompanied by the correct `404 Not Found`
+    header.
+  prefs: []
+  type: TYPE_NORMAL
+- en: I'm sure you can now recognize the arrow `->` operator, hinting to the use of
+    lambdas. Each `HandlerFunction` constructor takes an anonymous function. This
+    function is responsible for processing the request and generating the appropriate
+    `Response`. As its argument, it accepts the `Request` object (named `req`), and
+    it is expected to return an instance of `Response`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In our example code, we constructed three `Response` objects using two of the
+    available HTTP status codes (`200` for `OK` and `404` for page not found), plus
+    some strings for the body of the responses (the simple strings `"Hello World"`,
+    `"Bye"`, and `"Not found"`, respectively).
+  prefs: []
+  type: TYPE_NORMAL
+- en: To conclude, when the server receives a request, it delegates it to the router,
+    which matches the URI of the request to the most appropriately mapped URI pattern
+    and invokes the corresponding `HandlerFunction`, passing in the `Request` as the
+    argument. The handler function returns a `Response` object, which is sent by the
+    server back to the client.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s see it in action. You can use the `Run` functionality in your editor
+    or you can execute `$ julia hello.jl` in the Terminal. Alternatively, you can
+    run the code in this chapter''s accompanying IJulia notebook:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/7a15f58c-e321-4428-9c93-e02ab12045be.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: The preceding screenshot shows the `hello.jl` file running in Juno. The REPL
+    pane displays debugging information from the web server as requests are received
+    and handled.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'As soon as the server is ready, you''ll get a log message saying that the server
+    is listening on the indicated socket. At this point, you can open a web browser
+    and navigate to `http://localhost:9999`. You''ll be greeted by the (in)famous
+    **Hello World** message, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/b7b0f528-967b-4b4b-9aa5-0ba49dfb1a99.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: Congratulations—we've just developed our first web app with Julia!
+  prefs: []
+  type: TYPE_NORMAL
+- en: No bonus points for guessing what happens when navigating to `http://localhost:9999/bye`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Finally, you can confirm that any other request will result in a `404 Not Found`
+    page by attempting to navigate to any other link under `http://localhost:9999`—for
+    instance, `http://localhost:9999/oh/no`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/7a7d0203-9289-4860-aad6-d1926ff26149.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: Here is the **Not Found** page, correctly returning the `404` status code.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Developing the game's web UI
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Please start your favorite Julia editor and open the `sixdegrees/` folder we
+    used in the previous chapter. It should contain all the files that we've worked
+    on already—`six_degrees.jl`, plus the `Articles`, `Database`, `Gameplay`, and
+    `Wikipedia` modules.
+  prefs: []
+  type: TYPE_NORMAL
+- en: If you haven't followed through the code up to this point, you can download
+    this chapter's accompanying support files, which are available at [https://github.com/PacktPublishing/Julia-Programming-Projects/tree/master/Chapter05](https://github.com/PacktPublishing/Julia-Programming-Projects/tree/master/Chapter05).
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Add a new file for our web app. Since the code will be more complex this time
+    and should integrate with the rest of our modules, let''s define a `WebApp` module
+    within a new `WebApp.jl` file. Then, we can add these first few lines of code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE5]'
+  prefs: []
+  type: TYPE_PRE
+- en: No surprises here—similar to the previous example, we define constants for `HOST`
+    and `PORT`, and then instantiate a `Router` and a `Server` and start listening
+    for requests. The code should work just fine, but it's not worth running it yet
+    as it won't do anything useful. We need to define and register our routes, and
+    then set up the handler functions for generating the game's pages.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Defining our routes
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'By reviewing the high-level spec that we defined at the beginning of the chapter,
+    we can identify the following pages:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**Landing page**: The starting place of our web app and the home page, where
+    the player can begin a new game and choose the difficulty.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**New game page**: Bootstraps a new game, taking into account the difficulty
+    settings.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Wiki article page**: This will display the Wikipedia article corresponding
+    to a link in the chain and will update the game''s stats. Here, we''ll also check
+    if the current article is the goal (the end) article, which is to finish the game
+    as a winner. If not, we''ll check if the maximum number of articles has been reached,
+    and if so finish the game as a loser.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Back page**: This will allow the player to go back up the chain if the solution
+    wasn''t found. We''ll display the corresponding Wikipedia article while correctly
+    updating the game''s stats.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Solution page**: If the player gives up, this page will display the last
+    article in the chain, together with the path to it. The game is ended as a loss.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Any other page should end up as `Not Found`.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Taking into account that the route handlers will be fairly complex, it''s best
+    if we *don''t* define them inline with the route definitions. Instead, we''ll
+    use separately defined functions. Our route''s definitions will look like this—please
+    add them to the `WebApp` module, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE6]'
+  prefs: []
+  type: TYPE_PRE
+- en: You might be wondering what's with the extra `*` in front of the URI patterns.
+    We stated that we'll need a way to identify a running game session between the
+    otherwise stateless web requests. The `articlepage`, `backpage`, and `solutionpage`
+    functions will all require an existing game session. We'll pass this session ID
+    as the first part of the URL. Effectively, their paths are to be interpreted as
+    `/$session_id/wiki/*`, `/$session_id/back/*`, and `/$session_id/solution`, where
+    the `$session_id` variable represents the unique game identifier. As for the trailing
+    `*`, it represents different things for different routes—in the case of `new`,
+    it's the difficulty level of the game; for `articlepage`, it's the actual Wikipedia
+    URL, which is also our article identifier; and for the `backpage`, it represents
+    the index in the navigation stack. Similar to regular expressions, for route matching
+    as well, the `*` will match anything. If this sounds complicated, don't worry—seeing
+    and running the code will make things clear.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s add placeholder definitions for each handler function—please add these
+    *before* the list of routes:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE7]'
+  prefs: []
+  type: TYPE_PRE
+- en: Preparing the landing page
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Straight away, we can address the landing page handler. All it needs to do is
+    display some static content describing the game's rules, as well as provide a
+    way to start a new game with various levels of difficulty. Remember that the difficulty
+    of the game determines the length of the article chain, and we need this information
+    when we start a new game. We can pass it to the new game page as part of the URL,
+    under the format `/new/$difficulty_level`. The difficulty levels are already defined
+    in the `Gameplay` module, so don't forget to declare that we're `using Gameplay`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Taking this into account, we'll end up with the following code for our `WebApp`
+    module. We're putting everything together and we're also adding the `landingpage`
+    `HandlerFunction`. This works in correlation with the first route—`HTTP.register!(ROUTER,
+    "/",landingpage)`. What this means is that when we access the `/` route in the
+    browser, the ` landingpage` `HandlerFunction` will be executed and its output
+    will be returned as the response. In this case, we're simply returning a bunch
+    of HTML code. If you're not familiar with HTML, here's what the markup does—we
+    include the Twitter Bootstrap CSS theme to make our page prettier, we display
+    a few paragraphs of text explaining the rules of the game, and we display three
+    buttons for starting a new game—one button for each level of difficulty.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Here is the code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE8]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Let''s update the `six_degrees.jl` file to bootstrap our web app. Please make
+    sure that it now reads as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE9]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Run `six_degrees.jl` using your preferred approach, either in the editor or
+    the Terminal (`$ julia six_degrees.jl`). Look for the message `Info: Listening
+    on:...`, which notifies us that the web server has been started. Visit `http://localhost:8888/`
+    in your browser and feast your eyes on our landing page! I''m sure you''ll notice
+    the effect of including the Twitter Bootstrap CSS file—adding just a few CSS classes
+    to our code makes for a great visual impact!'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/c55d8dcb-0509-440e-914e-e35e4e5866c8.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: The preceding screenshot is of our game's landing page running on localhost
+    at port `8888`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Starting a new game
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'Excellent! Now, let''s focus on the functionality for starting a new game.
+    Here, we need to implement the following steps:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Extract the difficulty settings from the URL.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Start a new game. This game should have an ID, which will be our `session id`.
+    Plus, it should keep track of the list of articles, progress, navigation history,
+    the total number of steps taken, and the difficulty.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Render the first Wikipedia article.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Set up in-article navigation. We need to make sure that the links within the
+    Wikipedia article will properly link back into our app, and not the Wikipedia
+    website itself.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Display information about the game session, such as the objective (start and
+    end articles), number of steps taken, and so on.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: We'll look at all of these steps next.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Extracting the difficulty settings from the page URL
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'This is the very first step. Remember that within our `HandlerFunction`, we
+    have access to the `Request` object, `req`. All the `Request` objects expose a
+    field called `target` that references the URL of the request. The `target` does
+    not include the protocol or the domain name, so it will be of the form `/new/$difficulty_level`.
+    A quick way to extract the value of `$difficulty_level` is to simply replace the
+    first part of the URI with an empty string, `""`, effectively removing it. The
+    result will be used in a function, `newgamesession`, to create a new game of the
+    indicated difficulty. Put into code, it will look like this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE10]'
+  prefs: []
+  type: TYPE_PRE
+- en: Since we represent difficulty levels as integers (number of articles), we parse
+    the string into an integer (specifically of type `UInt8`) before using it.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Starting a new game session
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Starting a new game session is the second step. The game session manager, which
+    should include the preceding `newgamesession` function, is missing entirely, so
+    it's time we added it. We'll represent a game session as an instance of a corresponding
+    type. Let's pack the `type` definition and the methods for manipulating it into
+    a dedicated module. We can name the module `GameSession`, and the type `Game`.
+    Please create the `GameSession.jl` file within the `"sixdegrees/"` folder.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Our `Game` type will need a custom constructor. We'll provide the difficulty
+    level, and the constructor will take care of setting all of the internals—it will
+    fetch the right number of Wikipedia articles using the previously created `Gameplay.newgame`
+    function; it will create a unique game ID (which will be our session ID); and
+    it'll initialize the rest of the fields with default values.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'A first attempt will look like this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE11]'
+  prefs: []
+  type: TYPE_PRE
+- en: The `Random.randstring` function creates a random string. This is our game's
+    and our session's ID.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We've also defined a `GAMES` dictionary, which will store all the active games
+    and will allow us to look them up by their `id` field. Remember, our game is exposed
+    on the web, so we'll have multiple game sessions running in parallel.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We can now add the rest of the functions. Add the following definitions before
+    the module''s closing `end`, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE12]'
+  prefs: []
+  type: TYPE_PRE
+- en: It's worth noting that storing our games in memory is fine for the purpose of
+    this learning project, but in production, with a lot of players, you'd risk running
+    out of memory quickly. For production use, we'd be better off persisting each
+    `Game` to the database and retrieving it as necessary.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Rendering the first Wikipedia article from the chain
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'This is the third step. Going back to our `WebApp` module (in `WebApp.jl`),
+    let''s continue with the logic for the `newgamepage` handler. The implementation
+    will look like this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE13]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Once we create a new game, we need to reference its first article. We add the
+    starting article to the game''s history and then we render it as HTML using the
+    following `wikiarticle` function:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE14]'
+  prefs: []
+  type: TYPE_PRE
+- en: We simply display the title of the Wikipedia article as the main heading, and
+    then the content.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Finally, don''t forget to load `GameSession` into our app by adding it to `"six_degrees.jl"`.
+    Beware that it needs to be loaded before `WebApp` to be available for `WebApp`.
+    The full `"six_degrees.jl"` file should now look like this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE15]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'If you rerun our code and navigate to `http://localhost:8888/new/2`, you''ll
+    see our app rendering a random Wikipedia article:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/7cf79cd6-fbb9-4938-98c3-e94cc8328470.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: It's a good start, but there are some problems. First, we were a bit too greedy
+    when fetching the content from Wikipedia. It includes the full page HTML, which
+    contains things we don't really need, like the invisible `<head>` section and
+    the all-too visible Wikipedia content from above the article's text (the search
+    form, the menu, and so on). This is easy to fix—all we need to do is be a bit
+    more specific about the content we want by using a better-defined CSS selector.
+    A bit of playing around with the browser's inspector will reveal that the desired
+    selector is `#bodyContent`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Armed with this knowledge, we need to update the `Wikipedia` module. Please
+    replace the existing `articleinfo` function with this one:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE16]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Instead of using the whole HTML, we will now extract just the content of the
+    desired CSS selector:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE17]'
+  prefs: []
+  type: TYPE_PRE
+- en: Please add the definition of `extractcontent` to the `Wikipedia.jl` file, under
+    the `extractimage` function.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'By revisiting our page at `http://localhost:8888/new/2`, we will see our efforts
+    rewarded with a much better-looking replacement:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/2dc79e56-d94e-4ef1-97bc-3549a9756aa2.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: Setting up in-article navigation
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'All right, that wasn''t so hard! But the next issue is more difficult. The
+    fourth step is all about the setup. We established that we need to capture all
+    the internal Wikipedia links so that when the player clicks on a link, they are
+    taken to our app instead of going to the original Wikipedia article. Half of this
+    work is done by Wikipedia''s content itself because it uses relative URLs. That
+    is, instead of using absolute URLs in the form of `https://en.wikipedia.org/wiki/Wikipedia:Six_degrees_of_Wikipedia`,
+    it uses the relative form `/wiki/Wikipedia:Six_degrees_of_Wikipedia`. This means
+    that when rendered in the browser, these links will inherit the domain name (or
+    the *base URL*) of the current host. That is, when rendering the content of a
+    Wikipedia article at `http://localhost:8888/`, its relative URLs will be interpreted
+    as `http://localhost:8888/wiki/Wikipedia:Six_degrees_of_Wikipedia`. Therefore,
+    they''ll automatically point back to our web app. That''s great, but one big piece
+    of the puzzle is missing: we said that we want to maintain the state of our game
+    by passing the session ID as part of the URL. Thus, our URLs should be of the
+    form `http://localhost:8888/ABCDEF/wiki/Wikipedia:Six_degrees_of_Wikipedia`, where
+    `ABCDEF` represents the game (or session) ID. The simplest solution is to replace
+    `/wiki/` with `/ABCDEF/wiki/` when rendering the content—of course, using the
+    actual game ID instead of `ABCDEF`.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In the definition of the `WebApp.wikiarticle` function, please look for this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE18]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Replace it with the following:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE19]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Because we now need the `game` object, we must make sure that we pass it into
+    the function, so its declaration should become the following:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE20]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'This means that we also need to update the `newgamepage` route handler to correctly
+    invoke the updated `wikiarticle` function. The last line of the `WebApp.newgamepage`
+    function should now be as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE21]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'If you execute `six_degrees.jl` and take your browser to `http://localhost:8888/new/2`,
+    you should see a nice rendering of a Wikipedia article with all the internal links
+    containing the game ID:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/cb4f92b0-576f-4d7c-9b87-6b61d5939b03.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: In the preceding screenshot, we can see that all the URLs start with `/x2wHk2XI`—our
+    game ID.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Displaying information about the game session
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'For the fifth and very last part of our spec, we need to display information
+    about the game and provide a way to navigate back to the previous articles. We''ll
+    define the following functions:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE22]'
+  prefs: []
+  type: TYPE_PRE
+- en: The `objective` function informs the player about the start and end articles
+    and about the current progress. It also provides a small menu so that you can
+    view the solution or start a new game.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'For navigating back, we need to generate the game history links:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE23]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Finally, we need a bit of extra logic to check if the game was won or lost:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE24]'
+  prefs: []
+  type: TYPE_PRE
+- en: We have a winner if the URL of the current article is the same as the URL of
+    the last article in the game.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The game is lost if the player runs out of moves:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE25]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The complete code, so far, should look like this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE26]'
+  prefs: []
+  type: TYPE_PRE
+- en: Please note that we've also refactored the `<head>` of the pages, abstracting
+    it away into the `head` function, which is used by both `landingpage` and `wikiarticle`.
+    This way, we keep our code DRY, avoiding the repetition of the same `<head>` HTML
+    element.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Now, let''s make sure that we add `Gameplay.MAX_NUMBER_OF_STEPS` to `Gameplay.jl`.
+    Add it at the top, under the difficulty constants:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE27]'
+  prefs: []
+  type: TYPE_PRE
+- en: Displaying a Wikipedia article page
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: The player has read the starting article and clicked on a link within the content.
+    We need to add the logic for rendering the linked article. We'll have to fetch
+    the article (or read it from the database if it was already fetched), display
+    it, and update the game's state.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Here is the code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE28]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We start by parsing the `Request` URI to extract all the values sent via GET.
+    It is a string with the format `/$session_id/wiki/$article_name`, for example, `/c701b1b0b1/wiki/Buenos_Aires`.
+    We want to break it into its parts. Since this is an operation that we''ll need
+    to perform more than once, we will abstract this functionality into the `parseuri`
+    function:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE29]'
+  prefs: []
+  type: TYPE_PRE
+- en: Here, we use Julia's `split` function to break the URI string into an `Array`
+    of `SubString`, corresponding to the segments between forward slashes `/`. Then,
+    we convert the resulting `Array` of `SubString` to an `Array` of `String`, which
+    is returned and stored in the `uri_parts` variable.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Continuing with the definition of the `articlepage` handler, we use the first
+    element of the `uri_parts` array, which corresponds to the session ID, to retrieve
+    our game object, by invoking `gamesession(uri_parts[1])`. With the last element,
+    we generate the Wikipedia article URL. We then look up the article by URL, and
+    either retrieve it from the database or fetch it from the website.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Once we have the article, we add it to the game''s history and increase the
+    `game.steps_taken` counter. Then, we check if we should end the game as a win:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/994e68d4-d843-4ed8-b235-25b745cc474f.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: This is a screenshot of the winning article page. The design is not great, but
+    the sweet taste of victory surely is!
+  prefs: []
+  type: TYPE_NORMAL
+- en: Finally, similar to the new game page, we respond by rendering the article and
+    all the game information.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Navigating back up the article chain
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'Keep in mind that a back navigation URL looks like `/c701b1b0b1/back/1`, where
+    the first part is the session ID and the last part is the index of the item in
+    the history stack. To implement it, the workflow is similar to `articlepage`—we
+    parse the `Request` URI, retrieve the game by session ID, and get the article
+    from the game''s history stack. Since we go back in the game''s history, everything
+    beyond the current article index is to be removed from the navigation stack. When
+    done, we respond by rendering the corresponding Wikipedia article. The code is
+    short and readable:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE30]'
+  prefs: []
+  type: TYPE_PRE
+- en: Showing the solution
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'For the solution page, the only thing we need from the `Request` URI is the
+    session ID. Then, we follow the same workflow to get the current `Game` object.
+    Once we have it, we copy the list of articles into the history stack to display
+    the game''s solution using the existing rendering logic. We also set the `steps_taken`
+    counter to the maximum because the game is considered a loss. Finally, we display
+    the last article:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE31]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The solution page appears as follows, settling the game as a loss:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/53597668-7976-468f-81f3-f432d7cdf57c.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: Handling any other requests
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'Similar to our `Hello World` example, we''ll respond to any other requests
+    with a `404 Not Found` response:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE32]'
+  prefs: []
+  type: TYPE_PRE
+- en: Wrapping it up
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'I''ve added a few more UI tweaks to the  `WebApp.jl` file to spice things up
+    a bit. Here are the important parts—please download the full file from [https://github.com/PacktPublishing/Julia-Programming-Projects/blob/master/Chapter05/sixdegrees/WebApp.jl](https://github.com/PacktPublishing/Julia-Programming-Projects/blob/master/Chapter05/sixdegrees/WebApp.jl):'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE33]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'You will see that I have reorganized the layout a bit and that I''ve added
+    a few extra styles to make our UI prettier. Here is our game with its updated
+    look:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/03d56710-7271-47cc-8a32-49fa8bb210a9.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: As for the rest of the files, if you need them, they are available for download
+    in this chapter's GitHub repository, which is accessible at [https://github.com/PacktPublishing/Julia-Programming-Projects/tree/master/Chapter05/sixdegrees](https://github.com/PacktPublishing/Julia-Programming-Projects/tree/master/Chapter05/sixdegrees).
+  prefs: []
+  type: TYPE_NORMAL
+- en: That is all we need to do to run a full game of *Six Degrees of Wikipedia*.
+    Now, it's time to enjoy it!
+  prefs: []
+  type: TYPE_NORMAL
+- en: Summary
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Julia focuses on scientific computing and data science. But thanks to its great
+    qualities as a generic programming language, its native parallel computing features,
+    and its performance, we have an excellent use case for Julia in the area of web
+    development.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The package ecosystem provides access to a powerful set of libraries dedicated
+    to web programming. They are relatively low level, but still abstract away most
+    of the complexities of working directly with the network stack. The `HTTP` package
+    provides a good balance between usability, performance, and flexibility.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The fact that we managed to build a fairly complex (albeit small) web app with
+    so little code is a testimony to the power and expressiveness of the language
+    and to the quality of the third-party libraries. We did a great job with our learning
+    project—it's now time to relax a bit and enjoy a round of *Six Degrees of Wikipedia*,
+    Julia style!
+  prefs: []
+  type: TYPE_NORMAL

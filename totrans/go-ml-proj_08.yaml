@@ -1,0 +1,1295 @@
+- en: Basic Facial Detection
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: The previous chapters can best be described as trying to read an image. This
+    is a subfield in machine learning called **computer vision** (**CV**). With convolutional
+    neural networks ([Chapter 7](4c71e400-fde5-467f-a1ee-52300e326504.xhtml), *Convolutional
+    Neural Networks – MNIST Handwriting Recognition*), we found that the convolutional
+    layers learned how to filter an image.
+  prefs: []
+  type: TYPE_NORMAL
+- en: There is a common misconception that any **machine learning** (**ML**) worth
+    doing has to come from neural networks and deep learning. This is decidedly not
+    the case. Instead, one should view deep learning as a technique to get to one's
+    goals; deep learning is not the end-all. The purpose of this chapter is to expose
+    readers to some of the insights into making ML algorithms work better in production.
+    The code for this chapter is exceedingly simple. The topic is trivial and widely
+    considered by many to be solved. However, the insights are not trivial. It is
+    my hope that this chapter propels the reader to think more deeply about the problems
+    that they face.
+  prefs: []
+  type: TYPE_NORMAL
+- en: To that end, the algorithms that will be introduced in this chapter began their
+    life in academia. However, the invention of these algorithms was driven by a highly
+    practical requirement, and one can learn quite a lot by analyzing how these algorithms
+    were invented.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In this chapter, we're going to further improve our knowledge about what can
+    be done with computer vision, by building multiple facial detection systems in
+    Go. We will be using `GoCV` and `Pigo`. What we will be building is a program
+    that detects faces from a live webcam. However, this chapter will be different
+    from the previous ones, in that we will be comparing two kinds of algorithms.
+    The purpose is to allow the reader to think more about the actual problems faced,
+    rather than just copy-pasting code.
+  prefs: []
+  type: TYPE_NORMAL
+- en: What is a face?
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In order to detect faces, we need to understand what a face is, specifically
+    what a human face is. Think about a typical human face. A typical human face has
+    two eyes, a nose, and a mouth. But having these features isn't enough to define
+    a human face. Dogs also have two eyes, a nose, and a mouth. We are, after all,
+    products of mammalian evolution.
+  prefs: []
+  type: TYPE_NORMAL
+- en: I encourage the reader to think more carefully about what makes a human face.
+    We instinctively know what a face is, but to really quantify exactly what constitutes
+    a face takes work. Often, it may lead to philosophical ruminations about essentialism.
+  prefs: []
+  type: TYPE_NORMAL
+- en: If you watch terrible procedural TV shows, you might see faces being drawn with
+    dots and lines when the detectives on TV are doing facial recognition across a
+    database. These dots and lines are primarily due to the work of Woodrow Bledsoe,
+    Helen Chan, and Charles Bisson in the 1960s. They were among the first people
+    to study automated facial detection. One of the first things noticed is that the
+    standard features of the face—hairline, browlines, gauntness of eyes, height of
+    nose bridge, and so on—are all dynamically definable; that is to say that these
+    features are measured relative to one another. This made automatically detecting
+    features a little bit more challenging than expected.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Their solution was novel: using a device that is an ancestor to today''s drawing
+    tablets, annotate the location of eyes, nose, mouth, and other facial features.
+    The distances between these annotations are then used as features for facial recognition.
+    The process today is no different, except a lot more automatic. The works of Bledsoe,
+    Chan, and gang led to an immense effort to quantify how pixels would co-occur
+    to form facial features.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In order to understand the features that make up a face, abstract. What is
+    the minimum possible number of dots and lines required to depict a face? It is
+    instructive to note abstractions in the use of kaomoji. Consider the following
+    kaomoji:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/ad935efb-80ae-4768-9ae2-3835a66890e0.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'It''s quite easy to see that these depict faces. Contrast them with kaomojis
+    that depict other things (fish, spider, gun, and bomb respectively):'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/6f6fb6b1-cf8f-4b9b-a16c-f0a3a5e8c0be.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: The process of abstraction—the act of removing details until only the ones that
+    matter remain—allows one to think more clearly about a subject matter. This is
+    true in art, as it is in mathematics. It is equally true of software engineering,
+    though careful implementation of the abstractions needs to be made. Going back
+    to the kaomojis, note that, even in their highly abstract form, they are capable
+    of displaying emotions. In order of display, the kaomojis show happiness, indifference,
+    love, dissatisfaction, and anger. These abstract depictions offer us a path to
+    think about the facial features in pictures. To determine whether a face exists,
+    we simply determine if those lines are there. The question now becomes how do
+    we take a photo and draw lines?
+  prefs: []
+  type: TYPE_NORMAL
+- en: Start with the facial structure and assume an evenly-lit room. Barring diseases
+    such as Graves which cause proptosis, eyes are generally sunken. This causes the
+    area of the eyes to be shadowed by the brow ridge of the face, as well as cheekbones.
+    In pictures of an evenly-lit face, eyes would appear in shadow. Noses, on the
+    other hand, would appear more brightly lit, because noses are raised compared
+    with the rest of the face. Likewise, lips have a dark area and a bright area,
+    separated by a dark line. These are all useful features to consider when thinking
+    about detecting faces.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Viola-Jones
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Fast forward to the early 2000s. Facial detection methodologies leaped forwards
+    with Viola and Jones introducing a very fast method of detecting objects. The
+    `Viola-Jones` method, while generic enough for the detection of any object, was
+    primarily geared to detecting faces. The key genius to the Viola-Jones method
+    is that it used many small classifiers to classify a region of an image, in a
+    staged fashion. This is called the **cascade classifier**.
+  prefs: []
+  type: TYPE_NORMAL
+- en: To make the explanation clearer, whenever *classifier* is used in the context
+    of the Viola-Jones method, I mean the small classifiers in the cascade classifier.
+    When referring to the cascade classifier, it will be explicitly mentioned as such.
+  prefs: []
+  type: TYPE_NORMAL
+- en: A cascade classifier is made up of many small classifiers. Each classifier is
+    made up of multiple filters. For a brief introduction to filters, see the previous
+    chapter (How Instagram filters work). To detect faces, first start with a small
+    section (called a **window**) of the image. Run the classifiers one by one. If
+    the sum of the result of applying all the filters in the classifier exceeds a
+    predefined threshold for the classifier, then it's considered to be part of a
+    face. Then, the cascade classifier moves on to the next classifier. This is the
+    *cascading* part of the cascading classifier. Once all the classifiers are done,
+    the window slides to the next pixel, and the process begins anew. Should a classifier
+    in the cascade classifier fail to identify something as part of the face, the
+    entire region is rejected and the sliding window slides on.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The filters work by detecting the aforementioned light and dark areas of the
+    face. Take, for example, the fact that the areas around the eyes are typically
+    sunken and therefore shadowed. If we are to apply a filter to an area, we would
+    highlight only the eyes:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/0e8d31e7-0b40-4472-ba28-1944360cc496.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'A classifier for eyes would have multiple filters, configured to test against
+    the possible configurations of eyes. A classifier for the nose would have multiple
+    filters specific to the nose. In a cascading classifier, we could arrange the
+    importance; perhaps we define the eyes as the most important part of the face
+    (they are after all windows to the soul). We could arrange it so that the cascade
+    classifier first classifies a region for eyes. If there are eyes, we then look
+    for the nose, then the mouth. Otherwise, the sliding window should slide on:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/7c046b65-f1ce-4af1-937f-852c6459bd41.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: Another point of innovation with Viola-Jones is that the method was designed
+    to work on an image pyramid. What is an image pyramid? Imagine you have yourself
+    a large 1024 x 768 image. This image has two faces of multiple scales. There is
+    one person standing very close to the camera, and one person standing far away.
+    Anyone with any familiarity with the optics of cameras would instantly realize
+    that the person standing close to the camera will have a much larger face in the
+    image compared to the person standing far away from the camera. The question is,
+    how would we be able to detect both faces at different scales?
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'One possible answer is to design multiple filters, one for each possible scale.
+    But that leaves a lot of room for error. Instead of designing multiple filters,
+    the same filters can be reused, if the image is resized multiple times:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/5d447976-f901-4f10-89ed-324b22650208.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: The face that is very close to the camera wouldn't be detected by a filter designed
+    to detect a small face. Instead, in the original resolution, the classifier will
+    detect the smaller face. Then, the image is resized so that the resolution is
+    now smaller, say 640 x 480\. The big face is now small, and the small faces are
+    now single dots. The classifier will now be able to detect the large face and
+    not the small faces. But in total, the classifier would have detected all the
+    faces in the image. Because the images are directly resized, coordinates in the
+    smaller image can be easily translated into coordinates in the original image.
+    This allows for detection in the smaller scale to be directly translated into
+    detections in the original scale.
+  prefs: []
+  type: TYPE_NORMAL
+- en: At this point, if you have read the previous chapter, this starts to feel somewhat
+    familiar. **Convolutional Neural Networks** (**CNNs**) work in a remarkably similar
+    way. In a CNN, multiple filters are applied to a sub-region, producing a filtered
+    image. The filtered image is then passed through a reduction layer (max-pooling,
+    or some other reduction method). The key in CNNs is to learn what the filters
+    would be. In fact, the first layer of each CNN learns filters that are extremely
+    similar to the filters used in the Viola-Jones method.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The primary similarities are that Viola-Jones essentially amounts to having
+    a sliding window and applying filters to the section of the image. This is comparable
+    to convolutions in a CNN. Where CNNs have an advantage is that they are capable
+    of learning those filters, whereas in the Viola-Jones method the filters are manually
+    created. The Viola-Jones method on the other hand has the benefit of cascading:
+    it may terminate searching a section for faces early if one of the classifiers
+    fails. This saves a lot of computation. Indeed, such was the influence of the
+    Viola-Jones method that it inspired the *Joint Face Detection and Alignment Using
+    Multitask Cascaded Convolutional Networks* by Zhang et al. in 2016, which used
+    three neural networks in cascading fashion to recognize faces.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: It would be tempting to equate the image pyramid with what the pooling layers
+    do in a CNN. This wouldn't be correct. Multi-scale detection in the Viola-Jones
+    method is a neat trick, while pooling layers in a CNN lead to the learning of
+    higher order features. CNNs learn higher order features such as eyes, noses, and
+    mouths, whereas the Viola Jones method doesn't.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In light of this, one may wonder if CNNs may be better. They do detect faces
+    the way humans do—by identifying eyes, noses, and mouths as features, as opposed
+    to filtering patterns on pixels. There are still reasons to use Viola-Jones today.
+    At this point in time, the Viola-Jones method is well understood and well optimized
+    in libraries. It comes built into GoCV, which is what we'll use. The method is
+    also faster than deep learning-based models, at some expense of flexibility. Most
+    Viola-Jones models only detect faces if those faces are front-facing. Additionally,
+    the Viola-Jones method may not detect rotated faces (terrible if you want to detect
+    the face of a head-turning demon as proof to give an exorcist).
+  prefs: []
+  type: TYPE_NORMAL
+- en: Depending on use cases, one might not need deep learning-based systems to perform
+    facial detection at all!
+  prefs: []
+  type: TYPE_NORMAL
+- en: PICO
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Another technique we'll be using is **Pixel Intensity Comparison-based Object
+    detection** (**PICO**), originally developed by Markus, Frljak, et al. in 2014\.
+    It uses the same broad principles as the Viola-Jones method, in that there is
+    a cascade classifier. It differs in two ways. First, a sliding window is not used.
+    This is due to the latter differences. Second, the classifiers of the cascade
+    classifier are different from that of Viola-Jones. In Viola-Jones, a method of
+    applying filters repeatedly and then summing the result is used as a classifier.
+    By contrast, in PICO, decision trees are used.
+  prefs: []
+  type: TYPE_NORMAL
+- en: A decision tree is a tree where each node is a feature, and the branching of
+    the feature is defined by a threshold. In the case of PICO, the decision tree
+    applies for each pixel in the photo. For each pixel considered, the intensity
+    is compared against the intensity of another pixel at another location. These
+    locations are generated from a uniform distribution, obviating the need for a
+    sliding window.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The PICO method also does away with needing image pyramids and integral images.
+    The classifiers are capable of detecting faces straight away from an image. This
+    makes it very fast.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Nonetheless, the legacy of Viola-Jones is evident. The classifiers are applied
+    in stages. First, the simpler classifiers are used. This would eliminate areas
+    where the probability of faces existing is low. Next, more complex classifiers
+    are used on the reduced search areas. This is repeated until the last stage is
+    reached. The results of each classifier are retained for later use.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The reader might come to realize that areas in a picture that definitely has
+    a face will be searched by more classifiers. It is with this intuition that the
+    authors introduced a final clustering step in the PICO classifier. The rule is
+    simple: if there is an overlap of areas searched by the classifier, and the overlap
+    percentage is greater than 30%, it''s considered to be part of the same cluster.
+    Thus, the final result is robust to small changes.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: A note on learning
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: You may have noted that in describing the algorithms previously, I have neglected
+    to mention the training procedures for how these models learn. This omission is
+    rather deliberate. As we will not be training any models, how the Viola-Jones
+    method and the PICO method are trained to produce models will be left as an exercise
+    for the reader.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Instead, in this chapter we wish to use already created models. These models
+    are commonly used in practice. We will then compare and contrast the methods to
+    find out their pros and cons.
+  prefs: []
+  type: TYPE_NORMAL
+- en: GoCV
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In this chapter, we will be using GoCV. GoCV is a binding for OpenCV and comes
+    with a suite of features from OpenCV that can be used. One of the features from
+    OpenCV is the Viola-Jones classifier, which we will use to our advantage.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Installing GoCV is a little tricky, however. It requires OpenCV to be installed
+    beforehand. At the time of writing, the version supported by GoCV is OpenCV 3.4.2\.
+    Installing OpenCV can be quite a painful experience. Perhaps the best place to
+    find out *how* to install OpenCV is a website called **Learn OpenCV**. They have
+    great guides on installing OpenCV on all platforms:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Installing OpenCV on Ubuntu: [https://www.learnopencv.com/install-opencv3-on-ubuntu/](https://www.learnopencv.com/install-opencv3-on-ubuntu/)'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Installing OpenCV on Windows: [https://www.learnopencv.com/install-opencv3-on-windows/](https://www.learnopencv.com/install-opencv3-on-windows/)'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Installing OpenCV on MacOS: [https://www.learnopencv.com/install-opencv3-on-macos/](https://www.learnopencv.com/install-opencv3-on-macos/)'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: After the daunting process of installing OpenCV is done, installing GoCV is
+    a piece of cake. Simply run `go get -u gocv.io.x.gocv`, and Bob's your uncle.
+  prefs: []
+  type: TYPE_NORMAL
+- en: API
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: The API of GoCV matches the API of OpenCV quite well. A particularly good API
+    to showcase is the display window. With the display window, one is able to display
+    the image the webcam is receiving live. It's also a very useful tool for debugging,
+    in cases where one might want to write a new classifier.
+  prefs: []
+  type: TYPE_NORMAL
+- en: I have developed programs for many years. It's fair to say I've seen many design
+    patterns and packages. Among the prickliest problems to have for almost all programming
+    languages is the foreign function interface, when a program has to call a library
+    written in another language. Not many are well done. Most are shoddily done, as
+    if something is plastered over the underlying **foreign function interface** (**FFI**).
+    In Go, FFI is handled by cgo.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Very often, library authors (myself included) get too smart, and attempt to
+    manage resources on behalf of the users. While at first blush this may seem to
+    be good UX, good customer service even, this ultimately leads to much pain. At
+    the time of writing, Gorgonia itself had just undergone a series of refactors
+    to make the resource metaphors more clear, specifically with regards to CUDA usage.
+  prefs: []
+  type: TYPE_NORMAL
+- en: With all this said, GoCV is probably one of the most consistent Go libraries
+    with regards to its cgo usage. The part where GoCV is consistent is in its treatment
+    of foreign objects. Everything is treated as a resource; hence, most types have
+    a `.Close()` method. There are certainly other beauties of GoCV, including the
+    `customenv` build tags, which allow library users to define where OpenCV is installed,
+    but the chief compliment I have for GoCV is in its consistency with regards to
+    treating OpenCV objects as an external resource.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The treatment of objects with the resource metaphor guides us in our use of
+    the GoCV API. All objects must be closed after use,which is a  simple rule to
+    abide by.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Pigo
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Pigo is a Go library for detecting faces by using the PICO algorithm. Compared
+    to the Viola-Jones method, PICO is fast. Naturally, PIGO is fast too. Add this
+    to the fact that GoCV uses cgo, which adds a penalty for speed, and PIGO may seem
+    to be a better option overall. However, it must be noted that the PICO algorithm
+    is more prone to false positives than the original Viola-Jones method.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Using the PIGO library is simple. The provided documentation is clear. However,
+    PIGO was designed to run within the author's workflow. Differing from that workflow
+    will require some tiny amount of extra work. Specifically, the author draws images
+    using external helpers such as `github.com/fogleman/gg`. We shan't. However, the
+    work isn't much.
+  prefs: []
+  type: TYPE_NORMAL
+- en: To install `pigo`, simply run `go get -u github.com/esimov/pigo/...`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Face detection program
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: What we want to do is build a program that reads an image from a webcam, passes
+    the image into a face detector and then draws rectangles in the image. Finally,
+    we want to display the image with the rectangles drawn on.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Grabbing an image from the webcam
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'First, we''ll open a connection to the webcam:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE0]'
+  prefs: []
+  type: TYPE_PRE
+- en: func main() {
+  prefs: []
+  type: TYPE_NORMAL
+- en: // open webcam
+  prefs: []
+  type: TYPE_NORMAL
+- en: webcam, err := gocv.VideoCaptureDevice(0)
+  prefs: []
+  type: TYPE_NORMAL
+- en: if err != nil {
+  prefs: []
+  type: TYPE_NORMAL
+- en: log.Fatal(err)
+  prefs: []
+  type: TYPE_NORMAL
+- en: '}'
+  prefs: []
+  type: TYPE_NORMAL
+- en: defer webcam.Close()
+  prefs: []
+  type: TYPE_NORMAL
+- en: '}'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE1]'
+  prefs: []
+  type: TYPE_PRE
+- en: Here, I used `VideoCaptureDevice(0)` because, on my computer, which runs Ubuntu,
+    the webcam is device `0`. Your webcam may differ in device numbering. Also, do
+    note `defer webcam.Close()`. This is the aforementioned resource metaphor that
+    GoCV sticks very strongly to. A webcam (specifically, a `VideoCaptureDevice`)
+    is a resource, much like a file. In fact in Linux, this is true; the webcam on
+    my computer is mounted in the `/dev/video0` directory and I can access raw bytes
+    from it by just using a variant of `cat`. But I digress. The point is that `.Close()`
+    has to be called on resources to free up usage.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The talk about closing resources to free up usage naturally raises a question,
+    given we program in Go. Is a channel a resource? The answer is no. `close(ch)`
+    of a channel  merely informs every sender that this channel is no longer receiving
+    data.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Having access to the webcam is nice and all, but we also want to be able to
+    grab images off it. I had mentioned one can read raw streams off the file of a
+    webcam. We can do the same with GoCV as well:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE2]'
+  prefs: []
+  type: TYPE_PRE
+- en: img := gocv.NewMat()
+  prefs: []
+  type: TYPE_NORMAL
+- en: defer img.Close()
+  prefs: []
+  type: TYPE_NORMAL
+- en: width := int(webcam.Get(gocv.VideoCaptureFrameWidth))
+  prefs: []
+  type: TYPE_NORMAL
+- en: height := int(webcam.Get(gocv.VideoCaptureFrameHeight))
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'fmt.Printf("Webcam resolution: %v, %v", width, height)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: if ok := webcam.Read(&amp;img); !ok {
+  prefs: []
+  type: TYPE_NORMAL
+- en: log.Fatal("cannot read device 0")
+  prefs: []
+  type: TYPE_NORMAL
+- en: '}'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE3]'
+  prefs: []
+  type: TYPE_PRE
+- en: First, we create a new matrix, representing an image. Again, the matrix is treated
+    like a resource, because it is owned by the foreign function interface. Thus,
+    `defer img.Close()` is written. Next, we query the webcam for information about
+    the resolution. This is not as important right now, but it will be later. Nonetheless,
+    it's quite nice to know what resolution a webcam runs at. Last, we read the webcam's
+    image into the matrix.
+  prefs: []
+  type: TYPE_NORMAL
+- en: At this point, if you are already familiar with Gorgonia's tensor libraries,
+    this pattern may seem familiar, and yet feels funny. `img := gocv.NewMat()` does
+    not define a size. How does GoCV know how much space to allocate for the matrix?
+    Well, the answer is that the magic happens in `webcam.Read`. The underlying matrix
+    will be resized as necessary by OpenCV. In this way, the Go part of the program
+    does no real memory allocation.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Displaying the image
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: So, the image has been magically read into the matrix. How do we get anything
+    out of it?
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The answer is that we have to copy the data from the data structure controlled
+    by OpenCV into a Go-native data structure. Fortunately, GoCV handles that as well.
+    Here, we write it out to a file:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE4]'
+  prefs: []
+  type: TYPE_PRE
+- en: First, the matrix has to be converted to `image.Image`. To do that, `img.ToImage()`
+    is called. Then, it is encoded as a PNG by using `png.Encode`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'And you will have a test image. This was mine:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/617e5f17-6a1f-4b93-9b32-2144890f51c9.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: In the picture, I'm holding a box with a photo of Ralph Waldo Emerson, famed
+    American author. Readers who are familiar with writing instruments may note that
+    it's actually a brand of inks I use for my writing.
+  prefs: []
+  type: TYPE_NORMAL
+- en: So, now we have the basic pipeline of getting an image from the webcam and writing
+    out the image to a file. A webcam continuously captures images, but we're only
+    reading a single image to a matrix, and then writing the matrix into a file. If
+    we put this in a loop, we would have the ability to continuously read images from
+    a webcam and write to file.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Analogously to having a file, we could write it to the screen instead. The GoCV
+    integration with OpenCV is so complete that this is trivial. Instead of writing
+    to a file, we can display a window instead.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'To do so, we need to first create a window object, with the title `Face Detection
+    Window`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE5]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Then, to show the image in the window, simply replace the parts where we write
+    out to a file with this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE6]'
+  prefs: []
+  type: TYPE_PRE
+- en: When the program is run, a window will pop up, showing you the image captured
+    by the webcam.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Doodling on images
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: At some point, we would also like to draw on an image, preferably before we
+    output it, either to the display or a file. GoCV handles that admirably. For our
+    purposes in this chapter, we'll just be drawing rectangles to denote where a face
+    might be. GoCV interfaces well with the standard library's `Rectangle` type.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'To draw a rectangle on an image with GoCV, we first define a rectangle:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE7]'
+  prefs: []
+  type: TYPE_PRE
+- en: Here, I defined a rectangle that starts at location (`50, 50`) and is 100 pixels
+    wide and 100 pixels tall.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Then, a color needs to be defined. Again, GoCV plays very nicely with `image`/`color`,
+    found in the standard library. So, here''s the definition of the color `blue`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE8]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'And now, onward to draw the rectangle on the image!:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE9]'
+  prefs: []
+  type: TYPE_PRE
+- en: This draws a blue rectangle with the top left of the rectangle at (50, 50) in
+    the image.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'At this point, we have the components necessary to build two different pipelines.
+    One writes an image to a file. One creates a window to display the image. There
+    are two ways the input from the webcam may be processed: one-off or continuously.
+    And, we are also able to modify the image matrix before outputting. This gives
+    us a lot of flexibility as scaffolding in the process of building the program.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Face detection 1
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: The first face detection algorithm we want to use is the Viola-Jones method.
+    It comes built into GoCV, so we can just use that. The consistency of GoCV gives
+    us a hint as to what to do next. We need a classifier object (and remember to
+    close it!)
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'This is how to create a classifier object:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE10]'
+  prefs: []
+  type: TYPE_PRE
+- en: classifier := gocv.NewCascadeClassifier()
+  prefs: []
+  type: TYPE_NORMAL
+- en: if !classifier.Load(haarCascadeFile) {
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'log.Fatalf("Error reading cascade file: %v\n", haarCascadeFile)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '}'
+  prefs: []
+  type: TYPE_NORMAL
+- en: defer classifier.Close()
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE11]'
+  prefs: []
+  type: TYPE_PRE
+- en: Note that at this point, it is not enough to just create a classifier. We need
+    to load it with the model to use. The model used is very well established. It
+    was first created by Rainer Lienhart in the early 2000s. Like most products of
+    the 2000s, the model is serialized as an XML file.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The file can be downloaded from the GoCV GitHub repository: [https://github.com/hybridgroup/gocv/blob/master/data/haarcascade_frontalface_default.xml](https://github.com/hybridgroup/gocv/blob/master/data/haarcascade_frontalface_default.xml)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the preceding code, `haarCascadeFile` is a string denoting the path to the
+    file. GoCV handles the rest.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'To detect faces, it is a simple one-liner:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE12]'
+  prefs: []
+  type: TYPE_PRE
+- en: rects := classifier.DetectMultiScale(img)
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE13]'
+  prefs: []
+  type: TYPE_PRE
+- en: In this single line of code, we are telling OpenCV to use Viola-Jones' multiscale
+    detection to detect faces. Internally, OpenCV builds an image pyramid of integral
+    images, and runs the classifiers on the image pyramids. At each stage, rectangles
+    representing where the algorithm thinks the faces are, produced. These rectangles
+    are what is returned. They can then be drawn on the image before being output
+    to a file or window.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Here''s what a full windowed pipeline looks like:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE14]'
+  prefs: []
+  type: TYPE_PRE
+- en: var haarCascadeFile = "Path/To/CascadeFile.xml"
+  prefs: []
+  type: TYPE_NORMAL
+- en: var blue = color.RGBA{0, 0, 255, 0}
+  prefs: []
+  type: TYPE_NORMAL
+- en: func main() {
+  prefs: []
+  type: TYPE_NORMAL
+- en: // open webcam
+  prefs: []
+  type: TYPE_NORMAL
+- en: webcam, err := gocv.VideoCaptureDevice(0)
+  prefs: []
+  type: TYPE_NORMAL
+- en: if err != nil {
+  prefs: []
+  type: TYPE_NORMAL
+- en: log.Fatal(err)
+  prefs: []
+  type: TYPE_NORMAL
+- en: '}'
+  prefs: []
+  type: TYPE_NORMAL
+- en: defer webcam.Close()
+  prefs: []
+  type: TYPE_NORMAL
+- en: var err error
+  prefs: []
+  type: TYPE_NORMAL
+- en: // open display window
+  prefs: []
+  type: TYPE_NORMAL
+- en: window := gocv.NewWindow("Face Detect")
+  prefs: []
+  type: TYPE_NORMAL
+- en: defer window.Close()
+  prefs: []
+  type: TYPE_NORMAL
+- en: // prepare image matrix
+  prefs: []
+  type: TYPE_NORMAL
+- en: img := gocv.NewMat()
+  prefs: []
+  type: TYPE_NORMAL
+- en: defer img.Close()
+  prefs: []
+  type: TYPE_NORMAL
+- en: // color for the rect when faces detected
+  prefs: []
+  type: TYPE_NORMAL
+- en: // load classifier to recognize faces
+  prefs: []
+  type: TYPE_NORMAL
+- en: classifier := gocv.NewCascadeClassifier()
+  prefs: []
+  type: TYPE_NORMAL
+- en: if !classifier.Load(haarCascadeFile) {
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'log.Fatalf("Error reading cascade file: %v\n", haarCascadeFile)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '}'
+  prefs: []
+  type: TYPE_NORMAL
+- en: defer classifier.Close()
+  prefs: []
+  type: TYPE_NORMAL
+- en: for {
+  prefs: []
+  type: TYPE_NORMAL
+- en: if ok := webcam.Read(&amp;img); !ok {
+  prefs: []
+  type: TYPE_NORMAL
+- en: fmt.Printf("cannot read device %d\n", deviceID)
+  prefs: []
+  type: TYPE_NORMAL
+- en: return
+  prefs: []
+  type: TYPE_NORMAL
+- en: '}'
+  prefs: []
+  type: TYPE_NORMAL
+- en: if img.Empty() {
+  prefs: []
+  type: TYPE_NORMAL
+- en: continue
+  prefs: []
+  type: TYPE_NORMAL
+- en: '}'
+  prefs: []
+  type: TYPE_NORMAL
+- en: rects := classifier.DetectMultiScale(img)
+  prefs: []
+  type: TYPE_NORMAL
+- en: for _, r := range rects {
+  prefs: []
+  type: TYPE_NORMAL
+- en: gocv.Rectangle(&amp;img, r, blue, 3)
+  prefs: []
+  type: TYPE_NORMAL
+- en: '}'
+  prefs: []
+  type: TYPE_NORMAL
+- en: window.IMShow(img)
+  prefs: []
+  type: TYPE_NORMAL
+- en: if window.WaitKey(1) &gt;= 0 {
+  prefs: []
+  type: TYPE_NORMAL
+- en: break
+  prefs: []
+  type: TYPE_NORMAL
+- en: '}'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '}'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '}'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE15]'
+  prefs: []
+  type: TYPE_PRE
+- en: The program is now able to get an image from the webcam, detect faces, draw
+    rectangles around the faces, and then display the image. You may note that it
+    is quite quick at doing that.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Face detection 2
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In one fell swoop, GoCV has provided us with everything necessary to do real-time
+    face detection. But is it easy to use with other face detection algorithms? The
+    answer is yes, but some work is required.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The algorithm we want to use is the PICO algorithm. Recall that images in GoCV
+    are in the `gocv.Mat` type. In order for PIGO to use that, we would need to convert
+    that into a format readable by PICO. Incidentally, such a shared format is the
+    `image.Image` of the standard library.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Recall once again that the `gocv.Mat` type has a method `.ToImage()`, which
+    returns an `image.Image`. That's our bridge!
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Before crossing it, let''s look at how to create a PIGO classifier. Here''s
+    a function to do so:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE16]'
+  prefs: []
+  type: TYPE_PRE
+- en: func pigoSetup(width, height int) (*image.NRGBA, []uint8, *pigo.Pigo,
+  prefs: []
+  type: TYPE_NORMAL
+- en: pigo.CascadeParams, pigo.ImageParams) {
+  prefs:
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: goImg := image.NewNRGBA(image.Rect(0, 0, width, height))
+  prefs: []
+  type: TYPE_NORMAL
+- en: grayGoImg := make([]uint8, width*height)
+  prefs: []
+  type: TYPE_NORMAL
+- en: cParams := pigo.CascadeParams{
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'MinSize: 20,'
+  prefs:
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: 'MaxSize: 1000,'
+  prefs:
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: 'ShiftFactor: 0.1,'
+  prefs:
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: 'ScaleFactor: 1.1,'
+  prefs:
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: '}'
+  prefs: []
+  type: TYPE_NORMAL
+- en: imgParams := pigo.ImageParams{
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Pixels: grayGoImg,'
+  prefs:
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: 'Rows: height,'
+  prefs:
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: 'Cols: width,'
+  prefs:
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: 'Dim: width,'
+  prefs:
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: '}'
+  prefs: []
+  type: TYPE_NORMAL
+- en: classifier := pigo.NewPigo()
+  prefs: []
+  type: TYPE_NORMAL
+- en: var err error
+  prefs: []
+  type: TYPE_NORMAL
+- en: if classifier, err = classifier.Unpack(pigoCascadeFile); err != nil {
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'log.Fatalf("Error reading the cascade file: %s", err)'
+  prefs:
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: '}'
+  prefs: []
+  type: TYPE_NORMAL
+- en: return goImg, grayGoImg, classifier, cParams, imgParams
+  prefs: []
+  type: TYPE_NORMAL
+- en: '}'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE17]'
+  prefs: []
+  type: TYPE_PRE
+- en: This function is quite dense. Let's unpack it. We'll do it in a logical fashion
+    as opposed to in a top-down linear fashion.
+  prefs: []
+  type: TYPE_NORMAL
+- en: First, a `pigo.Pigo` is created with `classifier := pigo.NewPigo()`. This creates
+    a new classifier. Like the Viola-Jones method, a model is required to be supplied.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Unlike in GoCV, the model is in a binary format which needs to be unpacked.
+    Additionally, `classifier.Unpack` takes a `[]byte`, instead of a string denoting
+    the path to the file. The provided model can be acquired on GitHub: `https://github.com/esimov/pigo/blob/master/data/facefinder`.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Once the file has been acquired, it needs to be read as `[]byte`, as shown
+    in the snippet below (which is wrapped in an `init` function):'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE18]'
+  prefs: []
+  type: TYPE_PRE
+- en: pigoCascadeFile, err = ioutil.ReadFile("path/to/facefinder")
+  prefs: []
+  type: TYPE_NORMAL
+- en: if err != nil {
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'log.Fatalf("Error reading the cascade file: %v", err)'
+  prefs:
+  - PREF_IND
+  type: TYPE_NORMAL
+- en: '}'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE19]'
+  prefs: []
+  type: TYPE_PRE
+- en: Once the `pigoCascadeFile` is available, we can now unpack it into the classifier
+    by using `classifier.Unpack(pigoCascadeFile)`. Usual error handling applies.
+  prefs: []
+  type: TYPE_NORMAL
+- en: But what of the earlier parts of the section? Why is this necessary?
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'To understand this, let''s look at how PIGO does its classification. It looks
+    roughly like this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE20]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'When PIGO runs the classifier, it takes two parameters which determine its
+    behavior: the `ImageParam` and the `CascadeParams`. In particular, the details
+    `ImageParam` is illuminating our process. It''s defined thus:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE21]'
+  prefs: []
+  type: TYPE_PRE
+- en: It is with this in mind that the `pigoSetup` function has the extra functionalities.
+    The `goImg` is not strictly required, but it's useful when considering our bridge
+    between GoCV and PIGO.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'PIGO requires images to be in `[]uint8`, representing a grayscale image. GoCV
+    reads a webcam image into a `gocv.Mat`, which has a `.ToImage()` method. The method
+    returns a `image.Image`. Most webcams capture color images. These are the steps
+    required in order to make GoCV and PIGO play nicely together:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Capture an image from the webcam.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Convert the image into an `image.Image`.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Convert that image into a gray scale image.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Extract the `[]uint8` from the gray scale image.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Perform face detection on the `[]uint8`.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: For our preceding pipeline, the image parameters and the cascade parameters
+    are more or less static. Processing of the image is done in a linear fashion.
+    A frame from the webcam doesn't get captured until the face detection is done,
+    and the rectangles drawn, and the final image displayed in the window.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Hence, it would be perfectly all right to allocate an image once, and then overwrite
+    the image in each loop. The `.ToImage()` method allocates a new image every time
+    it's called. Rather, we can have a naughty version, where an already-allocated
+    image is reused.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Here''s how to do it:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE22]'
+  prefs: []
+  type: TYPE_PRE
+- en: This function allows one to reuse an existing image. We simply loop through
+    the bytes of the `gocv.Mat` and overwrite the underlying bytes of the image.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'With the same logic, we can also create a naughty version of a function that
+    converts the image into gray scale:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE23]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The differences in function signature are stylistic. The latter signature is
+    better—it''s better to return the type. This allows for error correction as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE24]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'And so our pipeline looks like this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE25]'
+  prefs: []
+  type: TYPE_PRE
+- en: There are some things to note here. If you follow the logic, you will note that
+    the only things that really changed are the data in `imgParams.Pixels`. The rest
+    of the things didn't really change as much.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Recall from the earlier explanation of the PICO algorithm—that there may be
+    overlaps in detection''s. A final clustering step is required for final detections.
+    This explains the following two lines:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE26]'
+  prefs: []
+  type: TYPE_PRE
+- en: The `0.3` value is chosen based on the original paper. In the documentation
+    of PIGO, the value `0.2` is recommended.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Another thing that is different is that PIGO does not return rectangles as
+    detections. Instead, it returns its own `pigo.Detection` type. To translate from
+    these to standard `image.Rectangle` is simply done with these lines:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE27]'
+  prefs: []
+  type: TYPE_PRE
+- en: Running the program yields a window showing the webcam image, with green rectangles
+    around faces.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Putting it all together
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Now we have two different uses of two different algorithms to detect faces.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Here are some observations:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The images using PIGO are smoother—there are fewer jumps and lags.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The PIGO algorithm jitters a little more than the standard Viola-Jones method.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The PIGO algorithm is more robust to rotations—I could tilt my head more and
+    still have my face detected compared to the standard Viola-Jones method.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'We can of course put both of them together:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE28]'
+  prefs: []
+  type: TYPE_PRE
+- en: Here we see PIGO and GoCV both managed to detect them rather accurately, and
+    that they agree with each other quite a lot.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Additionally we can see that there is now a fairly noticeable lag between actions
+    and when the actions are displayed on screen. This is because there is more work
+    to be done.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Evaluating algorithms
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: There are many dimensions upon which we can evaluate the algorithms. This section
+    explores how to evaluate algorithms.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Assuming we want to have fast face detection—which algorithm would be better?
+  prefs: []
+  type: TYPE_NORMAL
+- en: The only way to understand the performance of an algorithm is to measure it.
+    Thankfully Go comes with benchmarking built in. That is what we are about to do.
+  prefs: []
+  type: TYPE_NORMAL
+- en: To build benchmarks we must be very careful about what we're benchmarking. In
+    this case, we want to benchmark the performance of the detection algorithm. This
+    means comparing  `classifier.DetectMultiScale` versus, `pigoClass.RunCascade`
+    and `pigoClass.ClusterDetections`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Also, we have to compare apples to apples—it would be unfair if we compare
+    one algorithm with a 3840 x 2160 image and the other algorithm with a 640 x 480
+    image. There are simply more pixels in the former compared to the latter:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE29]'
+  prefs: []
+  type: TYPE_PRE
+- en: There are a few things to note—the set up is made early on in the function.
+    Then `b.ResetTimer()` is called. This resets the timer so that setups are not
+    counted towards the benchmark. The second thing to note is that the classifier
+    is set to detect faces on the same image over and over again. This is so that
+    we can get an accurate idea of how well the algorithm performs. The last thing
+    to note is the rather weird `_ = rects` line at the end. This is done to prevent
+    Go from optimizing away the calls. Technically, it is not needed, as I am quite
+    certain that the `DetectMultiScale` function is complicated enough as to never
+    have been optimized away, but that line is just there for insurance.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'A similar set up can be done for PIGO:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE30]'
+  prefs: []
+  type: TYPE_PRE
+- en: This time the set up is more involved than the GoCV benchmark. It may seem that
+    these two functions are benchmarking different things—the GoCV benchmark takes
+    a `gocv.Mat` while the PIGO benchmark takes a `[]uint8`. But remember that we're
+    interested in the performance of the algorithms on an image.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The main reason why the gray scaling is also added into the benchmark is because,
+    although GoCV takes a color image, the actual Viola-Jones method uses a gray scale
+    image. Internally, OpenCV converts the image into a gray scale before detection.
+    Because we're unable to separate the detection part by itself, the only alternative
+    is to consider conversion to gray scale as part of the detection process.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'To run the benchmark, both functions are added into `algorithms_test.go`. Then
+    `go test -run=^$ -bench=. -benchmem` is run. The result is as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE31]'
+  prefs: []
+  type: TYPE_PRE
+- en: Here we can see that GoCV is about 1/3 slower than PIGO. A key reason for this
+    is due to the cgo calls made in order to interface with OpenCV. However, it should
+    also be noted that the PICO algorithm is faster than the original Viola-Jones
+    algorithm. That PIGO can exceed the performance of a highly tuned and optimized
+    Viola-Jones algorithm found in OpenCV, is rather impressive.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'However, speed is not the only thing that matters. There are other dimensions
+    that matter. The following are things that matter when considering face detection
+    algorithms. Tests for them are suggested but left as an exercise for the reader:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE32]'
+  prefs: []
+  type: TYPE_PRE
+- en: The last one is of particular interest. For many years, ML algorithms have not
+    served people of color well. I myself had some issues when using a Viola-Jones
+    model (a different model from the one in the repository) to detect eyes. In a
+    facial feature detection project I did about five years ago, I was trying to detect
+    eyes on a face.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The so-called **Asian** eyes are composed of two major features—an upward slant
+    away from the nose to the outside of the face; and eyes that have epicanthic folds,
+    giving the illusion of a *single* eyelid—that is, an eyelid without crease. The
+    model I was working on couldn't detect where my eyes were on occasion because
+    the filter looked for the crease of the eyelid, and the creases on my eyelids
+    are not that obvious.
+  prefs: []
+  type: TYPE_NORMAL
+- en: On that front, some algorithms and models may appear accidentally exclusionary.
+    To be clear, I am NOT saying that the creators of such algorithms and models are
+    racist. However there are some assumptions that were made in the design of the
+    algorithms that did not include considerations of all the possible cases—nor could
+    they ever. For example, any contrast-based detection of facial landmarks will
+    fare poorly with people who have darker skin tones. On the flipside, contrast-based
+    detection systems are usually very fast, because there is a minimal amount of
+    calculation required. Here, there is a tradeoff to be made—do you need to detect
+    everyone, or do you need to be fast?
+  prefs: []
+  type: TYPE_NORMAL
+- en: This chapter aims to encourage readers to think more about use cases of machine
+    learning algorithms and the tradeoffs required in using the algorithms. This book
+    has mostly been about thinking about the tradeoffs. I highly encourage the reader
+    to think deeply about the use cases of the machine learning algorithms. Understand
+    all the tradeoffs required. Once the appropriate tradeoffs are understood, implementation
+    is usually a piece of cake.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Summary
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In this chapter, we learned about using GoCV and PIGO, and built a program that
+    detects faces from a live webcam. At the end of the chapter, we implemented a
+    usable facial recognition system, got familiar with notions of hashing of facial
+    features, and saw how to make fast inferences using the Gorgonia suite of libraries
+    as well as GoCV, which is a binding for OpenCV.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In saying that, in the next chapter, we'll look at some of the implications
+    of not having built your algorithm by yourself.
+  prefs: []
+  type: TYPE_NORMAL

@@ -1,0 +1,1024 @@
+- en: Assisted Drawing with RNNs
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In the previous chapter, we walked through building a simple drawing application
+    that would try to infer what the user was drawing and present them with alternatives
+    based on the most likely predicted categories; the intention of this application
+    was to improve the efficiency of sketching tasks by giving the user completed
+    sketches, obtained through Microsoft's Bing image search, rather than having to
+    spend time fussing over the details.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In this chapter, we'll revisit this application but look at an alternative for
+    inferring what the user is drawing, and, in doing so, we will be exposing ourselves
+    to new types of data and machine learning models. Following the familiar format,
+    we will first revise the task, explore the data and model, and then walk through
+    building up the required functionality in a playground, before migrating it across
+    to our application. Let's get started.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Assisted drawing
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In this section, we will briefly describe this chapter's project and what we
+    aim to achieve. Recall from the previous chapter that we described an application
+    capable of predicting what the user was trying to sketch, and fetched similar
+    images based on the predicted categories, such as a sailboat. Based on this prediction,
+    the application would search and download images of that category. After downloading,
+    it would sort them based on their similarity with regards to the user's sketch.
+    Then it would present the ordered alternatives to the user, which they could swap
+    their sketch with.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The finished project is shown as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/c711add4-cacb-4d48-b65a-f9a351ecf11f.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: The model used for performing this classification was based on a **Convolutional
+    Neural Network** (**CNN**), a type of neural network well suited for understanding
+    images owing to its ability to find local patterns and build on top of these lower
+    patterns to find more complex and interesting patterns. We took advantage of these
+    higher order patterns by using them as a basis to sort our downloaded images,
+    such that those that were more similar in style to the user's sketch would be
+    shown first. We reasoned how this worked by comparing it with measurements of
+    similarities between sentences using words as features—words being analogous to
+    our higher order patterns—and distance formulas to calculate the similarities.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'But our approach suffered from a bit of overhead; to perform accurate classification,
+    we needed a significant amount of the sketch completed, as well as needing to
+    use memory and CPU cycles to rasterize the image before we could feed it into
+    our model. In this chapter, we will be using an alternative that doesn''t rely
+    on pixels as its features but rather the **sequences of strokes** used to draw
+    it. There are numerous reasons you may want to do this, including:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Accessibility to the data or larger dataset
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Potential improvements to the accuracy of the predictions
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Generative capabilities, that is, being able to predict and generate the next
+    set of strokes
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: But here, it gives us the opportunity to explore a type of data that encodes
+    essentially the same thing—a sketch. Let's explore this further in the next section,
+    where we introduce the dataset and model that will be used in this project.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Recurrent Neural Networks for drawing classification
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: The model used in this chapter was trained on the dataset used in Google's AI
+    experiment *Quick**, Draw!*
+  prefs: []
+  type: TYPE_NORMAL
+- en: '*Quick, Draw!* is a game where players are challenged to draw a given object
+    to see whether the computer can recognize it; an extract of the data is shown
+    as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/68103d5c-1a1f-404a-96e5-d9638b275429.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'The technique was inspired from the work done on handwritten recognition (Google
+    Translate), where, rather than looking at the image as a whole, the team worked
+    with data features describing how the characters were drawn. This is illustrated
+    in the following image:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/607c6e39-9ebf-4990-883f-b0d2e905b949.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: Source: https://experiments.withgoogle.com/ai/quick-draw
+  prefs: []
+  type: TYPE_NORMAL
+- en: The hypothesis here is that there exists some consistent pattern of how people
+    draw certain types of objects; but to discover those patterns, we would need a
+    lot of data, which we do have. The dataset consists of over 50 million drawings
+    across 345 categories obtained cleverly, from the players of the *Quick, Draw!*
+    game. Each sample is described with timestamped vectors and associated metadata
+    describing the country the player was based in and the category asked of the user.
+    You can learn more about the dataset from the official website: [https://github.com/googlecreativelab/quickdraw-dataset](https://github.com/googlecreativelab/quickdraw-dataset).
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'To make the dataset and training manageable, our model was only trained on
+    172 of the 345 categories, but the accompanying Notebook used to create and train
+    the model is available for those wanting to delve into the details. To get a better
+    understanding of the data, let''s have a peek at a single sample, as shown here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE0]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The details of the sketch are broken down into an array of strokes, each described
+    by a three-dimensional array containing the `x`, `y` positions and `timestamp`
+    that make up the path of the stroke:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE1]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'As mentioned previously, this being an example from the **raw dataset**, the
+    team behind *Quick, Draw!* has released many variants of the data, from raw samples
+    to preprocessed and compressed versions. We are mostly interested in exploring
+    the raw and simplified versions: the former because it''s the closest representation
+    we have that will represent the data we obtain from the user, and the latter because
+    it was used to train the model.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**Spoiler**: Most of this chapter deals with preprocessing the user input.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Both raw and simplified versions have stored each category in an individual
+    file in the NDJSON  file format.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The NDJSON file format, short for newline delimited JSON, is a convenient format
+    for storing and streaming structured data that may be processed one record at
+    a time. As the name suggests, it stores multiple JSON-formatted objects in single
+    lines. In our case, this means each sample is stored as a separate object delimited
+    by a new line; you can learn more about the format at [http://ndjson.org](http://ndjson.org).
+  prefs: []
+  type: TYPE_NORMAL
+- en: You may be wondering what the difference is between the raw and simplified versions.
+    We will go into the details when we build the preprocessing functionality required
+    for this application, but as the name implies, the simplified version reduces
+    the complexity of each stroke by removing any unnecessary points, along with applying
+    some level of standardization—a typical requirement when dealing with any data
+    to make the samples more comparable.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Now that we have a better understanding of the data we are dealing with, let's
+    turn our attention to building up some level of intuition of how we can learn
+    from these sequences, by briefly discussing the details of the model used in this
+    chapter.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In previous chapters, we saw many examples of how CNNs can learn useful patterns
+    from local 2D patches, which themselves can be built upon to further abstract
+    from raw pixels into something with more descriptive power. This is fairly intuitive
+    given our understanding of images is not made up of independent pixels but rather
+    a collection of pixels related to their neighbors, which in turn describe parts
+    of an object. In [Chapter 1](7d4f641f-7137-4a8a-ae6e-2bb0e2a6db5c.xhtml), *Introduction
+    to Machine Learning*, we introduced a **Recurrent Neural Network** (**RNN**),
+    a major component of building the **Sequence to Sequence** (**Seq2Seq**) model
+    used for language translation, and we saw how its ability to remember made it
+    well suited for data made up of sequences where order matters. As highlighted
+    previously, our given samples are made up of sequences of strokes; the RNN is
+    a likely candidate for learning to classify sketches.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'As a quick recap, RNNs implement a type of **selective memory** using a feedback
+    loop, which itself is adjusted during training; diagrammatically this is shown
+    as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/9ce9ab70-0538-49dd-8a85-49ab5503d2d0.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: On the left is the actual network, and on the right we have the same network
+    unrolled across four time steps. As the points of the sketch's strokes are fed
+    in, they are multiplied by the layer's weight along with the current state before
+    being fed back in and/or outputted. During training, this feedback allows the
+    network to learn patterns of an ordered sequence. We can stack these recurrent
+    layers on top of each other to learn more complex and abstract patterns as we
+    did with CNN.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'But recurrent layers are not the only way to learn patterns from sequential
+    data. If you generalize the concept of CNNs as something being able to learn local
+    patterns across any dimension (as opposed to just two dimensions), then you can
+    see how we could use 1D convolutional layers to achieve a similar effect as our recurrent
+    layers. Therein, similar to 2D convolutional layers, we learn 1D kernels across
+    sequences (treating time as a spatial dimension) to find local patterns to represent
+    our data. Using a convolutional layer has the advantage of being considerably
+    computationally cheaper than its counterpart, making it ideal for processor- and
+    power-constrained devices, such as mobile phones. It is also advantageous for
+    its ability to learn patterns independent of order, similar to how 2D kernels
+    are invariant of position. In this figure, we illustrate how the 1D convolutional
+    layer operates on input data:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/7ebfa401-7372-4c04-bfc3-91ef33e6983b.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'In this context, strokes (local to the window size) will be learned, independent
+    of where they are in the sequence, and a compact representation will be outputted,
+    which we can then feed into an RNN to learn ordered sequences from these strokes
+    (rather than from raw points). Intuitively you can think of our model as initially
+    learning strokes such as vertical and horizontal strokes (independent of time),
+    and then learning (in our subsequent layers made up of RNNs) higher-order patterns
+    such as shapes from the ordered sequence of these strokes. The following figure
+    illustrates this concept:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/41eb49b5-30d3-446d-9269-458d3679581c.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: On the left, we have the raw points inputted into the model. The middle part
+    shows how a 1D convolutional layer can learn local patterns from these points
+    in a form of strokes. And finally, at the far right, we have the subsequent RNNs
+    learning order-sensitive patterns from the sequence of these strokes.
+  prefs: []
+  type: TYPE_NORMAL
+- en: One more concept to introduce before introducing the model, but, before doing
+    so, I want you to quickly think of how you draw a square. Do you draw it in a
+    clockwise direction or anti-clockwise direction?
+  prefs: []
+  type: TYPE_NORMAL
+- en: The last concept I want to briefly introduce in this section is bidirectional
+    layers; bidirectional layers attempt to make our network invariant to the previous
+    question. We discussed earlier how RNNs are sensitive to order, which is precisely
+    why they are useful here, but as I hope  has been highlighted, our sketch may
+    be drawn in the reverse order. To account for this, we can use a bidirectional
+    layer, which, as the name implies, processes the input sequence in two directions
+    (chronologically and anti-chronologically) and then merges their representations.
+    By processing a sequence in both directions, our model can become somewhat invariant
+    to the direction in which we draw.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We have now introduced all the building blocks used for this model; the following
+    figure shows the model in its entirety:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/2f02a2a5-9683-40fc-9c5f-c61caf9e715b.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: As a reminder, this book is focused on the application of machine learning related
+    to Core ML. Therefore we won't be going into the details of this (or any) model,
+    but cover just enough to have an intuitive understanding of how the model works
+    for you to use and explore further.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'As shown previously, our model is comprised of a stack of 1D convolutional
+    layers that feed into a stack of **Long Short-Term Memory** (**LSTM**), an implementation
+    of an RNN, before being fed into a fully connected layer where our prediction
+    is made. This model was trained on 172 categories, each using 10,000 training
+    samples and 1,000 validation samples. After 16 epochs, the model achieved approximately
+    78% accuracy on both the training and validation data, as shown here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/7040b3d5-bb2c-4031-8c3d-4a9ed07dd5f1.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: We now have our model but have skimmed across what we are actually feeding into
+    our model. In the next section, we will discuss what our model was trained with
+    (and therefore expecting) and implement the required functionality to prepare
+    it.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Input data and preprocessing
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In this section, we will implement the preprocessing functionality required
+    to transform our raw user input into something the model is expecting. We will
+    build up this functionality in a playground project before migrating it across
+    to our project in the next section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'If you haven''t done so, pull down the latest code from the accompanying repository
+    [https://github.com/PacktPublishing/Machine-Learning-with-Core-ML](https://github.com/PacktPublishing/Machine-Learning-with-Core-ML).
+    Once downloaded, navigate to the directory `Chapter8/Start/` and open the playground
+    project `ExploringQuickDrawData.playground`. Once loaded, you will see the playground
+    for this chapter, as shown:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/b0eb7b69-a4e1-4d6d-86b9-e2fb3e3b6ab6.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: The playground includes a few samples of the raw *Quick, Draw!* dataset, a single
+    simplified extract, as well as the complied model and supporting classes we created
+    in the previous chapter to represent a sketch (`Stroke.swift`, `Sketch.swift`)
+    and render it (`SketchView.swift`). Our goal for this section will be to better
+    understand the data and the preprocessing required before feeding our model; in
+    doing so, we will be extending our existing classes to encapsulate this functionality.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s start reviewing what code exists before we move forward; if you scroll
+    down the opened source file, you will see the methods `createFromJSON` and `drawSketch`.
+    The former takes in a JSON object (the format our samples are saved in) and returns
+    a strongly typed object: `StrokeSketch`. As a reminder, each sample is made up
+    of:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '`key_id`: Unique identifier'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`word`: Category label'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`countrycode`: Country code where the sample was drawn'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`timestamp`: Timestamp when the sample was created'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`recognized`: A flag indicating whether the sketch was currently recognized'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`drawing`: A multi-dimensional array consisting of arrays of *x*, *y* coordinates
+    along with the elapsed time since the point was created'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The `StrokeSketch` maps the word to the label property and *x*, *y* coordinates
+    to the stroke points. We discard everything else as it is not deemed useful in
+    classification and not used by our model. The `drawSketch` method is a utility
+    method that handles scaling and centering the sketch before creating an instance
+    of a `SketchView` to render the scaled and centered sketch.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The last block of code preloads the JSON files and makes them available through
+    the dictionary `loadedJSON`, where the key is the associated filename and value
+    is the loaded JSON object.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s start by taking a peek at the data, comparing the raw samples to the
+    simplified samples; add the following code to your playground:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE2]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'In the previous code snippet, we are simply getting a reference to our loaded
+    JSON files and passing the samples at index 0 and 1 to our `createFromJSON` file,
+    which will return their `StrokeSketch` representation. We then proceed to pass
+    this into our `drawSketch` method to create the view to render them. After running,
+    you can preview each of the sketches by clicking on the eye icon located to the
+    right-hand panel on the same line as the call to the method `drawSketch`. The
+    following image presents both outputs side by side for comparison:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/f25840e0-da15-4335-9fa2-3db291acfba2.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: The major differences between the samples from the raw dataset and simplified
+    dataset can be seen in the preceding figure. The raw sample is much larger and
+    smoother. What is not obvious from the previous image is that the simplified sample
+    is positioned to the top left while the raw one consists of points in their original
+    and absolute positions (recalling that our `drawSketch` method rescales, if required,
+    and centers the sketch).
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'As a reminder, the raw samples resemble the input we are expecting to receive
+    from the user, while on the other hand our model was trained on the samples from
+    the simplified dataset. Therefore, we need to perform the same preprocessing steps
+    that have been used to transform the raw data into its simplified counterparts
+    before feeding our model. These steps, described in the repository for the data
+    at [https://github.com/googlecreativelab/quickdraw-dataset](https://github.com/googlecreativelab/quickdraw-dataset),
+    are listed as follows, and this is what we will now implement in our playground:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Align the drawing to the top-left corner to have minimum values of zero
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Uniformly scale the drawing to have a maximum value of 255
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Resample all strokes with a one pixel spacing
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Simplify all strokes using the Ramer-Douglas-Peucker algorithm with an epsilon
+    value of 2.0
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The Ramer–Douglas–Peucker algorithm takes a curve composed of line segments
+    (strokes) and finds a simpler curve with fewer points. You can learn more about
+    the algorithm here: [https://en.wikipedia.org/wiki/Ramer-Douglas-Peucker_algorithm](https://en.wikipedia.org/wiki/Ramer-Douglas-Peucker_algorithm).
+  prefs: []
+  type: TYPE_NORMAL
+- en: The rationale behind these steps should be fairly self-explanatory and is highlighted
+    from the figure showing the two sketches of an airplane. That is, the airplane
+    should be invariant to its actual position on the screen and invariant to the
+    scale. And simplifying the stroke makes it easier for our model to learn as it
+    helps ensure that we only capture salient features.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Start off by creating an extension of your `StrokeSketch` class and stubbing
+    out the method `simplify`, as shown:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE3]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We will be mutating a clone of the instance of itself, which is why we first
+    create a copy. We next want to calculate the scale factor required to scale the
+    sketch to have a maximum height and/or width of 255 while respecting its aspect
+    ratio; add the following code to your `simplify` method, which does just this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE4]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'For each dimension (`width` and `height`), we have calculated the scale required
+    to ensure that our sketch is either scaled up or down to a dimension of `255`.
+    We now need to apply this to each of the points associated with each of the strokes
+    held by the `StrokeSketch` class; as we''re iterating through each point, it also
+    makes sense to align our sketch to the top-left corner (`x= 0`, `y = 0`) as a
+    required preprocessing step. We can do this simply by subtracting the minimum
+    value of each of the dimensions. Append the following code to your `simplify`
+    method to do this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE5]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Our final step is to simplify the curve using the Ramer-Douglas-Peucker algorithm;
+    to do this, we will make the `Stroke` responsible for implementing the details
+    and just delegate the task there. Add the final piece of code to your `simplify`
+    method within your `StrokeSketch` extension:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE6]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The Ramer-Douglas-Peucker algorithm recursively traverses the curve, initially
+    starting with the first and last point and finding the point that is furthest
+    from this line segment. If the point is closer than a given threshold, then any
+    points currently marked to be kept can be discarded, but if the point is greater
+    than our threshold then that point must be kept. The algorithm then recursively
+    calls itself with the first point and furthest point as well as furthest point
+    and last point. After traversing the whole curve, the result is a simplified curve
+    that only consists of the points marked as being kept, as described previously.
+    The process is summarized in the following figure:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/d6c502b8-0c3e-4d6d-8ad9-80cce1158c4d.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Let''s start by extending the `CGPoint` structure to include a method for calculating
+    the distance of a point given a line; add this code to your playground:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE7]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Here, we have added a static method to the `CGPoint` structure; it calculates
+    the perpendicular distance of a point given a line (which is the value we compare
+    with our threshold to simplify our line, as previously described). Next, we will
+    implement the recursive method as described, which will be used to build up the
+    curve by testing and discarding any points under our threshold. As mentioned,
+    we will encapsulate this functionality within the `Stroke` class itself, so we
+    start off by stubbing out the extension:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE8]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Now, within the extension, add the recursive method:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE9]'
+  prefs: []
+  type: TYPE_PRE
+- en: Most of this should make sense as it's a direct implementation of the algorithm
+    described. We start off by finding the furthest distance, which must be greater
+    than our threshold; otherwise, the point is ignored. We add the point to the array
+    of points to keep and then pass each end of the segment to our recursive method
+    until we have traversed the whole curve.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The last method we need to implement is the method responsible for initiating
+    this process, which we will also encapsulate within our `Stroke` extension; so
+    go ahead and add the following method to your extension:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE10]'
+  prefs: []
+  type: TYPE_PRE
+- en: The `simplify` method simply (excuse the pun) creates an array of points of
+    our simplified curve, adding the first point, before kicking off the recursive
+    method we had just implemented. Then, when the curve has been traversed, it finally
+    adds the last point before returning the `Stroke` with the simplified points.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'At this point, we have implemented the functionality required to transform
+    raw input into its simplified form, as specified in the *Quick, Draw!* repository.
+    Let''s verify our work by comparing our simplified version of a raw sketch with
+    an existing simplified version of the same sketch. Add the following code to your
+    playground:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE11]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'As we did before, you can click on the eye icon within the right-hand-side
+    panel for each of the `drawSketch` calls to preview each of the sketches. The
+    first is the sketch from the raw dataset, the second is from the simplified dataset,
+    and third is by using our simplified implementation, using the sample from the
+    raw dataset. If everything goes as per the plan, then you should see something
+    that resembles the following:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/7670a6d8-78ec-475a-be3c-787882db8ebd.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: At close inspection, our simplified version looks as though it is more aggressive
+    than the sample from the simplified dataset, but we can easily tweak this by adjusting
+    our threshold. However, for all intents and purposes, this will suffice for now.
+    At this point, we have the required functionality to simplify our dataset, transforming
+    it to something that resembles the training dataset. But before feeding our data
+    into the model, we have more preprocessing to do; let's do that now, starting
+    with a quick discussion of what our model is expecting.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Our model is expecting each sample to have three dimensions; point position
+    *(x, y)* and a flag indicating whether the point is the last point for its associated
+    stroke. The reason for having this flag is that we are passing in a fixed-length sequence
+    of size 75\. That is, each sketch will be either truncated to squeeze into this
+    sequence or padded out with leading zeros to fill it. And using a flag is a way
+    to add context indicating whether it is the end of the stroke or not (keeping
+    in mind that our sequence represents our sketch and our sketch is made up of many
+    strokes).
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Next, as usual, we normalize the inputs to a range of *0.0 - 1.0* to avoid
+    having our model fluctuate while training due to large weights. The last adjustment
+    is converting our absolute values into deltas, which makes a lot of sense when
+    you think about it. The first reason is that we want our model to be invariant
+    to the actual position of each point; that is, we could draw the same sketch side
+    by side, and ideally we want these to be classified as the same class. In the
+    previous chapter, we achieved this by using a CNN operating on pixel data range
+    and positions as we are doing here. The second reason for using deltas rather
+    than absolute values is that the delta carries more useful information than the
+    absolute position, that is, direction. After implementing this, we will be ready
+    to test out our model, so let''s get going; start by adding the following extension
+    and method that will be responsible for this preprocessing step:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE12]'
+  prefs: []
+  type: TYPE_PRE
+- en: Here we have added the static method `preprocess` to our `StrokeSketch` class
+    via an extension; within this method, we begin by setting up the buffer that will
+    be passed to our model. The size of this buffer needs to fit a full sequence,
+    which is calculated simply by multiplying the sequence length (`75`) with the
+    number of dimensions (`3`). We then call `simplify` on the `StrokeSketch` instance
+    to obtain the simplified sketch, ensuring that it closely resembles the data we
+    had trained our model on.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Next, we will iterate through each point for every stroke, normalizing the
+    point and determining the value of the flag (one indicating the end of the stroke;
+    otherwise it''s zero). Append the following code to your `preprocess` method:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE13]'
+  prefs: []
+  type: TYPE_PRE
+- en: We start by obtaining the minimum and maximum values, which we will use when
+    normalizing each point (using the equation *x^i−min(x)/max(x)−min(x)*, where *x[i]*
+    is a single point and *x* represents all points within that stroke). Then we create
+    a temporary place to store the data before iterating through all our points, normalizing
+    each one, and determining the value of the flag as described previously.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We now want to calculate the deltas of each point and finally remove the last
+    point as we are unable to calculate its delta; append the following to your `preprocess`
+    method:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE14]'
+  prefs: []
+  type: TYPE_PRE
+- en: The previous code should be self-explanatory; the only notable point worth highlighting
+    is that we are now dealing with a flattened array, and therefore we need to use
+    a stride of `3` when traversing the data.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'One last chunk of code to add! We need to ensure that our array is equal to
+    75 samples (our sequence length, that is, an array of length 225). We do this
+    by either truncating the array if too large or padding it out if too small. We
+    can easily do this while copying the data from our temporary array, `data`, across
+    to the buffer that we will be passing to our model, `array`. Here we first calculate
+    the starting index and then proceed to iterate through the whole sequence, copying
+    the data across if the current index has passed our starting index, or else padding
+    it with zeros. Add the following snippet to finish off your `preprocess` method:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE15]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'With our `preprocess` method now complete, we are ready to test out our model.
+    We will start by instantiating our model (contained within the playground) and
+    then feeding in a airplane sample we have used previously, before testing with
+    the other categories. Append the following code to your playground:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE16]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'If all goes well, your playground will output the following to the console:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/a8f8d488-654f-42e6-9bff-09105f9155e2.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'It has predicted the category of airplane and done so fairly confidently (with
+    a probability of approximately 77%). Before we migrate our code into our application,
+    let''s test with some other categories; we will start by implementing a method
+    to handle all the leg work and then proceed to pass some samples to perform inference.
+    Add the following method to your playground, which will be responsible for obtaining
+    and preprocessing the sample before passing it to your model for prediction and
+    then returning the results as a formatted string containing the most likely category
+    and probability:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE17]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'With most of the work now done, we are just left with the nail-biting task
+    of testing that our preprocessing implementation and model are sufficiently able
+    to predict the samples we pass. Let''s test with each category; add the following
+    code to your playground:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE18]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The output for each of these can be seen in this screenshot:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/2a2de26c-17a5-4434-b88a-f2779824fb32.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: Not bad! We managed to predict all the categories correctly, albeit the truck
+    was only given the probability of 41%. And interestingly, our simplified airplane
+    sample was given a higher probability (84%) than its counterpart from the raw
+    dataset (77%).
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Out of curiosity, let''s peek at the truck sample we asked our model to predict:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/8d845293-d905-407a-a5c3-597757130114.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: All due respect to the artist, but I would be pushed to predict a truck from
+    this sketch, so full credit to our model.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We have now exposed our model to a variety of categories, and each one we are
+    able to predict correctly, which implies that our preprocessing code has been
+    satisfactorily implemented. We are now ready to migrate our code across to our
+    application, but before doing so, one very last experiment. Let''s think about
+    how our model has been trained and how it will be used in the context of the application.
+    The model was trained on sequences that are essentially strokes, the user made
+    while drawing their sketch. This is precisely how users will be interacting with
+    our application; they will be sketching something with a series (or sequence)
+    of strokes; each time they finish a stroke, we want to try and predict what it
+    is they are trying to draw. Let''s mimic that behavior by building up a sample
+    stroke by stroke, predicting after each subsequent stroke is added to evaluate
+    how well the model performs in a more realistic setting. Add the following code
+    to your playground:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE19]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Nothing new has being introduced here; we are just loading in a sketch, slowly
+    building it up stroke by stroke as discussed, and passing up the partial sketch
+    to our model to perform inference. Here are the results, with their corresponding
+    sketches to give the results more context:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/63f5743c-3516-4b1e-9869-0381e9ee2c7b.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: All reasonable predictions, possibly uncovering how a lot of people draw a **hockey
+    puck**, **mouth**, and **bee**. Now, satisfied with our implementation, let's
+    move on to the next section, where we will migrate this code and look at how we
+    can obtain and compile a model at runtime.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Bringing it all together
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: If you haven't done already, pull down the latest code from the accompanying
+    repository: [https://github.com/packtpublishing/machine-learning-with-core-ml](https://github.com/packtpublishing/machine-learning-with-core-ml).
+    Once downloaded, navigate to the directory `Chapter8/Start/QuickDrawRNN` and open
+    the project `QuickDrawRNN.xcodeproj`. Once loaded, you will see a project that
+    should look familiar to you as it is almost a replica of the project we built
+    in the previous chapter. For this reason, I won't be going over the details here,
+    but feel free to refresh your memory by skimming through the previous chapter.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Rather I want to spend some time highlighting what I consider one of the most
+    important aspects of designing and building the interface between people and machine
+    learning systems. Let's start with this and then move on to migrating our code
+    across from our playground project.
+  prefs: []
+  type: TYPE_NORMAL
+- en: I consider Quick, Draw! a great example that highlights a major responsibility
+    of the designer of any interface of a machine learning system. What makes it stand
+    out is not the clever preprocessing that makes it invariant to scale and translation.
+    Nor is it the sophisticated architecture that can effectively learn complex sequences,
+    but rather the mechanism used to capture the training data. One major obstacle
+    we have in creating intelligent systems is obtaining (enough) clean and labeled
+    data that we can use to train our models. *Quick, Draw!* tackled this by, I assume,
+    intentionally being a tool for capturing and labeling data through the façade
+    of a compelling game—compelling enough to motivate a large number of users to
+    generate sufficient amounts of labeled data. Although some of the sketches are
+    questionable, the sheer number of sketches dilutes these outliers.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The point is that machine learning systems are not static, and we should design
+    opportunities to allow the user to correct the system, where applicable, and capture
+    new data, either implicitly (with the user's consent) and/or explicitly. Allowing
+    a level of transparency between the user and system and allowing the user to correct
+    the model when wrong not only provides us with new data to improve our model,
+    but also—just as important—assists the user in building a useful mental model
+    of the system. Thus it builds some intuition around the affordances of our system,
+    which help them use it correctly.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In our example project, we can easily expose the predictions and provide the
+    means for the user to correct the model. But to ensure that this chapter is concise,
+    we will just look at how we obtain an updated model that typically (remembering
+    that Core ML is suited for inference as opposed to training) we would train off
+    the device. In such a case, you would upload the data to a central server and
+    fetch an updated model when available. As mentioned before, here we will look
+    at the latter: how we obtain the updated model. Let''s see how.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Previously I mentioned, and implied, that you would typically upload new training
+    data and train your model off the device. This, of course, is not the only option
+    and it''s reasonable to perform training on the device using the user''s personal
+    data to tune a model. The advantage of training locally is privacy and lower latency,
+    but it has the disadvantage of diminishing collective intelligence, that is, improvement
+    of the model from collective behavior. Google proposed a clever solution that
+    ensured privacy and allowed for collaboration. In a post titled *Federated Learning:
+    Collaborative Machine Learning without Centralized Training Data*, they described
+    a technique of training locally on the device using personalized data and then
+    uploading only the tuned model to the server, where it would average the weights
+    from the crowd before updating a central model. I encourage you to read the post
+    at [https://research.googleblog.com/2017/04/federated-learning-collaborative.html](https://research.googleblog.com/2017/04/federated-learning-collaborative.html).'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'As you may have come to expect when using Core ML, the bulk of the work is
+    not interfacing with the framework but rather the activities before and after
+    it. Compiling and instantiating a model can be done in just two lines of code,
+    as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE20]'
+  prefs: []
+  type: TYPE_PRE
+- en: Where `modelUrl` is a URL of a locally stored `.mlmodel` file. Passing it to
+    `compileModel` will return the `.mlmodelc` file. This can be used to initialize
+    an instance of `MLModel`, which provides the same capabilities as a model bundled
+    with your application.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Downloading and compilation are time consuming. So you not only want to do this
+    off the main thread but also want to avoid having to perform the task unnecessary;
+    that is, cache locally and only update when required. Let's implement this functionality
+    now; click on the `QueryFacade.swift` file on the left-hand-side panel to bring
+    it to focus in the main editor window. Then add a new extension to the `QueryFacade`
+    class, which is where we will add our code responsible for downloading and compiling
+    the model.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Our first task is to test whether we need to download the model. We do this
+    by simply checking whether we have the model and our model is considered recent.
+    We will use `NSUserDefaults` to keep track of the location of the compiled model
+    as well as a timestamp of when it was last updated. Add the following code to
+    your extension of `QueryFacade`, which is be responsible for checking whether we
+    need to download the model:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE21]'
+  prefs: []
+  type: TYPE_PRE
+- en: As mentioned, we first check whether the model exists, and if so, then test
+    how many days have elapsed since the model was last updated, testing this against
+    some arbitrary threshold for which we consider the model to be stale.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The next method we implement will be responsible for downloading the model
+    (the `.mlmodel` file); this should look familiar to most iOS developers, with
+    the only notable piece of code being the use of a semaphore to make the task synchronous,
+    as the calling method will be running this off the main thread. Append the following
+    code to your `QueryFacade` extension:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE22]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'I have highlighted the statements related to making this task synchronous;
+    essentially, calling `semaphore.wait(timeout: .distantFuture)` will hold the current
+    thread until it is signaled to move on, via `semaphore.signal()`. If successful,
+    this method returns the local URL of the downloaded file.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Our last task is to tie this all together; the next method we implement will
+    be called when `QueryFacade` is instantiated (which we will add just after this).
+    It will be responsible for checking whether we need to download the model, proceeding
+    to download and compile if necessary, and instantiating an instance variable `model`,
+    which we can use to perform inference. Append the final snippet of code to your
+    `QueryFacade` extension:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE23]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We start by checking whether we need to download the model, and if so, proceed
+    to download and compile it:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE24]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'To avoid having to perform this step unnecessarily, we then save the details
+    somewhere permanently, setting the model''s location and the current timestamp
+    in `NSUserDefaults`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE25]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Finally, we instantiate and assign an instance of `MLModel` to our instance
+    variable `model`. The last task is to update the constructor of the `QueryFacade` class
+    to kick off this process when instantiated; update the `QueryFacade` `init` method
+    with the following code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE26]'
+  prefs: []
+  type: TYPE_PRE
+- en: At this stage, we have our model ready for performing inference; our next task
+    is to migrate the code we developed in our playground to our project and then
+    hook it all up. Given that we have spent the first part of this chapter discussing
+    the details, I will skip the specifics here but rather include the additions for
+    convenience and completeness.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s start with our extensions to the `CGPoint` structure; add a new swift
+    file to your project called `CGPointRNNExtension.swift` and add the following
+    code in it:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE27]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Next, add another new swift file to your project called `StrokeRNNExtension.swift`
+    and add the following code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE28]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Finally, we will add a couple of methods that we implemented in the playground
+    to our `StrokeSketch` class to handle the required preprocessing; start by adding
+    a new `.swift` file called `StrokeSketchExtension.swift` and block out the extension
+    as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE29]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Next, we copy and paste in the `simplify` method, which we implement in the
+    playground as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE30]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'As a reminder, this method is responsible for the preprocessing of a sequence
+    of strokes, as described previously. Next, we add our static method `preprocess` to
+    the `StrokeSketch` extension, which takes an instance of `StrokeSketch` and is
+    responsible for putting its simplified state into a data structure that we can
+    pass to our model for inference:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE31]'
+  prefs: []
+  type: TYPE_PRE
+- en: If anything looks unfamiliar, then I encourage you to revisit the previous section,
+    where we delve into the details of what these methods do (and why).
+  prefs: []
+  type: TYPE_NORMAL
+- en: We now have our model and functionality for preprocessing the input; our last
+    task is to tie this all together. Head back to the `QueryFacade` class and locate
+    the method `classifySketch`. As a reminder, this method is called via `queryCurrentSketch`,
+    which in turn is triggered anytime the user completes a stroke. The method is
+    expected to return a dictionary of category and probability pairs, which is then
+    used to search and download related drawings of most likely categories. At this
+    point, it's simply a matter of using the work we have previously done, with one
+    little caveat. If you recall from previous chapters, when we imported our model
+    into the project, Xcode would conveniently generate a strongly typed wrapper for
+    our model and its associated inputs and outputs. A disadvantage of downloading
+    and importing at runtime is that we forgo these generated wrappers and are left
+    to do it manually.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Starting backwards, after making the prediction, we are expecting an instance
+    of `MLFeatureProvider` to be returned, which in turn has a method called `featureValue`.
+    This returns an instance of `MLFeatureValue` for a given output key (`classLabelProbs`).
+    The returned instance of `MLFeatureValue` exposes properties set by the model
+    during inference; here we are interested in the `dictionaryValue` property of
+    type `[String:Double]` (category and its associated probability).
+  prefs: []
+  type: TYPE_NORMAL
+- en: Obviously, to obtain this output, we need to call `predict` on our model, which
+    is expecting an instance adhering to the `MLFeatureProvider` protocol that was
+    generated for us, as mentioned previously. Given that in most instances you will
+    have access and knowledge of the model, the easiest way to generate this wrapper
+    is to import the model and extract the generated input, which is exactly what
+    we will do.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Locate the file `CoreMLModels/Chapter8/quickdraw.mlmodel` in the accompanying
+    repository [https://github.com/packtpublishing/machine-learning-with-core-ml](https://github.com/packtpublishing/machine-learning-with-core-ml),
+    and drag the file into your project as we have done in previous chapters. Once
+    imported, select it from the left-hand-side panel and click on the arrow button
+    within the Model Class section, as shown in the following screenshot:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/53a57d2c-ab0c-45af-9142-23417cbc2556.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'This will open up the generated classes; locate the class `quickdrawInput`
+    and copy and paste it to your `QueryFacade.swift`, ensuring that it''s outside
+    the `QueryFacade` class (or extensions). Because we are only concerned with the
+    `strokeSeq` input, we can strip all other variables; clean it up such that you
+    are left with something like the following:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE32]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We are finally ready to perform inference; return to the `classifySketch` method
+    within the `QueryFacade` class and add the following code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE33]'
+  prefs: []
+  type: TYPE_PRE
+- en: No doubt most of this will look familiar to you; we start by extracting the
+    features via the `preprocess` method we implemented at the start of this chapter.
+    Once we have obtained these features, we wrap them in an instance of `quickdrawInput`,
+    before passing them to our model's `prediction` method to perform inference. If
+    successful, we are returned the output, with which we proceed to extract the appropriate
+    output, as discussed previously. Finally we sort the results before returning
+    them to the caller.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'With that complete, you are now in a good position to test. Build and deploy
+    to the simulator or device, and if everything goes as planned, you should be able
+    to test the accuracy of your mode (or drawing, depending on how you look at it):'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/2cdd1326-a576-4740-aead-489a0e951658.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: Let's wrap up this chapter by reviewing what we have covered.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Summary
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In this chapter, we revisited a previous problem (sketch recognition) but used
+    a different dataset and different approach. Previously, we tackled the problem
+    using CNN, but in this chapter, we identified nuances of how the data was collected,
+    which in turn allowed us to take a different approach using an RNN. As usual,
+    most of the effort was spent in preparing the data for the model. This, in doing
+    so, highlighted some techniques we can use to make our data invariant to scale
+    and translation, as well as the usefulness of reducing details of the inputs (through
+    simplification) to assist our model in more easily finding patterns.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Finally, we highlighted an important aspect of designing interfaces for machine
+    learning systems, that is, adding a layer of transparency and control for the
+    user to help them build a useful mental model of the system and improve the model
+    through explicit user feedback, such as corrections.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s continue our journey into the world of machine learning applications
+    and dive into the next chapter, where we will look at our final visual application:
+    image segmentation.'
+  prefs: []
+  type: TYPE_NORMAL
