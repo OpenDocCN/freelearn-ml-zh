@@ -1,6 +1,6 @@
-# Python 应用监督学习
+# H2O 大规模机器学习
 
-> 原文：[`annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47`](https://annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47)
+> 原文：[`annas-archive.org/md5/c9ddf18b4e65aa8fb31aa4946487f03c`](https://annas-archive.org/md5/c9ddf18b4e65aa8fb31aa4946487f03c)
 > 
 > 译者：[飞龙](https://github.com/wizardforcel)
 > 
