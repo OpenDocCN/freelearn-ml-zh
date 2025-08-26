@@ -1,0 +1,1204 @@
+- en: Building a Streaming Data Analysis Pipeline
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In this final chapter of the book, we will build an end-to-end streaming data
+    pipeline that integrates Amazon ML within the Kinesis Firehose, AWS Lambda, and
+    Redshift pipeline. We extend the Amazon ML capabilities by integrating it with
+    these other AWS data services to implement real-time Tweet classification.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In a second part of the chapter, we show how to address problems beyond a simple
+    regression and classification and use Amazon ML for **Named Entity Recognition**
+    and content-based recommender systems.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The topics covered in this chapter are as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Training a twitter classification model
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Streaming data with Kinesis
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Storing with Redshift
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Using AWS Lambda for processing
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Named entity recognition and recommender systems
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: In the chapter's conclusion, we will summarize Amazon ML's strengths and weaknesses.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Streaming Twitter sentiment analysis
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In this chapter, our main project consists of real-time sentiment classification
+    of Tweets. This will allow us to demonstrate how to use an Amazon ML model that
+    we've trained to process real-time data streams, by leveraging the AWS data ecosystem.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We will build an infrastructure of AWS services that includes the following:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**Amazon ML**: to provide a real-time classification endpoint'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Kinesis firehose**: To collect the Tweets'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**AWS Lambda**: To call an Amazon ML streaming endpoint'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Redshift**: To store the Tweets and their sentiment'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**S3**: To act as a temporary store for the Tweets collected by Kinesis Firehose'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**AWS Cloudwatch**: To debug and monitor'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: We will also write the necessary Python scripts that feed the Tweets to Kinesis
+    Firehose.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Popularity contest on twitter
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: All good data science projects start with a question. We wanted a social network
+    question not tied to a current political or societal context. We will be looking
+    into the popularity of vegetables on twitter. We want to know what the most popular
+    vegetables on twitter are. It's a question that could stand the test of time and
+    be adapted to other lists of things, such as fruits, beverages, weather conditions,
+    animals, and even brands and politicians. The results will surprise you... or
+    not.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We will start by training a binary classification Amazon ML model using a large
+    public twitter sentiment analysis dataset.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'There are many available sentiment analysis libraries that can, with a few
+    lines of code, and given a piece of text, return a sentiment score or a polarity
+    (positive, neutral, negative). `TextBlob` is such a library in Python. It is available
+    at [https://textblob.readthedocs.io](https://textblob.readthedocs.io). Built on
+    top of **NLTK**, `TextBlob` is a powerful library to extract information from
+    documents. Besides sentiment analysis, it can carry out some aspects of speech
+    tagging, classification, tokenization, named entity recognition, as well as many
+    other features. We compare `TextBlob` results with our own Amazon ML classification
+    model. Our goal, first and foremost, is to learn how to make these AWS services
+    work together seamlessly. Our vegetable popularity contest on social media will
+    follow these steps:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: We start by training a twitter sentiment classification model on Amazon ML and
+    creating a real-time prediction endpoint.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: We set up a Kinesis Firehose that stores content on S3.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: We write a simple Python script called a `producer` that collects the Tweets
+    from the twitter API and sends them to Kinesis. At this point, Kinesis Firehose
+    stores the Tweets in S3.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: We move on from storing streaming data in S3 to storing streaming data in Redshift.
+    To do so, we must launch a Redshift cluster and create the required tables.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Finally, we add an AWS Lambda function to our pipeline in order to interrogate
+    our Amazon ML classification endpoint.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Throughout the project, we use AWS CloudWatch to check the status and debug
+    our data pipeline.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: We end up with a collection of Tweets, with two types of sentiment scoring that
+    we can compare. We will look at the ranking of vegetables according to the two
+    methods, their variability, and the inter-rate agreement between the two methods,
+    and we will try to assess which one is better. It's worth noting at this point
+    that we refrain from any involved text processing of Tweets. Tweets are a very
+    specific type of textual content that contains URLs, emoticons, abbreviations,
+    slang, and hashtags. There is a large number of publications on sentiment analysis
+    for twitter that explore different preprocessing and information extraction techniques.
+    We will not use any particular feature extraction technique and restrict ourselves
+    to a simple bag-of-words approach. Our comparison between sentiment analysis via
+    Amazon ML and TextBlog is a proof of concept, not a benchmark.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The training dataset and the model
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'The first step in our project is to train a sentiment analysis and classification
+    Amazon ML model for Tweets. Fortunately, we have access to a rather large twitter
+    sentiment dataset composed of over 1.5M Tweets tagged 0/1 for negative/positive
+    sentiments. The dataset is available at [http://thinknook.com/twitter-sentiment-analysis-training-corpus-dataset-2012-09-22/](http://thinknook.com/twitter-sentiment-analysis-training-corpus-dataset-2012-09-22/).
+    This dataset is an aggregation of two twitter sentiment analysis datasets:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**University of Michigan Sentiment Analysis** competition on Kaggle: [https://inclass.kaggle.com/c/si650winter11](https://inclass.kaggle.com/c/si650winter11)'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Twitter Sentiment Corpus** by *Niek Sanders*: [http://www.sananalytics.com/lab/twitter-sentiment/](http://www.sananalytics.com/lab/twitter-sentiment/)'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'This Twitter **Sentiment Analysis** Dataset contains 1,578,627 classified Tweets.
+    Each row is tagged with 0/1 for negative/positive sentiment. We use a sample of
+    that dataset (approximately 10%, 158K Tweets) to train a classification model
+    in Amazon ML. We load the dataset on S3, and train and evaluate a binary classification
+    model using the Amazon ML service. We apply no specific text transformation on
+    the texts. The recipe is as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE0]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We set the model to have mild L2 regularization and 100 passes. Training the
+    model takes a bit of time (over 10 minutes) to complete, probably due to a large
+    number of samples in play. The model evaluation shows pretty good overall performances
+    with an AUC of 0.83\. Roughly two-thirds of the Tweets are properly classified
+    by the Amazon ML model. The predictions are smoothly distributed across the range
+    of class probabilities, as shown by the model''s evaluation graph:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/B05028_10_01.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'We now create a real-time prediction endpoint from the model''s page by clicking
+    on the Create endpoint button at the bottom of the page:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/B05028_10_02.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'The endpoint URL is of the form `https://realtime.machinelearning.us-east-1.amazonaws.com`. We
+    will use that endpoint to classify new Tweets through requests from the Lambda
+    service. Let''s test whether our Amazon ML classifier works as expected with the following
+    Python script:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE1]'
+  prefs: []
+  type: TYPE_PRE
+- en: The sentence `Hello world, this is a great day` returns a score of *0.91* for
+    the probability that the sentence is positive, and classifies the sentence as
+    *1*, while a `Hello world, this is a sad day` sentence returns a probability of
+    *0.08*, and classifies the sentence as 0\. The words `great` and `sad` are the
+    words driving the sentiment classification. The classifier is working as expected.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Let's now switch our attention to the Kinesis service.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Kinesis
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'Kinesis is a multiform service organized around three subservices: **Streams**,
+    **Firehose**, and **Analytics**. Kinesis acts as a highly available pipeline to
+    stream messages between data producers and data consumers.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Data producers are sources of data coming from streaming APIs, IoT devices, system
+    logs, and other high volume data streams
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Data consumers will most commonly be used to store, process data, or trigger
+    alerts
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Kinesis is able to handle up to 500 Terabytes of data per hour. We use Kinesis
+    at its minimal level and with its most simple configuration. Readers interested
+    in the more complex usage of Kinesis should read the AWS documentation at [https://aws.amazon.com/documentation/kinesis/](https://aws.amazon.com/documentation/kinesis/).
+    A good overview of the different concepts and elements behind AWS Kinesis on the
+    blog post at [https://www.sumologic.com/blog/devops/kinesis-streams-vs-firehose/](https://www.sumologic.com/blog/devops/kinesis-streams-vs-firehose/).
+  prefs: []
+  type: TYPE_NORMAL
+- en: Kinesis Stream
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Kinesis Stream is used to collect streaming data given by a producer and processed
+    by a consumer. It's the simplest of the three Kinesis services as it does not
+    store the data in any way. Kinesis Stream mainly acts like a buffer, and the data
+    is kept available between 24 hours to 168 hours. An IoT device or a log service
+    would typically act as the producer and send data to the Kinesis stream. At the
+    same time, a consumer is running to process that data. Consumers services that
+    trigger alerts (SMS, e-mails) based on event detection algorithms, real-time dashboards
+    updated in real time, data aggregators, or anything that retrieves the data synchronously.
+    Both producer and consumer must be running simultaneously for the Kinesis stream
+    to function. If your producer and consumer are scripts running on your local machine,
+    they must both be running in parallel.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'It is possible to add processing to the incoming data by adding an AWS Lambda
+    function to the stream. The whole data pipeline will now follow these steps:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: A custom application or script sends records to the stream (the producer).
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: AWS Lambda polls the stream and invokes your Lambda function when new records
+    are detected.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: AWS Lambda executes the Lambda function and sends back the record, original
+    or modified, to the Kinesis Stream.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: We will not be using Kinesis Streams since we want to store the data we are
+    collecting. Kinesis stream is a good way to start with the Kinesis service.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Kinesis Analytics
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: '**Kinesis Analytics** is AWS''s most recent add-on to the Kinesis mix. Kinesis
+    Analytics allows you analyzing real-time streaming data with standard SQL queries.
+    The idea is to go from querying a static representation of the data to a dynamic
+    one that evolves as the data streams in. Instead of using AWS Lambda to process
+    the data via a scripting language, the goal is to process the data in SQL and
+    feed the results to dashboards or alerting systems. We will not be using Kinesis
+    Analytics, but instead, focus on Kinesis Firehose.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Setting up Kinesis Firehose
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'We will focus on the Kinesis Firehose service, which offers two important features:
+    data received can be fed to an AWS Lambda function for extra processing, and the
+    resulting data can be stored on S3 or on a Redshift database.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We will start by setting up a Kinesis Firehose delivery stream that stores
+    data on S3 without any Lambda functionality:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Go to the Kinesis Firehose dashboard at [https://console.aws.amazon.com/firehose/](https://console.aws.amazon.com/firehose/) and
+    click on Create Delivery Stream.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'Fill in the following fields:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'Destination: `Amazon S3`'
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Delivery stream name: `veggieTweets` (or choose your own name)'
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'S3 bucket: `aml.packt`'
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'S3 prefix: `veggies`'
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Click on Next:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![](img/B05028_10_05.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Note that the S3 prefix field corresponds to a folder in your S3 bucket. You
+    should now go to S3 and create a `veggies` folder in your bucket. Mimic the setup
+    from the next screenshot:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/B05028_10_06.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: For the moment, we will keep the Data transformation with AWS Lambda disabled.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Enable Error Logging, since we will need to debug our data delivery errors with CloudWatch
+    Logs.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: For the IAM role, select Firehose Delivery IAM Role. You will be taken to the
+    IAM service and guided through the creation of the required role. You can choose
+    an existing policy and create a new one. The Role/Policy wizard will handle the
+    details. Click on Allow to be redirected to the initial Firehose configuration
+    screen.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Click on Next, review the details of the Firehose delivery stream, and click
+    on Create Delivery Stream.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: We now have a Kinesis Firehose delivery stream that will, once we send data
+    to it, store data in the S3 packt.aml/veggies location. We now need to create
+    a producer script that will send the data to the Kinesis Firehose service.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Producing tweets
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: A Kinesis producer can take many shapes as long as it sends data to the Kinesis
+    Stream. We will use the Python Firehose SDK and write a simple script that collects
+    Tweets from the twitter API, filters some of them, and sends them to the Kinesis
+    Firehose. We use the Python-Twitter library.
+  prefs: []
+  type: TYPE_NORMAL
+- en: There are several Twitter API Python packages available on GitHub. Two of the
+    more popular ones, `Twitter` and `Python-Twitter` ([https://pypi.python.org/pypi/python-twitter/](https://pypi.python.org/pypi/python-twitter/))
+    share the same import calls `import twitter`, but not the same method calls, which
+    can lead to confusion and time being wasted.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The Python-Twitter package offers a `GetSearch` method that takes either a
+    query string `term` or a `raw_query` as a parameter for the Twitter search:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The query string (`term` ) corresponds to the keywords you would write down
+    on the Twitter website search bar; for instance, `term = brocolli OR potato OR
+    tomato`.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'The `raw_query` parameter takes for input the parameter part of the URL once
+    you''ve hit the search button: the string after the `?` in the URL. You can build
+    advanced queries from the twitter advanced search page [https://twitter.com/search-advanced](https://twitter.com/search-advanced).
+    For instance, our search for "*brocolli OR potato OR tomato*" translates to a
+    `raw_query = q=brocolli%20OR%20potato%20OR%20tomato&src=typd`. We use the `raw_query`
+    parameter in our call to the search API.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: To obtain your own Twitter development API keys, go to [https://apps.twitter.com/](https://apps.twitter.com/) and
+    create an application.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'We first define a class that initializes the access to the twitter API. This
+    class has a `capture` method, which runs a search, given a raw query. Save the
+    following code in a `tweets.py` file:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE2]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Given this class and a `raw_query` string, gathering Tweets consists in initializing
+    the `ATweets` class with the `raw_query` and applying the capture method on the
+    instantiated object as such:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE3]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Here, `statuses` is a list of Tweets, each containing many elements. We only
+    use a few of these elements. Now that we can gather Tweets from the `Twitter`
+    API, we need a producer script that will send the Tweets to Kinesis. The producer
+    Python script is as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE4]'
+  prefs: []
+  type: TYPE_PRE
+- en: Save that code to a `producer.py` file in the same folder as the `tweets.py`
+    file.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'As you may have noticed, we restricted the Twitter search to English Tweets
+    by specifying `lang = ''en''` in the call to `GetSearch`. However, that did not
+    produce the expected results, and many non-English Tweets were returned. In a
+    later version of the producer script, we add the following conditions to the Tweets
+    themselves before sending them to the Firehose, actually filtering out non-English
+    tweets shorter than 10 characters or those send as retweets:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE5]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We are now ready to run our producer script. One last important detail to pay
+    attention to is that calls to the Twitter API are capped. If you call the API
+    too often, you will have to wait longer and longer between your requests until
+    they are allowed to go through. There are reliable ways to deal with these restrictions,
+    and it''s easy to find code online that show you how to delay your API calls.
+    We will simply use the `watch` command line with a delay of 10 minutes (600 s)
+    between calls. The `watch` command simply executes whatever command you write
+    afterwards, every nth second. To run your producer code, launch a terminal, and
+    run the following command:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE6]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Every 10 minutes, tweets will be captured and sent to Kinesis Firehose. To
+    verify that both your script and delivery stream work, go to your S3 bucket and
+    the `aml.packt/veggies` folder. You should see files piling up. The files are
+    saved by Kinesis in subfolders structured by date/year/month/day and hour. The
+    filenames in the last subfolder follow a format similar to `veggieTweets-2-2017-04-02-19-21-51-1b78a44f-12b2-40ce-b324-dbf4bb950458`.
+    In these files, you will find the records as they have been defined in the producer
+    code. Our producer code sends comma-separated data formatted as tweet ID/twitter
+    username/vegetable/tweet content. An example of such as record is as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE7]'
+  prefs: []
+  type: TYPE_PRE
+- en: We will now set up Redshift so that these tweets and related elements end up stored
+    in an SQL database.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The Redshift database
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'We saw how to create a Redshift cluster in [Chapter 8](https://cdp.packtpub.com/effective_amazon_machine_learning/wp-admin/post.php?post=688&action=edit),
+    *Creating Datasources from Redshift*, we won''t go through the steps again. For
+    our vegetable contest project, we create a vegetable cluster and a `vegetablesdb`
+    database. Wait till the endpoint for the cluster is ready and the endpoint is
+    defined, and then connect to your Redshift database via this `Psql` command:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE8]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Once connected to the database, create the following table with this SQL query:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE9]'
+  prefs: []
+  type: TYPE_PRE
+- en: Note that there are no `blob` or `text` data types in Redshift SQL. We defined
+    the tweets as `varchar(65535)`, which is probably far too large, but since we
+    used `varchar` and not `char`, the volume occupied by the data shrank to the actual
+    length of the text and not the whole 65KB. In that table, we only capture the
+    ID of the tweet, the tweet itself, what vegetable the tweet was associated with,
+    and the screen name of the person writing the tweet. We disregard any other tweet
+    elements.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Adding Redshift to the Kinesis Firehose
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'This part is delicate as several pieces from different services must fit together:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The data structure, table declaration, and Kinesis Redshift configuration
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The data fields aggregation and subsequent parsing
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The role and associated policies
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'The fields of the Redshift table that stores the data need to be synchronized in
+    three different places:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The Redshift table with a proper definition of fields.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'The script that sends the data to Kinesis. Depending on how the record sent
+    to Kinesis is aggregated together and later parsed by Redshift, the script must
+    concatenate the same number of fields in the same order as the ones defined in
+    the Redshift table. For instance, when we write `record = '',''.join([str(st.id)`,
+    `st.user.screen_name,veggie, clean_tweet]) + ''n''` in the script, it implies
+    that the table has four fields with the right types: `int` , `varchar`, `varchar`,
+    and `varchar`.'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: The columns as defined in the Kinesis Firehose definition.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'For that last point, we need to go back to the Firehose dashboard, create a
+    new stream, and define it as a Redshift-based delivery stream. Click on Create
+    Delivery Stream, and select Redshift as the destination. Follow the different
+    screens and fill in the following values:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'S3 bucket: Your own bucket'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'S3 prefix: We keep the prefix veggies'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Data transformation: Disabled for now'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Redshift cluster: `Vegetables`'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Redshift database: `Vegetablesdb`'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Redshift table columns: ID, `screen_name`, veggie, text (**this one is important**)'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Redshift username: The username you access Redshift with'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Redshift COPY options: Delimiter '','' (**very important too**)'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Once created, your Kinesis Firehose stream should resemble the following screenshot:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/B05028_10_03.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Notice the `COPY` command in the bottom right corner of the screen, which is
+    reproduced here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE10]'
+  prefs: []
+  type: TYPE_PRE
+- en: This command indicates how Redshift will ingest the data that Kinesis sends
+    to S3, what fields it expects, and how it will parse the different fields (for
+    instance, separated by a comma). There are other potential `COPY` formats including
+    JSON or CSV. We found this one to be simple and working. It's important that the
+    way the record is defined and formatted in the producer script (four variables separated
+    by commas) corresponds to the COPY part of the `table name (name of the four fields)` command
+    with the right definition of the delimiter `','`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: This COPY command is also a good way to debug the pipeline when the data is
+    not getting recorded into the database. Psql into the database, and run the same
+    query in order to get useful error messages on why the queries are failing.
+  prefs: []
+  type: TYPE_NORMAL
+- en: It's now time for a word on role-based access control.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Setting up the roles and policies
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'There are two types of access control in AWS: key based and role based. Key
+    based is much easier to set up but cannot be used to make Kinesis, Redshift, and
+    S3 talk to each other, as AWS indicates at [http://docs.aws.amazon.com/redshift/latest/dg/copy-usage_notes-access-permissions.html](http://docs.aws.amazon.com/redshift/latest/dg/copy-usage_notes-access-permissions.html):'
+  prefs: []
+  type: TYPE_NORMAL
+- en: With role-based access control, your cluster temporarily assumes an IAM role
+    on your behalf. Then, based on the authorizations granted to the role, your cluster
+    can access the required AWS resources. An IAM role is similar to an IAM user,
+    in that it is an AWS identity with permission policies that determine what the
+    identity can and cannot do in AWS. However, instead of being uniquely associated
+    with one user, a role can be assumed by any entity that needs it. Also, a role
+    doesn’t have any credentials (a password or access keys) associated with it. Instead,
+    if a role is associated with a cluster, access keys are created dynamically and
+    provided to the cluster. We recommend using role-based access control because
+    it provides more secure, fine-grained control of access to AWS resources and sensitive
+    user data.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We must create the right role for your user to be able to access Redshift, and
+    then we must give it the necessary policies.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'There are three steps:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: First, authorize Amazon Redshift to access other AWS services on your behalf.
+    Follow the instructions at: [http://docs.aws.amazon.com/redshift/latest/mgmt/authorizing-redshift-service.html](http://docs.aws.amazon.com/redshift/latest/mgmt/authorizing-redshift-service.html)
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Second, attach the role in clustering. Take a look at [http://docs.aws.amazon.com/redshift/latest/mgmt/copy-unload-iam-role.html](http://docs.aws.amazon.com/redshift/latest/mgmt/copy-unload-iam-role.html).
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'Finally, using the console to manage IAM role associations, perform the following
+    steps:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Go to Redshift, and click on Manage IAM Roles.
+  prefs:
+  - PREF_IND
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Select from the available roles.
+  prefs:
+  - PREF_IND
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Wait for the status to go from Modifying to Available.
+  prefs:
+  - PREF_IND
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Roles and policies in AWS, when trying to have different services connect with
+    one another, can be challenging and time consuming. There is an obvious need for
+    strict access control for production-level applications and services, but the
+    lack of a more relaxed or loose generalized access level to allow for proof of
+    concepts and pet projects is definitely missing from the AWS platform. The general
+    hacking idea when facing role-related access problems is to go to the IAM Role
+    page and attach the policies you think are necessary to the role giving you trouble.
+    Trial and error will get you there in the end.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'If all goes well, when you run the producer script, you should see the following
+    happening:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Files and date-based subfolders are created in the `{bucket}/veggies` folder
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Graphs and queries should show up or be updated in the Redshift cluster page
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: On the Firehose delivery stream page, check the S3 Logs and Redshift Logs tabs
+    for error messages
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Your `vegetablesdb.tweets` should start filling up with rows of content.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: If that's not the case and you are not seeing tweets in your database, it's
+    time to start debugging.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Dependencies and debugging
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Connecting up the different services -- Firehose, Redshift, S3 is not a straightforward
+    task if you're not a seasoned AWS user. Many details need to be ironed out, and
+    the documentation is not always clear, and sometimes, too complex. Many errors
+    can also happen in a hidden fashion, and it's not always obvious where the error
+    is happening and how to detect it, let alone make sense of it. Of all the bugs
+    and problems we had to solve, these were the most time-consuming ones.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Data format synchronization
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'If you send some data to Redshift, it needs to be parsed by Redshift. You are
+    sending a string formatted as `id, username`, `sentiment, tweet` or a JSON string
+    `{id: ''id''`, `username:''twetterin_chief''`, `sentiment: ''0.12''`, `tweet:''Hello
+    world it''s a beautiful day''}`. You need to make sure that the Redshift configuration
+    in Kinesis follows the format of your data. You do so in the Kinesis-Redshift
+    configuration screen with the two following fields:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The Redshift table columns
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The Redshift COPY options
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Debugging
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'When you run your producer, and the data does not end up in the redshift table,
+    you should remember that there is a delay. That delay is set when you create the
+    Kinesis delivery stream, and is set, by default, to 3,600 seconds. Set it to a
+    minimum of 60 seconds if you want to avoid long waits. These are the places to
+    check when your data is not streaming in your database:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**Check S3**: The S3 prefix corresponds to a folder in the bucket you have
+    defined. If there are errors, you will see a new subfolder called `errors` or
+    `processing errors`. Click through the subfolders until you reach the actual error
+    file, make it public (there''s a button), download the file, and examine it. It
+    will sometimes contain useful information. The error subfolder also contains a
+    manifest file. The manifest file is useful to reprocess failed files.'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Connect to your Redshift database, and check the `STL_LOAD_ERRORS` table with
+    `select * from STL_LOAD_ERRORS`. If the problem is caused by an SQL-based error
+    (probably parsing related), useful information will show up there. The error messages
+    are not always explanatory though. In our case, that table was showing the first
+    tweet Redshift failed to ingest, which helped a lot in figuring out what was wrong.
+    In the end, the problem we were facing was that some characters were taken as
+    column delimiters by Redshift. We removed these characters from the tweets directly
+    in the producer.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Check the **Redshift queries** page, where you will see the latest queries.
+    If you see that the queries have been terminated instead of completed, you have
+    an SQL-query-related problem.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: In the end, a good debugging method is to connect to your database and run the
+    COPY query shown in the Kinesis delivery stream recap page without forgetting
+    to replace the account ID and the role name with the right values. This will mimic
+    how Redshift is actually trying to ingest the data from the S3 buckets. If it
+    fails, the related errors will bring you more information.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Preprocessing with Lambda
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'We would now like to send the tweets for sentiment classification to our Amazon
+    ML model. In order to do that, we will enable the data transformation available
+    in the Kinesis Firehose delivery stream page and use a Lambda function:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/B05028_10_04.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: AWS Lambda is a data-processing service that allows you to run scripts (in a
+    variety of languages, including Python 2.7, but not Python 3). It is used in conjunction
+    with other services, such as Kinesis, as a data processing add-on. You can divert
+    your data stream, send it to Lambda for processing, and, if you wish, have the
+    result sent back to the initial stream. You can also use Lambda to call other
+    services, such as sending alerts or using other storage services.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The main default of AWS Lambda is that the choice of packages you can import
+    into your Python script is limited. Trying to import packages, such as `scikit-learn`,
+    NLTK, or for that matter, any package not already available, is rather complex.
+    For a guide for how to use `scikit-learn` on AWS Lambda, go to  [https://serverlesscode.com/post/deploy-scikitlearn-on-lamba/](https://serverlesscode.com/post/deploy-scikitlearn-on-lamba/)
+    or [https://serverlesscode.com/post/deploy-scikitlearn-on-lamba/](https://serverlesscode.com/post/deploy-scikitlearn-on-lamba/).
+    This significantly restricts what can be done out of the box with Lambda. Our
+    use of AWS Lambda is much simpler. We will use AWS Lambda to do the following:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Catch the data from Kinesis Firehose.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Parse the data and extract the tweet.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Send the data to Amazon ML real time end point.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Extract the classification score from the response.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Send back the data along with the classification score to the Kinesis Firehose
+    delivery stream.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'Go to AWS Lambda, and click on Create Lambda Function.  Then perform the following
+    steps:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Select the Blank Function blueprint and the Python 2.7 runtime.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Do not configure a trigger.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Fill in the Name as `vegetablesLambda`, and select Python 2.7 Runtime.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'Finally, paste the following code in the inline editor:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE11]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The `lambda_handler` function is triggered automatically by the Kinesis Firehose.
+    It catches and parses the message (aka the payload) `event[''records'']`, extracts
+    the tweets, and calls a `get_sentiment()` function that returns a sentiment score
+    and a sentiment label. Finally, it adds the sentiment numbers back to the record, rebuilds
+    the payload, and sends it back to Kinesis. The `get_sentiment()` function sends
+    the tweet to our Amazon classification endpoint and returns the  `predicted_label`,
+    and `predicted_score`.  It is defined in the following script:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE12]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Since we added two new elements to the payload, we also need to add them to
+    the Redshift table and to the Kinesis-Redshift configuration. To recreate the
+    `tweets` table in Redshift, run the following query:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE13]'
+  prefs: []
+  type: TYPE_PRE
+- en: At the Kinesis level, change the Redshift table columns field to `id,screen_name`,
+    `veggie,ml_label`, `ml_score, text`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Analyzing the results
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'We now have a complete pipeline of streaming data that is caught, transformed,
+    and stored. Once you have collected a few thousand tweets, you are ready to analyze
+    your data. There are a couple of things that remain to be done before we can get
+    the answers we set out to find at the beginning of this chapter:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: What are the most popular vegetables on twitter?
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: How does `TextBlob` compare to our Amazon ML classification model?
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Our simple producer does not attempt to handle duplicate tweets. However, in
+    the end, our dataset has many duplicate tweets. Broccoli and carrots are less
+    frequent Tweet subjects than one could expect them to be. So, as we collect about
+    a hundred tweets every 10 minutes, many tweets end up being collected several
+    times. We also still need to obtain a sentiment score and related classes from
+    `TextBlob`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We will now download our collected dataset of tweets, remove duplicates, and
+    use the `TextBlob` classification.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Download the dataset from RedShift
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'The right way to download data from Redshift is to connect to the database
+    using Psql and use the `Unload` command to dump the results of an SQL query in
+    S3\. The following command exports all the tweets to the `s3://aml.packt/data/veggies/results/`
+    location using an appropriate role:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE14]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We can then download the files and aggregate them:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE15]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The `veggie_tweets.csv` file is not comma separated. The values are separated
+    by the `|` character. We can replace all the pipes in the file with commas with the
+    following command line:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE16]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We are now ready to load the data into a pandas dataframe:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE17]'
+  prefs: []
+  type: TYPE_PRE
+- en: Note that we could have also used `|` as a delimiter when loading the pandas
+    dataframe with `df = pd.read_csv('data/veggie_tweets.tmp'`, `delimiter = '|'`,
+    `header=None`, `names = ['id'`, `'username'`, `'vegetable'`, `'ml_label'`, `'ml_score'`,
+    `'text']`).
+  prefs: []
+  type: TYPE_NORMAL
+- en: Sentiment analysis with TextBlob
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: '`TextBlob` gives you sentiment analysis, scoring, and classification in a couple
+    of Python lines. For the given a text, initialize a `TextBlob` instance, and retrieve
+    its polarity with these two lines of code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE18]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The `TextBlob` sentiment object has a polarity and a subjectivity score. The
+    polarity of a text ranges from -1 to +1, negative to positive, and the subjectivity
+    from 0 to 1, very objective to very subjective. For instance, the sentence `I
+    love brocoli` returns `Sentiment(polarity=0.5`, `subjectivity=0.6)`, while the
+    sentence `I hate brocoli` returns a sentiment of `Sentiment(polarity=-0.8`, `subjectivity=0.9)`.
+     We can add the `TextBlob` sentiment whenever we process the tweet, either within
+    the producer or once we''ve downloaded the dataset with these simple lines:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE19]'
+  prefs: []
+  type: TYPE_PRE
+- en: Each row of our dataframe now also has a sentiment score.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Removing duplicate tweets
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In all Twitter-based NLP analysis, you end up dealing with bots, even when collecting
+    tweets about vegetables! In our dataset, we had many versions of promotion tweets
+    where the text was the same across tweets, but the links and users were different. We
+    remove duplicate tweets by first removing the URL from the tweets and then using
+    the `drop_duplicates` Pandas method.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Noting that all URLs in Tweets start with `https://t.co/`, it''s easy to remove
+    all URLs from the Tweets. We will create a new tweet column without URLs in our
+    dataframe. We enter the following line, which, given a tweet, returns the tweet
+    without URLs:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE20]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'When working with pandas dataframes, a very practical way to create new columns
+    based on some operation on other columns of the dataframe is to combine the apply
+    method with a Lambda function. The overall pattern to create a `new_column` from
+    `existing_column` is:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE21]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We apply this pattern to create the `no_urls` column containing the tweets
+    with no urls:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE22]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The `no_urls` columns no longer contain any URLs. We can now remove duplicates
+    based on this column with the following line:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE23]'
+  prefs: []
+  type: TYPE_PRE
+- en: This removed about 30% of our tweets.
+  prefs: []
+  type: TYPE_NORMAL
+- en: And what is the most popular vegetable?
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'It''s interesting to compare the sentiment score distributions between our
+    Amazon ML model and `TextBlob`. We can see in the following plot that our Amazon
+    ML model is good at separating positive and negative tweets, while `TextBlob`
+    has a more centered distribution. In fact, a significant portion of tweets were
+    scored as 0 (neutral) by `TextBlob`. We removed them from the histogram:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/B05028_10_07.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'According to our Amazon ML model, the most popular vegetables on Twitter are
+    green beans, followed by asparagus and garlic. According to `TextBlob`, cauliflower
+    is ranked fourth favorite, followed by leeks and cucumber. The following plot
+    shows the 10 vegetables with the larger amount of tweets and their respective
+    sentiment scores obtained with `TextBlob` and our own Amazon ML binary classifier:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/B05028_10_08.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: The striking result is that green beans are the least popular vegetables according
+    to `TextBlob`. It so happens that `TextBlob` gives a negative *-0.2* sentiment
+    score to the word `green`. So the phrase `green beans` directly scores *-0.2*.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Our Amazon ML model seems to be more reliable than `TextBlob`. After all, green
+    beans are bound to be more popular than cauliflower!
+  prefs: []
+  type: TYPE_NORMAL
+- en: Going beyond classification and regression
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'Although Amazon ML is set to solve classification and regression problems,
+    the service can also be used for other supervised data science problems. In this
+    last section, we looked at two classic problems: Recommender systems and named
+    entity recognition.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**Making recommendations**: A recommender system seeks to predict the rating
+    or preference that a user would give to an item. There are several strategies
+    to build recommender systems:'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Collaborative filtering**: This involves using the behavioral patterns of
+    similar users to predict a given user''s preferences. It''s the other people also
+    bought this approach.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Content-based filtering**: This is the strategy where the features of a certain
+    content are used to group similar products or content.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'To use Amazon ML for recommendations, you can frame your solution as a content-based
+    recommendation problem. One way to do this is to extract features for your products
+    and users and build a training dataset where the outcome is binary: the user either
+    liked the product or did not. The recommender system is transformed into a binary
+    recommendation problem.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**Named entity recognition: **Named entity recognition seeks to locate and
+    classify entities in the text into predefined categories, such as the names of
+    persons, organizations, locations, and so forth. Amazon ML can also be used for
+    named entity recognition problems. The idea is to use single words, and extract
+    features as training data. Potential features could include the following:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The word itself
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`ngram()` or `osb()` of the context around the word, such as the previous and
+    subsequent three words.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Prefixes and suffixes
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The predicted class of the previous three words
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The length of the word
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Whether the word is capitalized?
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Whether the word has a hyphen?
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The first word in the sentence
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The frequency of the word in your dataset
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Numeric features -- is the word a number?
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Part of speech of the word or surrounding words
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Some of these feature extraction methods are available in Amazon ML; others
+    will need external processing.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Summary
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In this chapter, we leveraged the power of the AWS ecosystem to build a real-time
+    streaming data classification pipeline. Our pipeline was able to classify streaming
+    tweets using an Amazon ML classification endpoint.  The AWS data ecosystem is
+    diverse and complex, and for a given problem, there are often several possible
+    solutions and architectures. The **Kinesis-Lambda-Redshift-Machine** **Learning**
+    architecture we built is simple, yet very powerful.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The true strength of the Amazon ML service lies in its ease of use and simplicity.
+    Training and evaluating a model from scratch can be done in a few minutes with a
+    few clicks, and it can result in very good performances. Using the **AWS CLI**
+    and the SDK, more complex data flows and model explorations can easily be implemented.
+    The service is agile enough to become a part of a wider data flow by providing
+    real-time classification and regression.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Underneath the simple interface, the machine learning expertise of Amazon shines
+    at many levels. From the automated data transformations, to the tuning of the
+    stochastic gradient algorithm, there are many elements that drive the overall
+    performance of the models. A good balance between user control over the models
+    and automatic optimization is achieved. The user can try several types of regularization
+    and data transformations to optimize the models and the feature set, but the overall
+    feeling is that using the default parameters would often work as well.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The service simplicity has some drawbacks, mostly in terms of limited data transformation
+    and the absence of any embedded cross-validation mechanisms, which are central
+    to a data science workflow.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the end, Amazon ML is a useful regression and classification service that
+    brings machine learning automatization closer. What matters in a data science
+    project, as in any other software project, is the true costs of ownership. Compared
+    to a home-grown solution, Amazon ML wins in terms of ease of use, maintainability,
+    resources costs, and often performance.
+  prefs: []
+  type: TYPE_NORMAL

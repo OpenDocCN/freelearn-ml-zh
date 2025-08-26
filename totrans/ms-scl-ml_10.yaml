@@ -1,0 +1,501 @@
+- en: Chapter 10. Advanced Model Monitoring
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Even though this is the last chapter of the book, it can hardly be an afterthought
+    even though monitoring in general often is in practical situations, quite unfortunately.
+    Monitoring is a vital deployment component for any long execution cycle component
+    and thus is part of the finished product. Monitoring can significantly enhance
+    product experience and define future success as it improves problem diagnostic
+    and is essential to determine the improvement path.
+  prefs: []
+  type: TYPE_NORMAL
+- en: One of the primary rules of successful software engineering is to create systems
+    as if they were targeted for personal use when possible, which fully applies to
+    monitoring, diagnostic, and debugging—quite hapless name for fixing existing issues
+    in software products. Diagnostic and debugging of complex systems, particularly
+    distributed systems, is hard, as the events often can be arbitrary interleaved
+    and program executions subject to race conditions. While there is a lot of research
+    going in the area of distributed system devops and maintainability, this chapter
+    will scratch the service and provide guiding principle to design a maintainable
+    complex distributed system.
+  prefs: []
+  type: TYPE_NORMAL
+- en: To start with, a pure functional approach, which Scala claims to follow, spends
+    a lot of time avoiding side effects. While this idea is useful in a number of
+    aspects, it is hard to imagine a useful program that has no effect on the outside
+    world, the whole idea of a data-driven application is to have a positive effect
+    on the way the business is conducted, a well-defined side effect.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Monitoring clearly falls in the side effect category. Execution needs to leave
+    a trace that the user can later parse in order to understand where the design
+    or implementation went awry. The trace of the execution can be left by either
+    writing something on a console or into a file, usually called a log, or returning
+    an object that contains the trace of the program execution, and the intermediate
+    results. The latter approach, which is actually more in line with functional programming
+    and monadic philosophy, is actually more appropriate for the distributed programming
+    but often overlooked. This would have been an interesting topic for research,
+    but unfortunately the space is limited and I have to discuss the practical aspects
+    of monitoring in contemporary systems that is almost always done by logging. Having
+    the monadic approach of carrying an object with the execution trace on each call
+    can certainly increase the overhead of the interprocess or inter-machine communication,
+    but saves a lot of time in stitching different pieces of information together.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s list the naive approaches to debugging that everyone who needed to find
+    a bug in the code tried:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Analyzing program output, particularly logs produced by simple print statements
+    or built-in logback, java.util.logging, log4j, or the slf4j façade
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Attaching a (remote) debugger
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Monitoring CPU, disk I/O, memory (to resolve higher level resource-utilization
+    issues)
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: More or less, all these approaches fail if we have a multithreaded or distributed
+    system—and Scala is inherently multithreaded as Spark is inherently distributed.
+    Collecting logs over a set of nodes is not scalable (even though a few successful
+    commercial systems exist that do this). Attaching a remote debugger is not always
+    possible due to security and network restrictions. Remote debugging can also induce
+    substantial overhead and interfere with the program execution, particularly for
+    ones that use synchronization. Setting the debug level to the `DEBUG` or `TRACE`
+    level helps sometimes, but leaves you at the mercy of the developer who may or
+    may not have thought of a particular corner case you are dealing with right at
+    the moment. The approach we take in this book is to open a servlet with enough
+    information to glean into program execution and application methods real-time,
+    as much as it is possible with the current state of Scala and Scalatra.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Enough about the overall issues of debugging the program execution. Monitoring
+    is somewhat different, as it is concerned with only high-level issue identification.
+    Intersection with issue investigation or resolution happens, but usually is outside
+    of monitoring. In this chapter, we will cover the following topics:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Understanding major areas for monitoring and monitoring goals
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Learning OS tools for Scala/Java monitoring to support issue identification
+    and debugging
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Learning about MBeans and MXBeans
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Understanding model performance drift
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Understanding A/B testing
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: System monitoring
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'While there are other types of monitoring dealing specifically with ML-targeted
+    tasks, such as monitoring the performance of the models, let me start with basic
+    system monitoring. Traditionally, system monitoring is a subject of operating
+    system maintenance, but it is becoming a vital component of any complex application,
+    specifically running over a set of distributed workstations. The primary components
+    of the OS are CPU, disk, memory, network, and energy on battery-powered machines.
+    The traditional OS-like tools for monitoring system performance are provided in
+    the following table. We limit them to Linux tools as this is the platform for
+    most Scala applications, even though other OS vendors provide OS monitoring tools
+    such as **Activity Monitor**. As Scala runs in Java JVM, I also added Java-specific
+    monitoring tools that are specific to JVMs:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '| Area | Programs | Comments |'
+  prefs: []
+  type: TYPE_TB
+- en: '| --- | --- | --- |'
+  prefs: []
+  type: TYPE_TB
+- en: '| CPU | `htop,` `top`, `sar-u` | `top` has been the most often used performance
+    diagnostic tool, as CPU and memory have been the most constraint resources. With
+    the advent of distributed programming, network and disk tend to be the most constraint.
+    |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Disk | `iostat`, `sar -d`, `lsof` | The number of open files, provided by
+    `lsof`, is often a constraining resource as many big data applications and daemons
+    tend to keep multiple files open. |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Memory | `top`, `free`, `vmstat`, `sar -r` | Memory is used by OS in multiple
+    ways, for example to maintain disk I/O buffers so that having extra buffered and
+    cached memory helps performance. |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Network | `ifconfig`, `netstat`, `tcpdump`, `nettop`, `iftop`, `nmap` | Network
+    is how the distributed systems talk and is an important OS component. From the
+    application point of view, watch for errors, collisions, and dropped packets as
+    an indicator of problems. |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Energy | `powerstat` | While power consumption is traditionally not a part
+    of OS monitoring, it is nevertheless a shared resource, which recently became
+    one of the major costs for maintaining a working system. |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Java | `jconsole`, `jinfo`, `jcmd`, `jmc` | All these tools allow you to
+    examine configuration and run-time properties of an application. **Java Mission
+    Control** (**JMC**) is shipped with JDK starting with version 7u40. |'
+  prefs: []
+  type: TYPE_TB
+- en: Table 10.1\. Common Linux OS monitoring tools
+  prefs:
+  - PREF_BQ
+  type: TYPE_NORMAL
+- en: In many cases, the tools are redundant. For example, the CPU and memory information
+    can be obtained with `top`, `sar`, and `jmc` commands.
+  prefs: []
+  type: TYPE_NORMAL
+- en: There are a few tools for collecting this information over a set of distributed
+    nodes. Ganglia is a BSD-licensed scalable distributed monitoring system ([http://ganglia.info](http://ganglia.info)).
+    It is based on a hierarchical design and is very careful about data structure
+    and algorithm designs. It is known to scale to 10,000s of nodes. It consists of
+    a gmetad daemon that is collects information from multiple hosts and presents
+    it in a web interface, and gmond daemons running on each individual host. The
+    communication happens on the 8649 port by default, which spells Unix. By default,
+    gmond sends information about CPU, memory, and network, but multiple plugins exist
+    for other metrics (or can be created). Gmetad can aggregate the information and
+    pass it up the hierarchy chain to another gmetad daemon. Finally, the data is
+    presented in a Ganglia web interface.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Graphite is another monitoring tool that stores numeric time-series data and
+    renders graphs of this data on demand. The web app provides a /render endpoint
+    to generate graphs and retrieve raw data via a RESTful API. Graphite has a pluggable
+    backend (although it has it's own default implementation). Most of the modern
+    metrics implementations, including scala-metrics used in this chapter, support
+    sending data to Graphite.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Process monitoring
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: The tools described in the previous section are not application-specific. For
+    a long-running process, it often necessary to provide information about the internal
+    state to either a monitoring a graphing solution such as Ganglia or Graphite,
+    or just display it in a servlet. Most of these solutions are read-only, but in
+    some cases, the commands give the control to the users to modify the state, such
+    as log levels, or to trigger garbage collection.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Monitoring, in general is supposed to do the following:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Provide high-level information about program execution and application-specific
+    metrics
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Potentially, perform health-checks for critical components
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Might incorporate alerting and thresholding on some critical metrics
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: I have also seen monitoring to include update operations to either update the
+    logging parameters or test components, such as trigger model scoring with predefined
+    parameters. The latter can be considered as a part of parameterized health check.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s see how it works on the example of a simple `Hello World` web application
+    that accepts REST-like requests and assigns a unique ID for different users written
+    in the Scalatra framework ([http://scalatra.org](http://scalatra.org)), a lightweight
+    web-application development framework in Scala. The application is supposed to
+    respond to CRUD HTTP requests to create a unique numeric ID for a user. To implement
+    the service in Scalatra, we need just to provide a `Scalate` template. The full
+    documentation can be found at [http://scalatra.org/2.4/guides/views/scalate.html](http://scalatra.org/2.4/guides/views/scalate.html),
+    the source code is provided with the book and can be found in `chapter10` subdirectory:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE0]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'First, the code gets the `name` parameter from the request (REST-like parameter
+    parsing is also supported). Then, it checks the internal HashMap for existing
+    entries, and if the entry does not exist, it creates a new index using a synchronized
+    call to increment `hwCounter` (in a real-world application, this information should
+    be persistent in a database such as HBase, but I''ll skip this layer in this section
+    for the purpose of simplicity). To run the application, one needs to download
+    the code, start `sbt`, and type `~;jetty:stop;jetty:start` to enable continuous
+    run/compilation as in [Chapter 7](ch07.xhtml "Chapter 7. Working with Graph Algorithms"),
+    *Working with Graph Algorithms*. The modifications to the file will be immediately
+    picked up by the build tool and the jetty server will restart:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE1]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'When the servlet is started on port 8080, issue a browser request:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Tip
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: I pre-created the project for this book, but if you want to create a Scalatra
+    project from scratch, there is a `gitter` command in `chapter10/bin/create_project.sh`.
+    Gitter will create a `project/build.scala` file with a Scala object, extending
+    build that will set project parameters and enable the Jetty plugin for the SBT.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '`http://localhost:8080/hw/Joe`.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The output should look similar to the following screenshot:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Process monitoring](img/B04935_10_01.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 10-1: The servlet web page.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: If you call the servlet with a different name, it will assign a distinct ID,
+    which will be persistent across the lifetime of the application.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'As we also enabled console logging, you will also see something similar to
+    the following command on the console:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE2]'
+  prefs: []
+  type: TYPE_PRE
+- en: While retrieving and analyzing logs, which can be redirected to a file, is an
+    option and there are multiple systems to collect, search, and analyze logs from
+    a set of distributed servers, it is often also important to have a simple way
+    to introspect the running code. One way to accomplish this is to create a separate
+    template with metrics, however, Scalatra provides metrics and health support to
+    enable basic implementations for counts, histograms, rates, and so on.
+  prefs: []
+  type: TYPE_NORMAL
+- en: I will use the Scalatra metrics support. The `ScalatraBootstrap` class has to
+    implement the `MetricsBootstrap` trait. The `org.scalatra.metrics.MetricsSupport`
+    and `org.scalatra.metrics.HealthChecksSupport` traits provide templating similar
+    to the Scalate templates, as shown in the following code.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The following is the content of the `ScalatraTemplate.scala` file:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE3]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The following is the content of the `ServletWithMetrics.scala` file:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE4]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'If you run the server again, the `http://localhost:8080/admin` page will show
+    a set of links for operational information, as shown in the following screenshot:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Process monitoring](img/B04935_10_02.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 10-2: The admin servlet web page'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The **Metrics** link will lead to the metrics servlet depicted in *Figure 10-3*.
+    The `org.akozlov.exampes.ServletWithMetrics.counter` will have a global count
+    of requests, and `org.akozlov.exampes.ServletWithMetrics.histogram` will show
+    the distribution of accumulated values, in this case, the name lengths. More importantly,
+    it will compute `50`, `75`, `95`, `98`, `99`, and `99.9` percentiles. The meter
+    counter will show rates for the last `1`, `5`, and `15` minutes:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Process monitoring](img/B04935_10_03.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 10-3: The metrics servlet web page'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Finally, one can write health checks. In this case, I will just check whether
+    the result of the response function contains the string that it has been passed
+    as a parameter. Refer to the following *Figure 10.4*:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Process monitoring](img/B04935_10_04.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 10-4: The health check servlet web page.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The metrics can be configured to report to Ganglia or Graphite data collection
+    servers or periodically dump information into a log file.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Endpoints do not have to be read-only. One of the pre-configured components
+    is the timer, which measures the time to complete a task—which can be used for
+    measuring scoring performance. Let''s put the code in the `ServletWithMetrics`
+    class:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE5]'
+  prefs: []
+  type: TYPE_PRE
+- en: Accessing `http://localhost:8080/time` will trigger code execution, which will
+    be timed with a timer in metrics.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Analogously, the put operation, which can be created with the `put()` template,
+    can be used to either adjust the run-time parameters or execute the code in-situ—which,
+    depending on the code, might need to be secured in production environments.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Note
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: '**JSR 110**'
+  prefs: []
+  type: TYPE_NORMAL
+- en: JSR 110 is another **Java Specification Request** (**JSR**), commonly known
+    as **Java Management Extensions** (**JMX**). JSR 110 specifies a number of APIs
+    and protocols in order to be able to monitor the JVM executions remotely. A common
+    way to access JMX Services is via the `jconsole` command that will connect to
+    one of the local processes by default. To connect to a remote host, you need to
+    provide the `-Dcom.sun.management.jmxremote.port=portNum` property on the Java
+    command line. It is also advisable to enable security (SSL or password-based authentication).
+    In practice, other monitoring tools use JMX for monitoring, as well as managing
+    the JVM, as JMX allows callbacks to manage the system state.
+  prefs: []
+  type: TYPE_NORMAL
+- en: You can provide your own metrics that are exposed via JMX. While Scala runs
+    in JVM, the implementation of JMX (via MBeans) is very Java-specific, and it is
+    not clear how well the mechanism will play with Scala. JMX Beans can certainly
+    be exposed as a servlet in Scala though.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The JMX MBeans can usually be examined in JConsole, but we can also expose it
+    as `/jmx servlet`, the code provided in the book repository ([https://github.com/alexvk/ml-in-scala](https://github.com/alexvk/ml-in-scala)).
+  prefs: []
+  type: TYPE_NORMAL
+- en: Model monitoring
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'We have covered basic system and application metrics. Lately, a new direction
+    evolved for using monitoring components to monitor statistical model performance.
+    The statistical model performance covers the following:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: How the model performance evolved over time
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: When is the time to retire the model
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Model health check
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Performance over time
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'ML models deteriorate with time, or ''age'': While this process is not still
+    well understood, the model performance tends to change with time, if even due
+    to concept drift, where the definition of the attributes change, or the changes
+    in the underlying dependencies. Unfortunately, model performance rarely improves,
+    at least in my practice. Thus, it is imperative to keep track of models. One way
+    to do this is by monitoring the metrics that the model is intended to optimize,
+    as in many cases, we do not have a ready-labeled set of data.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: In many cases, the model performance deterioration is not related directly to
+    the quality of the statistical modeling, even though simpler models such as linear
+    and logistic regression tend to be more stable than more complex models such as
+    decision trees. Schema evolution or unnoticed renaming of attributes may cause
+    the model to not perform well.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Part of model monitoring should be running the health check, where a model periodically
+    scores either a few records or a known scored set of data.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Criteria for model retiring
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: A very common case in practical deployments is that data scientists come with
+    better sets of models every few weeks. However, if this does not happen, one needs
+    come up with a set of criteria to retire a model. As real-world traffic rarely
+    comes with the scored data, for example, the data that is already scored, the
+    usual way to measure model performance is via a proxy, which is the metric that
+    the model is supposed to improve.
+  prefs: []
+  type: TYPE_NORMAL
+- en: A/B testing
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'A/B testing is a specific case of controlled experiment in e-commerce setting.
+    A/B testing is usually applied to versions of a web page where we direct completely
+    independent subset of users to each of the versions. The dependent variable to
+    test is usually the response rate. Unless any specific information is available
+    about users, and in many cases, it is not unless a cookie is placed in the computer,
+    the split is random. Often the split is based on unique userID, but this is known
+    not to work too well across multiple devices. A/B testing is subject to the same
+    assumptions the controlled experiments are subject to: the tests should be completely
+    independent and the distribution of the dependent variable should be `i.i.d.`.
+    Even though it is hard to imagine that all people are truly `i.i.d.`, the A/B
+    test has been shown to work for practical problems.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: In modeling, we split the traffic to be scored into two or multiple channels
+    to be scored by two or multiple models. Further, we need to measure the cumulative
+    performance metric for each of the channels together with estimated variance.
+    Usually, one of the models is treated as a baseline and is associated with the
+    null hypothesis, and for the rest of the models, we run a t-test, comparing the
+    ratio of the difference to the standard deviation.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Summary
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: This chapter described system, application, and model monitoring goals together
+    with the existing monitoring solutions for Scala, and specifically Scalatra. Many
+    metrics overlap with standard OS or Java monitoring, but we also discussed how
+    to create application-specific metrics and health checks. We talked about a new
+    emerging field of model monitoring in an ML application, where statistical models
+    are subject to deterioration, health, and performance monitoring. I also touched
+    on monitoring distributed systems, a topic that really deserves much more space,
+    which unfortunately, I did not have.
+  prefs: []
+  type: TYPE_NORMAL
+- en: This is the end of the book, but in no way is it the end of the journey. I am
+    sure, new frameworks and applications are being written as we speak. Scala has
+    been a pretty awesome and succinct development tool in my practice, with which
+    I've been able to achieve results in hours instead of days, which is the case
+    with more traditional tools, but it is yet to win the popular support, which I
+    am pretty sure it. We just need to emphasize its advantages in the modern world
+    of interactive analysis, complex data, and distributed processing.
+  prefs: []
+  type: TYPE_NORMAL

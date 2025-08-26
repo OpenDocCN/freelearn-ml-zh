@@ -1,0 +1,757 @@
+- en: Chapter 6. Working with Unstructured Data
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'I am very excited to introduce you to this chapter. Unstructured data is what,
+    in reality, makes big data different from the old data, it also makes Scala to
+    be the new paradigm for processing the data. To start with, unstructured data
+    at first sight seems a lot like a derogatory term. Notwithstanding, every sentence
+    in this book is unstructured data: it does not have the traditional record / row
+    / column semantics. For most people, however, this is the easiest thing to read
+    rather than the book being presented as a table or spreadsheet.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: In practice, the unstructured data means nested and complex data. An XML document
+    or a photograph are good examples of unstructured data, which have very rich structure
+    to them. My guess is that the originators of the term meant that the new data,
+    the data that engineers at social interaction companies such as Google, Facebook,
+    and Twitter saw, had a different structure to it as opposed to a traditional flat
+    table that everyone used to see. These indeed did not fit the traditional RDBMS
+    paradigm. Some of them can be flattened, but the underlying storage would be too
+    inefficient as the RDBMSs were not optimized to handle them and also be hard to
+    parse not only for humans, but for the machines as well.
+  prefs: []
+  type: TYPE_NORMAL
+- en: A lot of techniques introduced in this chapter were created as an emergency
+    Band-Aid to deal with the need to just process the data.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In this chapter, we will cover the following topics:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Learning about the serialization, popular serialization frameworks, and language
+    in which the machines talk to each other
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Learning about Avro-Parquet encoding for nested data
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Learning how RDBMs try to incorporate nested structures in modern SQL-like languages
+    to work with them
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Learning how you can start working with nested structures in Scala
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Seeing a practical example of sessionization—one of the most frequent use cases
+    for unstructured data
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Seeing how Scala traits and match/case statements can simplify path analysis
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Learning where the nested structures can benefit your analysis
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Nested data
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'You already saw unstructured data in the previous chapters, the data was an
+    array of **LabeledPoint**, which is a tuple **(label: Double, features: Vector)**.
+    The label is just a number of type **Double**. **Vector** is a sealed trait with
+    two subclasses: **SparseVector** and **DenseVector**. The class diagram is as
+    follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Nested data](img/B04935_06_01.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Figure 1: The LabeledPoint class structure is a tuple of label and features,
+    where features is a trait with two inherited subclasses {Dense,Sparse}Vector.
+    DenseVector is an array of double, while SparseVector stores only size and non-default
+    elements by index and value.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Each observation is a tuple of label and features, and features can be sparse.
+    Definitely, if there are no missing values, the whole row can be represented as
+    vector. A dense vector representation requires (*8 x size + 8*) bytes. If most
+    of the elements are missing—or equal to some default value—we can store only the
+    non-default elements. In this case, we would require (*12 x non_missing_size +
+    20*) bytes, with small variations depending on the JVM implementation. So, the
+    threshold for switching between one or another, from the storage point of view,
+    is when the size is greater than *1.5 x* ( *non_missing_size + 1* ), or if roughly
+    at least 30% of elements are non-default. While the computer languages are good
+    at representing the complex structures via pointers, we need some convenient form
+    to exchange these data between JVMs or machines. First, let''s see first how Spark/Scala
+    does it, specifically persisting the data in the Parquet format:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE0]'
+  prefs: []
+  type: TYPE_PRE
+- en: What we did was create a new RDD dataset from command line, or we could use
+    `org.apache.spark.mllib.util.MLUtils` to load a text file, converted it to a DataFrames
+    and create a serialized representation of it in the Parquet file under the `points`
+    directory.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Note
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: '**What Parquet stands for?**'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Apache Parquet is a columnar storage format, jointly developed by Cloudera and
+    Twitter for big data. Columnar storage allows for better compression of values
+    in the datasets and is more efficient if only a subset of columns need to be retrieved
+    from the disk. Parquet was built from the ground up with complex nested data structures
+    in mind and uses the record shredding and assembly algorithm described in the
+    Dremel paper ([https://blog.twitter.com/2013/dremel-made-simple-with-parquet](https://blog.twitter.com/2013/dremel-made-simple-with-parquet)).
+    Dremel/Parquet encoding uses definition/repetition fields to denote the level
+    in the hierarchy the data is coming from, which covers most of the immediate encoding
+    needs, as it is sufficient to store optional fields, nested arrays, and maps.
+    Parquet stores the data by chunks, thus probably the name Parquet, which means
+    flooring composed of wooden blocks arranged in a geometric pattern. Parquet can
+    be optimized for reading only a subset of blocks from disk, depending on the subset
+    of columns to be read and the index used (although it very much depends on whether
+    the specific implementation is aware of these features). The values in the columns
+    can use dictionary and **Run-Length Encoding** (**RLE**), which provides exceptionally
+    good compression for columns with many duplicate entries, a frequent use case
+    in big data.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Parquet file is a binary format, but you might look at the information in it
+    using `parquet-tools`, which are downloadable from [http://archive.cloudera.com/cdh5/cdh/5](http://archive.cloudera.com/cdh5/cdh/5):'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE1]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Let''s look at the schema, which is very close to the structure depicted in
+    *Figure 1*: first member is the label of type double and the second and last one
+    is features of composite type. The keyword optional is another way of saying that
+    the value can be null (absent) in the record for one or another reason. The lists
+    or arrays are encoded as a repeated field. As the whole array may be absent (it
+    is possible for all features to be absent), it is wrapped into optional groups
+    (indices and values). Finally, the type encodes whether it is a sparse or dense
+    representation:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE2]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'You are probably a bit confused about the `R`: and `D`: in the output. These
+    are the repetition and definition levels as described in the Dremel paper and
+    they are necessary to efficiently encode the values in the nested structures.
+    Only repeated fields increment the repetition level and only non-required fields
+    increment the definition level. Drop in `R` signifies the end of the list(array).
+    For every non-required level in the hierarchy tree, one needs a new definition
+    level. Repetition and definition level values are small by design and can be efficiently
+    stored in a serialized form.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: What is best, if there are many duplicate entries, they will all be placed together.
+    The case for which the compression algorithm (by default, it is gzip) are optimized.
+    Parquet also implements other algorithms exploiting repeated values such as dictionary
+    encoding or RLE compression.
+  prefs: []
+  type: TYPE_NORMAL
+- en: This is a simple and efficient serialization out of the box. We have been able
+    to write a set of complex objects to a file, each column stored in a separate
+    block, representing all values in the records and nested structures.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s now read the file and recover RDD. The Parquet format does not know
+    anything about the `LabeledPoint` class, so we''ll have to do some typecasting
+    and trickery here. When we read the file, we''ll see a collection of `org.apache.spark.sql.Row`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE3]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Personally, I think that this is pretty cool: without any compilation, we can
+    encode and decide complex objects. One can easily create their own objects in
+    REPL. Let''s consider that we want to track user''s behavior on the web:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE4]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'As a matter of good practice, we need to register the newly created classes
+    with the `Kryo` `serializer`—Spark will use another serialization mechanism to
+    pass the objects between tasks and executors. If the class is not registered,
+    Spark will use default Java serialization, which might be up to *10 x* slower:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE5]'
+  prefs: []
+  type: TYPE_PRE
+- en: If you are deploying the code on a cluster, the recommendation is to put this
+    code in a jar on the classpath.
+  prefs: []
+  type: TYPE_NORMAL
+- en: I've certainly seen examples of up to 10 level deep nesting in production. Although
+    this might be an overkill for performance reasons, nesting is required in more
+    and more production business use cases. Before we go into the specifics of constructing
+    a nested object in the example of sessionization, let's get an overview of serialization
+    in general.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Other serialization formats
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: I do recommend the Parquet format for storing the data. However, for completeness,
+    I need to at least mention other serialization formats, some of them like Kryo
+    will be used implicitly for you during Spark computations without your knowledge
+    and there is obviously a default Java serialization.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Tip
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: '**Object-oriented approach versus functional approach**'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Objects in object-oriented approach are characterized by state and behavior.
+    Objects are the cornerstone of object-oriented programming. A class is a template
+    for objects with fields that represent the state, and methods that may represent
+    the behavior. Abstract method implementation may depend on the instance of the
+    class. In functional approach, the state is usually frowned upon; in pure programming
+    languages, there should be no state, no side effects, and every invocation should
+    return the same result. The behaviors may be expressed though additional function
+    parameters and higher order functions (functions over functions, such as currying),
+    but should be explicit unlike the abstract methods. Since Scala is a mix of object-oriented
+    and functional language, some of the preceding constraints are violated, but this
+    does not mean that you have to use them unless absolutely necessary. It is best
+    practice to store the code in jar packages while storing the data, particularly
+    for the big data, separate from code in data files (in a serialized form); but
+    again, people often store data/configurations in jar files, and it is less common,
+    but possible to store code in the data files.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The serialization has been an issue since the need to persist data on disk or
+    transfer object from one JVM or machine to another over network appeared. Really,
+    the purpose of serialization is to make complex nested objects be represented
+    as a series of bytes, understandable by machines, and as you can imagine, this
+    might be language-dependent. Luckily, serialization frameworks converge on a set
+    of common data structures they can handle.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'One of the most popular serialization mechanisms, but not the most efficient,
+    is to dump an object in an ASCII file: CSV, XML, JSON, YAML, and so on. They do
+    work for more complex nested data like structures, arrays, and maps, but are inefficient
+    from the storage space perspective. For example, a Double represents a continuous
+    number with 15-17 significant digits that will, without rounding or trivial ratios,
+    take 15-17 bytes to represent in US ASCII, while the binary representation takes
+    only 8 bytes. Integers may be stored even more efficiently, particularly if they
+    are small, as we can compress/remove zeroes.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: One advantage of text encoding is that they are much easier to visualize with
+    simple command-line tools, but any advanced serialization framework now comes
+    with a set of tools to work with raw records such as `avro` *-* or `parquet-tools`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The following table provides an overview for most common serialization frameworks:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '| Serialization Format | When developed | Comments |'
+  prefs: []
+  type: TYPE_TB
+- en: '| --- | --- | --- |'
+  prefs: []
+  type: TYPE_TB
+- en: '| XML, JSON, YAML | This was a direct response to the necessity to encode nested
+    structures and exchange the data between machines. | While grossly inefficient,
+    these are still used in many places, particularly in web services. The only advantage
+    is that they are relatively easy to parse without machines. |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Protobuf | Developed by Google in the early 2000s. This implements the Dremel
+    encoding scheme and supports multiple languages (Scala is not officially supported
+    yet, even though some code exists). | The main advantage is that Protobuf can
+    generate native classes in many languages. C++, Java, and Python are officially
+    supported. There are ongoing projects in C, C#, Haskell, Perl, Ruby, Scala, and
+    more. Run-time can call native code to inspect/serialize/deserialize the objects
+    and binary representations. |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Avro | Avro was developed by Doug Cutting while he was working at Cloudera.
+    The main objective was to separate the encoding from a specific implementation
+    and language, allowing better schema evolution. | While the arguments whether
+    Protobuf or Avro are more efficient are still ongoing, Avro supports a larger
+    number of complex structures, say unions and maps out of the box, compared to
+    Protobuf. Scala support is still to be strengthened to the production level. Avro
+    files have schema encoded with every file, which has its pros and cons. |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Thrift | The Apache Thrift was developed at Facebook for the same purpose
+    Protobuf was developed. It probably has the widest selection of supported languages:
+    C++, Java, Python, PHP, Ruby, Erlang, Perl, Haskell, C#, Cocoa, JavaScript, Node.js,
+    Smalltalk, OCaml, Delphi, and other languages. Again, Twitter is hard at work
+    for making the Thrift code generation in Scala ([https://twitter.github.io/scrooge/](https://twitter.github.io/scrooge/)).
+    | Apache Thrift is often described as a framework for cross-language services
+    development and is most frequently used as **Remote Procedure Call** (**RPC**).
+    Even though it can be used directly for serialization/deserialization, other frameworks
+    just happen to be more popular. |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Parquet | Parquet was developed in a joint effort between Twitter and Cloudera.
+    Compared to the Avro format, which is row-oriented, Parquet is columnar storage
+    that results in better compression and performance if only a few columns are to
+    be selected. The interval encoding is Dremel or Protobuf-based, even though the
+    records are presented as Avro records; thus, it is often called **AvroParquet**.
+    | Advances features such as indices, dictionary encoding, and RLE compression
+    potentially make it very efficient for pure disk storage. Writing the files may
+    be slower as Parquet requires some preprocessing and index building before it
+    can be committed to the disk. |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Kryo | This is a framework for encoding arbitrary classes in Java. However,
+    not all built-in Java collection classes can be serialized. | If one avoids non-serializable
+    exceptions, such as priority queues, Kryo can be very efficient. Direct support
+    in Scala is also under way. |'
+  prefs: []
+  type: TYPE_TB
+- en: Certainly, Java has a built-in serialization framework, but as it has to support
+    all Java cases, and therefore is overly general, the Java serialization is far
+    less efficient than any of the preceding methods. I have certainly seen other
+    companies implement their own proprietary serialization earlier, which would beat
+    any of the preceding serialization for the specific cases. Nowadays, it is no
+    longer necessary, as the maintenance costs definitely overshadow the converging
+    inefficiency of the existing frameworks.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Hive and Impala
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'One of the design considerations for a new framework is always the compatibility
+    with the old frameworks. For better or worse, most data analysts still work with
+    SQL. The roots of the SQL go to an influential relational modeling paper (*Codd,
+    Edgar F* (June 1970). *A Relational Model of Data for Large Shared Data Banks*.
+    *Communications of the ACM (Association for Computing Machinery) 13 (6): 377–87*).
+    All modern databases implement one or another version of SQL.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'While the relational model was influential and important for bringing the database
+    performance, particularly for **Online Transaction Processing** (**OLTP**) to
+    the competitive levels, the significance of normalization for analytic workloads,
+    where one needs to perform aggregations, and for situations where relations themselves
+    change and are subject to analysis, is less critical. This section will cover
+    the extensions of standard SQL language for analysis engines traditionally used
+    for big data analytics: Hive and Impala. Both of them are currently Apache licensed
+    projects. The following table summarizes the complex types:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '| Type | Hive support since version | Impala support since version | Comments
+    |'
+  prefs: []
+  type: TYPE_TB
+- en: '| --- | --- | --- | --- |'
+  prefs: []
+  type: TYPE_TB
+- en: '| `ARRAY` | This is supported since 0.1.0, but the use of non-constant index
+    expressions is allowed only as of 0.14. | This is supported since 2.3.0 (only
+    for Parquet tables). | This can be an array of any type, including complex. The
+    index is `int` in Hive (`bigint` in Impala) and access is via array notation,
+    for example, `element[1]` only in Hive (`array.pos` and `item pseudocolumns` in
+    Impala). |'
+  prefs: []
+  type: TYPE_TB
+- en: '| `MAP` | This is supported since 0.1.0, but the use of non-constant index
+    expressions is allowed only as of 0.14. | This is supported since 2.3.0 (only
+    for Parquet tables). | The key should be of primitive type. Some libraries support
+    keys of the string type only. Fields are accessed using array notation, for example,
+    `map["key"]` only in Hive (map key and value pseudocolumns in Impala). |'
+  prefs: []
+  type: TYPE_TB
+- en: '| `STRUCT` | This is supported since 0.5.0. | This is supported since 2.3.0
+    (only for Parquet tables). | Access is using dot notation, for example, `struct.element`.
+    |'
+  prefs: []
+  type: TYPE_TB
+- en: '| `UNIONTYPE` | This is supported since 0.7.0. | This is not supported in Impala.
+    | Support is incomplete: queries that reference `UNIONTYPE` fields in `JOIN` (HIVE-2508),
+    `WHERE`, and `GROUP BY` clauses will fail, and Hive does not define the syntax
+    to extract the tag or value fields of `UNIONTYPE`. This means that `UNIONTYPEs`
+    are effectively look-at-only. |'
+  prefs: []
+  type: TYPE_TB
+- en: 'While Hive/Impala tables can be created on top of many underlying file formats
+    (Text, Sequence, ORC, Avro, Parquet, and even custom format) and multiple serializations,
+    in most practical instances, Hive is used to read lines of text in ASCII files.
+    The underlying serialization/deserialization format is `LazySimpleSerDe` (**Serialization**/**Deserialization**
+    (**SerDe**)). The format defines several levels of separators, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE6]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The default for separators are `''\001''` or `^A`, `''\002''` or `^B`, and
+    `''\003''` or `^B`. In other words, it''s using the new separator at each level
+    of the hierarchy as opposed to the definition/repetition indicator in the Dremel
+    encoding. For example, to encode the `LabeledPoint` table that we used before,
+    we need to create a file, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE7]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Download Hive from [http://archive.cloudera.com/cdh5/cdh/5/hive-1.1.0-cdh5.5.0.tar.gz](http://archive.cloudera.com/cdh5/cdh/5/hive-1.1.0-cdh5.5.0.tar.gz)
+    and perform the follow:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE8]'
+  prefs: []
+  type: TYPE_PRE
+- en: In Spark, select from a relational table is supported via the `sqlContext.sql`
+    method, but unfortunately the Hive union types are not directly supported as of
+    Spark 1.6.1; it does support maps and arrays though. The supportability of complex
+    objects in other BI and data analysis tools still remains the biggest obstacle
+    to their adoption. Supporting everything as a rich data structure in Scala is
+    one of the options to converge on nested data representation.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Sessionization
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: I will demonstrate the use of the complex or nested structures in the example
+    of sessionization. In sessionization, we want to find the behavior of an entity,
+    identified by some ID over a period of time. While the original records may come
+    in any order, we want to summarize the behavior over time to derive trends.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We already analyzed web server logs in [Chapter 1](ch01.xhtml "Chapter 1. Exploratory
+    Data Analysis"), *Exploratory Data Analysis*. We found out how often different
+    web pages are accessed over a period of time. We could dice and slice this information,
+    but without analyzing the sequence of pages visited, it would be hard to understand
+    each individual user interaction with the website. In this chapter, I would like
+    to give this analysis more individual flavor by tracking the user navigation throughout
+    the website. Sessionization is a common tool for website personalization and advertising,
+    IoT tracking, telemetry, and enterprise security, in fact anything to do with
+    entity behavior.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s assume the data comes as tuples of three elements (fields `1`, `5`,
+    `11` in the original dataset in [Chapter 1](ch01.xhtml "Chapter 1. Exploratory
+    Data Analysis"), *Exploratory Data Analysis*):'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE9]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Here, `id` is a unique entity ID, timestamp is an event `timestamp` (in any
+    sortable format: Unix timestamp or an ISO8601 date format), and `path` is some
+    indication of the location on the web server page hierarchy.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'For people familiar with SQL, sessionization, or at least a subset of it, is
+    better known as a windowing analytics function:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE10]'
+  prefs: []
+  type: TYPE_PRE
+- en: Here `ANALYTIC_FUNCTION` is some transformation on the sequence of paths for
+    a given `id`. While this approach works for a relatively simple function, such
+    as first, last, lag, average, expressing a complex function over a sequence of
+    paths is usually very convoluted (for example, nPath from Aster Data ([https://www.nersc.gov/assets/Uploads/AnalyticsFoundation5.0previewfor4.6.x-Guide.pdf](https://www.nersc.gov/assets/Uploads/AnalyticsFoundation5.0previewfor4.6.x-Guide.pdf))).
+    Besides, without additional preprocessing and partitioning, these approaches usually
+    result in big data transfers across multiple nodes in a distributed setting.
+  prefs: []
+  type: TYPE_NORMAL
+- en: While in a pure functional approach, one would just have to design a function—or
+    a sequence of function applications—to produce the desired answers from the original
+    set of tuples, I will create two helper objects that will help us to simplify
+    working with the concept of a user session. As an additional benefit, the new
+    nested structures can be persisted on a disk to speed up getting answers on additional
+    questions.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s see how it''s done in Spark/Scala using case classes:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE11]'
+  prefs: []
+  type: TYPE_PRE
+- en: The first class will represent a single page view with a timestamp, which, in
+    this case, is an ISO8601 `String`, while the second a sequence of page views.
+    Could we do it by encoding both members as a `String` with a object separator?
+    Absolutely, but representing the fields as members of a class gives us nice access
+    semantics, together with offloading some of the work that we need to perform on
+    the compiler, which is always nice.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s read the previously described log files and construct the objects:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE12]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Bingo! We have an RDD of Sessions, one per each unique IP address. The IP `189.248.74.238`
+    has a session that lasted from `23:09:16` to `23:15:10`, and seemingly ended after
+    browsing for men''s shoes. The session for IP `82.166.130.148` contains only one
+    hit. The last session concentrated on sports watch and lasted for over three minutes
+    from `2015-08-23 22:36:10` to `2015-08-23 22:39:26`. Now, we can easily ask questions
+    involving specific navigation path patterns. For example, we want analyze all
+    the sessions that resulted in checkout (the path contains `checkout`) and see
+    the number of hits and the distribution of times after the last hit on homepage:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE13]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The sessions last from 1 to 121 hits with a mode at 8 hits and from 15 to 2653
+    seconds (or about 45 minutes). Why would you be interested in this information?
+    Long sessions might indicate that there was a problem somewhere in the middle
+    of the session: a long delay or non-responsive call. It does not have to be: the
+    person might just have taken a long lunch break or a call to discuss his potential
+    purchase, but there might be something of interest here. At least one should agree
+    that this is an outlier and needs to be carefully analyzed.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Let's talk about persisting this data to the disk. As you've seen, our transformation
+    is written as a long pipeline, so there is nothing in the result that one could
+    not compute from the raw data. This is a functional approach, the data is immutable.
+    Moreover, if there is an error in our processing, let's say I want to change the
+    homepage to some other anchor page, I can always modify the function as opposed
+    to data. You may be content or not with this fact, but there is absolutely no
+    additional piece of information in the result—transformations only increase the
+    disorder and entropy. They might make it more palatable for humans, but this is
+    only because humans are a very inefficient data-processing apparatus.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Tip
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: '**Why rearranging the data makes the analysis faster?**'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Sessionization seems just a simple rearranging of data—we just put the pages
+    that were accessed in sequence together. Yet, in many cases, it makes practical
+    data analysis run 10 to 100 times faster. The reason is data locality. The analysis,
+    like filtering or path matching, most often tends to happen on the pages in one
+    session at a time. Deriving user features requires all page views or interactions
+    of the user to be in one place on disk and memory. This often beats other inefficiencies
+    such as the overhead of encoding/decoding the nested structures as this can happen
+    in local L1/L2 cache as opposed to data transfers from RAM or disk, which are
+    much more expensive in modern multithreaded CPUs. This very much depends on the
+    complexity of the analysis, of course.
+  prefs: []
+  type: TYPE_NORMAL
+- en: There is a reason to persist the new data to the disk, and we can do it with
+    either CSV, Avro, or Parquet format. The reason is that we do not want to reprocess
+    the data if we want to look at them again. The new representation might be more
+    compact and more efficient to retrieve and show to my manager. Really, humans
+    like side effects and, fortunately, Scala/Spark allows you to do this as was described
+    in the previous section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Well, well, well...will say the people familiar with sessionization. This is
+    only a part of the story. We want to split the path sequence into multiple sessions,
+    run path analysis, compute conditional probabilities for page transitions, and
+    so on. This is exactly where the functional paradigm shines. Write the following
+    function:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE14]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Then run the following code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE15]'
+  prefs: []
+  type: TYPE_PRE
+- en: Bingo! The result is the session's split. I intentionally left the implementation
+    out; it's the implementation that is user-dependent, not the data, and every analyst
+    might have it's own way to split the sequence of page visits into sessions.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Another use case to apply the function is feature generation for applying machine
+    learning…well, this is already hinting at the side effect: we want to modify the
+    state of the world to make it more personalized and user-friendly. I guess one
+    cannot avoid it after all.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Working with traits
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: As we saw, case classes significantly simplify handling of new nested data structures
+    that we want to construct. The case class definition is probably the most convincing
+    reason to move from Java (and SQL) to Scala. Now, what about the methods? How
+    do we quickly add methods to a class without expensive recompilation? Scala allows
+    you to do this transparently with traits!
+  prefs: []
+  type: TYPE_NORMAL
+- en: A fundamental feature of functional programming is that functions are a first
+    class citizen on par with objects. In the previous section, we defined the two
+    `EpochSeconds` functions that transform the ISO8601 format to epoch time in seconds.
+    We also suggested the `splitSession` function that provides a multi-session view
+    for a given IP. How do we associate this or other behavior with a given class?
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'First, let''s define a desired behavior:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE16]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'This basically creates a `PageView`-specific function that converts a string
+    representation for datetime to epoch time in seconds. Now, if we just make the
+    following transformation:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE17]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We now have a new RDD of page views with additional behavior. For example,
+    if we want to find out what is the time spent on each individual page in a session
+    is, we will run a pipeline, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE18]'
+  prefs: []
+  type: TYPE_PRE
+- en: Multiple traits can be added at the same time without affecting either the original
+    class definitions or original data. No recompilation is required.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Working with pattern matching
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'No Scala book would be complete without mentioning the match/case statements.
+    Scala has a very rich pattern-matching mechanism. For instance, let''s say we
+    want to find all instances of a sequence of page views that start with a homepage
+    followed by a products page—we really want to filter out the determined buyers.
+    This may be accomplished with a new function, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE19]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Note that we explicitly put `PageView` constructors in the case statement!
+    Scala will traverse the `visits` sequence and generate new sessions that match
+    the specified two `PageViews`, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE20]'
+  prefs: []
+  type: TYPE_PRE
+- en: I leave it to the reader to write a function that also filters only those sessions
+    where the user spent less than 10 seconds before going to the products page. The
+    epoch trait or the previously defined to the `EpochSeconds` function may be useful.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The match/case function can be also used for feature generation and return a
+    vector of features over a session.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Other uses of unstructured data
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: The personalization and device diagnostic obviously are not the only uses of
+    unstructured data. The preceding case is a good example as we started from structured
+    record and quickly converged on the need to construct an unstructured data structure
+    to simplify the analysis.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In fact, there are many more unstructured data than there are structured; it
+    is just the convenience of having the flat structure for the traditional statistical
+    analysis that makes us to present the data as a set of records. Text, images,
+    and music are the examples of semi-structured data.
+  prefs: []
+  type: TYPE_NORMAL
+- en: One example of non-structured data is denormalized data. Traditionally the record
+    data are normalized mostly for performance reasons as the RDBMSs have been optimized
+    to work with structured data. This leads to foreign key and lookup tables, but
+    these are very hard to maintain if the dimensions change. Denormalized data does
+    not have this problem as the lookup table can be stored with each record—it is
+    just an additional table object associated with a row, but may be less storage-efficient.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Probabilistic structures
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Another use case is the probabilistic structures. Usually people assume that
+    answering a question is deterministic. As I showed in [Chapter 2](ch02.xhtml "Chapter 2. Data
+    Pipelines and Modeling"), *Data Pipelines and Modeling*, in many cases, the true
+    answer has some uncertainty associated with it. One of the most popular ways to
+    encode uncertainty is probability, which is a frequentist approach, meaning that
+    the simple count of when the answer does happen to be the true answer, divided
+    by the total number of attempts—the probability also can encode our beliefs. I
+    will touch on probabilistic analysis and models in the following chapters, but
+    probabilistic analysis requires storing each possible outcome with some measure
+    of probability, which happens to be a nested structure.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Projections
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'One way to deal with high dimensionality is projections on a lower dimensional
+    space. The fundamental basis for why projections might work is Johnson-Lindenstrauss
+    lemma. The lemma states that a small set of points in a high-dimensional space
+    can be embedded into a space of much lower dimension in such a way that distances
+    between the points are nearly preserved. We will touch on random and other projections
+    when we talk about NLP in [Chapter 9](ch09.xhtml "Chapter 9. NLP in Scala"), *NLP
+    in Scala*, but the random projections work well for nested structures and functional
+    programming language, as in many cases, generating a random projection is the
+    question of applying a function to a compactly encoded data rather than flattening
+    the data explicitly. In other words, the Scala definition for a random projection
+    may look like functional paradigm shines. Write the following function:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE21]'
+  prefs: []
+  type: TYPE_PRE
+- en: Here, `Vector` is in low dimensional space.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The map used for embedding is at least Lipschitz, and can even be taken to be
+    an orthogonal projection.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Summary
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In this chapter, we saw examples of how to represent and work with complex and
+    nested data in Scala. Obviously, it would be hard to cover all the cases as the
+    world of unstructured data is much larger than the nice niche of structured row-by-row
+    simplification of the real world and is still under construction. Pictures, music,
+    and spoken and written language have a lot of nuances that are hard to capture
+    in a flat representation.
+  prefs: []
+  type: TYPE_NORMAL
+- en: While for ultimate data analysis, we eventually convert the datasets to the
+    record-oriented flat representation, at least at the time of collection, one needs
+    to be careful to store that data as it is and not throw away useful information
+    that might be contained in data or metadata. Extending the databases and storage
+    with a way to record this useful information is the first step. The next one is
+    to use languages that can effectively analyze this information; which is definitely
+    Scala.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the next chapter we'll look at somewhat related topic of working with graphs,
+    a specific example of non-structured data.
+  prefs: []
+  type: TYPE_NORMAL
