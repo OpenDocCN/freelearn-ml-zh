@@ -1,6 +1,6 @@
-# Python 应用监督学习
+# Julia 编程项目
 
-> 原文：[`annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47`](https://annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47)
+> 原文：[`annas-archive.org/md5/0086c86218c52c8cc6ad2375a5d3ae02`](https://annas-archive.org/md5/0086c86218c52c8cc6ad2375a5d3ae02)
 > 
 > 译者：[飞龙](https://github.com/wizardforcel)
 > 

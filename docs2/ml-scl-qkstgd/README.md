@@ -1,6 +1,6 @@
-# Python 应用监督学习
+# Scala 机器学习快速启动指南
 
-> 原文：[`annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47`](https://annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47)
+> 原文：[`annas-archive.org/md5/7cee668dc80e7e6b8a656779b72e2561`](https://annas-archive.org/md5/7cee668dc80e7e6b8a656779b72e2561)
 > 
 > 译者：[飞龙](https://github.com/wizardforcel)
 > 
