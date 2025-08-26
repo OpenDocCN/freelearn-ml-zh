@@ -127,6 +127,7 @@
 +   [Python 机器学习示例第四版](docs/py-ml-ex-4e/README.md)
 +   [Python 机器学习示例](docs/py-ml-exam/README.md)
 +   [R 机器学习项目](docs/r-ml-proj/README.md)
++   [Scala 机器学习项目](docs/scala-ml-proj/README.md)
 +   [Sklearn 秘籍第二版](docs/skl-cb-2e/README.md)
 +   [Sklearn 秘籍](docs/sklearn-cookbook/README.md)
 +   [监督学习研讨会](docs/spr-lrn-ws/README.md)
