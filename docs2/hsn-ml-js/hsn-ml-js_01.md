@@ -1,4 +1,4 @@
-# 探索 JavaScript 的潜力
+# 第一章：探索 JavaScript 的潜力
 
 本章我们将涵盖以下主题：
 

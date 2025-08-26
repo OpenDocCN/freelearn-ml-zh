@@ -1,4 +1,4 @@
-# 使用 vRealize Code Stream 进行 DevOps
+# 第九章：使用 vRealize Code Stream 进行 DevOps
 
 DevOps 运营模型及其支持 CI/CD 工具集的实施方法正在改变 IT 资源的角色和责任，以及传统的设计、交付和运营流程。本章将使您能够进行必要的流程变更，以采用 DevOps。我们将探讨最高优先级的流程，以转换并应用技术，比较和对比传统运营模型、流程和团队结构与 DevOps 所需的战略运营模型之间的关键差异。我们还将介绍**VMware vRealize Code Stream**（**vRCS**）及其在 DevOps 发布流程和持续应用交付中的编排。
 

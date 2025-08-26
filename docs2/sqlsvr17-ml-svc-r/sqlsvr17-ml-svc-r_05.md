@@ -1,4 +1,4 @@
-# RevoScaleR 包
+# 第五章：RevoScaleR 包
 
 `RevoScaleR` 包与 Microsoft Machine Learning R Server 和 R Services 一起提供。它也适用于 R Client，但有一些限制在 第二章 中讨论，*Microsoft Machine Learning Server 和 SQL Server 概述*。鉴于快速发展和持续升级，本章将涵盖 8.X 和 9.X 版本——后者也适用于 SQL Server 2017。9.X 版本的变更和升级不容忽视，也将被涵盖。
 

@@ -1,4 +1,4 @@
-# Google Cloud Storage
+# 第三章：Google Cloud Storage
 
 在本章中，我们将探讨来自 Google Cloud 平台的两项数据存储服务：用于文件的 Google Storage 和用于结构化数据的 Google SQL。Google Storage 是一种文件托管服务，允许您在云端存储文件。非常简单直接，它与 Amazon S3 服务非常相似。为了超越基本使用，我们将探讨一些高级主题，例如签名 URL、协作存储桶设置、优化上传速度以及传输大型数据集。
 

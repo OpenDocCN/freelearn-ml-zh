@@ -1,4 +1,4 @@
-# 使用 Workspace ONE Intelligence 的安全性
+# 第三章：使用 Workspace ONE Intelligence 的安全性
 
 本章将详细讨论 VMware Workspace ONE 及其创新的方法来保护应用程序、数据、端点和网络。它可以通过其智能分析引擎管理应用程序和设备的访问权限，并通过集成第三方工具为最终用户提供端到端的安全保障。
 

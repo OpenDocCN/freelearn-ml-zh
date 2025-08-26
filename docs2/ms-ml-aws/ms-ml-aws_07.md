@@ -1,4 +1,4 @@
-# 使用聚类算法进行客户细分
+# 第五章：使用聚类算法进行客户细分
 
 本章将通过探讨如何根据他们的行为模式将聚类算法应用于客户细分来介绍主要的聚类算法。特别是，我们将演示 Apache Spark 和 Amazon SageMaker 如何无缝交互以执行聚类。在本章中，我们将使用**Kaggle 数据集 E-Commerce**，这是由**Fabien Daniel**提供的，可以从[`www.kaggle.com/fabiendaniel/customer-segmentation/data`](https://www.kaggle.com/fabiendaniel/customer-segmentation/data)下载。
 

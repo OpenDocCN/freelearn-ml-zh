@@ -1,4 +1,4 @@
-# 如何解决所有机器学习问题
+# 第一章：如何解决所有机器学习问题
 
 欢迎阅读《Go Machine Learning Projects》这本书。
 

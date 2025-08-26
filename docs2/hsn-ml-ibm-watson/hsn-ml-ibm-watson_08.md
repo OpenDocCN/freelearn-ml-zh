@@ -1,4 +1,4 @@
-# 在 IBM Watson Studio 中使用 Spark
+# 第六章：在 IBM Watson Studio 中使用 Spark
 
 在本章中，我们将讨论**机器学习（ML）**管道，并提供在 IBM Watson Studio 中创建和部署 Spark 机器学习管道的指南。
 

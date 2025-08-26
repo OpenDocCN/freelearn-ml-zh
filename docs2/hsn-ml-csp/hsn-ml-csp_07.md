@@ -1,4 +1,4 @@
-# 面部检测和运动检测 – 图像过滤器
+# 第七章：面部检测和运动检测 – 图像过滤器
 
 您无处不在都见过和听说过它。面部识别，运动检测。我们家里的安全系统中就有运动传感器。每个人都正在进行面部识别——我们的街道、机场，甚至可能在我们家里都有安全摄像头。如果我们考虑自动驾驶汽车必须完成的所有事情，哇！在写作的时候，有一个关于面部识别技术如何在 5 万名面孔的群众中识别出嫌疑人的链接。[`www.digitaltrends.com/cool-tech/facial-recognition-china-50000/`](https://www.digitaltrends.com/cool-tech/facial-recognition-china-50000/)
 

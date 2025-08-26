@@ -1,4 +1,4 @@
-# 使用 Spark 进行机器学习
+# 第九章：使用 Spark 进行机器学习
 
 本章涵盖了 Microsoft 平台上 Spark 的使用，并将提供如何使用 Spark 训练 ML 模型的演练，以及 Azure 中可用于执行基于 Spark 的 ML 训练的选项。
 

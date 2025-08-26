@@ -1,4 +1,4 @@
-# R 和 SQL Server 简介
+# 第一章：R 和 SQL Server 简介
 
 SQL Server 2016 带来了许多新功能，其中之一是将 R 集成到 SQL Server 中，部分是为了高级分析，部分是为了新的可编程能力。Microsoft R Services for SQL Server 是新扩展性家族的一部分，旨在实现高度可扩展和并行的高级分析。R Services 允许您在数据库中存储的大量数据上执行高级分析（统计、多元统计、预测分析、机器学习和深度学习）。Microsoft 将 R Services 作为**Microsoft R Server**（**MRS**）的一部分发布，该服务器专门设计用于在相同的 SQL Server 计算环境中直接从 SQL Server 数据库读取数据。
 

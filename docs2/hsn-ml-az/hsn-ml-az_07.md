@@ -1,4 +1,4 @@
-# Machine Learning Server
+# 第七章：Machine Learning Server
 
 本章的主题是 Microsoft ML Server 及其在 SQL Server 和 HDInsight 中的功能。此外，本章还将提供 ML Server 使用方法的概述，以展示使用 ML Server 的最佳情况以及如何使用它部署解决方案。
 

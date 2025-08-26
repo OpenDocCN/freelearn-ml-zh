@@ -1,4 +1,4 @@
-# 使用 VMware vRealize Suite 进行主动操作
+# 第四章：使用 VMware vRealize Suite 进行主动操作
 
 在本章中，我们将关注 VMware 如何通过将高级分析注入解决方案，以意图为基础管理 IT 操作，帮助客户自动化基于 vSphere 的数据中心和公有云。vRealize Operations 的容量分析引擎利用机器学习技术，根据过去趋势分析主动提醒您关于未来事件。
 

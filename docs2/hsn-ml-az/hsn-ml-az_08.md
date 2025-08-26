@@ -1,4 +1,4 @@
-# HDInsight
+# 第八章：HDInsight
 
 HDInsight 是 Hadoop 在微软 Azure 平台上运行的一种实现方式。HDInsight 基于**Hortonworks 数据平台**（**HDP**），与 Apache Hadoop 完全兼容。
 

@@ -1,4 +1,4 @@
-# 在 AWS 上使用 TensorFlow 实现深度学习
+# 第八章：在 AWS 上使用 TensorFlow 实现深度学习
 
 TensorFlow 是一个非常流行的深度学习框架，可以用来训练深度神经网络，例如前一章中描述的那些。
 
