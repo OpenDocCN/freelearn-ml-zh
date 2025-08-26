@@ -1,6 +1,6 @@
-# Python 应用监督学习
+# Go 机器学习项目
 
-> 原文：[`annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47`](https://annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47)
+> 原文：[`annas-archive.org/md5/4616f8384ccd1e939817bbe6eb92f7d8`](https://annas-archive.org/md5/4616f8384ccd1e939817bbe6eb92f7d8)
 > 
 > 译者：[飞龙](https://github.com/wizardforcel)
 > 
