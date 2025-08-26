@@ -1,0 +1,524 @@
+<html><head></head><body><div id="sbo-rt-content"><div class="chapter" title="Chapter 6. Working with Unstructured Data"><div class="titlepage"><div><div><h1 class="title"><a id="ch06"/>Chapter 6. Working with Unstructured Data</h1></div></div></div><p>I am very excited to introduce you to this chapter. Unstructured data is what, in reality, makes big data different from the old data, it also makes Scala to be the new paradigm for processing the data. To start with, unstructured data at first sight seems a lot like a derogatory term. Notwithstanding, every sentence in this book is unstructured data: it does not have the traditional record / row / column semantics. For most people, however, this is the easiest thing to read rather than the book being presented as a table or spreadsheet.</p><p>In practice, the unstructured data means nested and complex data. An XML document or a photograph are good examples of unstructured data, which have very rich structure to them. My guess is that the originators of the term meant that the new data, the data that engineers at social interaction companies such as Google, Facebook, and Twitter saw, had a different structure to it as opposed to a traditional flat table that everyone used to see. These indeed did not fit the traditional RDBMS paradigm. Some of them can be flattened, but the underlying storage would be too inefficient as the RDBMSs were not optimized to handle them and also be hard to parse not only for humans, but for the machines as well.</p><p>A lot of techniques introduced in this chapter were created as an emergency Band-Aid to deal with the need to just process the data.</p><p>In this chapter, we will cover the following topics:</p><div class="itemizedlist"><ul class="itemizedlist"><li class="listitem" style="list-style-type: disc">Learning about the serialization, popular serialization frameworks, and language in which the machines talk to each other</li><li class="listitem" style="list-style-type: disc">Learning about Avro-Parquet encoding for nested data</li><li class="listitem" style="list-style-type: disc">Learning how RDBMs try to incorporate nested structures in modern SQL-like languages to work with them</li><li class="listitem" style="list-style-type: disc">Learning how you can start working with nested structures in Scala</li><li class="listitem" style="list-style-type: disc">Seeing a practical example of sessionization—one of the most frequent use cases for unstructured data</li><li class="listitem" style="list-style-type: disc">Seeing how Scala traits and match/case statements can simplify path analysis</li><li class="listitem" style="list-style-type: disc">Learning where the nested structures can benefit your analysis</li></ul></div><div class="section" title="Nested data"><div class="titlepage"><div><div><h1 class="title"><a id="ch06lvl1sec46"/>Nested data</h1></div></div></div><p>You already <a id="id401" class="indexterm"/>saw unstructured data in the previous chapters, the data was an array <a id="id402" class="indexterm"/>of <span class="strong"><strong>LabeledPoint</strong></span>, which is a tuple <span class="strong"><strong>(label: Double, features: Vector)</strong></span>. The label is just a number of type <span class="strong"><strong>Double</strong></span>. <span class="strong"><strong>Vector</strong></span> is a sealed trait <a id="id403" class="indexterm"/>with two subclasses: <span class="strong"><strong>SparseVector</strong></span> and <span class="strong"><strong>DenseVector</strong></span>. The <a id="id404" class="indexterm"/>class <a id="id405" class="indexterm"/>diagram is as follows:</p><div class="mediaobject"><img src="Images/B04935_06_01.jpg" alt="Nested data" width="467" height="254"/><div class="caption"><p>Figure 1: The LabeledPoint class structure is a tuple of label and features, where features is a trait with two inherited subclasses {Dense,Sparse}Vector.  DenseVector is an array of double, while SparseVector stores only size and non-default elements by index and value.</p></div></div><p>Each observation is a tuple of label and features, and features can be sparse. Definitely, if there are no missing values, the whole row can be represented as vector. A dense vector representation requires (<span class="emphasis"><em>8 x size + 8</em></span>) bytes. If most of the elements are missing—or equal to some default value—we can store only the non-default elements. In this case, we would require (<span class="emphasis"><em>12 x non_missing_size + 20</em></span>) bytes, with small variations depending on the JVM implementation. So, the threshold for switching between one or another, from the storage point of view, is when the size is greater than <span class="emphasis"><em>1.5 x</em></span> ( <span class="emphasis"><em>non_missing_size + 1</em></span> ), or if roughly at least 30% of elements are non-default. While the computer languages are good at representing the complex structures via pointers, we need some convenient form to exchange<a id="id406" class="indexterm"/> these data between JVMs or machines. First, let's see first how Spark/Scala does it, specifically persisting the data in the Parquet format:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>akozlov@Alexanders-MacBook-Pro$ bin/spark-shell </strong></span>
+<span class="strong"><strong>Welcome to</strong></span>
+<span class="strong"><strong>      ____              __</strong></span>
+<span class="strong"><strong>     / __/__  ___ _____/ /__</strong></span>
+<span class="strong"><strong>    _\ \/ _ \/ _ `/ __/  '_/</strong></span>
+<span class="strong"><strong>   /___/ .__/\_,_/_/ /_/\_\   version 1.6.1-SNAPSHOT</strong></span>
+<span class="strong"><strong>      /_/</strong></span>
+
+<span class="strong"><strong>Using Scala version 2.11.7 (Java HotSpot(TM) 64-Bit Server VM, Java 1.8.0_40)</strong></span>
+<span class="strong"><strong>Type in expressions to have them evaluated.</strong></span>
+<span class="strong"><strong>Type :help for more information.</strong></span>
+<span class="strong"><strong>Spark context available as sc.</strong></span>
+<span class="strong"><strong>SQL context available as sqlContext.</strong></span>
+
+<span class="strong"><strong>scala&gt; import org.apache.spark.mllib.regression.LabeledPoint</strong></span>
+<span class="strong"><strong>import org.apache.spark.mllib.regression.LabeledPoint</strong></span>
+
+<span class="strong"><strong>scala&gt; import org.apache.spark.mllib.linalg.Vectors</strong></span>
+<span class="strong"><strong>import org.apache.spark.mllib.linalg.Vectors</strong></span>
+<span class="strong"><strong>Wha</strong></span>
+<span class="strong"><strong>scala&gt; </strong></span>
+
+<span class="strong"><strong>scala&gt; val points = Array(</strong></span>
+<span class="strong"><strong>     |    LabeledPoint(0.0, Vectors.sparse(3, Array(1), Array(1.0))),</strong></span>
+<span class="strong"><strong>     |    LabeledPoint(1.0, Vectors.dense(0.0, 2.0, 0.0)),</strong></span>
+<span class="strong"><strong>     |    LabeledPoint(2.0, Vectors.sparse(3, Array((1, 3.0)))),</strong></span>
+<span class="strong"><strong>     |    LabeledPoint.parse("(3.0,[0.0,4.0,0.0])"));</strong></span>
+<span class="strong"><strong>pts: Array[org.apache.spark.mllib.regression.LabeledPoint] = Array((0.0,(3,[1],[1.0])), (1.0,[0.0,2.0,0.0]), (2.0,(3,[1],[3.0])), (3.0,[0.0,4.0,0.0]))</strong></span>
+<span class="strong"><strong>scala&gt; </strong></span>
+
+<span class="strong"><strong>scala&gt; val rdd = sc.parallelize(points)</strong></span>
+<span class="strong"><strong>rdd: org.apache.spark.rdd.RDD[org.apache.spark.mllib.regression.LabeledPoint] = ParallelCollectionRDD[0] at parallelize at &lt;console&gt;:25</strong></span>
+
+<span class="strong"><strong>scala&gt; </strong></span>
+
+<span class="strong"><strong>scala&gt; val df = rdd.repartition(1).toDF</strong></span>
+<span class="strong"><strong>df: org.apache.spark.sql.DataFrame = [label: double, features: vector]</strong></span>
+
+<span class="strong"><strong>scala&gt; df.write.parquet("points")</strong></span>
+</pre></div><p>What we did was create a new RDD dataset from command line, or we could use <code class="literal">org.apache.spark.mllib.util.MLUtils</code> to load a text file, converted it to a DataFrames and <a id="id407" class="indexterm"/>create a serialized representation of it in the Parquet file under the <code class="literal">points</code> directory.</p><div class="note" title="Note" style=""><div class="inner"><h3 class="title"><a id="note05"/>Note</h3><p>
+<span class="strong"><strong>What Parquet stands for?</strong></span>
+</p><p>Apache Parquet <a id="id408" class="indexterm"/>is a columnar storage format, jointly developed by Cloudera and Twitter for big data. Columnar storage allows for better compression of values in the datasets and is more efficient if only a subset of columns need to be retrieved from the disk. Parquet was built from the ground up with complex nested data structures in mind and uses the record shredding and <a id="id409" class="indexterm"/>assembly algorithm described in the Dremel paper (<a class="ulink" href="https://blog.twitter.com/2013/dremel-made-simple-with-parquet">https://blog.twitter.com/2013/dremel-made-simple-with-parquet</a>). Dremel/Parquet encoding uses definition/repetition fields to denote the level in the hierarchy the data is coming from, which covers most of the immediate encoding needs, as it is sufficient to store optional fields, nested arrays, and maps. Parquet stores the data by chunks, thus probably the name Parquet, which means flooring composed of wooden blocks arranged in a geometric pattern. Parquet can be optimized for reading only a subset of blocks from disk, depending on the subset of columns to be read and the index used (although it very much depends on whether the specific implementation is aware of these features). The<a id="id410" class="indexterm"/> values in the columns can use dictionary and <span class="strong"><strong>Run-Length Encoding</strong></span> (<span class="strong"><strong>RLE</strong></span>), which provides exceptionally good compression for columns with many duplicate entries, a frequent use case in big data.</p></div></div><p>Parquet file<a id="id411" class="indexterm"/> is a binary format, but you might look at the information<a id="id412" class="indexterm"/> in it using <code class="literal">parquet-tools</code>, which are downloadable from <a class="ulink" href="http://archive.cloudera.com/cdh5/cdh/5">http://archive.cloudera.com/cdh5/cdh/5</a>:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>akozlov@Alexanders-MacBook-Pro$ wget -O - http://archive.cloudera.com/cdh5/cdh/5/parquet-1.5.0-cdh5.5.0.tar.gz | tar xzvf -</strong></span>
+
+<span class="strong"><strong>akozlov@Alexanders-MacBook-Pro$ cd parquet-1.5.0-cdh5.5.0/parquet-tools</strong></span>
+
+<span class="strong"><strong>akozlov@Alexanders-MacBook-Pro$ tar xvf xvf parquet-1.5.0-cdh5.5.0/parquet-tools/target/parquet-tools-1.5.0-cdh5.5.0-bin.tar.gz</strong></span>
+
+<span class="strong"><strong>akozlov@Alexanders-MacBook-Pro$ cd parquet-tools-1.5.0-cdh5.5.0</strong></span>
+
+<span class="strong"><strong>akozlov@Alexanders-MacBook-Pro $ ./parquet-schema ~/points/*.parquet </strong></span>
+<span class="strong"><strong>message spark_schema {</strong></span>
+<span class="strong"><strong>  optional double label;</strong></span>
+<span class="strong"><strong>  optional group features {</strong></span>
+<span class="strong"><strong>    required int32 type (INT_8);</strong></span>
+<span class="strong"><strong>    optional int32 size;</strong></span>
+<span class="strong"><strong>    optional group indices (LIST) {</strong></span>
+<span class="strong"><strong>      repeated group list {</strong></span>
+<span class="strong"><strong>        required int32 element;</strong></span>
+<span class="strong"><strong>      }</strong></span>
+<span class="strong"><strong>    }</strong></span>
+<span class="strong"><strong>    optional group values (LIST) {</strong></span>
+<span class="strong"><strong>      repeated group list {</strong></span>
+<span class="strong"><strong>        required double element;</strong></span>
+<span class="strong"><strong>      }</strong></span>
+<span class="strong"><strong>    }</strong></span>
+<span class="strong"><strong>  }</strong></span>
+<span class="strong"><strong>}</strong></span>
+</pre></div><p>Let's look at the<a id="id413" class="indexterm"/> schema, which is very close to the structure depicted in <span class="emphasis"><em>Figure 1</em></span>: first member is the label of type double and the second and last one is features of composite type. The keyword optional is another way of saying that the value can be null (absent) in the record for one or another reason. The lists or arrays are encoded as a repeated field. As the whole array may be absent (it is possible for all features to be absent), it is wrapped into optional groups (indices and values). Finally, the type encodes whether it is a sparse or dense representation:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>akozlov@Alexanders-MacBook-Pro $ ./parquet-dump ~/points/*.parquet </strong></span>
+<span class="strong"><strong>row group 0 </strong></span>
+<span class="strong"><strong>----------------------------------------------------------------------------------------------------------------------------------------------------------------------</strong></span>
+<span class="strong"><strong>label:       DOUBLE GZIP DO:0 FPO:4 SZ:78/79/1.01 VC:4 ENC:BIT_PACKED,PLAIN,RLE</strong></span>
+<span class="strong"><strong>features:   </strong></span>
+<span class="strong"><strong>.type:       INT32 GZIP DO:0 FPO:82 SZ:101/63/0.62 VC:4 ENC:BIT_PACKED,PLAIN_DICTIONARY,RLE</strong></span>
+<span class="strong"><strong>.size:       INT32 GZIP DO:0 FPO:183 SZ:97/59/0.61 VC:4 ENC:BIT_PACKED,PLAIN_DICTIONARY,RLE</strong></span>
+<span class="strong"><strong>.indices:   </strong></span>
+<span class="strong"><strong>..list:     </strong></span>
+<span class="strong"><strong>...element:  INT32 GZIP DO:0 FPO:280 SZ:100/65/0.65 VC:4 ENC:PLAIN_DICTIONARY,RLE</strong></span>
+<span class="strong"><strong>.values:    </strong></span>
+<span class="strong"><strong>..list:     </strong></span>
+<span class="strong"><strong>...element:  DOUBLE GZIP DO:0 FPO:380 SZ:125/111/0.89 VC:8 ENC:PLAIN_DICTIONARY,RLE</strong></span>
+
+<span class="strong"><strong>    label TV=4 RL=0 DL=1</strong></span>
+<span class="strong"><strong>    ------------------------------------------------------------------------------------------------------------------------------------------------------------------</strong></span>
+<span class="strong"><strong>    page 0:                                           DLE:RLE RLE:BIT_PACKED VLE:PLAIN SZ:38 VC:4</strong></span>
+
+<span class="strong"><strong>    features.type TV=4 RL=0 DL=1 DS:                 2 DE:PLAIN_DICTIONARY</strong></span>
+<span class="strong"><strong>    ------------------------------------------------------------------------------------------------------------------------------------------------------------------</strong></span>
+<span class="strong"><strong>    page 0:                                           DLE:RLE RLE:BIT_PACKED VLE:PLAIN_DICTIONARY SZ:9 VC:4</strong></span>
+
+<span class="strong"><strong>    features.size TV=4 RL=0 DL=2 DS:                 1 DE:PLAIN_DICTIONARY</strong></span>
+<span class="strong"><strong>    ------------------------------------------------------------------------------------------------------------------------------------------------------------------</strong></span>
+<span class="strong"><strong>    page 0:                                           DLE:RLE RLE:BIT_PACKED VLE:PLAIN_DICTIONARY SZ:9 VC:4</strong></span>
+
+<span class="strong"><strong>    features.indices.list.element TV=4 RL=1 DL=3 DS: 1 DE:PLAIN_DICTIONARY</strong></span>
+<span class="strong"><strong>    ------------------------------------------------------------------------------------------------------------------------------------------------------------------</strong></span>
+<span class="strong"><strong>    page 0:                                           DLE:RLE RLE:RLE VLE:PLAIN_DICTIONARY SZ:15 VC:4</strong></span>
+
+<span class="strong"><strong>    features.values.list.element TV=8 RL=1 DL=3 DS:  5 DE:PLAIN_DICTIONARY</strong></span>
+<span class="strong"><strong>    ------------------------------------------------------------------------------------------------------------------------------------------------------------------</strong></span>
+<span class="strong"><strong>    page 0:                                           DLE:RLE RLE:RLE VLE:PLAIN_DICTIONARY SZ:17 VC:8</strong></span>
+
+<span class="strong"><strong>DOUBLE label </strong></span>
+<span class="strong"><strong>----------------------------------------------------------------------------------------------------------------------------------------------------------------------</strong></span>
+<span class="strong"><strong>*** row group 1 of 1, values 1 to 4 *** </strong></span>
+<span class="strong"><strong>value 1: R:0 D:1 V:0.0</strong></span>
+<span class="strong"><strong>value 2: R:0 D:1 V:1.0</strong></span>
+<span class="strong"><strong>value 3: R:0 D:1 V:2.0</strong></span>
+<span class="strong"><strong>value 4: R:0 D:1 V:3.0</strong></span>
+
+<span class="strong"><strong>INT32 features.type </strong></span>
+<span class="strong"><strong>----------------------------------------------------------------------------------------------------------------------------------------------------------------------</strong></span>
+<span class="strong"><strong>*** row group 1 of 1, values 1 to 4 *** </strong></span>
+<span class="strong"><strong>value 1: R:0 D:1 V:0</strong></span>
+<span class="strong"><strong>value 2: R:0 D:1 V:1</strong></span>
+<span class="strong"><strong>value 3: R:0 D:1 V:0</strong></span>
+<span class="strong"><strong>value 4: R:0 D:1 V:1</strong></span>
+
+<span class="strong"><strong>INT32 features.size </strong></span>
+<span class="strong"><strong>----------------------------------------------------------------------------------------------------------------------------------------------------------------------</strong></span>
+<span class="strong"><strong>*** row group 1 of 1, values 1 to 4 *** </strong></span>
+<span class="strong"><strong>value 1: R:0 D:2 V:3</strong></span>
+<span class="strong"><strong>value 2: R:0 D:1 V:&lt;null&gt;</strong></span>
+<span class="strong"><strong>value 3: R:0 D:2 V:3</strong></span>
+<span class="strong"><strong>value 4: R:0 D:1 V:&lt;null&gt;</strong></span>
+
+<span class="strong"><strong>INT32 features.indices.list.element </strong></span>
+<span class="strong"><strong>----------------------------------------------------------------------------------------------------------------------------------------------------------------------</strong></span>
+<span class="strong"><strong>*** row group 1 of 1, values 1 to 4 *** </strong></span>
+<span class="strong"><strong>value 1: R:0 D:3 V:1</strong></span>
+<span class="strong"><strong>value 2: R:0 D:1 V:&lt;null&gt;</strong></span>
+<span class="strong"><strong>value 3: R:0 D:3 V:1</strong></span>
+<span class="strong"><strong>value 4: R:0 D:1 V:&lt;null&gt;</strong></span>
+
+<span class="strong"><strong>DOUBLE features.values.list.element </strong></span>
+<span class="strong"><strong>----------------------------------------------------------------------------------------------------------------------------------------------------------------------</strong></span>
+<span class="strong"><strong>*** row group 1 of 1, values 1 to 8 *** </strong></span>
+<span class="strong"><strong>value 1: R:0 D:3 V:1.0</strong></span>
+<span class="strong"><strong>value 2: R:0 D:3 V:0.0</strong></span>
+<span class="strong"><strong>value 3: R:1 D:3 V:2.0</strong></span>
+<span class="strong"><strong>value 4: R:1 D:3 V:0.0</strong></span>
+<span class="strong"><strong>value 5: R:0 D:3 V:3.0</strong></span>
+<span class="strong"><strong>value 6: R:0 D:3 V:0.0</strong></span>
+<span class="strong"><strong>value 7: R:1 D:3 V:4.0</strong></span>
+<span class="strong"><strong>value 8: R:1 D:3 V:0.0</strong></span>
+</pre></div><p>You are probably a bit confused about the <code class="literal">R</code>: and <code class="literal">D</code>: in the output. These are the repetition and definition<a id="id414" class="indexterm"/> levels as described in the Dremel paper and they are necessary to efficiently encode the values in the nested structures. Only repeated fields increment the repetition level and only non-required fields increment the definition level. Drop in <code class="literal">R</code> signifies the end of the list(array). For every non-required level in the hierarchy tree, one needs a new definition level. Repetition and definition level values are small by design and can be efficiently stored in a serialized form.</p><p>What is best, if there are many duplicate entries, they will all be placed together. The case for which the compression algorithm (by default, it is gzip) are optimized. Parquet also implements other algorithms exploiting repeated values such as dictionary encoding or RLE compression.</p><p>This is a simple and efficient serialization out of the box. We have been able to write a set of complex objects to a file, each column stored in a separate block, representing all values in the records and nested structures.</p><p>Let's now read the file and recover RDD. The Parquet format does not know anything about the <code class="literal">LabeledPoint</code> class, so we'll have to do some typecasting and trickery here. When we read the file, we'll see a collection of <code class="literal">org.apache.spark.sql.Row</code>:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>akozlov@Alexanders-MacBook-Pro$ bin/spark-shell </strong></span>
+<span class="strong"><strong>Welcome to</strong></span>
+<span class="strong"><strong>      ____              __</strong></span>
+<span class="strong"><strong>     / __/__  ___ _____/ /__</strong></span>
+<span class="strong"><strong>    _\ \/ _ \/ _ `/ __/  '_/</strong></span>
+<span class="strong"><strong>   /___/ .__/\_,_/_/ /_/\_\   version 1.6.1-SNAPSHOT</strong></span>
+<span class="strong"><strong>      /_/</strong></span>
+
+<span class="strong"><strong>Using Scala version 2.11.7 (Java HotSpot(TM) 64-Bit Server VM, Java 1.8.0_40)</strong></span>
+<span class="strong"><strong>Type in expressions to have them evaluated.</strong></span>
+<span class="strong"><strong>Type :help for more information.</strong></span>
+<span class="strong"><strong>Spark context available as sc.</strong></span>
+<span class="strong"><strong>SQL context available as sqlContext.</strong></span>
+
+<span class="strong"><strong>scala&gt; val df = sqlContext.read.parquet("points")</strong></span>
+<span class="strong"><strong>df: org.apache.spark.sql.DataFrame = [label: double, features: vector]</strong></span>
+
+<span class="strong"><strong>scala&gt; val df = sqlContext.read.parquet("points").collect</strong></span>
+<span class="strong"><strong>df: Array[org.apache.spark.sql.Row] = Array([0.0,(3,[1],[1.0])], [1.0,[0.0,2.0,0.0]], [2.0,(3,[1],[3.0])], [3.0,[0.0,4.0,0.0]])</strong></span>
+
+<span class="strong"><strong>scala&gt; val rdd = df.map(x =&gt; LabeledPoint(x(0).asInstanceOf[scala.Double], x(1).asInstanceOf[org.apache.spark.mllib.linalg.Vector]))</strong></span>
+<span class="strong"><strong>rdd: org.apache.spark.rdd.RDD[org.apache.spark.mllib.regression.LabeledPoint] = MapPartitionsRDD[16] at map at &lt;console&gt;:25</strong></span>
+
+<span class="strong"><strong>scala&gt; rdd.collect</strong></span>
+<span class="strong"><strong>res12: Array[org.apache.spark.mllib.regression.LabeledPoint] = Array((0.0,(3,[1],[1.0])), (1.0,[0.0,2.0,0.0]), (2.0,(3,[1],[3.0])), (3.0,[0.0,4.0,0.0]))</strong></span>
+
+<span class="strong"><strong>scala&gt; rdd.filter(_.features(1) &lt;= 2).collect</strong></span>
+<span class="strong"><strong>res13: Array[org.apache.spark.mllib.regression.LabeledPoint] = Array((0.0,(3,[1],[1.0])), (1.0,[0.0,2.0,0.0]))</strong></span>
+</pre></div><p>Personally, I think that this is pretty cool: without any compilation, we can encode and decide <a id="id415" class="indexterm"/>complex objects. One can easily create their own objects in REPL. Let's consider that we want to track user's behavior on the web:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>akozlov@Alexanders-MacBook-Pro$ bin/spark-shell </strong></span>
+<span class="strong"><strong>Welcome to</strong></span>
+<span class="strong"><strong>      ____              __</strong></span>
+<span class="strong"><strong>     / __/__  ___ _____/ /__</strong></span>
+<span class="strong"><strong>    _\ \/ _ \/ _ `/ __/  '_/</strong></span>
+<span class="strong"><strong>   /___/ .__/\_,_/_/ /_/\_\   version 1.6.1-SNAPSHOT</strong></span>
+<span class="strong"><strong>      /_/</strong></span>
+
+<span class="strong"><strong>Using Scala version 2.11.7 (Java HotSpot(TM) 64-Bit Server VM, Java 1.8.0_40)</strong></span>
+<span class="strong"><strong>Type in expressions to have them evaluated.</strong></span>
+<span class="strong"><strong>Type :help for more information.</strong></span>
+<span class="strong"><strong>Spark context available as sc.</strong></span>
+<span class="strong"><strong>SQL context available as sqlContext.</strong></span>
+
+<span class="strong"><strong>scala&gt; case class Person(id: String, visits: Array[String]) { override def toString: String = { val vsts = visits.mkString(","); s"($id -&gt; $vsts)" } }</strong></span>
+<span class="strong"><strong>defined class Person</strong></span>
+
+<span class="strong"><strong>scala&gt; val p1 = Person("Phil", Array("http://www.google.com", "http://www.facebook.com", "http://www.linkedin.com", "http://www.homedepot.com"))</strong></span>
+<span class="strong"><strong>p1: Person = (Phil -&gt; http://www.google.com,http://www.facebook.com,http://www.linkedin.com,http://www.homedepot.com)</strong></span>
+
+<span class="strong"><strong>scala&gt; val p2 = Person("Emily", Array("http://www.victoriassecret.com", "http://www.pacsun.com", "http://www.abercrombie.com/shop/us", "http://www.orvis.com"))</strong></span>
+<span class="strong"><strong>p2: Person = (Emily -&gt; http://www.victoriassecret.com,http://www.pacsun.com,http://www.abercrombie.com/shop/us,http://www.orvis.com)</strong></span>
+
+<span class="strong"><strong>scala&gt; sc.parallelize(Array(p1,p2)).repartition(1).toDF.write.parquet("history")</strong></span>
+
+<span class="strong"><strong>scala&gt; import scala.collection.mutable.WrappedArray</strong></span>
+<span class="strong"><strong>import scala.collection.mutable.WrappedArray</strong></span>
+
+<span class="strong"><strong>scala&gt; val df = sqlContext.read.parquet("history")</strong></span>
+<span class="strong"><strong>df: org.apache.spark.sql.DataFrame = [id: string, visits: array&lt;string&gt;]</strong></span>
+
+<span class="strong"><strong>scala&gt; val rdd = df.map(x =&gt; Person(x(0).asInstanceOf[String], x(1).asInstanceOf[WrappedArray[String]].toArray[String]))</strong></span>
+<span class="strong"><strong>rdd: org.apache.spark.rdd.RDD[Person] = MapPartitionsRDD[27] at map at &lt;console&gt;:28</strong></span>
+
+<span class="strong"><strong>scala&gt; rdd.collect</strong></span>
+<span class="strong"><strong>res9: Array[Person] = Array((Phil -&gt; http://www.google.com,http://www.facebook.com,http://www.linkedin.com,http://www.homedepot.com), (Emily -&gt; http://www.victoriassecret.com,http://www.pacsun.com,http://www.abercrombie.com/shop/us,http://www.orvis.com))</strong></span>
+</pre></div><p>As a matter <a id="id416" class="indexterm"/>of good practice, we need to register the newly created classes with the <code class="literal">Kryo</code> <code class="literal">serializer</code>—Spark will use another serialization mechanism to pass the objects between tasks and executors. If the class is not registered, Spark will use default Java serialization, which might be up to <span class="emphasis"><em>10 x</em></span> slower:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>scala&gt; :paste</strong></span>
+<span class="strong"><strong>// Entering paste mode (ctrl-D to finish)</strong></span>
+
+<span class="strong"><strong>import com.esotericsoftware.kryo.Kryo</strong></span>
+<span class="strong"><strong>import org.apache.spark.serializer.{KryoSerializer, KryoRegistrator}</strong></span>
+
+<span class="strong"><strong>class MyKryoRegistrator extends KryoRegistrator {</strong></span>
+<span class="strong"><strong>  override def registerClasses(kryo: Kryo) {</strong></span>
+<span class="strong"><strong>    kryo.register(classOf[Person])</strong></span>
+<span class="strong"><strong>  }</strong></span>
+<span class="strong"><strong>}</strong></span>
+
+<span class="strong"><strong>object MyKryoRegistrator {</strong></span>
+<span class="strong"><strong>  def register(conf: org.apache.spark.SparkConf) {</strong></span>
+<span class="strong"><strong>    conf.set("spark.serializer", classOf[KryoSerializer].getName)</strong></span>
+<span class="strong"><strong>    conf.set("spark.kryo.registrator", classOf[MyKryoRegistrator].getName)</strong></span>
+<span class="strong"><strong>  }</strong></span>
+<span class="strong"><strong>}</strong></span>
+<span class="strong"><strong>^D</strong></span>
+
+<span class="strong"><strong>// Exiting paste mode, now interpreting.</strong></span>
+
+<span class="strong"><strong>import com.esotericsoftware.kryo.Kryo</strong></span>
+<span class="strong"><strong>import org.apache.spark.serializer.{KryoSerializer, KryoRegistrator}</strong></span>
+<span class="strong"><strong>defined class MyKryoRegistrator</strong></span>
+<span class="strong"><strong>defined module MyKryoRegistrator</strong></span>
+
+<span class="strong"><strong>scala&gt;</strong></span>
+</pre></div><p>If you are <a id="id417" class="indexterm"/>deploying the code on a cluster, the recommendation is to put this code in a jar on the classpath.</p><p>I've certainly seen examples of up to 10 level deep nesting in production. Although this might be an overkill for performance reasons, nesting is required in more and more production business use cases. Before we go into the specifics of constructing a nested object in the example of sessionization, let's get an overview of serialization in general.</p></div></div></div>
+
+
+
+  
+<div id="sbo-rt-content"><div class="section" title="Other serialization formats"><div class="titlepage"><div><div><h1 class="title"><a id="ch06lvl1sec47"/>Other serialization formats</h1></div></div></div><p>I do recommend the Parquet format for storing the data. However, for completeness, I need to at least mention other serialization formats, some of them like Kryo will be used implicitly <a id="id418" class="indexterm"/>for you during Spark computations without your knowledge and there is obviously a default Java serialization.</p><div class="note" title="Note" style=""><div class="inner"><h3 class="title"><a id="tip08"/>Tip</h3><p>
+<span class="strong"><strong>Object-oriented approach versus functional approach</strong></span>
+</p><p>Objects in <a id="id419" class="indexterm"/>object-oriented<a id="id420" class="indexterm"/> approach are characterized by state and behavior. Objects are the cornerstone of object-oriented programming. A class is a template for objects with fields that represent the state, and methods that may represent the behavior. Abstract method implementation may depend on the instance of the class. In functional approach, the state is usually frowned upon; in pure programming languages, there should be no state, no<a id="id421" class="indexterm"/> side effects, and<a id="id422" class="indexterm"/> every invocation should return the same result. The behaviors may be expressed though additional function parameters and higher order functions (functions over functions, such as currying), but should be explicit unlike the abstract methods. Since Scala is a mix of object-oriented and functional language, some of the preceding constraints are violated, but this does not mean that you have to use them unless absolutely necessary. It is best practice to store the code in jar packages while storing the data, particularly for the big data, separate from code in data files (in a serialized form); but again, people often store data/configurations in jar files, and it is less common, but possible to store code in the data files.</p></div></div><p>The serialization has been an issue since the need to persist data on disk or transfer object from one JVM <a id="id423" class="indexterm"/>or machine to another over network appeared. Really, the purpose of serialization is to make complex nested objects be represented as a series of bytes, understandable by machines, and as you can imagine, this might be language-dependent. Luckily, serialization frameworks converge on a set of common data structures they can handle.</p><p>One of the most popular serialization mechanisms, but not the most efficient, is to dump an object in an ASCII file: CSV, XML, JSON, YAML, and so on. They do work for more complex nested data like structures, arrays, and maps, but are inefficient from the storage space perspective. For example, a Double represents a continuous number with 15-17 significant digits that will, without rounding or trivial ratios, take 15-17 bytes to represent in US ASCII, while the binary representation takes only 8 bytes. Integers may be stored even more efficiently, particularly if they are small, as we can compress/remove zeroes.</p><p>One advantage of text encoding is that they are much easier to visualize with simple command-line tools, but any advanced serialization framework now comes with a set of tools to work with raw records such as <code class="literal">avro</code>
+<span class="emphasis"><em>-</em></span> or <code class="literal">parquet-tools</code>.</p><p>The following table provides an overview for most common serialization frameworks:</p><div class="informaltable"><table border="1"><colgroup><col style="text-align: left"/><col style="text-align: left"/><col style="text-align: left"/></colgroup><thead><tr><th style="text-align: left" valign="bottom">
+<p>Serialization Format</p>
+</th><th style="text-align: left" valign="bottom">
+<p>When developed</p>
+</th><th style="text-align: left" valign="bottom">
+<p>Comments</p>
+</th></tr></thead><tbody><tr><td style="text-align: left" valign="top">
+<p>XML, JSON, YAML</p>
+</td><td style="text-align: left" valign="top">
+<p>This was <a id="id424" class="indexterm"/>a direct<a id="id425" class="indexterm"/> response <a id="id426" class="indexterm"/>to the necessity to encode nested structures and exchange the <a id="id427" class="indexterm"/>data between machines.</p>
+</td><td style="text-align: left" valign="top">
+<p>While <a id="id428" class="indexterm"/>grossly inefficient, these are still used <a id="id429" class="indexterm"/>in many places, particularly in web services. The only advantage is that they are relatively easy to parse without machines.</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>Protobuf</p>
+</td><td style="text-align: left" valign="top">
+<p>Developed<a id="id430" class="indexterm"/> by Google in the early 2000s. This implements the Dremel encoding scheme and supports multiple languages (Scala is not officially supported yet, even though some code exists).</p>
+</td><td style="text-align: left" valign="top">
+<p>The <a id="id431" class="indexterm"/>main advantage is that Protobuf can generate native classes in many languages. C++, Java, and Python are officially supported. There are ongoing projects in C, C#, Haskell, Perl, Ruby, Scala, and more. Run-time can call native code to inspect/serialize/deserialize the objects and binary representations.</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>Avro</p>
+</td><td style="text-align: left" valign="top">
+<p>Avro<a id="id432" class="indexterm"/> was developed by <a id="id433" class="indexterm"/>Doug Cutting while he was working at Cloudera. The main objective was to separate the encoding from a specific implementation and language, allowing better schema evolution.</p>
+</td><td style="text-align: left" valign="top">
+<p>While the arguments whether Protobuf or Avro are more efficient are still ongoing, Avro supports a larger number of complex structures, say unions and maps out of the box, compared to Protobuf. Scala support is still to be strengthened to the production level. Avro files have schema encoded with every file, which has its pros and cons.</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>Thrift</p>
+</td><td style="text-align: left" valign="top">
+<p>The <a id="id434" class="indexterm"/>Apache Thrift <a id="id435" class="indexterm"/>was developed at Facebook for the same purpose Protobuf was developed. It probably has the widest selection of supported languages: C++, Java, Python, PHP, Ruby, Erlang, Perl, Haskell, C#, Cocoa, JavaScript, Node.js, Smalltalk, OCaml, Delphi, and other languages. Again, Twitter is hard at work for making the<a id="id436" class="indexterm"/> Thrift code generation in Scala (<a class="ulink" href="https://twitter.github.io/scrooge/">https://twitter.github.io/scrooge/</a>).</p>
+</td><td style="text-align: left" valign="top">
+<p>Apache Thrift is often described as a framework for cross-language services development and is most frequently used as <span class="strong"><strong>Remote Procedure Call</strong></span> (<span class="strong"><strong>RPC</strong></span>). Even<a id="id437" class="indexterm"/> though it can be used directly for serialization/deserialization, other frameworks just happen to be more popular.</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>Parquet</p>
+</td><td style="text-align: left" valign="top">
+<p>Parquet <a id="id438" class="indexterm"/>was developed<a id="id439" class="indexterm"/> in a joint effort between Twitter and Cloudera. Compared to the Avro format, which is row-oriented, Parquet is columnar storage that results in better compression and performance if only a few columns are to be selected. The interval encoding is Dremel or Protobuf-based, even though the records are presented as Avro records; thus, it is often called <a id="id440" class="indexterm"/>
+<span class="strong"><strong>AvroParquet</strong></span>.</p>
+</td><td style="text-align: left" valign="top">
+<p>Advances features such as indices, dictionary encoding, and RLE compression potentially make it very efficient for pure disk storage. Writing the files may be slower as Parquet requires some preprocessing and index building before it can be committed to the disk.</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>Kryo</p>
+</td><td style="text-align: left" valign="top">
+<p>This <a id="id441" class="indexterm"/>is a framework <a id="id442" class="indexterm"/>for encoding arbitrary classes in Java. However, not all built-in Java collection classes can be serialized.</p>
+</td><td style="text-align: left" valign="top">
+<p>If one avoids non-serializable exceptions, such as priority queues, Kryo can be very efficient. Direct support in Scala is also under way.</p>
+</td></tr></tbody></table></div><p>Certainly, Java has a built-in serialization framework, but as it has to support all Java cases, and therefore<a id="id443" class="indexterm"/> is overly general, the Java serialization is far less efficient than any of the preceding methods. I have certainly seen other companies implement their own proprietary serialization earlier, which would beat any of the preceding serialization for the specific cases. Nowadays, it is no longer necessary, as the maintenance costs definitely overshadow the converging inefficiency of the existing frameworks.</p></div></div>
+
+
+
+  
+<div id="sbo-rt-content"><div class="section" title="Hive and Impala"><div class="titlepage"><div><div><h1 class="title"><a id="ch06lvl1sec48"/>Hive and Impala</h1></div></div></div><p>One of the <a id="id444" class="indexterm"/>design considerations for a new framework is always the compatibility<a id="id445" class="indexterm"/> with the old frameworks. For better or worse, most data analysts still work with SQL. The roots of the SQL go to an influential relational modeling paper (<span class="emphasis"><em>Codd, Edgar F</em></span> (June 1970). <span class="emphasis"><em>A Relational Model of Data for Large Shared Data Banks</em></span>. <span class="emphasis"><em>Communications of the ACM (Association for Computing Machinery) 13 (6): 377–87</em></span>). All modern databases implement one or another version of SQL.</p><p>While the relational model was influential and important for bringing the database performance, particularly for <span class="strong"><strong>Online Transaction Processing</strong></span> (<span class="strong"><strong>OLTP</strong></span>) to the competitive<a id="id446" class="indexterm"/> levels, the significance of normalization for analytic workloads, where one needs to perform aggregations, and for situations where relations themselves change and are subject to analysis, is less critical. This section will cover the extensions of standard SQL language for analysis engines traditionally used for big data analytics: Hive and Impala. Both of them are currently Apache licensed projects. The following table summarizes the complex types:</p><div class="informaltable"><table border="1"><colgroup><col style="text-align: left"/><col style="text-align: left"/><col style="text-align: left"/><col style="text-align: left"/></colgroup><thead><tr><th style="text-align: left" valign="bottom">
+<p>Type</p>
+</th><th style="text-align: left" valign="bottom">
+<p>Hive support since version</p>
+</th><th style="text-align: left" valign="bottom">
+<p>Impala support since version</p>
+</th><th style="text-align: left" valign="bottom">
+<p>Comments</p>
+</th></tr></thead><tbody><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">ARRAY</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>This is<a id="id447" class="indexterm"/> supported since 0.1.0, but the use of non-constant index expressions is allowed only as of 0.14.</p>
+</td><td style="text-align: left" valign="top">
+<p>This is supported since 2.3.0 (only for Parquet tables).</p>
+</td><td style="text-align: left" valign="top">
+<p>This can be an array of any type, including complex. The index is <code class="literal">int</code> in Hive (<code class="literal">bigint</code> in Impala) and access is via array notation, for example, <code class="literal">element[1]</code> only in Hive (<code class="literal">array.pos</code> and <code class="literal">item pseudocolumns</code> in Impala).</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">MAP</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>This is<a id="id448" class="indexterm"/> supported since 0.1.0, but the use of non-constant index expressions is allowed only as of 0.14.</p>
+</td><td style="text-align: left" valign="top">
+<p>This is supported since 2.3.0 (only for Parquet tables).</p>
+</td><td style="text-align: left" valign="top">
+<p>The key should be of primitive type. Some libraries support keys of the string type only. Fields are accessed using array notation, for example, <code class="literal">map["key"]</code> only in Hive (map key and value pseudocolumns in Impala).</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">STRUCT</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>This is<a id="id449" class="indexterm"/> supported since 0.5.0.</p>
+</td><td style="text-align: left" valign="top">
+<p>This is supported since 2.3.0 (only for Parquet tables).</p>
+</td><td style="text-align: left" valign="top">
+<p>Access is using dot notation, for example, <code class="literal">struct.element</code>.</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">UNIONTYPE</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>This is<a id="id450" class="indexterm"/> supported since 0.7.0.</p>
+</td><td style="text-align: left" valign="top">
+<p>This is not supported in Impala.</p>
+</td><td style="text-align: left" valign="top">
+<p>Support is incomplete: queries that reference <code class="literal">UNIONTYPE</code> fields in <code class="literal">JOIN</code> (HIVE-2508), <code class="literal">WHERE</code>, and <code class="literal">GROUP BY</code> clauses will fail, and Hive does not define the syntax to extract the tag or value fields of <code class="literal">UNIONTYPE</code>. This means that <code class="literal">UNIONTYPEs</code> are effectively look-at-only.</p>
+</td></tr></tbody></table></div><p>While Hive/Impala tables can be created on top of many underlying file formats (Text, Sequence, ORC, Avro, Parquet, and even custom format) and multiple serializations, in most practical instances, Hive is used to read lines of text in ASCII files. The underlying serialization/deserialization format is <code class="literal">LazySimpleSerDe</code> (<span class="strong"><strong>Serialization</strong></span>/<span class="strong"><strong>Deserialization</strong></span> (<span class="strong"><strong>SerDe</strong></span>)). The format defines several levels of separators, as follows:</p><div class="informalexample"><pre class="programlisting">row_format
+  : DELIMITED [FIELDS TERMINATED BY char [ESCAPED BY char]] [COLLECTION ITEMS TERMINATED BY char]
+    [MAP KEYS TERMINATED BY char] [LINES TERMINATED BY char]
+    [NULL DEFINED AS char]</pre></div><p>The<a id="id451" class="indexterm"/> default for separators are <code class="literal">'\001'</code> or <code class="literal">^A</code>, <code class="literal">'\002'</code> or <code class="literal">^B</code>, and <code class="literal">'\003'</code> or <code class="literal">^B</code>. In <a id="id452" class="indexterm"/>other words, it's using the new separator at each level of the hierarchy as opposed to the definition/repetition indicator in the Dremel encoding. For example, to encode the <code class="literal">LabeledPoint</code> table that we used before, we need to create a file, as follows:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ cat data</strong></span>
+<span class="strong"><strong>0^A1^B1^D1.0$</strong></span>
+<span class="strong"><strong>2^A1^B1^D3.0$</strong></span>
+<span class="strong"><strong>1^A0^B0.0^C2.0^C0.0$</strong></span>
+<span class="strong"><strong>3^A0^B0.0^C4.0^C0.0$</strong></span>
+</pre></div><p>Download <a id="id453" class="indexterm"/>Hive from <a class="ulink" href="http://archive.cloudera.com/cdh5/cdh/5/hive-1.1.0-cdh5.5.0.tar.gz">http://archive.cloudera.com/cdh5/cdh/5/hive-1.1.0-cdh5.5.0.tar.gz</a> and perform the follow:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ tar xf hive-1.1.0-cdh5.5.0.tar.gz </strong></span>
+<span class="strong"><strong>$ cd hive-1.1.0-cdh5.5.0</strong></span>
+<span class="strong"><strong>$ bin/hive</strong></span>
+<span class="strong"><strong>…</strong></span>
+<span class="strong"><strong>hive&gt; CREATE TABLE LABELED_POINT ( LABEL INT, VECTOR UNIONTYPE&lt;ARRAY&lt;DOUBLE&gt;, MAP&lt;INT,DOUBLE&gt;&gt; ) STORED AS TEXTFILE;</strong></span>
+<span class="strong"><strong>OK</strong></span>
+<span class="strong"><strong>Time taken: 0.453 seconds</strong></span>
+<span class="strong"><strong>hive&gt; LOAD DATA LOCAL INPATH './data' OVERWRITE INTO TABLE LABELED_POINT;</strong></span>
+<span class="strong"><strong>Loading data to table alexdb.labeled_point</strong></span>
+<span class="strong"><strong>Table labeled_point stats: [numFiles=1, numRows=0, totalSize=52, rawDataSize=0]</strong></span>
+<span class="strong"><strong>OK</strong></span>
+<span class="strong"><strong>Time taken: 0.808 seconds</strong></span>
+<span class="strong"><strong>hive&gt; select * from labeled_point;</strong></span>
+<span class="strong"><strong>OK</strong></span>
+<span class="strong"><strong>0  {1:{1:1.0}}</strong></span>
+<span class="strong"><strong>2  {1:{1:3.0}}</strong></span>
+<span class="strong"><strong>1  {0:[0.0,2.0,0.0]}</strong></span>
+<span class="strong"><strong>3  {0:[0.0,4.0,0.0]}</strong></span>
+<span class="strong"><strong>Time taken: 0.569 seconds, Fetched: 4 row(s)</strong></span>
+<span class="strong"><strong>hive&gt;</strong></span>
+</pre></div><p>In Spark, select from a relational table is supported via the <code class="literal">sqlContext.sql</code> method, but unfortunately the Hive union types are not directly supported as of Spark 1.6.1; it does support maps <a id="id454" class="indexterm"/>and arrays though. The supportability of complex objects in <a id="id455" class="indexterm"/>other BI and data analysis tools still remains the biggest obstacle to their adoption. Supporting everything as a rich data structure in Scala is one of the options to converge on nested data representation.</p></div></div>
+
+
+
+  
+<div id="sbo-rt-content"><div class="section" title="Sessionization"><div class="titlepage"><div><div><h1 class="title"><a id="ch06lvl1sec49"/>Sessionization</h1></div></div></div><p>I will demonstrate<a id="id456" class="indexterm"/> the use of the complex or nested structures in the example of sessionization. In sessionization, we want to find the behavior of an entity, identified by some ID over a period of time. While the original records may come in any order, we want to summarize the behavior over time to derive trends.</p><p>We already analyzed web server logs in <a class="link" href="ch01.xhtml" title="Chapter 1. Exploratory Data Analysis">Chapter 1</a>, <span class="emphasis"><em>Exploratory Data Analysis</em></span>. We found out how often different web pages are accessed over a period of time. We could dice and slice this information, but without analyzing the sequence of pages visited, it would be hard to understand each individual user interaction with the website. In this chapter, I would like to give this analysis more individual flavor by tracking the user navigation throughout the website. Sessionization is a common tool for website personalization and advertising, IoT tracking, telemetry, and enterprise security, in fact anything to do with entity behavior.</p><p>Let's assume the data comes as tuples of three elements (fields <code class="literal">1</code>, <code class="literal">5</code>, <code class="literal">11</code> in the original dataset in <a class="link" href="ch01.xhtml" title="Chapter 1. Exploratory Data Analysis">Chapter 1</a>, <span class="emphasis"><em>Exploratory Data Analysis</em></span>):</p><div class="informalexample"><pre class="programlisting">(id, timestamp, path)</pre></div><p>Here, <code class="literal">id</code> is a unique entity ID, timestamp is an event <code class="literal">timestamp</code> (in any sortable format: Unix timestamp or an ISO8601 date format), and <code class="literal">path</code> is some indication of the location on the web server page hierarchy.</p><p>For people familiar with SQL, sessionization, or at least a subset of it, is better known as a windowing analytics function:</p><div class="informalexample"><pre class="programlisting">SELECT id, timestamp, path 
+  ANALYTIC_FUNCTION(path) OVER (PARTITION BY id ORDER BY timestamp) AS agg
+FROM log_table;</pre></div><p>Here <code class="literal">ANALYTIC_FUNCTION</code> is some transformation on the sequence of paths for a given <code class="literal">id</code>. While this approach works for a relatively simple function, such as first, last, lag, average, expressing a complex function over a sequence of paths is usually very convoluted (for example, nPath <a id="id457" class="indexterm"/>from Aster Data (<a class="ulink" href="https://www.nersc.gov/assets/Uploads/AnalyticsFoundation5.0previewfor4.6.x-Guide.pdf">https://www.nersc.gov/assets/Uploads/AnalyticsFoundation5.0previewfor4.6.x-Guide.pdf</a>)). Besides, without additional preprocessing and partitioning, these approaches usually result in big data transfers across multiple nodes in a distributed setting.</p><p>While in a pure<a id="id458" class="indexterm"/> functional approach, one would just have to design a function—or a sequence of function applications—to produce the desired answers from the original set of tuples, I will create two helper objects that will help us to simplify working with the concept of a user session. As an additional benefit, the new nested structures can be persisted on a disk to speed up getting answers on additional questions.</p><p>Let's see how it's done in Spark/Scala using case classes:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>akozlov@Alexanders-MacBook-Pro$ bin/spark-shell</strong></span>
+<span class="strong"><strong>Welcome to</strong></span>
+<span class="strong"><strong>      ____              __</strong></span>
+<span class="strong"><strong>     / __/__  ___ _____/ /__</strong></span>
+<span class="strong"><strong>    _\ \/ _ \/ _ `/ __/  '_/</strong></span>
+<span class="strong"><strong>   /___/ .__/\_,_/_/ /_/\_\   version 1.6.1-SNAPSHOT</strong></span>
+<span class="strong"><strong>      /_/</strong></span>
+
+<span class="strong"><strong>Using Scala version 2.11.7 (Java HotSpot(TM) 64-Bit Server VM, Java 1.8.0_40)</strong></span>
+<span class="strong"><strong>Type in expressions to have them evaluated.</strong></span>
+<span class="strong"><strong>Type :help for more information.</strong></span>
+<span class="strong"><strong>Spark context available as sc.</strong></span>
+<span class="strong"><strong>SQL context available as sqlContext.</strong></span>
+
+<span class="strong"><strong>scala&gt; :paste</strong></span>
+<span class="strong"><strong>// Entering paste mode (ctrl-D to finish)</strong></span>
+
+<span class="strong"><strong>import java.io._</strong></span>
+
+<span class="strong"><strong>// a basic page view structure</strong></span>
+<span class="strong"><strong>@SerialVersionUID(123L)</strong></span>
+<span class="strong"><strong>case class PageView(ts: String, path: String) extends Serializable with Ordered[PageView] {</strong></span>
+<span class="strong"><strong>  override def toString: String = {</strong></span>
+<span class="strong"><strong>    s"($ts :$path)"</strong></span>
+<span class="strong"><strong>  }</strong></span>
+<span class="strong"><strong>  def compare(other: PageView) = ts compare other.ts</strong></span>
+<span class="strong"><strong>}</strong></span>
+
+<span class="strong"><strong>// represent a session</strong></span>
+<span class="strong"><strong>@SerialVersionUID(456L)</strong></span>
+<span class="strong"><strong>case class Session[A  &lt;: PageView](id: String, visits: Seq[A]) extends Serializable {</strong></span>
+<span class="strong"><strong>  override def toString: String = {</strong></span>
+<span class="strong"><strong>    val vsts = visits.mkString("[", ",", "]")</strong></span>
+<span class="strong"><strong>    s"($id -&gt; $vsts)"</strong></span>
+<span class="strong"><strong>  }</strong></span>
+<span class="strong"><strong>}^D</strong></span>
+<span class="strong"><strong>// Exiting paste mode, now interpreting.</strong></span>
+
+<span class="strong"><strong>import java.io._</strong></span>
+<span class="strong"><strong>defined class PageView</strong></span>
+<span class="strong"><strong>defined class Session</strong></span>
+</pre></div><p>The first class <a id="id459" class="indexterm"/>will represent a single page view with a timestamp, which, in this case, is an ISO8601 <code class="literal">String</code>, while the second a sequence of page views. Could we do it by encoding both members as a <code class="literal">String</code> with a object separator? Absolutely, but representing the fields as members of a class gives us nice access semantics, together with offloading some of the work that we need to perform on the compiler, which is always nice.</p><p>Let's read the previously described log files and construct the objects:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>scala&gt; val rdd = sc.textFile("log.csv").map(x =&gt; { val z = x.split(",",3); (z(1), new PageView(z(0), z(2))) } ).groupByKey.map( x =&gt; { new Session(x._1, x._2.toSeq.sorted) } ).persist</strong></span>
+<span class="strong"><strong>rdd: org.apache.spark.rdd.RDD[Session] = MapPartitionsRDD[14] at map at &lt;console&gt;:31</strong></span>
+
+<span class="strong"><strong>scala&gt; rdd.take(3).foreach(println)</strong></span>
+<span class="strong"><strong>(189.248.74.238 -&gt; [(2015-08-23 23:09:16 :mycompanycom&gt;homepage),(2015-08-23 23:11:00 :mycompanycom&gt;homepage),(2015-08-23 23:11:02 :mycompanycom&gt;running:slp),(2015-08-23 23:12:01 :mycompanycom&gt;running:slp),(2015-08-23 23:12:03 :mycompanycom&gt;running&gt;stories&gt;2013&gt;04&gt;themycompanyfreestore:cdp),(2015-08-23 23:12:08 :mycompanycom&gt;running&gt;stories&gt;2013&gt;04&gt;themycompanyfreestore:cdp),(2015-08-23 23:12:08 :mycompanycom&gt;running&gt;stories&gt;2013&gt;04&gt;themycompanyfreestore:cdp),(2015-08-23 23:12:42 :mycompanycom&gt;running:slp),(2015-08-23 23:13:25 :mycompanycom&gt;homepage),(2015-08-23 23:14:00 :mycompanycom&gt;homepage),(2015-08-23 23:14:06 :mycompanycom:mobile&gt;mycompany photoid&gt;landing),(2015-08-23 23:14:56 :mycompanycom&gt;men&gt;shoes:segmentedgrid),(2015-08-23 23:15:10 :mycompanycom&gt;homepage)])</strong></span>
+<span class="strong"><strong>(82.166.130.148 -&gt; [(2015-08-23 23:14:27 :mycompanycom&gt;homepage)])</strong></span>
+<span class="strong"><strong>(88.234.248.111 -&gt; [(2015-08-23 22:36:10 :mycompanycom&gt;plus&gt;home),(2015-08-23 22:36:20 :mycompanycom&gt;plus&gt;home),(2015-08-23 22:36:28 :mycompanycom&gt;plus&gt;home),(2015-08-23 22:36:30 :mycompanycom&gt;plus&gt;onepluspdp&gt;sport band),(2015-08-23 22:36:52 :mycompanycom&gt;onsite search&gt;results found),(2015-08-23 22:37:19 :mycompanycom&gt;plus&gt;onepluspdp&gt;sport band),(2015-08-23 22:37:21 :mycompanycom&gt;plus&gt;home),(2015-08-23 22:37:39 :mycompanycom&gt;plus&gt;home),(2015-08-23 22:37:43 :mycompanycom&gt;plus&gt;home),(2015-08-23 22:37:46 :mycompanycom&gt;plus&gt;onepluspdp&gt;sport watch),(2015-08-23 22:37:50 :mycompanycom&gt;gear&gt;mycompany+ sportwatch:standardgrid),(2015-08-23 22:38:14 :mycompanycom&gt;homepage),(2015-08-23 22:38:35 :mycompanycom&gt;homepage),(2015-08-23 22:38:37 :mycompanycom&gt;plus&gt;products landing),(2015-08-23 22:39:01 :mycompanycom&gt;homepage),(2015-08-23 22:39:24 :mycompanycom&gt;homepage),(2015-08-23 22:39:26 :mycompanycom&gt;plus&gt;whatismycompanyfuel)])</strong></span>
+</pre></div><p>Bingo! We <a id="id460" class="indexterm"/>have an RDD of Sessions, one per each unique IP address. The IP <code class="literal">189.248.74.238</code> has a session that lasted from <code class="literal">23:09:16</code> to <code class="literal">23:15:10</code>, and seemingly ended after browsing for men's shoes. The session for IP <code class="literal">82.166.130.148</code> contains only one hit. The last session concentrated on sports watch and lasted for over three minutes from <code class="literal">2015-08-23 22:36:10</code> to <code class="literal">2015-08-23 22:39:26</code>. Now, we can easily ask questions involving specific navigation path patterns. For example, we want analyze all the sessions that resulted in checkout (the path contains <code class="literal">checkout</code>) and see the number of hits and the distribution of times after the last hit on homepage:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>scala&gt; import java.time.ZoneOffset</strong></span>
+<span class="strong"><strong>import java.time.ZoneOffset</strong></span>
+
+<span class="strong"><strong>scala&gt; import java.time.LocalDateTime</strong></span>
+<span class="strong"><strong>import java.time.LocalDateTime</strong></span>
+
+<span class="strong"><strong>scala&gt; import java.time.format.DateTimeFormatter</strong></span>
+<span class="strong"><strong>import java.time.format.DateTimeFormatter</strong></span>
+
+<span class="strong"><strong>scala&gt; </strong></span>
+<span class="strong"><strong>scala&gt; def toEpochSeconds(str: String) : Long = { LocalDateTime.parse(str, DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")).toEpochSecond(ZoneOffset.UTC) }</strong></span>
+<span class="strong"><strong>toEpochSeconds: (str: String)Long</strong></span>
+
+<span class="strong"><strong>scala&gt; val checkoutPattern = ".*&gt;checkout.*".r.pattern</strong></span>
+<span class="strong"><strong>checkoutPattern: java.util.regex.Pattern = .*&gt;checkout.*</strong></span>
+
+<span class="strong"><strong>scala&gt; val lengths = rdd.map(x =&gt; { val pths = x.visits.map(y =&gt; y.path); val pchs = pths.indexWhere(checkoutPattern.matcher(_).matches); (x.id, x.visits.map(y =&gt; y.ts).min, x.visits.map(y =&gt; y.ts).max, x.visits.lastIndexWhere(_ match { case PageView(ts, "mycompanycom&gt;homepage") =&gt; true; case _ =&gt; false }, pchs), pchs, x.visits) } ).filter(_._4&gt;0).filter(t =&gt; t._5&gt;t._4).map(t =&gt; (t._5 - t._4, toEpochSeconds(t._6(t._5).ts) - toEpochSeconds(t._6(t._4).ts)))</strong></span>
+
+<span class="strong"><strong>scala&gt; lengths.toDF("cnt", "sec").agg(avg($"cnt"),min($"cnt"),max($"cnt"),avg($"sec"),min($"sec"),max($"sec")).show</strong></span>
+<span class="strong"><strong>+-----------------+--------+--------+------------------+--------+--------+</strong></span>
+
+<span class="strong"><strong>|         avg(cnt)|min(cnt)|max(cnt)|          avg(sec)|min(sec)|max(sec)|</strong></span>
+<span class="strong"><strong>+-----------------+--------+--------+------------------+--------+--------+</strong></span>
+<span class="strong"><strong>|19.77570093457944|       1|     121|366.06542056074767|      15|    2635|</strong></span>
+<span class="strong"><strong>+-----------------+--------+--------+------------------+--------+--------+</strong></span>
+
+
+<span class="strong"><strong>scala&gt; lengths.map(x =&gt; (x._1,1)).reduceByKey(_+_).sortByKey().collect</strong></span>
+<span class="strong"><strong>res18: Array[(Int, Int)] = Array((1,1), (2,8), (3,2), (5,6), (6,7), (7,9), (8,10), (9,4), (10,6), (11,4), (12,4), (13,2), (14,3), (15,2), (17,4), (18,6), (19,1), (20,1), (21,1), (22,2), (26,1), (27,1), (30,2), (31,2), (35,1), (38,1), (39,2), (41,1), (43,2), (47,1), (48,1), (49,1), (65,1), (66,1), (73,1), (87,1), (91,1), (103,1), (109,1), (121,1))</strong></span>
+</pre></div><p>The sessions last<a id="id461" class="indexterm"/> from 1 to 121 hits with a mode at 8 hits and from 15 to 2653 seconds (or about 45 minutes). Why would you be interested in this information? Long sessions might indicate that there was a problem somewhere in the middle of the session: a long delay or non-responsive call. It does not have to be: the person might just have taken a long lunch break or a call to discuss his potential purchase, but there might be something of interest here. At least one should agree that this is an outlier and needs to be carefully analyzed.</p><p>Let's talk about persisting this data to the disk. As you've seen, our transformation is written as a long pipeline, so there is nothing in the result that one could not compute from the raw data. This is a functional approach, the data is immutable. Moreover, if there is an error in our processing, let's say I want to change the homepage to some other anchor page, I can always modify the function as opposed to data. You may be content or not with this fact, but there is absolutely no additional piece of information in the result—transformations only increase the disorder and entropy. They might make it more palatable for humans, but this is only because humans are a very inefficient data-processing apparatus.</p><div class="note" title="Note" style=""><div class="inner"><h3 class="title"><a id="tip09"/>Tip</h3><p>
+<span class="strong"><strong>Why rearranging the data makes the analysis faster?</strong></span>
+</p><p>Sessionization<a id="id462" class="indexterm"/> seems just a simple rearranging of data—we just put the pages that were accessed in sequence together. Yet, in many cases, it makes practical data analysis run 10 to 100 times faster. The reason is data locality. The analysis, like filtering or path matching, most often tends to happen on the pages in one session at a time. Deriving user features requires all page views or interactions of the user to be in one place on disk and memory. This often beats other inefficiencies such as the overhead of encoding/decoding the nested structures as this can happen in local L1/L2 cache as opposed to data transfers from RAM or disk, which are much more expensive in modern multithreaded CPUs. This very much depends on the complexity of the analysis, of course.</p></div></div><p>There is a reason<a id="id463" class="indexterm"/> to persist the new data to the disk, and we can do it with either CSV, Avro, or Parquet format. The reason is that we do not want to reprocess the data if we want to look at them again. The new representation might be more compact and more efficient to retrieve and show to my manager. Really, humans like side effects and, fortunately, Scala/Spark allows you to do this as was described in the previous section.</p><p>Well, well, well...will say the people familiar with sessionization. This is only a part of the story. We want to split the path sequence into multiple sessions, run path analysis, compute conditional probabilities for page transitions, and so on. This is exactly where the functional paradigm shines. Write the following function:</p><div class="informalexample"><pre class="programlisting">def splitSession(session: Session[PageView]) : Seq[Session[PageView]] = { … }</pre></div><p>Then run the following code:</p><div class="informalexample"><pre class="programlisting">val newRdd = rdd.flatMap(splitSession)</pre></div><p>Bingo! The result is the session's split. I intentionally left the implementation out; it's the implementation that is user-dependent, not the data, and every analyst might have it's own way to split the sequence of page visits into sessions.</p><p>Another use case to apply the function is feature generation for applying machine learning…well, this is already hinting at the side effect: we want to modify the state of the world to make it more personalized and user-friendly. I guess one cannot avoid it after all.</p></div></div>
+
+
+
+  
+<div id="sbo-rt-content"><div class="section" title="Working with traits"><div class="titlepage"><div><div><h1 class="title"><a id="ch06lvl1sec50"/>Working with traits</h1></div></div></div><p>As we saw, case <a id="id464" class="indexterm"/>classes significantly simplify handling of new nested data structures that we want to construct. The case class definition is probably the most convincing reason to move from Java (and SQL) to Scala. Now, what about the methods? How do we quickly add methods to a class without expensive recompilation? Scala allows you to do this transparently with traits!</p><p>A fundamental feature of functional programming is that functions are a first class citizen on par with objects. In the previous section, we defined the two <code class="literal">EpochSeconds</code> functions that transform the ISO8601 format to epoch time in seconds. We also suggested the <code class="literal">splitSession</code> function that provides a multi-session view for a given IP. How do we associate this or other behavior with a given class?</p><p>First, let's define a desired behavior:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>scala&gt; trait Epoch {</strong></span>
+<span class="strong"><strong>     |   this: PageView =&gt;</strong></span>
+<span class="strong"><strong>     |   def epoch() : Long = { LocalDateTime.parse(ts, DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")).toEpochSecond(ZoneOffset.UTC) }</strong></span>
+<span class="strong"><strong>     | }</strong></span>
+<span class="strong"><strong>defined trait Epoch</strong></span>
+</pre></div><p>This basically creates a <code class="literal">PageView</code>-specific function that converts a string representation for datetime to epoch time in seconds. Now, if we just make the following transformation:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>scala&gt; val rddEpoch = rdd.map(x =&gt; new Session(x.id, x.visits.map(x =&gt; new PageView(x.ts, x.path) with Epoch)))</strong></span>
+<span class="strong"><strong>rddEpoch: org.apache.spark.rdd.RDD[Session[PageView with Epoch]] = MapPartitionsRDD[20] at map at &lt;console&gt;:31</strong></span>
+</pre></div><p>We now have a new RDD of page views with additional behavior. For example, if we want to find out what is the time spent on each individual page in a session is, we will run a pipeline, as follows:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>scala&gt; rddEpoch.map(x =&gt; (x.id, x.visits.zip(x.visits.tail).map(x =&gt; (x._2.path, x._2.epoch - x._1.epoch)).mkString("[", ",", "]"))).take(3).foreach(println)</strong></span>
+<span class="strong"><strong>(189.248.74.238,[(mycompanycom&gt;homepage,104),(mycompanycom&gt;running:slp,2),(mycompanycom&gt;running:slp,59),(mycompanycom&gt;running&gt;stories&gt;2013&gt;04&gt;themycompanyfreestore:cdp,2),(mycompanycom&gt;running&gt;stories&gt;2013&gt;04&gt;themycompanyfreestore:cdp,5),(mycompanycom&gt;running&gt;stories&gt;2013&gt;04&gt;themycompanyfreestore:cdp,0),(mycompanycom&gt;running:slp,34),(mycompanycom&gt;homepage,43),(mycompanycom&gt;homepage,35),(mycompanycom:mobile&gt;mycompany photoid&gt;landing,6),(mycompanycom&gt;men&gt;shoes:segmentedgrid,50),(mycompanycom&gt;homepage,14)])</strong></span>
+<span class="strong"><strong>(82.166.130.148,[])</strong></span>
+<span class="strong"><strong>(88.234.248.111,[(mycompanycom&gt;plus&gt;home,10),(mycompanycom&gt;plus&gt;home,8),(mycompanycom&gt;plus&gt;onepluspdp&gt;sport band,2),(mycompanycom&gt;onsite search&gt;results found,22),(mycompanycom&gt;plus&gt;onepluspdp&gt;sport band,27),(mycompanycom&gt;plus&gt;home,2),(mycompanycom&gt;plus&gt;home,18),(mycompanycom&gt;plus&gt;home,4),(mycompanycom&gt;plus&gt;onepluspdp&gt;sport watch,3),(mycompanycom&gt;gear&gt;mycompany+ sportwatch:standardgrid,4),(mycompanycom&gt;homepage,24),(mycompanycom&gt;homepage,21),(mycompanycom&gt;plus&gt;products landing,2),(mycompanycom&gt;homepage,24),(mycompanycom&gt;homepage,23),(mycompanycom&gt;plus&gt;whatismycompanyfuel,2)])</strong></span>
+</pre></div><p>Multiple traits can be added at the same time without affecting either the original class definitions or <a id="id465" class="indexterm"/>original data. No recompilation is required.</p></div></div>
+
+
+
+  
+<div id="sbo-rt-content"><div class="section" title="Working with pattern matching"><div class="titlepage"><div><div><h1 class="title"><a id="ch06lvl1sec51"/>Working with pattern matching</h1></div></div></div><p>No Scala book would be complete without mentioning the match/case statements. Scala has a very rich <a id="id466" class="indexterm"/>pattern-matching mechanism. For instance, let's say we want to find all instances of a sequence of page views that start with a homepage followed by a products page—we really want to filter out the determined buyers. This may be accomplished with a new function, as follows:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>scala&gt; def findAllMatchedSessions(h: Seq[Session[PageView]], s: Session[PageView]) : Seq[Session[PageView]] = {</strong></span>
+<span class="strong"><strong>     |     def matchSessions(h: Seq[Session[PageView]], id: String, p: Seq[PageView]) : Seq[Session[PageView]] = {</strong></span>
+<span class="strong"><strong>     |       p match {</strong></span>
+<span class="strong"><strong>     |         case Nil =&gt; Nil</strong></span>
+<span class="strong"><strong>     |         case PageView(ts1, "mycompanycom&gt;homepage") :: PageView(ts2, "mycompanycom&gt;plus&gt;products landing") :: tail =&gt;</strong></span>
+<span class="strong"><strong>     |           matchSessions(h, id, tail).+:(new Session(id, p))</strong></span>
+<span class="strong"><strong>     |         case _ =&gt; matchSessions(h, id, p.tail)</strong></span>
+<span class="strong"><strong>     |       }</strong></span>
+<span class="strong"><strong>     |     }</strong></span>
+<span class="strong"><strong>     |    matchSessions(h, s.id, s.visits)</strong></span>
+<span class="strong"><strong>     | }</strong></span>
+<span class="strong"><strong>findAllSessions: (h: Seq[Session[PageView]], s: Session[PageView])Seq[Session[PageView]]</strong></span>
+</pre></div><p>Note that we explicitly put <code class="literal">PageView</code> constructors in the case statement! Scala will traverse the <code class="literal">visits</code> sequence and generate new sessions that match the specified two <code class="literal">PageViews</code>, as follows:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>scala&gt; rdd.flatMap(x =&gt; findAllMatchedSessions(Nil, x)).take(10).foreach(println)</strong></span>
+<span class="strong"><strong>(88.234.248.111 -&gt; [(2015-08-23 22:38:35 :mycompanycom&gt;homepage),(2015-08-23 22:38:37 :mycompanycom&gt;plus&gt;products landing),(2015-08-23 22:39:01 :mycompanycom&gt;homepage),(2015-08-23 22:39:24 :mycompanycom&gt;homepage),(2015-08-23 22:39:26 :mycompanycom&gt;plus&gt;whatismycompanyfuel)])</strong></span>
+<span class="strong"><strong>(148.246.218.251 -&gt; [(2015-08-23 22:52:09 :mycompanycom&gt;homepage),(2015-08-23 22:52:16 :mycompanycom&gt;plus&gt;products landing),(2015-08-23 22:52:23 :mycompanycom&gt;homepage),(2015-08-23 22:52:32 :mycompanycom&gt;homepage),(2015-08-23 22:52:39 :mycompanycom&gt;running:slp)])</strong></span>
+<span class="strong"><strong>(86.30.116.229 -&gt; [(2015-08-23 23:15:00 :mycompanycom&gt;homepage),(2015-08-23 23:15:02 :mycompanycom&gt;plus&gt;products landing),(2015-08-23 23:15:12 :mycompanycom&gt;plus&gt;products landing),(2015-08-23 23:15:18 :mycompanycom&gt;language tunnel&gt;load),(2015-08-23 23:15:23 :mycompanycom&gt;language tunnel&gt;geo selected),(2015-08-23 23:15:24 :mycompanycom&gt;homepage),(2015-08-23 23:15:27 :mycompanycom&gt;homepage),(2015-08-23 23:15:30 :mycompanycom&gt;basketball:slp),(2015-08-23 23:15:38 :mycompanycom&gt;basketball&gt;lebron-10:cdp),(2015-08-23 23:15:50 :mycompanycom&gt;basketball&gt;lebron-10:cdp),(2015-08-23 23:16:05 :mycompanycom&gt;homepage),(2015-08-23 23:16:09 :mycompanycom&gt;homepage),(2015-08-23 23:16:11 :mycompanycom&gt;basketball:slp),(2015-08-23 23:16:29 :mycompanycom&gt;onsite search&gt;results found),(2015-08-23 23:16:39 :mycompanycom&gt;onsite search&gt;no results)])</strong></span>
+<span class="strong"><strong>(204.237.0.130 -&gt; [(2015-08-23 23:26:23 :mycompanycom&gt;homepage),(2015-08-23 23:26:27 :mycompanycom&gt;plus&gt;products landing),(2015-08-23 23:26:35 :mycompanycom&gt;plus&gt;fuelband activity&gt;summary&gt;wk)])</strong></span>
+<span class="strong"><strong>(97.82.221.34 -&gt; [(2015-08-23 22:36:24 :mycompanycom&gt;homepage),(2015-08-23 22:36:32 :mycompanycom&gt;plus&gt;products landing),(2015-08-23 22:37:09 :mycompanycom&gt;plus&gt;plus activity&gt;summary&gt;wk),(2015-08-23 22:37:39 :mycompanycom&gt;plus&gt;products landing),(2015-08-23 22:44:17 :mycompanycom&gt;plus&gt;home),(2015-08-23 22:44:33 :mycompanycom&gt;plus&gt;home),(2015-08-23 22:44:34 :mycompanycom&gt;plus&gt;home),(2015-08-23 22:44:36 :mycompanycom&gt;plus&gt;home),(2015-08-23 22:44:43 :mycompanycom&gt;plus&gt;home)])</strong></span>
+<span class="strong"><strong>(24.230.204.72 -&gt; [(2015-08-23 22:49:58 :mycompanycom&gt;homepage),(2015-08-23 22:50:00 :mycompanycom&gt;plus&gt;products landing),(2015-08-23 22:50:30 :mycompanycom&gt;homepage),(2015-08-23 22:50:38 :mycompanycom&gt;homepage),(2015-08-23 22:50:41 :mycompanycom&gt;training:cdp),(2015-08-23 22:51:56 :mycompanycom&gt;training:cdp),(2015-08-23 22:51:59 :mycompanycom&gt;store locator&gt;start),(2015-08-23 22:52:28 :mycompanycom&gt;store locator&gt;landing)])</strong></span>
+<span class="strong"><strong>(62.248.72.18 -&gt; [(2015-08-23 23:14:27 :mycompanycom&gt;homepage),(2015-08-23 23:14:30 :mycompanycom&gt;plus&gt;products landing),(2015-08-23 23:14:33 :mycompanycom&gt;plus&gt;products landing),(2015-08-23 23:14:40 :mycompanycom&gt;plus&gt;products landing),(2015-08-23 23:14:47 :mycompanycom&gt;store homepage),(2015-08-23 23:14:50 :mycompanycom&gt;store homepage),(2015-08-23 23:14:55 :mycompanycom&gt;men:clp),(2015-08-23 23:15:08 :mycompanycom&gt;men:clp),(2015-08-23 23:15:15 :mycompanycom&gt;men:clp),(2015-08-23 23:15:16 :mycompanycom&gt;men:clp),(2015-08-23 23:15:24 :mycompanycom&gt;men&gt;sportswear:standardgrid),(2015-08-23 23:15:41 :mycompanycom&gt;pdp&gt;mycompany blazer low premium vintage suede men's shoe),(2015-08-23 23:15:45 :mycompanycom&gt;pdp&gt;mycompany blazer low premium vintage suede men's shoe),(2015-08-23 23:15:45 :mycompanycom&gt;pdp&gt;mycompany blazer low premium vintage suede men's shoe),(2015-08-23 23:15:49 :mycompanycom&gt;pdp&gt;mycompany blazer low premium vintage suede men's shoe),(2015-08-23 23:15:50 :mycompanycom&gt;pdp&gt;mycompany blazer low premium vintage suede men's shoe),(2015-08-23 23:15:56 :mycompanycom&gt;men&gt;sportswear:standardgrid),(2015-08-23 23:18:41 :mycompanycom&gt;pdp&gt;mycompany bruin low men's shoe),(2015-08-23 23:18:42 :mycompanycom&gt;pdp&gt;mycompany bruin low men's shoe),(2015-08-23 23:18:53 :mycompanycom&gt;pdp&gt;mycompany bruin low men's shoe),(2015-08-23 23:18:55 :mycompanycom&gt;pdp&gt;mycompany bruin low men's shoe),(2015-08-23 23:18:57 :mycompanycom&gt;pdp&gt;mycompany bruin low men's shoe),(2015-08-23 23:19:04 :mycompanycom&gt;men&gt;sportswear:standardgrid),(2015-08-23 23:20:12 :mycompanycom&gt;men&gt;sportswear&gt;silver:standardgrid),(2015-08-23 23:28:20 :mycompanycom&gt;onsite search&gt;no results),(2015-08-23 23:28:33 :mycompanycom&gt;onsite search&gt;no results),(2015-08-23 23:28:36 :mycompanycom&gt;pdp&gt;mycompany blazer low premium vintage suede men's shoe),(2015-08-23 23:28:40 :mycompanycom&gt;pdp&gt;mycompany blazer low premium vintage suede men's shoe),(2015-08-23 23:28:41 :mycompanycom&gt;pdp&gt;mycompany blazer low premium vintage suede men's shoe),(2015-08-23 23:28:43 :mycompanycom&gt;pdp&gt;mycompany blazer low premium vintage suede men's shoe),(2015-08-23 23:28:43 :mycompanycom&gt;pdp&gt;mycompany blazer low premium vintage suede men's shoe),(2015-08-23 23:29:00 :mycompanycom&gt;pdp:mycompanyid&gt;mycompany blazer low id shoe)])</strong></span>
+<span class="strong"><strong>(46.5.127.21 -&gt; [(2015-08-23 22:58:00 :mycompanycom&gt;homepage),(2015-08-23 22:58:01 :mycompanycom&gt;plus&gt;products landing)])</strong></span>
+<span class="strong"><strong>(200.45.228.1 -&gt; [(2015-08-23 23:07:33 :mycompanycom&gt;homepage),(2015-08-23 23:07:39 :mycompanycom&gt;plus&gt;products landing),(2015-08-23 23:07:42 :mycompanycom&gt;plus&gt;products landing),(2015-08-23 23:07:45 :mycompanycom&gt;language tunnel&gt;load),(2015-08-23 23:07:59 :mycompanycom&gt;homepage),(2015-08-23 23:08:15 :mycompanycom&gt;homepage),(2015-08-23 23:08:26 :mycompanycom&gt;onsite search&gt;results found),(2015-08-23 23:08:43 :mycompanycom&gt;onsite search&gt;no results),(2015-08-23 23:08:49 :mycompanycom&gt;onsite search&gt;results found),(2015-08-23 23:08:53 :mycompanycom&gt;language tunnel&gt;load),(2015-08-23 23:08:55 :mycompanycom&gt;plus&gt;products landing),(2015-08-23 23:09:04 :mycompanycom&gt;homepage),(2015-08-23 23:11:34 :mycompanycom&gt;running:slp)])</strong></span>
+<span class="strong"><strong>(37.78.203.213 -&gt; [(2015-08-23 23:18:10 :mycompanycom&gt;homepage),(2015-08-23 23:18:12 :mycompanycom&gt;plus&gt;products landing),(2015-08-23 23:18:14 :mycompanycom&gt;plus&gt;products landing),(2015-08-23 23:18:22 :mycompanycom&gt;plus&gt;products landing),(2015-08-23 23:18:25 :mycompanycom&gt;store homepage),(2015-08-23 23:18:31 :mycompanycom&gt;store homepage),(2015-08-23 23:18:34 :mycompanycom&gt;men:clp),(2015-08-23 23:18:50 :mycompanycom&gt;store homepage),(2015-08-23 23:18:51 :mycompanycom&gt;footwear:segmentedgrid),(2015-08-23 23:19:12 :mycompanycom&gt;men&gt;footwear:segmentedgrid),(2015-08-23 23:19:12 :mycompanycom&gt;men&gt;footwear:segmentedgrid),(2015-08-23 23:19:26 :mycompanycom&gt;men&gt;footwear&gt;new releases:standardgrid),(2015-08-23 23:19:26 :mycompanycom&gt;men&gt;footwear&gt;new releases:standardgrid),(2015-08-23 23:19:35 :mycompanycom&gt;pdp&gt;mycompany cheyenne 2015 men's shoe),(2015-08-23 23:19:40 :mycompanycom&gt;men&gt;footwear&gt;new releases:standardgrid)])</strong></span>
+</pre></div><p>I leave it to the <a id="id467" class="indexterm"/>reader to write a function that also filters only those sessions where the user spent less than 10 seconds before going to the products page. The epoch trait or the previously defined to the <code class="literal">EpochSeconds</code> function may be useful.</p><p>The match/case function can be also used for feature generation and return a vector of features over a session.</p></div></div>
+
+
+
+  
+<div id="sbo-rt-content"><div class="section" title="Other uses of unstructured data"><div class="titlepage"><div><div><h1 class="title"><a id="ch06lvl1sec52"/>Other uses of unstructured data</h1></div></div></div><p>The personalization and device diagnostic obviously are not the only uses of unstructured data. The preceding case is a good example as we started from structured record and quickly converged <a id="id468" class="indexterm"/>on the need to construct an unstructured data structure to simplify the analysis.</p><p>In fact, there are many more unstructured data than there are structured; it is just the convenience of having the flat structure for the traditional statistical analysis that makes us to present the data as a set of records. Text, images, and music are the examples of semi-structured data.</p><p>One example of non-structured data is denormalized data. Traditionally the record data are normalized mostly for performance reasons as the RDBMSs have been optimized to work with structured data. This leads to foreign key and lookup tables, but these are very hard to maintain if the dimensions change. Denormalized data does not have this problem as the lookup table can be stored with each record—it is just an additional table object associated with a row, but may be less storage-efficient.</p></div></div>
+
+
+
+  
+<div id="sbo-rt-content"><div class="section" title="Probabilistic structures"><div class="titlepage"><div><div><h1 class="title"><a id="ch06lvl1sec53"/>Probabilistic structures</h1></div></div></div><p>Another use case is the probabilistic structures. Usually people assume that answering a question is <a id="id469" class="indexterm"/>deterministic. As I showed in <a class="link" href="ch02.xhtml" title="Chapter 2. Data Pipelines and Modeling">Chapter 2</a>, <span class="emphasis"><em>Data Pipelines and Modeling</em></span>, in many cases, the true answer has some uncertainty associated with it. One of the most popular ways to encode uncertainty is probability, which is a frequentist approach, meaning that the simple count of when the answer does happen to be the true answer, divided by the total number of attempts—the probability also can encode our beliefs. I will touch on probabilistic analysis and models in the following chapters, but probabilistic analysis requires storing each possible outcome with some measure of probability, which happens to be a nested structure.</p></div></div>
+
+
+
+  
+<div id="sbo-rt-content"><div class="section" title="Projections"><div class="titlepage"><div><div><h1 class="title"><a id="ch06lvl1sec54"/>Projections</h1></div></div></div><p>One way to deal <a id="id470" class="indexterm"/>with high dimensionality is projections on a lower dimensional space. The fundamental basis for why projections might work is Johnson-Lindenstrauss lemma. The lemma states that a small set of points in a high-dimensional space can be embedded into a space of much lower dimension in such a way that distances between the points are nearly preserved. We will touch on random and other projections when we talk about NLP in <a class="link" href="ch09.xhtml" title="Chapter 9. NLP in Scala">Chapter 9</a>, <span class="emphasis"><em>NLP in Scala</em></span>, but the random projections work well for nested structures and functional programming language, as in many cases, generating a random projection is the question of applying a function to a compactly encoded data rather than flattening the data explicitly. In other words, the Scala definition for a random projection may look like functional paradigm shines. Write the following function:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>def randomeProjecton(data: NestedStructure) : Vector = { … }</strong></span>
+</pre></div><p>Here, <code class="literal">Vector</code> is in low dimensional space.</p><p>The map used for embedding is at least Lipschitz, and can even be taken to be an orthogonal projection.</p></div></div>
+
+
+
+  
+<div id="sbo-rt-content"><div class="section" title="Summary"><div class="titlepage"><div><div><h1 class="title"><a id="ch06lvl1sec55"/>Summary</h1></div></div></div><p>In this chapter, we saw examples of how to represent and work with complex and nested data in Scala. Obviously, it would be hard to cover all the cases as the world of unstructured data is much larger than the nice niche of structured row-by-row simplification of the real world and is still under construction. Pictures, music, and spoken and written language have a lot of nuances that are hard to capture in a flat representation.</p><p>While for ultimate data analysis, we eventually convert the datasets to the record-oriented flat representation, at least at the time of collection, one needs to be careful to store that data as it is and not throw away useful information that might be contained in data or metadata. Extending the databases and storage with a way to record this useful information is the first step. The next one is to use languages that can effectively analyze this information; which is definitely Scala.</p><p>In the next chapter we'll look at somewhat related topic of working with graphs, a specific example of non-structured data.</p></div></div>
+
+
+
+  </body></html>

@@ -1,0 +1,940 @@
+<html><head></head><body><div id="sbo-rt-content"><div class="chapter" title="Chapter 7. Working with Graph Algorithms"><div class="titlepage"><div><div><h1 class="title"><a id="ch07"/>Chapter 7. Working with Graph Algorithms</h1></div></div></div><p>In this chapter, I'll delve into graph libraries and algorithm implementations in Scala. In particular, I will introduce Graph for Scala (<a class="ulink" href="http://www.scala-graph.org">http://www.scala-graph.org</a>), an open source project that was <a id="id471" class="indexterm"/>started in 2011 in the EPFL Scala incubator. Graph for Scala does not support distributed computing yet—the distributed computing aspects of popular graph algorithms is available in GraphX, which is a part of MLlib library that is part of Spark project (<a class="ulink" href="http://spark.apache.org/docs/latest/mllib-guide.html">http://spark.apache.org/docs/latest/mllib-guide.html</a>). Both, Spark and MLlib were started as class projects at UC Berkeley around or after 2009. I considered Spark in <a class="link" href="ch03.xhtml" title="Chapter 3. Working with Spark and MLlib">Chapter 3</a>, <span class="emphasis"><em>Working with Spark and MLlib</em></span> and introduced an RDD. In GraphX, a graph is a pair of RDDs, each of which is partitioned among executors and tasks, represents vertices and edges in a graph.</p><p>In this chapter, we will cover the following topics:</p><div class="itemizedlist"><ul class="itemizedlist"><li class="listitem" style="list-style-type: disc">Configuring <a id="id472" class="indexterm"/><span class="strong"><strong>Simple Build Tool</strong></span> (<span class="strong"><strong>SBT</strong></span>) to use the material in this chapter interactively</li><li class="listitem" style="list-style-type: disc">Learning basic operations on graphs supported by Graph for Scala</li><li class="listitem" style="list-style-type: disc">Learning how to enforce graph constraints</li><li class="listitem" style="list-style-type: disc">Learning how to import/export graphs in JSON</li><li class="listitem" style="list-style-type: disc">Performing connected components, triangle count, and strongly connected components running on Enron e-mail data</li><li class="listitem" style="list-style-type: disc">Performing PageRank computations on Enron e-mail data</li><li class="listitem" style="list-style-type: disc">Learning how to use SVD++</li></ul></div><div class="section" title="A quick introduction to graphs"><div class="titlepage"><div><div><h1 class="title"><a id="ch07lvl1sec56"/>A quick introduction to graphs</h1></div></div></div><p>What is a <a id="id473" class="indexterm"/>graph? A graph is <a id="id474" class="indexterm"/>a set of <span class="strong"><strong>vertices</strong></span> where some pairs of these vertices are linked<a id="id475" class="indexterm"/> with <span class="strong"><strong>edges</strong></span>. If every vertex is linked with every other vertex, we say the graph is a complete graph. On the contrary, if it has no edges, the graph is said to be empty. These are, of course, extremes that are rarely encountered in practice, as graphs have varying degrees of density; the more edges it has proportional to the number of vertices, the more dense we say it is.</p><p>Depending on <a id="id476" class="indexterm"/>what algorithms we intend to run on a graph and how dense is it expected to be, we can choose how to appropriately represent the graph in memory. If the graph is really dense, it pays off to store it as a square <span class="emphasis"><em>N x N</em></span> matrix, where <span class="emphasis"><em>0</em></span> in the <span class="emphasis"><em>n</em></span>th row and <span class="emphasis"><em>m</em></span>th column means that the <span class="emphasis"><em>n</em></span> vertex is not connected to the <span class="emphasis"><em>m</em></span> vertex. A diagonal entry expresses a node connection to itself. This representation is called the adjacency matrix.</p><p>If there are not many edges and we need to traverse the whole edge set without distinction, often it pays off to store it as a simple container of pairs. This structure is called an <a id="id477" class="indexterm"/>
+<span class="strong"><strong>edge list</strong></span>.</p><p>In practice, we can model many real-life situations and events as graphs. We could imagine cities as vertices and plane routes as edges. If there is no flight between two cities, there is no edge between them. Moreover, if we add the numerical costs of plane tickets to the edges, we say that the <a id="id478" class="indexterm"/>graph is <span class="strong"><strong>weighted</strong></span>. If there are some edges where only travels in one direction exist, we can represent that by making a graph directed as opposed to an undirected graph. So, for an undirected graph, it is true that the graph is symmetric, that is, if <span class="emphasis"><em>A</em></span> is connected to <span class="emphasis"><em>B</em></span>, then <span class="emphasis"><em>B</em></span> is also connected to <span class="emphasis"><em>A</em></span>—that is not necessarily true for a directed graph.</p><p>Graphs without cycles are called acyclic. Multigraph can contain multiple edges, potentially of different type, between the nodes. Hyperedges can connect arbitrary number of nodes.</p><p>The most popular algorithm on the undirected graphs is probably <span class="strong"><strong>connected components</strong></span>, or <a id="id479" class="indexterm"/>partitioning of a graph into subgraph, in which any two vertices are connected to each other by paths. Partitioning is important to parallelize the operations on the graphs.</p><p>Google and other search engines made PageRank popular. According to Google, PageRank estimates of how important the website is by counting the number and quality of links to a page. The underlying assumption is that more important websites are likely to receive more links from other websites, especially more highly ranked ones. PageRank can be applied to many problems outside of websites ranking and is equivalent to finding eigenvectors and the most significant eigenvalue of the connectivity matrix.</p><p>The most basic, nontrivial subgraph, consists of three nodes. Triangle counting finds all the possible fully connected (or complete) triples of nodes and is another well-known algorithm used in community detection and CAD.</p><p>A <span class="strong"><strong>clique</strong></span><a id="id480" class="indexterm"/> is a fully connected subgraph. A strongly connected component is an analogous notion for a directed graph: every vertex in a subgraph is reachable from every other vertex. GraphX provides an implementation for both.</p><p>Finally, a recommender graph is a graph connecting two types of nodes: users and items. The edges can additionally contain the strength of a recommendation or a measure of satisfaction. The<a id="id481" class="indexterm"/> goal of a recommender is to predict the satisfaction for potentially missing edges. Multiple algorithms have been developed for a recommendation engine, such as SVD and SVD++, which are considered at the end of this chapter.</p></div></div></div>
+
+
+
+  
+<div id="sbo-rt-content"><div class="section" title="SBT"><div class="titlepage"><div><div><h1 class="title"><a id="ch07lvl1sec57"/>SBT</h1></div></div></div><p>Everyone likes <a id="id482" class="indexterm"/>Scala REPL. REPL is the command line for Scala. It allows you to type Scala expressions that are evaluated immediately and try and explore things. As you saw in the previous chapters, one can simply type <code class="literal">scala</code> at the command prompt and start developing complex data pipelines. What is even more convenient is that one can press <span class="emphasis"><em>tab</em></span> to have auto-completion, a required feature of any fully developed modern IDE (such as Eclipse or IntelliJ, <span class="emphasis"><em>Ctrl +</em></span>. or <span class="emphasis"><em>Ctrl + Space</em></span>) by keeping track of the namespace and using reflection mechanisms. Why would we need one extra tool or framework for builds, particularly that other builds management frameworks such as Ant, Maven, and Gradle exist in addition to IDEs? As the SBT authors argue, even though one might compile Scala using the preceding tools, all of them have inefficiencies, as it comes to interactivity and reproducibility of Scala builds (<span class="emphasis"><em>SBT in Action</em></span> by <span class="emphasis"><em>Joshua Suereth</em></span> and <span class="emphasis"><em>Matthew Farwell</em></span>, Nov 2015).</p><p>One of the main SBT features for me is interactivity and the ability to seamlessly work with multiple versions of Scala and dependent libraries. In the end, what is critical for software development is the speed with which one can prototype and test new ideas. I used to work on mainframes using punch cards, where the programmers were waiting to execute their programs and ideas, sometimes for hours and days. The efficiency of the computers mattered more, as this was the bottleneck. These days are gone, and a personal laptop is probably having more computing power than rooms full of servers a few decades back. To take advantage of this efficiency, we need to utilize human time more efficiently by speeding <a id="id483" class="indexterm"/>up the program development cycle, which also means interactivity and more versions in the repositories.</p><p>Apart from the ability to<a id="id484" class="indexterm"/> handle multiple versions and REPL, SBT's main features are as follows:</p><div class="itemizedlist"><ul class="itemizedlist"><li class="listitem" style="list-style-type: disc">Native support for compiling Scala code and integrating with many test frameworks, including JUnit, ScalaTest, and Selenium</li><li class="listitem" style="list-style-type: disc">Build descriptions written in Scala using a DSL</li><li class="listitem" style="list-style-type: disc">Dependency management using Ivy (which also supports Maven-format repositories)</li><li class="listitem" style="list-style-type: disc">Continuous execution, compilation, testing, and deployment</li><li class="listitem" style="list-style-type: disc">Integration with the Scala interpreter for rapid iteration and debugging</li><li class="listitem" style="list-style-type: disc">Support for mixed Java/Scala projects</li><li class="listitem" style="list-style-type: disc">Support for testing and deployment frameworks</li><li class="listitem" style="list-style-type: disc">Ability to complement the tool with custom plugins</li><li class="listitem" style="list-style-type: disc">Parallel execution of tasks</li></ul></div><p>SBT is written in Scala and uses SBT to build itself (bootstrapping or dogfooding). SBT became the de facto build tool for the <a id="id485" class="indexterm"/>Scala community, and is used by the <span class="strong"><strong>Lift</strong></span> and <a id="id486" class="indexterm"/>
+<span class="strong"><strong>Play</strong></span> frameworks.</p><p>While you can download <a id="id487" class="indexterm"/>SBT directly from <a class="ulink" href="http://www.scala-sbt.org/download">http://www.scala-sbt.org/download</a>, the easiest way to install SBT on Mac is to run MacPorts:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ port install sbt</strong></span>
+</pre></div><p>You can also run Homebrew:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ brew install sbt</strong></span>
+</pre></div><p>While other tools exist to create SBT projects, the most straightforward way is to run the <code class="literal">bin/create_project.sh</code> script in the GitHub book project repository provided for each chapter:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ bin/create_project.sh</strong></span>
+</pre></div><p>This will create main and test source subdirectories (but not the code). The project directory contains project-wide settings (refer to <code class="literal">project/build.properties</code>). The target will contain compiled classes and build packages (the directory will contain different subdirectories for different versions of Scala, for example, 2.10 and 2.11). Finally, any jars or libraries put into the <code class="literal">lib</code> directory will be available across the project (I personally recommend using the <code class="literal">libraryDependencies</code> mechanism in the <code class="literal">build.sbt</code> file, but <a id="id488" class="indexterm"/>not all libraries are available via centralized repositories). This is the minimal setup, and the directory structure may potentially contain multiple subprojects. The Scalastyle plugin<a id="id489" class="indexterm"/> will even check the syntax for you (<a class="ulink" href="http://www.scalastyle.org/sbt.html">http://www.scalastyle.org/sbt.html</a>). Just add <code class="literal">project/plugin.sbt</code>:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ cat &gt;&gt; project.plugin.sbt &lt;&lt; EOF</strong></span>
+<span class="strong"><strong>addSbtPlugin("org.scalastyle" %% "scalastyle-sbt-plugin" % "0.8.0")</strong></span>
+<span class="strong"><strong>EOF</strong></span>
+</pre></div><p>Finally, the SBT creates Scaladoc documentation with the <code class="literal">sdbt doc</code> command.</p><div class="note" title="Note" style=""><div class="inner"><h3 class="title"><a id="note06"/>Note</h3><p>
+<span class="strong"><strong>Blank lines and other settings in build.sbt</strong></span>
+</p><p>Probably most<a id="id490" class="indexterm"/> of the <code class="literal">build.sbt</code> files out there are double spaced: this is a remnant of old versions. You no longer need them. As of version 0.13.7, the definitions do not require extra lines.</p><p>There are <a id="id491" class="indexterm"/>many other settings that you can use on <code class="literal">build.sbt</code> or <code class="literal">build.properties</code>, the up-to-date documentation is available at <a class="ulink" href="http://www.scala-sbt.org/documentation.html">http://www.scala-sbt.org/documentation.html</a>.</p></div></div><p>When run from the command line, the tool will automatically download and use the dependencies, in this case, <code class="literal">graph-{core,constrained,json}</code> and <code class="literal">lift-json</code>. In order to run the project, simply type <code class="literal">sbt run</code>.</p><p>In continuous mode, SBT will automatically detect changes to the source file and rerun the command(s). In order to continuously compile and run the code, type <code class="literal">~~ run</code> after starting REPL with <code class="literal">sbt</code>.</p><p>To get help on the<a id="id492" class="indexterm"/> commands, run the following command:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ sbt</strong></span>
+<span class="strong"><strong> [info] Loading global plugins from /Users/akozlov/.sbt/0.13/plugins</strong></span>
+<span class="strong"><strong>[info] Set current project to My Graph Project (in build file:/Users/akozlov/Scala/graph/)</strong></span>
+<span class="strong"><strong>&gt; help</strong></span>
+
+<span class="strong"><strong>  help                                    Displays this help message or prints detailed help on requested commands (run 'help &lt;command&gt;').</strong></span>
+<span class="strong"><strong>For example, `sbt package` will build a Java jar, as follows:</strong></span>
+<span class="strong"><strong>$  sbt package</strong></span>
+<span class="strong"><strong>[info] Loading global plugins from /Users/akozlov/.sbt/0.13/plugins</strong></span>
+<span class="strong"><strong>[info] Loading project definition from /Users/akozlov/Scala/graph/project</strong></span>
+<span class="strong"><strong>[info] Set current project to My Graph Project (in build file:/Users/akozlov/Scala/graph/)</strong></span>
+<span class="strong"><strong>[info] Updating {file:/Users/akozlov/Scala/graph/}graph...</strong></span>
+<span class="strong"><strong>[info] Resolving jline#jline;2.12.1 ...</strong></span>
+<span class="strong"><strong>[info] Done updating.</strong></span>
+<span class="strong"><strong>$ ls -1 target/scala-2.11/</strong></span>
+<span class="strong"><strong>classes</strong></span>
+<span class="strong"><strong>my-graph-project_2.11-1.0.jar</strong></span>
+</pre></div><p>While SBT will be sufficient for our use even with a<a id="id493" class="indexterm"/> simple editor such as <span class="strong"><strong>vi</strong></span> or <a id="id494" class="indexterm"/>
+<span class="strong"><strong>Emacs</strong></span>, the <code class="literal">sbteclipse</code> project <a id="id495" class="indexterm"/>at <a class="ulink" href="https://github.com/typesafehub/sbteclipse">https://github.com/typesafehub/sbteclipse</a> will create the necessary project files to work with your Eclipse IDE.</p></div></div>
+
+
+
+  
+<div id="sbo-rt-content"><div class="section" title="Graph for Scala"><div class="titlepage"><div><div><h1 class="title"><a id="ch07lvl1sec58"/>Graph for Scala</h1></div></div></div><p>For this<a id="id496" class="indexterm"/> project, I will create a <code class="literal">src/main/scala/InfluenceDiagram.scala</code> file. For demo purpose, I will just recreate the graph from <a class="link" href="ch02.xhtml" title="Chapter 2. Data Pipelines and Modeling">Chapter 2</a>, <span class="emphasis"><em>Data Pipelines and Modeling</em></span>:</p><div class="informalexample"><pre class="programlisting">import scalax.collection.Graph
+import scalax.collection.edge._
+import scalax.collection.GraphPredef._
+import scalax.collection.GraphEdge._
+
+import scalax.collection.edge.Implicits._
+
+object InfluenceDiagram extends App {
+  var g = Graph[String, LDiEdge](("'Weather'"~+&gt;"'Weather Forecast'")("Forecast"), ("'Weather Forecast'"~+&gt;"'Vacation Activity'")("Decision"), ("'Vacation Activity'"~+&gt;"'Satisfaction'")("Deterministic"), ("'Weather'"~+&gt;"'Satisfaction'")("Deterministic"))
+  println(g.mkString(";"))
+  println(g.isDirected)
+  println(g.isAcyclic)
+}</pre></div><p>The <code class="literal">~+&gt;</code> operator<a id="id497" class="indexterm"/> is used to create a directed labeled edge between two nodes defined in <code class="literal">scalax/collection/edge/Implicits.scala</code>, which, in our case, are of the <code class="literal">String</code> type. The list of other edge types and operators is provided in the following table:</p><p>
+<span class="emphasis"><em>The following table shows</em></span> graph<a id="id498" class="indexterm"/> edges from <code class="literal">scalax.collection.edge.Implicits</code> (from <a class="ulink" href="http://www.scala-graph.org/guides/core-initializing.html">http://www.scala-graph.org/guides/core-initializing.html</a>)</p><div class="informaltable"><table border="1"><colgroup><col style="text-align: left"/><col style="text-align: left"/><col style="text-align: left"/></colgroup><thead><tr><th style="text-align: left" valign="bottom">
+<p>Edge Class</p>
+</th><th style="text-align: left" valign="bottom">
+<p>Shortcut/Operator</p>
+</th><th style="text-align: left" valign="bottom">
+<p>Description</p>
+</th></tr></thead><tbody><tr><td colspan="3" style="text-align: center" valign="top">
+<p>
+<span class="strong"><strong>Hyperedges</strong></span>
+</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">HyperEdge</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">~</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>hyperedge</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">WHyperEdge</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">~%</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>weighted hyperedge</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">WkHyperEdge</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">~%#</code></p>
+</td><td style="text-align: left" valign="top">
+<p>key-weighted hyperedge</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">LHyperEdge</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">~+</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>labeled hyperedge</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">LkHyperEdge</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">~+#</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>key-labeled hyperedge</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">WLHyperEdge</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">~%+</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>weighted labeled hyperedge</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">WkLHyperEdge</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">~%#+</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>key-weighted labeled hyperedge</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">WLkHyperEdge</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">~%+#</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>weighted key-labeled hyperedge</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">WkLkHyperEdge</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">~%#+#</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>key-weighted key-labeled hyperedge</p>
+</td></tr><tr><td colspan="3" style="text-align: center" valign="top">
+<p>
+<span class="strong"><strong>Directed hyperedges</strong></span>
+</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">DiHyperEdge</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">~&gt;</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>directed <a id="id499" class="indexterm"/>hyperedge</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">WDiHyperEdge</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">~%&gt;</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>weighted directed hyperedge</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">WkDiHyperEdge</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">~%#&gt;</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>key-weighted directed hyperedge</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">LDiHyperEdge</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">~+&gt;</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>labeled directed hyperedge</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">LkDiHyperEdge</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">~+#&gt;</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>key-labeled directed hyperedge</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">WLDiHyperEdge</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">~%+&gt;</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>weighted labeled directed hyperedge</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">WkLDiHyperEdge</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">~%#+&gt;</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>key-weighted labeled directed hyperedge</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">WLkDiHyperEdge</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">~%+#&gt;</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>weighted key-labeled directed hyperedge</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">WkLkDiHyperEdge</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">~%#+#&gt;</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>key-weighted key-labeled directed hyperedge</p>
+</td></tr><tr><td colspan="3" style="text-align: center" valign="top">
+<p>
+<span class="strong"><strong>Undirected edges</strong></span>
+</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">UnDiEdge</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">~</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>undirected edge</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">WUnDiEdge</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">~%</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>weighted undirected edge</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">WkUnDiEdge</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">~%#</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>key-weighted undirected edge</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">LUnDiEdge</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">~+</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>labeled <a id="id500" class="indexterm"/>undirected edge</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">LkUnDiEdge</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">~+#</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>key-labeled undirected edge</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">WLUnDiEdge</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">~%+</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>weighted labeled undirected edge</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">WkLUnDiEdge</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">~%#+</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>key-weighted labeled undirected edge</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">WLkUnDiEdge</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">~%+#</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>weighted key-labeled undirected edge</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">WkLkUnDiEdge</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">~%#+#</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>key-weighted key-labeled undirected edge</p>
+</td></tr><tr><td colspan="3" style="text-align: center" valign="top">
+<p>
+<span class="strong"><strong>Directed edges</strong></span>
+</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">DiEdge</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">~&gt;</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>directed edge</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">WDiEdge</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">~%&gt;</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>weighted directed edge</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">WkDiEdge</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">~%#&gt;</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>key-weighted directed edge</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">LDiEdge</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">~+&gt;</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>labeled directed edge</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">LkDiEdge</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">~+#&gt;</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>key-labeled directed edge</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">WLDiEdge</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">~%+&gt;</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>weighted labeled directed edge</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">WkLDiEdge</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">~%#+&gt;</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>key-weighted labeled directed edge</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">WLkDiEdge</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">~%+#&gt;</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>weighted key-labeled directed edge</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">WkLkDiEdge</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">~%#+#&gt;</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>key-weighted key-labeled directed edge</p>
+</td></tr></tbody></table></div><p>You saw the power <a id="id501" class="indexterm"/>of graph for Scala: the edges can be weighted and we may potentially construct a multigraph (key-labeled edges allow multiple edges for a pair of source and destination nodes).</p><p>If you run SBT on the preceding project with the Scala file in the <code class="literal">src/main/scala</code> directory, the output will be as follows:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>[akozlov@Alexanders-MacBook-Pro chapter07(master)]$ sbt</strong></span>
+<span class="strong"><strong>[info] Loading project definition from /Users/akozlov/Src/Book/ml-in-scala/chapter07/project</strong></span>
+<span class="strong"><strong>[info] Set current project to Working with Graph Algorithms (in build file:/Users/akozlov/Src/Book/ml-in-scala/chapter07/)</strong></span>
+<span class="strong"><strong>&gt; run</strong></span>
+<span class="strong"><strong>[warn] Multiple main classes detected.  Run 'show discoveredMainClasses' to see the list</strong></span>
+
+<span class="strong"><strong>Multiple main classes detected, select one to run:</strong></span>
+
+<span class="strong"><strong> [1] org.akozlov.chapter07.ConstranedDAG</strong></span>
+<span class="strong"><strong> [2] org.akozlov.chapter07.EnronEmail</strong></span>
+<span class="strong"><strong> [3] org.akozlov.chapter07.InfluenceDiagram</strong></span>
+<span class="strong"><strong> [4] org.akozlov.chapter07.InfluenceDiagramToJson</strong></span>
+
+<span class="strong"><strong>Enter number: 3</strong></span>
+
+<span class="strong"><strong>[info] Running org.akozlov.chapter07.InfluenceDiagram </strong></span>
+<span class="strong"><strong>'Weather';'Vacation Activity';'Satisfaction';'Weather Forecast';'Weather'~&gt;'Weather Forecast' 'Forecast;'Weather'~&gt;'Satisfaction' 'Deterministic;'Vacation Activity'~&gt;'Satisfaction' 'Deterministic;'Weather Forecast'~&gt;'Vacation Activity' 'Decision</strong></span>
+<span class="strong"><strong>Directed: true</strong></span>
+<span class="strong"><strong>Acyclic: true</strong></span>
+<span class="strong"><strong>'Weather';'Vacation Activity';'Satisfaction';'Recommend to a Friend';'Weather Forecast';'Weather'~&gt;'Weather Forecast' 'Forecast;'Weather'~&gt;'Satisfaction' 'Deterministic;'Vacation Activity'~&gt;'Satisfaction' 'Deterministic;'Satisfaction'~&gt;'Recommend to a Friend' 'Probabilistic;'Weather Forecast'~&gt;'Vacation Activity' 'Decision</strong></span>
+<span class="strong"><strong>Directed: true</strong></span>
+<span class="strong"><strong>Acyclic: true</strong></span>
+</pre></div><p>If continuous <a id="id502" class="indexterm"/>compilation is enabled, the main method will be run as soon as SBT detects that the file has changed (in the case of multiple classes having the main method, SBT will ask you which one to run, which is not great for interactivity; so you might want to limit the number of executable classes).</p><p>I will cover different output formats in a short while, but let's first see how to perform simple operations on the graph.</p><div class="section" title="Adding nodes and edges"><div class="titlepage"><div><div><h2 class="title"><a id="ch07lvl2sec32"/>Adding nodes and edges</h2></div></div></div><p>First, we <a id="id503" class="indexterm"/>already know that the graph is directed and acyclic, which<a id="id504" class="indexterm"/> is a required property for all decision<a id="id505" class="indexterm"/> diagrams<a id="id506" class="indexterm"/> so that we know we did not make a mistake. Let's say that I want to make the graph more complex and add a node that will indicate the likelihood of me recommending a vacation in Portland, Oregon to another person. The only thing I need to add is the following line:</p><div class="informalexample"><pre class="programlisting">g += ("'Satisfaction'" ~+&gt; "'Recommend to a Friend'")("Probabilistic")</pre></div><p>If you have continuous compilation/run enabled, you will immediately see the changes after pressing the <span class="strong"><strong>Save File</strong></span> button:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>'Weather';'Vacation Activity';'Satisfaction';'Recommend to a Friend';'Weather Forecast';'Weather'~&gt;'Weather Forecast' 'Forecast;'Weather'~&gt;'Satisfaction' 'Deterministic;'Vacation Activity'~&gt;'Satisfaction' 'Deterministic;'Satisfaction'~&gt;'Recommend to a Friend' 'Probabilistic;'Weather Forecast'~&gt;'Vacation Activity' 'Decision</strong></span>
+<span class="strong"><strong>Directed: true</strong></span>
+<span class="strong"><strong>Acyclic: true</strong></span>
+</pre></div><p>Now, if we want to know the parents of the newly introduced node, we can simply run the following code:</p><div class="informalexample"><pre class="programlisting">println((g get "'Recommend to a Friend'").incoming)
+
+Set('Satisfaction'~&gt;'Recommend to a Friend' 'Probabilistic)</pre></div><p>This will give us a set of parents for a specific node—and thus drive the decision making process. If we add a cycle, the acyclic method will automatically detect it:</p><div class="informalexample"><pre class="programlisting">g += ("'Satisfaction'" ~+&gt; "'Weather'")("Cyclic")
+println(g.mkString(";")) println("Directed: " + g.isDirected)
+println("Acyclic: " + g.isAcyclic)
+
+'Weather';'Vacation Activity';'Satisfaction';'Recommend to a Friend';'Weather Forecast';'Weather'~&gt;'Weather Forecast' 'Forecast;'Weather'~&gt;'Satisfaction' 'Deterministic;'Vacation Activity'~&gt;'Satisfaction' 'Deterministic;'Satisfaction'~&gt;'Recommend to a Friend' 'Probabilistic;'Satisfaction'~&gt;'Weather' 'Cyclic;'Weather Forecast'~&gt;'Vacation Activity' 'Decision
+Directed: true
+Acyclic: false</pre></div><p>Note that you can create the graphs completely programmatically:</p><div class="informalexample"><pre class="programlisting"> var n, m = 0; val f = Graph.fill(45){ m = if (m &lt; 9) m + 1 else { n = if (n &lt; 8) n + 1 else 8; n + 1 }; m ~ n }
+
+  println(f.nodes)
+  println(f.edges)
+  println(f)
+
+  println("Directed: " + f.isDirected)
+  println("Acyclic: " + f.isAcyclic)
+
+NodeSet(0, 9, 1, 5, 2, 6, 3, 7, 4, 8)
+EdgeSet(9~0, 9~1, 9~2, 9~3, 9~4, 9~5, 9~6, 9~7, 9~8, 1~0, 5~0, 5~1, 5~2, 5~3, 5~4, 2~0, 2~1, 6~0, 6~1, 6~2, 6~3, 6~4, 6~5, 3~0, 3~1, 3~2, 7~0, 7~1, 7~2, 7~3, 7~4, 7~5, 7~6, 4~0, 4~1, 4~2, 4~3, 8~0, 8~1, 8~2, 8~3, 8~4, 8~5, 8~6, 8~7)
+Graph(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 1~0, 2~0, 2~1, 3~0, 3~1, 3~2, 4~0, 4~1, 4~2, 4~3, 5~0, 5~1, 5~2, 5~3, 5~4, 6~0, 6~1, 6~2, 6~3, 6~4, 6~5, 7~0, 7~1, 7~2, 7~3, 7~4, 7~5, 7~6, 8~0, 8~1, 8~2, 8~3, 8~4, 8~5, 8~6, 8~7, 9~0, 9~1, 9~2, 9~3, 9~4, 9~5, 9~6, 9~7, 9~8)
+Directed: false
+Acyclic: false</pre></div><p>Here, the<a id="id507" class="indexterm"/> element<a id="id508" class="indexterm"/> computation <a id="id509" class="indexterm"/>provided as the second parameter to the fill method is<a id="id510" class="indexterm"/> repeated <code class="literal">45</code> times (the first parameter). The graph connects every node to all of its predecessors, which is also known as a clique in the graph theory.</p></div><div class="section" title="Graph constraints"><div class="titlepage"><div><div><h2 class="title"><a id="ch07lvl2sec33"/>Graph constraints</h2></div></div></div><p>Graph for Scala <a id="id511" class="indexterm"/>enables us to set constraints that cannot be violated by any future graph update. This comes in handy when we want to preserve some detail in the graph structure. For example, a <span class="strong"><strong>Directed Acyclic Graph</strong></span> (<span class="strong"><strong>DAG</strong></span>) should <a id="id512" class="indexterm"/>not contain cycles. Two constraints are currently implemented as a part of the <code class="literal">scalax.collection.constrained.constraints</code> package—connected and acyclic, as follows:</p><div class="informalexample"><pre class="programlisting">package org.akozlov.chapter07
+
+import scalax.collection.GraphPredef._, scalax.collection.GraphEdge._
+import scalax.collection.constrained.{Config, ConstraintCompanion, Graph =&gt; DAG}
+import scalax.collection.constrained.constraints.{Connected, Acyclic}
+
+object AcyclicWithSideEffect extends ConstraintCompanion[Acyclic] {
+  def apply [N, E[X] &lt;: EdgeLikeIn[X]] (self: DAG[N,E]) =
+    new Acyclic[N,E] (self) {
+      override def onAdditionRefused(refusedNodes: Iterable[N],
+        refusedEdges: Iterable[E[N]],
+        graph:        DAG[N,E]) = {
+          println("Addition refused: " + "nodes = " + refusedNodes + ", edges = " + refusedEdges)
+          true
+        }
+    }
+}
+
+object ConnectedWithSideEffect extends ConstraintCompanion[Connected] {
+  def apply [N, E[X] &lt;: EdgeLikeIn[X]] (self: DAG[N,E]) =
+    new Connected[N,E] (self) {
+      override def onSubtractionRefused(refusedNodes: Iterable[DAG[N,E]#NodeT],
+        refusedEdges: Iterable[DAG[N,E]#EdgeT],
+        graph:        DAG[N,E]) = {
+          println("Subtraction refused: " + "nodes = " + refusedNodes + ", edges = " + refusedEdges)
+        true
+      }
+    }
+}
+
+class CycleException(msg: String) extends IllegalArgumentException(msg)
+object ConstranedDAG extends App {
+  implicit val conf: Config = ConnectedWithSideEffect &amp;&amp; AcyclicWithSideEffect
+  val g = DAG(1~&gt;2, 1~&gt;3, 2~&gt;3, 3~&gt;4) // Graph()
+  println(g ++ List(1~&gt;4, 3~&gt;1))
+  println(g - 2~&gt;3)
+  println(g - 2)
+  println((g + 4~&gt;5) - 3)
+}</pre></div><p>Here is the command <a id="id513" class="indexterm"/>to run the program that tries to add or remove nodes that violate the constraints:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>[akozlov@Alexanders-MacBook-Pro chapter07(master)]$ sbt "run-main org.akozlov.chapter07.ConstranedDAG"</strong></span>
+<span class="strong"><strong>[info] Loading project definition from /Users/akozlov/Src/Book/ml-in-scala/chapter07/project</strong></span>
+<span class="strong"><strong>[info] Set current project to Working with Graph Algorithms (in build file:/Users/akozlov/Src/Book/ml-in-scala/chapter07/)</strong></span>
+<span class="strong"><strong>[info] Running org.akozlov.chapter07.ConstranedDAG </strong></span>
+<span class="strong"><strong>Addition refused: nodes = List(), edges = List(1~&gt;4, 3~&gt;1)</strong></span>
+<span class="strong"><strong>Graph(1, 2, 3, 4, 1~&gt;2, 1~&gt;3, 2~&gt;3, 3~&gt;4)</strong></span>
+<span class="strong"><strong>Subtraction refused: nodes = Set(), edges = Set(2~&gt;3)</strong></span>
+<span class="strong"><strong>Graph(1, 2, 3, 4, 1~&gt;2, 1~&gt;3, 2~&gt;3, 3~&gt;4)</strong></span>
+<span class="strong"><strong>Graph(1, 3, 4, 1~&gt;3, 3~&gt;4)</strong></span>
+<span class="strong"><strong>Subtraction refused: nodes = Set(3), edges = Set()</strong></span>
+<span class="strong"><strong>Graph(1, 2, 3, 4, 5, 1~&gt;2, 1~&gt;3, 2~&gt;3, 3~&gt;4, 4~&gt;5)</strong></span>
+<span class="strong"><strong>[success] Total time: 1 s, completed May 1, 2016 1:53:42 PM </strong></span>
+</pre></div><p>Adding or<a id="id514" class="indexterm"/> subtracting nodes that violate one of the constraints is rejected. The programmer can also specify a side effect if an attempt to add or subtract a node that violates the condition is made.</p></div><div class="section" title="JSON"><div class="titlepage"><div><div><h2 class="title"><a id="ch07lvl2sec34"/>JSON</h2></div></div></div><p>Graph for Scala <a id="id515" class="indexterm"/>supports importing/exporting graphs to JSON, as <a id="id516" class="indexterm"/>follows:</p><div class="informalexample"><pre class="programlisting">object InfluenceDiagramToJson extends App {
+
+  val g = Graph[String,LDiEdge](("'Weather'" ~+&gt; "'Weather Forecast'")("Forecast"), ("'Weather Forecast'" ~+&gt; "'Vacation Activity'")("Decision"), ("'Vacation Activity'" ~+&gt; "'Satisfaction'")("Deterministic"), ("'Weather'" ~+&gt; "'Satisfaction'")("Deterministic"), ("'Satisfaction'" ~+&gt; "'Recommend to a Friend'")("Probabilistic"))
+
+  import scalax.collection.io.json.descriptor.predefined.{LDi}
+  import scalax.collection.io.json.descriptor.StringNodeDescriptor
+  import scalax.collection.io.json._
+
+  val descriptor = new Descriptor[String](
+    defaultNodeDescriptor = StringNodeDescriptor,
+    defaultEdgeDescriptor = LDi.descriptor[String,String]("Edge")
+  )
+
+  val n = g.toJson(descriptor)
+  println(n)
+  import net.liftweb.json._
+  println(Printer.pretty(JsonAST.render(JsonParser.parse(n))))
+}</pre></div><p>To produce a JSON representation for a sample graph, run:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>[kozlov@Alexanders-MacBook-Pro chapter07(master)]$ sbt "run-main org.akozlov.chapter07.InfluenceDiagramToJson"</strong></span>
+<span class="strong"><strong>[info] Loading project definition from /Users/akozlov/Src/Book/ml-in-scala/chapter07/project</strong></span>
+<span class="strong"><strong>[info] Set current project to Working with Graph Algorithms (in build file:/Users/akozlov/Src/Book/ml-in-scala/chapter07/)</strong></span>
+<span class="strong"><strong>[info] Running org.akozlov.chapter07.InfluenceDiagramToJson </strong></span>
+<span class="strong"><strong>{</strong></span>
+<span class="strong"><strong>  "nodes":[["'Recommend to a Friend'"],["'Satisfaction'"],["'Vacation Activity'"],["'Weather Forecast'"],["'Weather'"]],</strong></span>
+<span class="strong"><strong>  "edges":[{</strong></span>
+<span class="strong"><strong>    "n1":"'Weather'",</strong></span>
+<span class="strong"><strong>    "n2":"'Weather Forecast'",</strong></span>
+<span class="strong"><strong>    "label":"Forecast"</strong></span>
+<span class="strong"><strong>  },{</strong></span>
+<span class="strong"><strong>    "n1":"'Vacation Activity'",</strong></span>
+<span class="strong"><strong>    "n2":"'Satisfaction'",</strong></span>
+<span class="strong"><strong>    "label":"Deterministic"</strong></span>
+<span class="strong"><strong>  },{</strong></span>
+<span class="strong"><strong>    "n1":"'Weather'",</strong></span>
+<span class="strong"><strong>    "n2":"'Satisfaction'",</strong></span>
+<span class="strong"><strong>    "label":"Deterministic"</strong></span>
+<span class="strong"><strong>  },{</strong></span>
+<span class="strong"><strong>    "n1":"'Weather Forecast'",</strong></span>
+<span class="strong"><strong>    "n2":"'Vacation Activity'",</strong></span>
+<span class="strong"><strong>    "label":"Decision"</strong></span>
+<span class="strong"><strong>  },{</strong></span>
+<span class="strong"><strong>    "n1":"'Satisfaction'",</strong></span>
+<span class="strong"><strong>    "n2":"'Recommend to a Friend'",</strong></span>
+<span class="strong"><strong>    "label":"Probabilistic"</strong></span>
+<span class="strong"><strong>  }]</strong></span>
+<span class="strong"><strong>}</strong></span>
+<span class="strong"><strong>[success] Total time: 1 s, completed May 1, 2016 1:55:30 PM</strong></span>
+</pre></div><p>For more<a id="id517" class="indexterm"/> complex structures, one might need to write custom <a id="id518" class="indexterm"/>descriptors, serializers, and deserializers (refer<a id="id519" class="indexterm"/> to <a class="ulink" href="http://www.scala-graph.org/api/json/api/#scalax.collection.io.json.package">http://www.scala-graph.org/api/json/api/#scalax.collection.io.json.package</a>).</p></div></div></div>
+
+
+
+  
+<div id="sbo-rt-content"><div class="section" title="GraphX"><div class="titlepage"><div><div><h1 class="title"><a id="ch07lvl1sec59"/>GraphX</h1></div></div></div><p>While graph<a id="id520" class="indexterm"/> for Scala may be considered a DSL for graph operations and querying, one should go to GraphX for scalability. GraphX is build on top of a powerful Spark framework. As an example of Spark/GraphX operations, I'll use the CMU Enron e-mail dataset (about 2 GB). The actual semantic analysis of the e-mail content is not going to be important to us until the next chapters. The dataset can be downloaded from the CMU site. It has e-mail from mailboxes of 150 users, primarily Enron managers, and about 517,401 e-mails between them. The e-mails may be considered as an indication of a relation (edge) between two people: Each email is an edge between a source (<code class="literal">From:</code>) and a destination (<code class="literal">To:</code>) vertices.</p><p>Since GraphX requires the data in RDD format, I'll have to do some preprocessing. Luckily, it is extremely easy with Scala—this is why Scala is the perfect language for semi-structured data. Here is the code:</p><div class="informalexample"><pre class="programlisting">package org.akozlov.chapter07
+
+import scala.io.Source
+
+import scala.util.hashing.{MurmurHash3 =&gt; Hash}
+import scala.util.matching.Regex
+
+import java.util.{Date =&gt; javaDateTime}
+
+import java.io.File
+import net.liftweb.json._
+import Extraction._
+import Serialization.{read, write}
+
+object EnronEmail {
+
+  val emailRe = """[a-zA-Z0-9_.+\-]+@enron.com""".r.unanchored
+
+  def emails(s: String) = {
+    for (email &lt;- emailRe findAllIn s) yield email
+  }
+
+  def hash(s: String) = {
+    java.lang.Integer.MAX_VALUE.toLong + Hash.stringHash(s)
+  }
+
+  val messageRe =
+    """(?:Message-ID:\s+)(&lt;[A-Za-z0-9_.+\-@]+&gt;)(?s)(?:.*?)(?m)
+      |(?:Date:\s+)(.*?)$(?:.*?)
+      |(?:From:\s+)([a-zA-Z0-9_.+\-]+@enron.com)(?:.*?)
+      |(?:Subject: )(.*?)$""".stripMargin.r.unanchored
+
+  case class Relation(from: String, fromId: Long, to: String, toId: Long, source: String, messageId: String, date: javaDateTime, subject: String)
+
+  implicit val formats = Serialization.formats(NoTypeHints)
+
+  def getFileTree(f: File): Stream[File] =
+    f #:: (if (f.isDirectory) f.listFiles().toStream.flatMap(getFileTree) else Stream.empty)
+
+  def main(args: Array[String]) {
+    getFileTree(new File(args(0))).par.map {
+      file =&gt; {
+        "\\.$".r findFirstIn file.getName match {
+          case Some(x) =&gt;
+          try {
+            val src = Source.fromFile(file, "us-ascii")
+            val message = try src.mkString finally src.close()
+            message match {
+              case messageRe(messageId, date, from , subject) =&gt;
+              val fromLower = from.toLowerCase
+              for (to &lt;- emails(message).filter(_ != fromLower).toList.distinct)
+              println(write(Relation(fromLower, hash(fromLower), to, hash(to), file.toString, messageId, new javaDateTime(date), subject)))
+                case _ =&gt;
+            }
+          } catch {
+            case e: Exception =&gt; System.err.println(e)
+          }
+          case _ =&gt;
+        }
+      }
+    }
+  }
+}</pre></div><p>First, we use <a id="id521" class="indexterm"/>the <code class="literal">MurmurHash3</code> class to generate node IDs, which are of type <code class="literal">Long</code>, as they are required for each node in GraphX. The <code class="literal">emailRe</code> and <code class="literal">messageRe</code> are used to match the file content to find the required content. Scala allows you to parallelize the programs without much work.</p><p>Note the <code class="literal">par</code> call on line 50, <code class="literal">getFileTree(new File(args(0))).par.map</code>. This will make the loop parallel. If processing the whole Enron dataset can take up to an hour even on 3 GHz processor, adding parallelization reduces it by about 8 minutes on a 32-core Intel Xeon E5-2630 2.4 GHz CPU Linux machine (it took 15 minutes on an Apple MacBook Pro with 2.3 GHz Intel Core i7).</p><p>Running the code will produce a set of JSON records that can be loaded into Spark (to run it, you'll need to<a id="id522" class="indexterm"/> put <span class="strong"><strong>joda-time</strong></span> and <span class="strong"><strong>lift-json</strong></span> library jars on the classpath), as<a id="id523" class="indexterm"/> follows:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong># (mkdir Enron; cd Enron; wget -O - http://www.cs.cmu.edu/~./enron/enron_mail_20150507.tgz | tar xzvf -)</strong></span>
+<span class="strong"><strong>...</strong></span>
+<span class="strong"><strong># sbt --error "run-main org.akozlov.chapter07.EnronEmail Enron/maildir" &gt; graph.json</strong></span>
+
+<span class="strong"><strong># spark --driver-memory 2g --executor-memory 2g</strong></span>
+<span class="strong"><strong>...</strong></span>
+<span class="strong"><strong>scala&gt; val df = sqlContext.read.json("graph.json")</strong></span>
+<span class="strong"><strong>df: org.apache.spark.sql.DataFrame = [[date: string, from: string, fromId: bigint, messageId: string, source: string, subject: string, to: string, toId: bigint]</strong></span>
+</pre></div><p>Nice! Spark was able to figure out the fields and types on it's own. If Spark was not able to parse all the records, one would have a <code class="literal">_corrupt_record</code> field containing the unparsed records (one of them is the <code class="literal">[success]</code> line at the end of the dataset, which can be filtered out <a id="id524" class="indexterm"/>with a <code class="literal">grep -Fv [success]</code>). You can see them with the following command:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>scala&gt; df.select("_corrupt_record").collect.foreach(println)</strong></span>
+<span class="strong"><strong>...</strong></span>
+</pre></div><p>The nodes (people) and edges (relations) datasets can be extracted with the following commands:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>scala&gt; import org.apache.spark._</strong></span>
+<span class="strong"><strong>...</strong></span>
+<span class="strong"><strong>scala&gt; import org.apache.spark.graphx._</strong></span>
+<span class="strong"><strong>...</strong></span>
+<span class="strong"><strong>scala&gt; import org.apache.spark.rdd.RDD</strong></span>
+<span class="strong"><strong>...</strong></span>
+<span class="strong"><strong>scala&gt; val people: RDD[(VertexId, String)] = df.select("fromId", "from").unionAll(df.select("toId", "to")).na.drop.distinct.map( x =&gt; (x.get(0).toString.toLong, x.get(1).toString))</strong></span>
+<span class="strong"><strong>people: org.apache.spark.rdd.RDD[(org.apache.spark.graphx.VertexId, String)] = MapPartitionsRDD[146] at map at &lt;console&gt;:28</strong></span>
+
+<span class="strong"><strong>scala&gt; val relationships = df.select("fromId", "toId", "messageId", "subject").na.drop.distinct.map( x =&gt; Edge(x.get(0).toString.toLong, x.get(1).toString.toLong, (x.get(2).toString, x.get(3).toString)))</strong></span>
+<span class="strong"><strong>relationships: org.apache.spark.rdd.RDD[org.apache.spark.graphx.Edge[(String, String)]] = MapPartitionsRDD[156] at map at &lt;console&gt;:28</strong></span>
+
+<span class="strong"><strong>scala&gt; val graph = Graph(people, relationships).cache</strong></span>
+<span class="strong"><strong>graph: org.apache.spark.graphx.Graph[String,(String, String)] = org.apache.spark.graphx.impl.GraphImpl@7b59aa7b</strong></span>
+</pre></div><div class="note" title="Note" style=""><div class="inner"><h3 class="title"><a id="note07"/>Note</h3><p>
+<span class="strong"><strong>Node IDs in GraphX</strong></span>
+</p><p>As we saw in Graph for Scala, specifying the edges is sufficient for defining the nodes and the graph. In Spark/GraphX, nodes need to be extracted explicitly, and each node needs to be associated with <span class="emphasis"><em>n</em></span> id of the <code class="literal">Long</code> type. While this potentially<a id="id525" class="indexterm"/> limits the flexibility and the number of unique nodes, it enhances the efficiency. In this particular example, generating node ID as a hash of the e-mail string was sufficient as no collisions were detected, but the generation of unique IDs is usually a hard problem to parallelize.</p></div></div><p>The first<a id="id526" class="indexterm"/> GraphX graph is ready!! It took a bit more work than Scala for Graph, but now it's totally ready for distributed processing. A few things to note: first, we needed to explicitly convert the fields to <code class="literal">Long</code> and <code class="literal">String</code> as the <code class="literal">Edge</code> constructor needed help in figuring out the types. Second, Spark might need to optimize the number of partitions (likely, it created too many):</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>scala&gt; graph.vertices.getNumPartitions</strong></span>
+<span class="strong"><strong>res1: Int = 200</strong></span>
+
+<span class="strong"><strong>scala&gt; graph.edges.getNumPartitions</strong></span>
+<span class="strong"><strong>res2: Int = 200</strong></span>
+</pre></div><p>To repartition, there are two calls: repartition and coalesce. The latter tries to avoid shuffle, as follows:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>scala&gt; val graph = Graph(people.coalesce(6), relationships.coalesce(6))</strong></span>
+<span class="strong"><strong>graph: org.apache.spark.graphx.Graph[String,(String, String)] = org.apache.spark.graphx.impl.GraphImpl@5dc7d016</strong></span>
+
+<span class="strong"><strong>scala&gt; graph.vertices.getNumPartitions</strong></span>
+<span class="strong"><strong>res10: Int = 6</strong></span>
+
+<span class="strong"><strong>scala&gt; graph.edges.getNumPartitions</strong></span>
+<span class="strong"><strong>res11: Int = 6</strong></span>
+</pre></div><p>However, this might limit parallelism if one performs computations over a large cluster. Finally, it's a good idea to use <code class="literal">cache</code> method that pins the data structure in memory:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>scala&gt; graph.cache</strong></span>
+<span class="strong"><strong>res12: org.apache.spark.graphx.Graph[String,(String, String)] = org.apache.spark.graphx.impl.GraphImpl@5dc7d016</strong></span>
+</pre></div><p>It took a few more commands to construct a graph in Spark, but four is not too bad. Let's compute some<a id="id527" class="indexterm"/> statistics (and show the power of Spark/GraphX, in the following table:</p><p>Computing basic statistics on Enron e-mail graph.</p><div class="informaltable"><table border="1"><colgroup><col style="text-align: left"/><col style="text-align: left"/><col style="text-align: left"/></colgroup><thead><tr><th style="text-align: left" valign="bottom">
+<p>Statistics</p>
+</th><th style="text-align: left" valign="bottom">
+<p>Spark command</p>
+</th><th style="text-align: left" valign="bottom">
+<p>Value for Enron</p>
+</th></tr></thead><tbody><tr><td style="text-align: left" valign="top">
+<p>Total # of relations (pairwise communications)</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">graph.numEdges</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>3,035,021</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>Number of e-mails (message IDs)</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">graph.edges.map( e =&gt; e.attr._1 ).distinct.count</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>371,135</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>Number of connected pairs</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">graph.edges.flatMap( e =&gt; List((e.srcId, e.dstId), (e.dstId, e.srcId))).distinct.count / 2</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>217,867</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>Number of one-way communications</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">graph.edges.flatMap( e =&gt; List((e.srcId, e.dstId), (e.dstId, e.srcId))).distinct.count - graph.edges.map( e =&gt; (e.srcId, e.dstId)).distinct.count</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>193,183</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>Number of distinct subject lines</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">graph.edges.map( e =&gt; e.attr._2 ).distinct.count</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>110,273</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>Total # of nodes</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">graph.numVertices</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>23,607</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>Number of destination-only nodes</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">graph. numVertices - graph.edges.map( e =&gt; e.srcId).distinct.count</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>17,264</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>Number of source-only nodes</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">graph. numVertices - graph.edges.map( e =&gt; e.dstId).distinct.count</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>611</p>
+</td></tr></tbody></table></div><div class="section" title="Who is getting e-mails?"><div class="titlepage"><div><div><h2 class="title"><a id="ch07lvl2sec35"/>Who is getting e-mails?</h2></div></div></div><p>One of the <a id="id528" class="indexterm"/>most straightforward ways to estimate people's importance<a id="id529" class="indexterm"/> in an organization is to look at the number of connections or the number of incoming and outgoing communicates. The GraphX graph has built-in <code class="literal">inDegrees</code> and <code class="literal">outDegrees</code> methods. To rank the emails with respect to the number of incoming emails, run:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>scala&gt; people.join(graph.inDegrees).sortBy(_._2._2, ascending=false).take(10).foreach(println)</strong></span>
+<span class="strong"><strong>(268746271,(richard.shapiro@enron.com,18523))</strong></span>
+<span class="strong"><strong>(1608171805,(steven.kean@enron.com,15867))</strong></span>
+<span class="strong"><strong>(1578042212,(jeff.dasovich@enron.com,13878))</strong></span>
+<span class="strong"><strong>(960683221,(tana.jones@enron.com,13717))</strong></span>
+<span class="strong"><strong>(3784547591,(james.steffes@enron.com,12980))</strong></span>
+<span class="strong"><strong>(1403062842,(sara.shackleton@enron.com,12082))</strong></span>
+<span class="strong"><strong>(2319161027,(mark.taylor@enron.com,12018))</strong></span>
+<span class="strong"><strong>(969899621,(mark.guzman@enron.com,10777))</strong></span>
+<span class="strong"><strong>(1362498694,(geir.solberg@enron.com,10296))</strong></span>
+<span class="strong"><strong>(4151996958,(ryan.slinger@enron.com,10160))</strong></span>
+</pre></div><p>To rank the emails with respect to the number of egressing emails, run:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>scala&gt; people.join(graph.outDegrees).sortBy(_._2._2, ascending=false).take(10).foreach(println)</strong></span>
+<span class="strong"><strong>(1578042212,(jeff.dasovich@enron.com,139786))</strong></span>
+<span class="strong"><strong>(2822677534,(veronica.espinoza@enron.com,106442))</strong></span>
+<span class="strong"><strong>(3035779314,(pete.davis@enron.com,94666))</strong></span>
+<span class="strong"><strong>(2346362132,(rhonda.denton@enron.com,90570))</strong></span>
+<span class="strong"><strong>(861605621,(cheryl.johnson@enron.com,74319))</strong></span>
+<span class="strong"><strong>(14078526,(susan.mara@enron.com,58797))</strong></span>
+<span class="strong"><strong>(2058972224,(jae.black@enron.com,58718))</strong></span>
+<span class="strong"><strong>(871077839,(ginger.dernehl@enron.com,57559))</strong></span>
+<span class="strong"><strong>(3852770211,(lorna.brennan@enron.com,50106))</strong></span>
+<span class="strong"><strong>(241175230,(mary.hain@enron.com,40425))</strong></span>
+<span class="strong"><strong>…</strong></span>
+</pre></div><p>Let's <a id="id530" class="indexterm"/>apply <a id="id531" class="indexterm"/>some more complex algorithms to the Enron dataset.</p></div><div class="section" title="Connected components"><div class="titlepage"><div><div><h2 class="title"><a id="ch07lvl2sec36"/>Connected components</h2></div></div></div><p>Connected components<a id="id532" class="indexterm"/> determine whether the graph is naturally<a id="id533" class="indexterm"/> partitioned into several parts. In the Enron relationship graph, this would mean that two or several groups communicate mostly between each other:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>scala&gt; val groups = org.apache.spark.graphx.lib.ConnectedComponents.run(graph).vertices.map(_._2).distinct.cache</strong></span>
+<span class="strong"><strong>groups: org.apache.spark.rdd.RDD[org.apache.spark.graphx.VertexId] = MapPartitionsRDD[2404] at distinct at &lt;console&gt;:34</strong></span>
+
+<span class="strong"><strong>scala&gt; groups.count</strong></span>
+<span class="strong"><strong>res106: Long = 18</strong></span>
+
+<span class="strong"><strong>scala&gt; people.join(groups.map( x =&gt; (x, x))).map(x =&gt; (x._1, x._2._1)).sortBy(_._1).collect.foreach(println)</strong></span>
+<span class="strong"><strong>(332133,laura.beneville@enron.com)</strong></span>
+<span class="strong"><strong>(81833994,gpg.me-q@enron.com)</strong></span>
+<span class="strong"><strong>(115247730,dl-ga-enron_debtor@enron.com)</strong></span>
+<span class="strong"><strong>(299810291,gina.peters@enron.com)</strong></span>
+<span class="strong"><strong>(718200627,techsupport.notices@enron.com)</strong></span>
+<span class="strong"><strong>(847455579,paul.de@enron.com)</strong></span>
+<span class="strong"><strong>(919241773,etc.survey@enron.com)</strong></span>
+<span class="strong"><strong>(1139366119,enron.global.services.-.us@enron.com)</strong></span>
+<span class="strong"><strong>(1156539970,shelley.ariel@enron.com)</strong></span>
+<span class="strong"><strong>(1265773423,dl-ga-all_ews_employees@enron.com)</strong></span>
+<span class="strong"><strong>(1493879606,chairman.ees@enron.com)</strong></span>
+<span class="strong"><strong>(1511379835,gary.allen.-.safety.specialist@enron.com)</strong></span>
+<span class="strong"><strong>(2114016426,executive.robert@enron.com)</strong></span>
+<span class="strong"><strong>(2200225669,ken.board@enron.com)</strong></span>
+<span class="strong"><strong>(2914568776,ge.americas@enron.com)</strong></span>
+<span class="strong"><strong>(2934799198,yowman@enron.com)</strong></span>
+<span class="strong"><strong>(2975592118,tech.notices@enron.com)</strong></span>
+<span class="strong"><strong>(3678996795,mail.user@enron.com)</strong></span>
+</pre></div><p>We see<a id="id534" class="indexterm"/> 18 groups. Each one of the groups can be counted and <a id="id535" class="indexterm"/>extracted by filtering the ID. For instance, the group associated with <code class="email">&lt;<a class="email" href="mailto:etc.survey@enron.com">etc.survey@enron.com</a>&gt;</code> can be found by running a SQL query on DataFrame:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>scala&gt; df.filter("fromId = 919241773 or toId = 919241773").select("date","from","to","subject","source").collect.foreach(println)</strong></span>
+<span class="strong"><strong>[2000-09-19T18:40:00.000Z,survey.test@enron.com,etc.survey@enron.com,NO ACTION REQUIRED - TEST,Enron/maildir/dasovich-j/all_documents/1567.]</strong></span>
+<span class="strong"><strong>[2000-09-19T18:40:00.000Z,survey.test@enron.com,etc.survey@enron.com,NO ACTION REQUIRED - TEST,Enron/maildir/dasovich-j/notes_inbox/504.]</strong></span>
+</pre></div><p>This group is based on a single e-mail sent on September 19, 2000, from <code class="email">&lt;<a class="email" href="mailto:survey.test@enron.com">survey.test@enron.com</a>&gt;</code> to <code class="email">&lt;<a class="email" href="mailto:etc.survey@enron">etc.survey@enron</a>&gt;</code>. The e-mail is listed twice, only because it ended up in two different folders (and has two distinct message IDs). Only the first group, the largest subgraph, contains more than two e-mail addresses in the organization.</p></div><div class="section" title="Triangle counting"><div class="titlepage"><div><div><h2 class="title"><a id="ch07lvl2sec37"/>Triangle counting</h2></div></div></div><p>The <a id="id536" class="indexterm"/>triangle counting algorithm is relatively straightforward<a id="id537" class="indexterm"/> and can be computed in the following three steps:</p><div class="orderedlist"><ol class="orderedlist arabic"><li class="listitem">Compute the set of neighbors for each vertex.</li><li class="listitem">For each edge, compute the intersection of the sets and send the count to both vertices.</li><li class="listitem">Compute the sum at each vertex and divide by two, as each triangle is counted twice.</li></ol></div><p>We need to convert the multigraph to an undirected graph with <code class="literal">srcId &lt; dstId</code>, which is a precondition for the algorithm:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>scala&gt; val unedges = graph.edges.map(e =&gt; if (e.srcId &lt; e.dstId) (e.srcId, e.dstId) else (e.dstId, e.srcId)).map( x =&gt; Edge(x._1, x._2, 1)).cache</strong></span>
+<span class="strong"><strong>unedges: org.apache.spark.rdd.RDD[org.apache.spark.graphx.Edge[Int]] = MapPartitionsRDD[87] at map at &lt;console&gt;:48</strong></span>
+
+<span class="strong"><strong>scala&gt; val ungraph = Graph(people, unedges).partitionBy(org.apache.spark.graphx.PartitionStrategy.EdgePartition1D, 10).cache</strong></span>
+<span class="strong"><strong>ungraph: org.apache.spark.graphx.Graph[String,Int] = org.apache.spark.graphx.impl.GraphImpl@77274fff</strong></span>
+
+<span class="strong"><strong>scala&gt; val triangles = org.apache.spark.graphx.lib.TriangleCount.run(ungraph).cache</strong></span>
+<span class="strong"><strong>triangles: org.apache.spark.graphx.Graph[Int,Int] = org.apache.spark.graphx.impl.GraphImpl@6aec6da1</strong></span>
+
+<span class="strong"><strong>scala&gt; people.join(triangles.vertices).map(t =&gt; (t._2._2,t._2._1)).sortBy(_._1, ascending=false).take(10).foreach(println)</strong></span>
+<span class="strong"><strong>(31761,sally.beck@enron.com)</strong></span>
+<span class="strong"><strong>(24101,louise.kitchen@enron.com)</strong></span>
+<span class="strong"><strong>(23522,david.forster@enron.com)</strong></span>
+<span class="strong"><strong>(21694,kenneth.lay@enron.com)</strong></span>
+<span class="strong"><strong>(20847,john.lavorato@enron.com)</strong></span>
+<span class="strong"><strong>(18460,david.oxley@enron.com)</strong></span>
+<span class="strong"><strong>(17951,tammie.schoppe@enron.com)</strong></span>
+<span class="strong"><strong>(16929,steven.kean@enron.com)</strong></span>
+<span class="strong"><strong>(16390,tana.jones@enron.com)</strong></span>
+<span class="strong"><strong>(16197,julie.clyatt@enron.com)</strong></span>
+</pre></div><p>While there<a id="id538" class="indexterm"/> is no direct relationship between the<a id="id539" class="indexterm"/> triangle count and the importance of people in the organization, the people with higher triangle count arguably are more social—even though a clique or a strongly connected component count might be a better measure.</p></div><div class="section" title="Strongly connected components"><div class="titlepage"><div><div><h2 class="title"><a id="ch07lvl2sec38"/>Strongly connected components</h2></div></div></div><p>In the <a id="id540" class="indexterm"/>mathematical theory of directed graphs, a subgraph is<a id="id541" class="indexterm"/> said to be strongly connected if every vertex is reachable from every other vertex. It could happen that the whole graph is just one strongly connected component, but on the other end of the spectrum, each vertex could be its own connected component.</p><p>If you contract each connected component to a single vertex, you get a new directed graph that has a property to be without cycles—acyclic.</p><p>The algorithm for SCC detection is already built into GraphX:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>scala&gt; val components = org.apache.spark.graphx.lib.StronglyConnectedComponents.run(graph, 100).cache</strong></span>
+<span class="strong"><strong>components: org.apache.spark.graphx.Graph[org.apache.spark.graphx.VertexId,(String, String)] = org.apache.spark.graphx.impl.GraphImpl@55913bc7</strong></span>
+
+<span class="strong"><strong>scala&gt; components.vertices.map(_._2).distinct.count</strong></span>
+<span class="strong"><strong>res2: Long = 17980</strong></span>
+
+<span class="strong"><strong>scala&gt; people.join(components.vertices.map(_._2).distinct.map( x =&gt; (x, x))).map(x =&gt; (x._1, x._2._1)).sortBy(_._1).collect.foreach(println)</strong></span>
+<span class="strong"><strong>(332133,laura.beneville@enron.com)                                              </strong></span>
+<span class="strong"><strong>(466265,medmonds@enron.com)</strong></span>
+<span class="strong"><strong>(471258,.jane@enron.com)</strong></span>
+<span class="strong"><strong>(497810,.kimberly@enron.com)</strong></span>
+<span class="strong"><strong>(507806,aleck.dadson@enron.com)</strong></span>
+<span class="strong"><strong>(639614,j..bonin@enron.com)</strong></span>
+<span class="strong"><strong>(896860,imceanotes-hbcamp+40aep+2ecom+40enron@enron.com)</strong></span>
+<span class="strong"><strong>(1196652,enron.legal@enron.com)</strong></span>
+<span class="strong"><strong>(1240743,thi.ly@enron.com)</strong></span>
+<span class="strong"><strong>(1480469,ofdb12a77a.a6162183-on86256988.005b6308@enron.com)</strong></span>
+<span class="strong"><strong>(1818533,fran.i.mayes@enron.com)</strong></span>
+<span class="strong"><strong>(2337461,michael.marryott@enron.com)</strong></span>
+<span class="strong"><strong>(2918577,houston.resolution.center@enron.com)</strong></span>
+</pre></div><p>There <a id="id542" class="indexterm"/>are 18,200 strongly connected components <a id="id543" class="indexterm"/>with only an average 23,787/18,200 = 1.3 users per group.</p></div><div class="section" title="PageRank"><div class="titlepage"><div><div><h2 class="title"><a id="ch07lvl2sec39"/>PageRank</h2></div></div></div><p>The <a id="id544" class="indexterm"/>PageRank algorithm gives us an estimate<a id="id545" class="indexterm"/> of how important a person by analysing the links, which are the emails in this case.  For example, let's run PageRank on Enron email graph:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>scala&gt; val ranks = graph.pageRank(0.001).vertices</strong></span>
+<span class="strong"><strong>ranks: org.apache.spark.graphx.VertexRDD[Double] = VertexRDDImpl[955] at RDD at VertexRDD.scala:57</strong></span>
+
+<span class="strong"><strong>scala&gt; people.join(ranks).map(t =&gt; (t._2._2,t._2._1)).sortBy(_._1, ascending=false).take(10).foreach(println)</strong></span>
+
+<span class="strong"><strong>scala&gt; val ranks = graph.pageRank(0.001).vertices</strong></span>
+<span class="strong"><strong>ranks: org.apache.spark.graphx.VertexRDD[Double] = VertexRDDImpl[955] at RDD at VertexRDD.scala:57</strong></span>
+
+<span class="strong"><strong>scala&gt; people.join(ranks).map(t =&gt; (t._2._2,t._2._1)).sortBy(_._1, ascending=false).take(10).foreach(println)</strong></span>
+<span class="strong"><strong>(32.073722548483325,tana.jones@enron.com)</strong></span>
+<span class="strong"><strong>(29.086568868043248,sara.shackleton@enron.com)</strong></span>
+<span class="strong"><strong>(28.14656912897315,louise.kitchen@enron.com)</strong></span>
+<span class="strong"><strong>(26.57894933459292,vince.kaminski@enron.com)</strong></span>
+<span class="strong"><strong>(25.865486865014493,sally.beck@enron.com)</strong></span>
+<span class="strong"><strong>(23.86746232662471,john.lavorato@enron.com)</strong></span>
+<span class="strong"><strong>(22.489814482022275,jeff.skilling@enron.com)</strong></span>
+<span class="strong"><strong>(21.968039409295585,mark.taylor@enron.com)</strong></span>
+<span class="strong"><strong>(20.903053536275547,kenneth.lay@enron.com)</strong></span>
+<span class="strong"><strong>(20.39124651779771,gerald.nemec@enron.com)</strong></span>
+</pre></div><p>Ostensibly, these are the go-to people. PageRank tends to emphasize the incoming edges, and Tana Jones returns to the top of the list compared to the 9th place in the triangle counting.</p></div><div class="section" title="SVD++"><div class="titlepage"><div><div><h2 class="title"><a id="ch07lvl2sec40"/>SVD++</h2></div></div></div><p>SVD++ is a<a id="id546" class="indexterm"/> recommendation engine algorithm, developed specifically for<a id="id547" class="indexterm"/> Netflix competition by Yahuda Koren and team in 2008—the original paper is still out there in the public domain and can be Googled as <code class="literal">kdd08koren.pdf</code>. The specific implementation comes from the .NET <span class="emphasis"><em>MyMediaLite</em></span> library<a id="id548" class="indexterm"/> by ZenoGarther (<a class="ulink" href="https://github.com/zenogantner/MyMediaLite">https://github.com/zenogantner/MyMediaLite</a>), who granted Apache 2 license to the Apache Foundation. Let's assume I have a set of users (on the left) and items (on the right):</p><div class="mediaobject"><img src="Images/B04935_07_01.jpg" alt="SVD++" width="300" height="463"/><div class="caption"><p>Figure 07-1. A graphical representation of a recommendation problem as a bipartite graph.</p></div></div><p>The preceding diagram is a graphical representation of the recommendation problem. The nodes on the left represent users. The nodes on the right represent items. User <span class="strong"><strong>1</strong></span> recommends items <span class="strong"><strong>A</strong></span> and <span class="strong"><strong>C</strong></span>, while users <span class="strong"><strong>2</strong></span> and <span class="strong"><strong>3</strong></span> recommend only a single item <span class="strong"><strong>A</strong></span>. The rest of the edges are missing. The common question is to find recommendation ranking of the rest of the<a id="id549" class="indexterm"/> items, the edges may also have a weight or recommendation <a id="id550" class="indexterm"/>strength attached to them. The graph is usually sparse. Such graph is also often called bipartite, as the edges only go from one set of nodes to another set of nodes (the user does not recommend another user).</p><p>For the recommendation engine, we typically need two types of nodes—users and items. The recommendations are based on the rating matrix of (user, item, and rating) tuples. One of the implementation of the recommendation algorithm is based on <span class="strong"><strong>Singular Value Decomposition</strong></span> (<span class="strong"><strong>SVD</strong></span>) of the preceding matrix. The final scoring has four components: the baseline, which<a id="id551" class="indexterm"/> is the sum of average for the whole matrix, average for the users, and average for the items, as follows:</p><div class="mediaobject"><img src="Images/B04935_07_01F.jpg" alt="SVD++" width="135" height="32"/></div><p>Here, the <span class="inlinemediaobject"><img src="Images/B04935_07_02F.jpg" alt="SVD++" width="20" height="22"/></span>, <span class="inlinemediaobject"><img src="Images/B04935_07_03F.jpg" alt="SVD++" width="22" height="30"/></span>, and <span class="inlinemediaobject"><img src="Images/B04935_07_04F.jpg" alt="SVD++" width="18" height="30"/></span> can be understood as the averages for the whole population, user (among all user recommendations), and item (among all the users). The final part is the Cartesian product of two rows:</p><div class="mediaobject"><img src="Images/B04935_07_05F.jpg" alt="SVD++" width="200" height="35"/></div><p>The <a id="id552" class="indexterm"/>problem is <a id="id553" class="indexterm"/>posed as a minimization problem (refer to <a class="link" href="ch04.xhtml" title="Chapter 4. Supervised and Unsupervised Learning">Chapter 4</a>, <span class="emphasis"><em>Supervised and Unsupervised Learning</em></span>):</p><div class="mediaobject"><img src="Images/B04935_07_06F.jpg" alt="SVD++" width="482" height="52"/></div><p>Here, <span class="inlinemediaobject"><img src="Images/B04935_07_07F.jpg" alt="SVD++" width="22" height="30"/></span> is a regularization coefficient also discussed in <a class="link" href="ch04.xhtml" title="Chapter 4. Supervised and Unsupervised Learning">Chapter 4</a>, <span class="emphasis"><em>Supervised and Unsupervised Learning</em></span>. So, each user is associated with a set of numbers (<span class="inlinemediaobject"><img src="Images/B04935_07_08F.jpg" alt="SVD++" width="67" height="33"/></span>, and each item with <span class="inlinemediaobject"><img src="Images/B04935_07_09F.jpg" alt="SVD++" width="18" height="30"/></span>, <span class="inlinemediaobject"><img src="Images/B04935_07_10F.jpg" alt="SVD++" width="20" height="30"/></span>. In this particlar implementation, the optimal coefficients are found by gradient descent. This is the basic of SVD optimization. In linear algebra, SVD takes an arbitrary <span class="inlinemediaobject"><img src="Images/B04935_07_11F.jpg" alt="SVD++" width="47" height="18"/></span> matrix <span class="emphasis"><em>A</em></span> and represents it as a product of an orthogonal <span class="inlinemediaobject"><img src="Images/B04935_07_11F.jpg" alt="SVD++" width="47" height="18"/></span> matrix <span class="emphasis"><em>U</em></span>, a diagonal <span class="inlinemediaobject"><img src="Images/B04935_07_11F.jpg" alt="SVD++" width="47" height="18"/></span> matrix <span class="inlinemediaobject"><img src="Images/B04935_07_12F.jpg" alt="SVD++" width="25" height="25"/></span>, and a <span class="inlinemediaobject"><img src="Images/B04935_07_11F.jpg" alt="SVD++" width="47" height="18"/></span> unitary matrix <span class="emphasis"><em>V</em></span>, for example, the columns are mutually orthogonal. Arguably, if one takes the largest <span class="inlinemediaobject"><img src="Images/B04935_07_13F.jpg" alt="SVD++" width="15" height="17"/></span> entries of the <span class="inlinemediaobject"><img src="Images/B04935_07_12F.jpg" alt="SVD++" width="25" height="25"/></span> matrix, the product is reduced to the product of a very tall <span class="inlinemediaobject"><img src="Images/B04935_07_14F.jpg" alt="SVD++" width="45" height="18"/></span> matrix and a wide <span class="inlinemediaobject"><img src="Images/B04935_07_15F.jpg" alt="SVD++" width="42" height="18"/></span> matric, where <span class="inlinemediaobject"><img src="Images/B04935_07_13F.jpg" alt="SVD++" width="15" height="17"/></span> is called the rank of decomposition. If the remaining values are small, the new <span class="inlinemediaobject"><img src="Images/B04935_07_17F.jpg" alt="SVD++" width="88" height="33"/></span> numbers approximate the original <span class="inlinemediaobject"><img src="Images/B04935_07_11F.jpg" alt="SVD++" width="47" height="18"/></span> numbers <a id="id554" class="indexterm"/>for the relation, <span class="emphasis"><em>A</em></span>. If <span class="emphasis"><em>m</em></span> and <span class="emphasis"><em>n</em></span> are large to start with, and in practical<a id="id555" class="indexterm"/> online shopping situations, <span class="emphasis"><em>m</em></span> is the items and can be in hundreds of thousands, and <span class="emphasis"><em>n</em></span> is the users and can be hundreds of millions, the saving can be substantial. For example, for <span class="emphasis"><em>r=10</em></span>, <span class="emphasis"><em>m=100,000</em></span>, and <span class="emphasis"><em>n=100,000,000</em></span>, the savings are as follows:</p><div class="mediaobject"><img src="Images/B04935_07_18F.jpg" alt="SVD++" width="355" height="58"/></div><p>SVD can also be viewed as PCA for matrices with <span class="inlinemediaobject"><img src="Images/B04935_07_19F.jpg" alt="SVD++" width="52" height="20"/></span>. In the Enron case, we can treat senders as <a id="id556" class="indexterm"/>users <a id="id557" class="indexterm"/>and recipients as items (we'll need to reassign the node IDs), as follows:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>scala&gt; val rgraph = graph.partitionBy(org.apache.spark.graphx.PartitionStrategy.EdgePartition1D, 10).mapEdges(e =&gt; 1).groupEdges(_+_).cache</strong></span>
+<span class="strong"><strong>rgraph: org.apache.spark.graphx.Graph[String,Int] = org.apache.spark.graphx.impl.GraphImpl@2c1a48d6</strong></span>
+
+<span class="strong"><strong>scala&gt; val redges = rgraph.edges.map( e =&gt; Edge(-e.srcId, e.dstId, Math.log(e.attr.toDouble)) ).cache</strong></span>
+<span class="strong"><strong>redges: org.apache.spark.rdd.RDD[org.apache.spark.graphx.Edge[Double]] = MapPartitionsRDD[57] at map at &lt;console&gt;:36</strong></span>
+
+<span class="strong"><strong>scala&gt; import org.apache.spark.graphx.lib.SVDPlusPlus</strong></span>
+<span class="strong"><strong>import org.apache.spark.graphx.lib.SVDPlusPlus</strong></span>
+
+<span class="strong"><strong>scala&gt; implicit val conf = new SVDPlusPlus.Conf(10, 50, 0.0, 10.0, 0.007, 0.007, 0.005, 0.015)</strong></span>
+<span class="strong"><strong>conf: org.apache.spark.graphx.lib.SVDPlusPlus.Conf = org.apache.spark.graphx.lib.SVDPlusPlus$Conf@15cdc117</strong></span>
+
+<span class="strong"><strong>scala&gt; val (svd, mu) = SVDPlusPlus.run(redges, conf)</strong></span>
+<span class="strong"><strong>svd: org.apache.spark.graphx.Graph[(Array[Double], Array[Double], Double, Double),Double] = org.apache.spark.graphx.impl.GraphImpl@3050363d</strong></span>
+<span class="strong"><strong>mu: Double = 1.3773578970633769</strong></span>
+
+<span class="strong"><strong>scala&gt; val svdRanks = svd.vertices.filter(_._1 &gt; 0).map(x =&gt; (x._2._3, x._1))</strong></span>
+<span class="strong"><strong>svdRanks: org.apache.spark.rdd.RDD[(Double, org.apache.spark.graphx.VertexId)] = MapPartitionsRDD[1517] at map at &lt;console&gt;:31</strong></span>
+
+<span class="strong"><strong>scala&gt; val svdRanks = svd.vertices.filter(_._1 &gt; 0).map(x =&gt; (x._1, x._2._3))</strong></span>
+<span class="strong"><strong>svdRanks: org.apache.spark.rdd.RDD[(org.apache.spark.graphx.VertexId, Double)] = MapPartitionsRDD[1520] at map at &lt;console&gt;:31</strong></span>
+
+<span class="strong"><strong>scala&gt; people.join(svdRanks).sortBy(_._2._2, ascending=false).map(x =&gt; (x._2._2, x._2._1)).take(10).foreach(println)</strong></span>
+<span class="strong"><strong>(8.864218804309887,jbryson@enron.com)</strong></span>
+<span class="strong"><strong>(5.935146713012661,dl-ga-all_enron_worldwide2@enron.com)</strong></span>
+<span class="strong"><strong>(5.740242927715701,houston.report@enron.com)</strong></span>
+<span class="strong"><strong>(5.441934324464593,a478079f-55e1f3b0-862566fa-612229@enron.com)</strong></span>
+<span class="strong"><strong>(4.910272928389445,pchoi2@enron.com)</strong></span>
+<span class="strong"><strong>(4.701529779800544,dl-ga-all_enron_worldwide1@enron.com)</strong></span>
+<span class="strong"><strong>(4.4046392452058045,eligible.employees@enron.com)</strong></span>
+<span class="strong"><strong>(4.374738019256556,all_ena_egm_eim@enron.com)</strong></span>
+<span class="strong"><strong>(4.303078586979311,dl-ga-all_enron_north_america@enron.com)</strong></span>
+<span class="strong"><strong>(3.8295412053860867,the.mailout@enron.com)</strong></span>
+</pre></div><p>The <code class="literal">svdRanks</code> is the user-part of the <span class="inlinemediaobject"><img src="Images/B04935_07_20F.jpg" alt="SVD++" width="50" height="30"/></span> prediction. The distribution lists take a priority as<a id="id558" class="indexterm"/> this is usually used for mass e-mailing. To get the user-specific part, we<a id="id559" class="indexterm"/> need to provide the user ID:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>scala&gt; import com.github.fommil.netlib.BLAS.{getInstance =&gt; blas}</strong></span>
+
+<span class="strong"><strong>scala&gt; def topN(uid: Long, num: Int) = {</strong></span>
+<span class="strong"><strong>     |    val usr = svd.vertices.filter(uid == -_._1).collect()(0)._2</strong></span>
+<span class="strong"><strong>     |    val recs = svd.vertices.filter(_._1 &gt; 0).map( v =&gt; (v._1, mu + usr._3 + v._2._3 + blas.ddot(usr._2.length, v._2._1, 1, usr._2, 1)))</strong></span>
+<span class="strong"><strong>     |    people.join(recs).sortBy(_._2._2, ascending=false).map(x =&gt; (x._2._2, x._2._1)).take(num)</strong></span>
+<span class="strong"><strong>     | }</strong></span>
+<span class="strong"><strong>topN: (uid: Long, num: Int)Array[(Double, String)]</strong></span>
+
+<span class="strong"><strong>scala&gt; def top5(x: Long) : Array[(Double, String)] = topN(x, 5)</strong></span>
+<span class="strong"><strong>top5: (x: Long)Array[(Double, String)]</strong></span>
+
+<span class="strong"><strong>scala&gt; people.join(graph.inDegrees).sortBy(_._2._2, ascending=false).map(x =&gt; (x._1, x._2._1)).take(10).toList.map(t =&gt; (t._2, top5(t._1).toList)).foreach(println)</strong></span>
+<span class="strong"><strong>(richard.shapiro@enron.com,List((4.866184418005094E66,anne.bertino@enron.com), (3.9246829664352734E66,kgustafs@enron.com), (3.9246829664352734E66,gweiss@enron.com), (3.871029763863491E66,hill@enron.com), (3.743135924382312E66,fraser@enron.com)))</strong></span>
+<span class="strong"><strong>(steven.kean@enron.com,List((2.445163626935533E66,anne.bertino@enron.com), (1.9584692804232504E66,hill@enron.com), (1.9105427465629028E66,kgustafs@enron.com), (1.9105427465629028E66,gweiss@enron.com), (1.8931872324048717E66,fraser@enron.com)))</strong></span>
+<span class="strong"><strong>(jeff.dasovich@enron.com,List((2.8924566115596135E66,anne.bertino@enron.com), (2.3157345904446663E66,hill@enron.com), (2.2646318970030287E66,gweiss@enron.com), (2.2646318970030287E66,kgustafs@enron.com), (2.2385865127706285E66,fraser@enron.com)))</strong></span>
+<span class="strong"><strong>(tana.jones@enron.com,List((6.1758464471309754E66,elizabeth.sager@enron.com), (5.279291610047078E66,tana.jones@enron.com), (4.967589820856654E66,tim.belden@enron.com), (4.909283344915057E66,jeff.dasovich@enron.com), (4.869177440115682E66,mark.taylor@enron.com)))</strong></span>
+<span class="strong"><strong>(james.steffes@enron.com,List((5.7702834706832735E66,anne.bertino@enron.com), (4.703038082326939E66,gweiss@enron.com), (4.703038082326939E66,kgustafs@enron.com), (4.579565962089777E66,hill@enron.com), (4.4298763869135494E66,george@enron.com)))</strong></span>
+<span class="strong"><strong>(sara.shackleton@enron.com,List((9.198688613290757E67,louise.kitchen@enron.com), (8.078107057848099E67,john.lavorato@enron.com), (6.922806078209984E67,greg.whalley@enron.com), (6.787266892881456E67,elizabeth.sager@enron.com), (6.420473603137515E67,sally.beck@enron.com)))</strong></span>
+<span class="strong"><strong>(mark.taylor@enron.com,List((1.302856119148208E66,anne.bertino@enron.com), (1.0678968544568682E66,hill@enron.com), (1.031255083546722E66,fraser@enron.com), (1.009319696608474E66,george@enron.com), (9.901391892701356E65,brad@enron.com)))</strong></span>
+<span class="strong"><strong>(mark.guzman@enron.com,List((9.770393472845669E65,anne.bertino@enron.com), (7.97370292724488E65,kgustafs@enron.com), (7.97370292724488E65,gweiss@enron.com), (7.751983820970696E65,hill@enron.com), (7.500175024539423E65,george@enron.com)))</strong></span>
+<span class="strong"><strong>(geir.solberg@enron.com,List((6.856103529420811E65,anne.bertino@enron.com), (5.611272903720188E65,gweiss@enron.com), (5.611272903720188E65,kgustafs@enron.com), (5.436280144720843E65,hill@enron.com), (5.2621103015001885E65,george@enron.com)))</strong></span>
+<span class="strong"><strong>(ryan.slinger@enron.com,List((5.0579114162531735E65,anne.bertino@enron.com), (4.136838933824579E65,kgustafs@enron.com), (4.136838933824579E65,gweiss@enron.com), (4.0110663808847004E65,hill@enron.com), (3.8821438267917902E65,george@enron.com)))</strong></span>
+
+<span class="strong"><strong>scala&gt; people.join(graph.outDegrees).sortBy(_._2._2, ascending=false).map(x =&gt; (x._1, x._2._1)).take(10).toList.map(t =&gt; (t._2, top5(t._1).toList)).foreach(println)</strong></span>
+<span class="strong"><strong>(jeff.dasovich@enron.com,List((2.8924566115596135E66,anne.bertino@enron.com), (2.3157345904446663E66,hill@enron.com), (2.2646318970030287E66,gweiss@enron.com), (2.2646318970030287E66,kgustafs@enron.com), (2.2385865127706285E66,fraser@enron.com)))</strong></span>
+<span class="strong"><strong>(veronica.espinoza@enron.com,List((3.135142195254243E65,gweiss@enron.com), (3.135142195254243E65,kgustafs@enron.com), (2.773512892785554E65,anne.bertino@enron.com), (2.350799070225962E65,marcia.a.linton@enron.com), (2.2055288158758267E65,robert@enron.com)))</strong></span>
+<span class="strong"><strong>(pete.davis@enron.com,List((5.773492048248794E66,louise.kitchen@enron.com), (5.067434612038159E66,john.lavorato@enron.com), (4.389028076992449E66,greg.whalley@enron.com), (4.1791711984241975E66,sally.beck@enron.com), (4.009544764149938E66,elizabeth.sager@enron.com)))</strong></span>
+<span class="strong"><strong>(rhonda.denton@enron.com,List((2.834710591578977E68,louise.kitchen@enron.com), (2.488253676819922E68,john.lavorato@enron.com), (2.1516048969715738E68,greg.whalley@enron.com), (2.0405329247770104E68,sally.beck@enron.com), (1.9877213034021861E68,elizabeth.sager@enron.com)))</strong></span>
+<span class="strong"><strong>(cheryl.johnson@enron.com,List((3.453167402163105E64,mary.dix@enron.com), (3.208849221485621E64,theresa.byrne@enron.com), (3.208849221485621E64,sandy.olofson@enron.com), (3.0374270093157086E64,hill@enron.com), (2.886581252384442E64,fraser@enron.com)))</strong></span>
+<span class="strong"><strong>(susan.mara@enron.com,List((5.1729089729525785E66,anne.bertino@enron.com), (4.220843848723133E66,kgustafs@enron.com), (4.220843848723133E66,gweiss@enron.com), (4.1044435240204605E66,hill@enron.com), (3.9709951893268635E66,george@enron.com)))</strong></span>
+<span class="strong"><strong>(jae.black@enron.com,List((2.513139130001457E65,anne.bertino@enron.com), (2.1037756300035247E65,hill@enron.com), (2.0297519350719265E65,fraser@enron.com), (1.9587139280519927E65,george@enron.com), (1.947164483486155E65,brad@enron.com)))</strong></span>
+<span class="strong"><strong>(ginger.dernehl@enron.com,List((4.516267307013845E66,anne.bertino@enron.com), (3.653408921875843E66,gweiss@enron.com), (3.653408921875843E66,kgustafs@enron.com), (3.590298037045689E66,hill@enron.com), (3.471781765250177E66,fraser@enron.com)))</strong></span>
+<span class="strong"><strong>(lorna.brennan@enron.com,List((2.0719309635087482E66,anne.bertino@enron.com), (1.732651408857978E66,kgustafs@enron.com), (1.732651408857978E66,gweiss@enron.com), (1.6348480059915056E66,hill@enron.com), (1.5880693846486309E66,george@enron.com)))</strong></span>
+<span class="strong"><strong>(mary.hain@enron.com,List((5.596589595417286E66,anne.bertino@enron.com), (4.559474243930487E66,kgustafs@enron.com), (4.559474243930487E66,gweiss@enron.com), (4.4421474044331</strong></span>
+</pre></div><p>Here, we <a id="id560" class="indexterm"/>computed <a id="id561" class="indexterm"/>the top five recommended e-mail-to list for top in-degree and out-degree users.</p><p>SVD has only 159 lines of code in Scala and can be the basis for some further improvements. SVD++ includes<a id="id562" class="indexterm"/> a part based on implicit user feedback and item similarity <a id="id563" class="indexterm"/>information. Finally, the Netflix winning solution had also taken into consideration the fact that user preferences are time-dependent, but this part has not been implemented in GraphX yet.</p></div></div></div>
+
+
+
+  
+<div id="sbo-rt-content"><div class="section" title="Summary"><div class="titlepage"><div><div><h1 class="title"><a id="ch07lvl1sec60"/>Summary</h1></div></div></div><p>While one can easily create their own data structures for graph problems, Scala's support for graphs comes from both semantic layer—Graph for Scala is effectively a convenient, interactive, and expressive language for working with graphs—and scalability via Spark and distributed computing. I hope that some of the material exposed in this chapter will be useful for implementing algorithms on top of Scala, Spark, and GraphX. It is worth mentioning that bot libraries are still under active development.</p><p>In the next chapter, we'll step down from from our flight in the the skies and look at Scala integration with traditional data analysis frameworks such as statistical language R and Python, which are often used for data munching. Later, in <a class="link" href="ch09.xhtml" title="Chapter 9. NLP in Scala">Chapter 9</a>, <span class="emphasis"><em>NLP in Scala</em></span>. I'll look at NLP Scala tools, which leverage complex data structures extensively.</p></div></div>
+
+
+
+  </body></html>

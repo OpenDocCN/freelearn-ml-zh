@@ -1,0 +1,628 @@
+<html><head></head><body><div class="chapter" title="Chapter&#xA0;8.&#xA0;Querying Structured Data in a Natural Way"><div class="titlepage"><div><div><h1 class="title"><a id="ch08"/>Chapter 8. Querying Structured Data in a Natural Way</h1></div></div></div><p>In the previous chapter, we learned how we can use the current context to extend our knowledge on a certain topic. Throughout this chapter, we will continue discussing about the knowledge APIs. More specifically, we will learn how to explore relationships between academic papers and journals. We will see how we can interpret natural language queries, and retrieve query expressions. Using these expressions, we will learn how to find academic entities. We will then focus more on how to set up this kind of service on your own. At the end of this chapter, we will look at QnA Maker to see how we can create FAQ services from existing content.</p><p>This chapter will cover the following topics:</p><div class="itemizedlist"><ul class="itemizedlist"><li class="listitem" style="list-style-type: disc">Interpreting natural-language user queries using Project Academic Knowledge</li><li class="listitem" style="list-style-type: disc">Assisting the user with queries using autocomplete features</li><li class="listitem" style="list-style-type: disc">Using autocomplete queries to retrieve academic entities</li><li class="listitem" style="list-style-type: disc">Calculating the distribution of academic entities from queries</li><li class="listitem" style="list-style-type: disc">Hosting the Project Knowledge Exploration Service with your own schema</li><li class="listitem" style="list-style-type: disc">Creating an FAQ service from existing content using QnA Maker</li></ul></div><div class="section" title="Tapping into academic content using the academic API"><div class="titlepage"><div><div><h1 class="title"><a id="ch08lvl1sec42"/>Tapping into academic content using the academic API</h1></div></div></div><p>
+<span class="strong"><strong>Microsoft Academic Graph</strong></span> (<span class="strong"><strong>MAG</strong></span>) is<a class="indexterm" id="id419"/> a knowledge base for web-scale, heterogeneous entity graphs. Entities model scholarly activities, and contain information such as the field of study, author(s), institution, and more.</p><p>Data contained in MAG is indexed from the Bing web index. As this is continuously indexed, the data is always up to date.</p><p>Using the Project Academic Knowledge API, we can<a class="indexterm" id="id420"/> tap into this knowledge base. This API allows us to combine <a class="indexterm" id="id421"/>search suggestions, research paper graph search results, and histogram distributions. The API enables a knowledge-driven and interactive dialog.</p><p>When a user searches for research papers, the API can provide query completion. It may suggest queries based on the input. With a complete query, we can evaluate a query expression. This will retrieve a set of matching paper entities from the knowledge base.</p><div class="section" title="Setting up an example project"><div class="titlepage"><div><div><h2 class="title"><a id="ch08lvl2sec62"/>Setting up an example project</h2></div></div></div><p>To test <a class="indexterm" id="id422"/>Project Academic Knowledge, we will first want to create a new example project. We will create this from the MVVM template created in <a class="link" href="ch01.html" title="Chapter 1. Getting Started with Microsoft Cognitive Services">Chapter 1</a>, <span class="emphasis"><em>Getting Started with Microsoft Cognitive Services</em></span>.</p><p>Project Academic Knowledge does not have any client packages available. This means that we need to call the API ourselves. Copy the <code class="literal">WebRequest.cs</code> file from the <code class="literal">Model</code> folder in the smart house application and paste it into the <code class="literal">Model</code> folder of the newly created project. Make sure that you correct the namespace.</p><p>To be able to compile this, we will need to add references to <code class="literal">System.Web</code> and <code class="literal">System.Runtime.Serializable</code>. We will also be working with JSON, so go ahead and add the <code class="literal">Newtonsoft.Json</code> package through the NuGet package manager.</p><p>As this will be the only API tested in this sample project, we can add UI elements in the <code class="literal">MainView.xaml</code> file. Open this file now.</p><p>Our <code class="literal">View</code> should have a <code class="literal">TextBox</code> element for our input query. It should have a <code class="literal">ComboBox</code> element to list the suggested query expressions. We need three <code class="literal">Button</code> elements, one for <code class="literal">Interpret</code>, one for <code class="literal">Evaluate</code>, and one for <code class="literal">Histogram</code>, which are all functions we will be executing. Last but not least, we need a <code class="literal">TextBox</code> element to display our results.</p><p>In the <code class="literal">MainViewModel.cs</code> file, we will need to add corresponding properties. Add three <code class="literal">string</code> properties, one for the input query, one for the results, and one for the selected query expression. Add an <code class="literal">ObservableCollection</code> property of the <code class="literal">string </code>type for our available query expressions. We also need three <code class="literal">ICommand</code> properties, one for each of our buttons.</p><p>Add a private member for our <code class="literal">WebRequest</code> object. Make the constructor look like the following:</p><div class="informalexample"><pre class="programlisting">    public MainViewModel()
+    {
+        _webRequest = new WebRequest("https://api.labs.cognitive.microsoft.com/academic/v1.0/", 
+        "API_KEY_HERE");
+
+        InterpretCommand = new DelegateCommand(Interpret, CanInterpret);
+        EvaluateCommand = new DelegateCommand(Evaluate, CanExecuteCommands);
+        CalculateHistogramCommand = new DelegateCommand (CalculateHistogram,  
+        CanExecuteCommands);
+    }</pre></div><div class="note" style="" title="Note"><div class="inner"><h3 class="title"><a id="note10"/>Note</h3><p>If you have not already done so, sign up for an API key at <a class="ulink" href="https://labs.cognitive.microsoft.com/en-us/project-academic-knowledge">https://labs.cognitive.microsoft.com/en-us/project-academic-knowledge</a> and click the <span class="strong"><strong>Subscribe</strong></span> button.</p></div></div><p>The <code class="literal">CanInterpret</code> parameter<a class="indexterm" id="id423"/> should return <code class="literal">true</code> if we have entered any text into the query textbox. The <code class="literal">CanExecuteCommands</code> parameter should return <code class="literal">true</code> if we have selected a query expression. We will cover <code class="literal">Interpret</code>, <code class="literal">Evaluate</code>, and the <code class="literal">CalculateHistogram</code> parameters in the upcoming sections.</p><p>Make sure that the application compiles and runs before continuing.</p></div></div></div>
+<div class="section" title="Interpreting natural language queries"><div class="titlepage"><div><div><h1 class="title"><a id="ch08lvl1sec43"/>Interpreting natural language queries</h1></div></div></div><p>The query<a class="indexterm" id="id424"/> expressions that the API uses to evaluate a query are not in a natural language format. To ensure that users can make queries in a natural way, we need to interpret their input.</p><p>When calling the <code class="literal">Interpret</code> feature of the API, it accepts a query string. This will be returned and formatted to reflect the user intent using academic grammar. In addition, this feature can be called as the user is writing, to provide an interactive experience.</p><p>The request is a <code class="literal">GET</code> request, as shown in the following code:</p><div class="informalexample"><pre class="programlisting">    private async void Interpret(object obj)
+    {
+        var queryString = HttpUtility.ParseQueryString(string.Empty);
+
+        queryString["query"] = InputQuery;
+        queryString["complete"] = "1";
+        //queryString["count"] = "10";
+        //queryString["offset"] = "0";
+        //queryString["timeout"] = "1000";
+        //queryString["model"] = "latest";</pre></div><p>We start the call by<a class="indexterm" id="id425"/> creating a <code class="literal">queryString</code> variable. The parameters we can input are specified in the following table:</p><div class="informaltable"><table border="1"><colgroup><col style="text-align: left"/><col style="text-align: left"/></colgroup><thead><tr><th style="text-align: left" valign="bottom">
+<p>Parameter</p>
+</th><th style="text-align: left" valign="bottom">
+<p>Description</p>
+</th></tr></thead><tbody><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">query</code> (required)</p>
+</td><td style="text-align: left" valign="top">
+<p>The query from the user.</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">complete</code> (optional)</p>
+</td><td style="text-align: left" valign="top">
+<p>If this is set to <code class="literal">1</code>, then the service will return suggestions using the query as a prefix. A value of <code class="literal">0</code> means there will be no autocomplete.</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">count</code> (optional)</p>
+</td><td style="text-align: left" valign="top">
+<p>The maximum number of interpretations to return.</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">offset</code> (optional)</p>
+</td><td style="text-align: left" valign="top">
+<p>The index of the first interpretation. This is useful if a lot of results are expected and you need to add pagination.</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">timeout</code> (optional)</p>
+</td><td style="text-align: left" valign="top">
+<p>The timeout specified in milliseconds. Only results found before this limit will be returned.</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">model</code> (optional)</p>
+</td><td style="text-align: left" valign="top">
+<p>The name of the model you want to query. This defaults to the latest model.</p>
+</td></tr></tbody></table></div><p>We call the API to get interpretations, as shown in the following code:</p><div class="informalexample"><pre class="programlisting">    InterpretResponse response = await _webRequest.MakeRequest&lt;object, 
+    InterpretResponse&gt;(HttpMethod.Get, $"interpret?{queryString.ToString()}");
+
+    if (response == null || response.interpretations.Length == 0)
+        return;</pre></div><p>As this is a <code class="literal">GET</code> request, we do not need to specify any request bodies. We do, however, expect a result to be serialized into an <code class="literal">InterpretResponse</code> object. This is a data contract, containing properties from the result.</p><p>A successful call to the API will result in a JSON response, which looks as follows:</p><div class="informalexample"><pre class="programlisting">    {
+        "query": "papers by jaime", "interpretations": [
+        {
+            "prob": 2.429e-006,
+            "parse": "&lt;rule id="#GetPapers"&gt; papers by &lt;attr name="academic#AA.AuN"&gt;
+            jaime teevan &lt;/attr&gt;&lt;/rule&gt;",
+            "rules": [
+            {
+                "name": "#GetPapers",
+                "output": {
+                    "type": "query",
+                    "value": "Composite(AA.AuN=='jaime teevan')"
+                }
+            }]
+        }]
+    }</pre></div><p>The result contains the <a class="indexterm" id="id426"/>original <code class="literal">query</code>. It also contains an array with <code class="literal">interpretations</code>. Each item in this array consists of the data shown in the following table:</p><div class="informaltable"><table border="1"><colgroup><col style="text-align: left"/><col style="text-align: left"/></colgroup><thead><tr><th style="text-align: left" valign="bottom">
+<p>Data field</p>
+</th><th style="text-align: left" valign="bottom">
+<p>Description</p>
+</th></tr></thead><tbody><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">prob</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>This is the probability of the current interpretation being correct. The scale goes from <code class="literal">0</code> to <code class="literal">1</code>, where <code class="literal">1</code> is the highest.</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">parse</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>This is an XML string showing interpretations for each part of the string.</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">rules</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>This is an array with one or more rules defined. There will always be one rule for the academic API.</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">rules[x].name</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>This is the name of the current rule.</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">rules[x].output</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>This is the output of the current rule.</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">rules[x].output.type</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>This is the type of the rule output. This will always be <code class="literal">query</code> for the academic API.</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">rules[x].output.value</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>This is the output value for the rule. This will be a query expression string.</p>
+</td></tr></tbody></table></div><p>Create the <code class="literal">InterpretResponse</code> data contract based on the preceding JSON output. We are interested in the last data field, <code class="literal">rules[x].output.value</code>. This is the query expression string, which we will use to evaluate queries.</p><p>When the API call has succeeded, we want to update the <code class="literal">ObservableCollection</code> class as to the available query expressions, using the following code:</p><div class="informalexample"><pre class="programlisting">    ObservableCollection&lt;string&gt; tempList = new ObservableCollection&lt;string&gt;();
+
+    foreach (Interpretation interpretation in response.interpretations)
+    {
+        foreach (Rule rule in interpretation.rules) {
+            tempList.Add(rule.output.value);
+        }
+    }
+
+    AvailableQueryExpressions = tempList;
+    QueryExpression = AvailableQueryExpressions.FirstOrDefault();</pre></div><p>We loop <a class="indexterm" id="id427"/>through all <code class="literal">interpretations</code>, adding the <code class="literal">outputvalue</code> from a rule to our <code class="literal">AvailableQueryExpressions</code>.</p><p>Finally, we set the selected <code class="literal">QueryExpression</code> as the first one available. This is just for our own convenience.</p><p>A successful test run can generate the following results:</p><div class="mediaobject"><img alt="Interpreting natural language queries" src="graphics/B12373_08_01.jpg"/></div><p>An unsuccessful<a class="indexterm" id="id428"/> call will produce an error response code. The response codes that can be generated are as follows:</p><div class="informaltable"><table border="1"><colgroup><col style="text-align: left"/><col style="text-align: left"/></colgroup><thead><tr><th style="text-align: left" valign="bottom">
+<p>Response code</p>
+</th><th style="text-align: left" valign="bottom">
+<p>Description</p>
+</th></tr></thead><tbody><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">400</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>Bad argument; request parameter is missing</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">401</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>Invalid subscription key</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">403</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>The call volume quota has been exceeded</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">404</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>The requested resources are not found</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">500</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>Internal server error</p>
+</td></tr></tbody></table></div></div>
+<div class="section" title="Finding academic entities in query expressions"><div class="titlepage"><div><div><h1 class="title"><a id="ch08lvl1sec44"/>Finding academic entities in query expressions</h1></div></div></div><p>Now that we have a<a class="indexterm" id="id429"/> query expression available, we <a class="indexterm" id="id430"/>can retrieve a set of academic entities using the <code class="literal">Evaluate</code> endpoint. This is a <code class="literal">GET</code> request, where we need to specify the attributes we want returned for each entity. We will cover the available attributes later.</p><p>We start by creating a query string, as shown in the following code:</p><div class="informalexample"><pre class="programlisting">    private async void Evaluate(object obj)
+    {
+        string queryString = $"expr={QueryExpression} &amp;
+        attributes=Id,Ti,Y,D,CC,AA.AuN";
+
+        //queryString += "&amp;model=latest";
+        //queryString += "&amp;count=10";
+        //queryString += "&amp;offset=0";5
+        //queryString += "&amp;orderby=name:asc";</pre></div><p>The parameters we can add are described in the following table:</p><div class="informaltable"><table border="1"><colgroup><col style="text-align: left"/><col style="text-align: left"/></colgroup><thead><tr><th style="text-align: left" valign="bottom">
+<p>Parameter</p>
+</th><th style="text-align: left" valign="bottom">
+<p>Description</p>
+</th></tr></thead><tbody><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">expr</code> (required)</p>
+</td><td style="text-align: left" valign="top">
+<p>This is the query expression found in the <code class="literal">Interpret</code> call.</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">attributes</code> (optional)</p>
+</td><td style="text-align: left" valign="top">
+<p>This is a comma-separated list of attributes to be included in the response. Each attribute is case-sensitive.</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">model</code> (optional)</p>
+</td><td style="text-align: left" valign="top">
+<p>This is the model you wish to use for a query. This defaults to the latest model.</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">count</code> (optional)</p>
+</td><td style="text-align: left" valign="top">
+<p>This is the number of entities to return.</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">offset</code> (optional)</p>
+</td><td style="text-align: left" valign="top">
+<p>This is the index of the first result to return; it can be useful for pagination purposes.</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">orderby</code> (optional)</p>
+</td><td style="text-align: left" valign="top">
+<p>This specifies the order in which to sort the entities.</p>
+</td></tr></tbody></table></div><p>Note that, while <a class="indexterm" id="id431"/>the <code class="literal">attributes</code> parameter is optional, you <a class="indexterm" id="id432"/>should specify which attributes you want. If none are specified, only the entity ID is returned.</p><p>We call the API, as follows:</p><div class="informalexample"><pre class="programlisting">      EvaluateResponse response = await _webRequest.MakeRequest&lt;object,
+      EvaluateResponse&gt;(HttpMethod.Get, $"evaluate?{queryString}");
+
+    if (response == null || response.entities.Length == 0)
+        return;</pre></div><p>As this is a <code class="literal">GET</code> request, we do not need any request bodies. With a successful call, we expect an <code class="literal">EvaluateResponse</code> object in return. This is a data contract, which will be deserialized from the JSON response.</p><p>A successful response will give a JSON response like the following code (depending on the attributes specified):</p><div class="informalexample"><pre class="programlisting">    {
+        "expr": "Composite(AA.AuN=='jaime teevan')",
+        "entities": [
+        {
+            "prob": 2.266e-007,
+            "Ti": "personalizing search via automated analysis of interests and 
+            activities",
+            "Y": 2005,
+            "CC": 372,
+            "AA": [
+            {
+                "AuN": "jaime teevan",
+                "AuId": 1968481722
+            },
+            {
+                "AuN": "susan t dumais",
+                "AuId": 676500258
+            },
+            {
+                "AuN": "eric horvitz",
+                "AuId": 1470530979
+            }]
+        }]
+    }</pre></div><p>The response contains the query expression we used. It also contains an array of entities. Each item in this array will contain the probability of it being correct. It will also contain all the attributes that we specified, in the form of either string or numeric values. It can also be in the form of objects, which we will need to have data contracts for.</p><p>For our request, we <a class="indexterm" id="id433"/>specified some attributes. These <a class="indexterm" id="id434"/>were the entity ID, title, year and date of publication, citation count, and author name. Knowing these attributes, we can use the following code to output the result:</p><div class="informalexample"><pre class="programlisting">    StringBuilder sb = new StringBuilder(); 
+    sb.AppendFormat("Expression {0} returned {1} entities\n\n", response.expr,    
+    response.entities.Length);
+
+    foreach (Entity entity in response.entities)
+    {
+        sb.AppendFormat("Paper title: {0}\n\tDate: {1}\n", entity.Ti, entity.D);
+
+        sb.Append("Authors:\n");
+        foreach (AA author in entity.AA)
+        {
+            sb.AppendFormat("\t{0}\n", author.AuN);
+        }
+
+        sb.Append("\n");
+    } 
+    Results = sb.ToString();</pre></div><p>A successful call can give the following output:</p><div class="mediaobject"><img alt="Finding academic entities in query expressions" src="graphics/B12373_08_02.jpg"/></div><p>Any<a class="indexterm" id="id435"/> error responses will produce response codes, as<a class="indexterm" id="id436"/> described previously.</p></div>
+<div class="section" title="Calculating the distribution of attributes from academic entities"><div class="titlepage"><div><div><h1 class="title"><a id="ch08lvl1sec45"/>Calculating the distribution of attributes from academic entities</h1></div></div></div><p>Another feature of the <a class="indexterm" id="id437"/>academic API is the ability to calculate the distribution of attribute values for a set of paper entities. This can be done by calling the <code class="literal">calchistogram</code> API endpoint.</p><p>This is a <code class="literal">GET</code> request, so we start by creating a query string, as follows:</p><div class="informalexample"><pre class="programlisting">    string queryString = $"expr={QueryExpression}&amp;attributes=Y,F.FN";
+
+    //queryString += "&amp;model=latest";
+    //queryString += "&amp;count=10";
+    //queryString += "&amp;offset=0";</pre></div><p>The parameters we can specify are the same as with <code class="literal">Evaluate</code>, except that we do not have the <code class="literal">orderby</code> parameter. For this call, we want to get the year of publication (<code class="literal">Y</code>) and the name of the field of study (<code class="literal">F.FN</code>).</p><p>We make the call to the API without specifying any request bodies, as shown in the following code:</p><div class="informalexample"><pre class="programlisting">    HistogramResponse response = await _webRequest.MakeRequest&lt;object, 
+    HistogramResponse&gt;(HttpMethod.Get, $"calchistogram?{queryString}");
+
+    if (response == null || response.histograms.Length == 0)
+        return;</pre></div><p>If the call succeeds, we expect a <code class="literal">HistogramResponse</code> object in return. This is a data contract, which should contain the data from the JSON response.</p><p>A successful request should give the following JSON response (depending on the requested attributes):</p><div class="informalexample"><pre class="programlisting">    {
+        "expr": "And(Composite(AA.AuN=='jaime teevan'),Y&gt;2012)",
+        "num_entities": 37,
+        "histograms": [
+        {
+            "attribute": "Y",
+            "distinct_values": 3,
+            "total_count": 37,
+            "histogram": [
+            {
+                "value": 2014,
+                "prob": 1.275e-07,
+                "count": 15
+            },
+            {   
+                "value": 2013,
+                "prob": 1.184e-07,
+                "count": 12
+            },
+            {  
+                "value": 2015,
+                "prob": 8.279e-08,
+                "count": 10
+            }]
+        },
+        {
+            "attribute": "F.FN",
+            "distinct_values": 34,
+            "total_count": 53,
+            "histogram": [
+            {
+                "value": "crowdsourcing",
+                "prob": 7.218e-08,
+            "count": 9
+        },
+        {
+            "value": "information retrieval",
+            "prob": 4.082e-08,
+            "count": 4
+        },
+        {
+            "value": "personalization",
+            "prob": 2.384e-08,
+            "count": 3
+        },
+        {
+            "value": "mobile search",
+            "prob": 2.119e-08,
+            "count": 2
+        }]
+    }] 
+}</pre></div><p>The response<a class="indexterm" id="id438"/> contains the original query expression that we used. It will give us a count of the number of matching entities. An array of histograms will also be present. This will contain an item for each of the attributes we requested. The data for each item is described in the following table:</p><div class="informaltable"><table border="1"><colgroup><col style="text-align: left"/><col style="text-align: left"/></colgroup><thead><tr><th style="text-align: left" valign="bottom">
+<p>Data field</p>
+</th><th style="text-align: left" valign="bottom">
+<p>Description</p>
+</th></tr></thead><tbody><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">attribute</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>This is the attribute name.</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">distinct_values</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>This is the number of distinct values that match the entities for this attribute.</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">total_count</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>This is the total number of value instances among the matching entities for this attribute.</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">histogram</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>This is an array containing the histogram data for this attribute.</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">histogram[x].value</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>This is the value for the current histogram.</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">histogram[x].prob</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>This is the probability that matching entities have this attribute value.</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">histogram[x].count</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>This is the number of matching entities that have this value.</p>
+</td></tr></tbody></table></div><p>With a <a class="indexterm" id="id439"/>successful response, we loop through the data, presenting it in the UI using the following code:</p><div class="informalexample"><pre class="programlisting">    StringBuilder sb = new StringBuilder();
+
+    sb.AppendFormat("Totalt number of matching entities: {0}\n",
+    response.num_entities);
+
+    foreach (Histogram histogram in response.histograms)
+    {
+        sb.AppendFormat("Attribute: {0}\n", histogram.attribute);
+        foreach (HistogramY histogramY in histogram.histogram)
+        {
+            sb.AppendFormat("\tValue '{0}' was found {1} times\n", histogramY.value,
+            histogramY.count);
+        }
+
+        sb.Append("\n");
+    } 
+    Results = sb.ToString();</pre></div><p>A successful call gives us the following result:</p><div class="mediaobject"><img alt="Calculating the distribution of attributes from academic entities" src="graphics/B12373_08_03.jpg"/></div><p>An<a class="indexterm" id="id440"/> unsuccessful API call will return an error, containing a response code. The potential response codes are the same as described in the previous section on the <code class="literal">Interpret</code> feature.</p></div>
+<div class="section" title="Entity attributes"><div class="titlepage"><div><div><h1 class="title"><a id="ch08lvl1sec46"/>Entity attributes</h1></div></div></div><p>A rather important<a class="indexterm" id="id441"/> element of this API is the usage of attributes. You will most definitely want to get some data from the query, but not all of the data.</p><p>We have previously seen how to specify attributes in each request. The following table describes all available attributes. Please make sure that all attributes specified in a request are correct per casing:</p><div class="informaltable"><table border="1"><colgroup><col style="text-align: left"/><col style="text-align: left"/></colgroup><thead><tr><th style="text-align: left" valign="bottom">
+<p>Attribute</p>
+</th><th style="text-align: left" valign="bottom">
+<p>Description</p>
+</th></tr></thead><tbody><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">Id</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>Entity ID</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">Ti</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>Paper title</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">Y</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>Paper year</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">D</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>Paper date</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">CC</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>Citation count</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">ECC</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>Estimated citation count</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">AA.AuN</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>Author name</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">AA.AuId</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>Author ID</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">AA.AfN</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>Author affiliation name</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">AA.AfId</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>Author affiliation ID</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">F.FN</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>Name of field of study</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">F.Fid</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>Field of study ID</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">J.JN</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>Journal name</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">J.JId</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>Journal ID</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">C.CN</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>Conference series name</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">C.Cid</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>Conference series ID</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">Rid</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>Reference ID</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">W</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>Words from the paper title/abstract for full text search</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">E</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>Extended metadata</p>
+</td></tr></tbody></table></div><p>The extended metadata is described in the following table:</p><div class="informaltable"><table border="1"><colgroup><col style="text-align: left"/><col style="text-align: left"/></colgroup><thead><tr><th style="text-align: left" valign="bottom">
+<p>Attribute</p>
+</th><th style="text-align: left" valign="bottom">
+<p>Description</p>
+</th></tr></thead><tbody><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">DN</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>Display name of the paper</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">D</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>Description</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">S</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>Sources (web sources of the paper, sorted by static rank)</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">S.Ty</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>Source type (HTML/text/PDF/DOC/PPT/XLS/PS)</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">S.U</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>Source URL</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">VFN</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>Venue full name - full name of journal or conference</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">VSN</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>Venue short name - short name of the journal or conference</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">V</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>Journal volume</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">I</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>Journal issue</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">FP</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>First page of paper</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">LP</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>Last page of paper</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">DOI</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>Digital object identifier</p>
+</td></tr></tbody></table></div></div>
+<div class="section" title="Creating the backend using the Knowledge Exploration Service"><div class="titlepage"><div><div><h1 class="title"><a id="ch08lvl1sec46_b"/>Creating the backend using the Knowledge Exploration Service
+</h1></div></div></div><p>The <span class="strong"><strong>Knowledge Exploration Service</strong></span> (<span class="strong"><strong>KES</strong></span>) is, in some ways, the backend for the academic <a class="indexterm" id="id442"/>API. It allows us to build a compressed index from structured data, authoring grammar to interpret natural language.</p><p>To get started with the KES, we need to install the service locally.</p><div class="note" style="" title="Note"><div class="inner"><h3 class="title"><a id="note11"/>Note</h3><p>To <a class="indexterm" id="id443"/>download the KES installer, go to <a class="ulink" href="https://www.microsoft.com/en-us/download/details.aspx?id=51488">https://www.microsoft.com/en-us/download/details.aspx?id=51488</a>.</p></div></div><p>With the installation comes some example data, which we will use.</p><p>The steps required to have a working service are as follows:</p><div class="orderedlist"><ol class="orderedlist arabic"><li class="listitem">Define a schema</li><li class="listitem">Generate data</li><li class="listitem">Build the index</li><li class="listitem">Author the grammar</li><li class="listitem">Compile the grammar</li><li class="listitem">Host<a class="indexterm" id="id444"/> the service </li></ol></div></div>
+<div class="section" title="Defining attributes"><div class="titlepage"><div><div><h1 class="title"><a id="ch08lvl1sec48"/>Defining attributes</h1></div></div></div><p>The <code class="literal">schema</code> file defines the <a class="indexterm" id="id445"/>attribute structure in our domain. When we previously discussed the academic API, we saw a list of different entity attributes, which we could retrieve through the queries. This is defined in a schema.</p><p>If you open the <code class="literal">Academic.schema </code>file in the <code class="literal">Example</code> folder where the KES is installed, you will see the attributes defined. We have a title, year, and keyword, which are basic attribute types. In addition, we have a <code class="literal">Composite</code> attribute for the author. This attribute contains more attributes related to the author.</p><p>Each attribute will support all attribute operations. There may be cases where this is not desired. Explicitly defining the operations for a given attribute may reduce the index size. In the case of the author ID, we just want to be able to check whether it is equal to something, which we can achieve by adding the following:</p><div class="informalexample"><pre class="programlisting">    {"name":"Author.Id", "type":"Int32", "operations":["equals"]}</pre></div></div>
+<div class="section" title="Adding data"><div class="titlepage"><div><div><h1 class="title"><a id="ch08lvl1sec49"/>Adding data</h1></div></div></div><p>With a schema defined, we can add some data. The example contains a file, called <code class="literal">Academic.data</code>, which holds all the <a class="indexterm" id="id446"/>example data. Open the file to learn what the data can look like.</p><p>Each line in the data file specifies the attribute values for an object. It can also contain a <code class="literal">logprob</code> value, which will indicate the return order of matching objects.</p></div>
+<div class="section" title="Building the index"><div class="titlepage"><div><div><h1 class="title"><a id="ch08lvl1sec50"/>Building the index</h1></div></div></div><p>With the<a class="indexterm" id="id447"/> attribute schema and data file in place, we can build the compressed binary index. This will hold all our data objects.</p><p>Using our example files, we can build the index by running the following command:</p><div class="informalexample"><pre class="programlisting">kes.exe build_index Academic.schema Academic.data Academic.index</pre></div><p>A successful execution should produce the <code class="literal">Academic.index </code>file, which we will use when we are hosting the service.</p><p>When running the command, the application will continuously output the status, which can look like <a class="indexterm" id="id448"/>the following:</p><div class="informalexample"><pre class="programlisting">    00:00:00 Input Schema: \Programs\KES\Example\Academic.schema
+    00:00:00 Input Data: \Programs\KES\Example\Academic.data
+    00:00:00 Output Index: \Programs\KES\Example\Academic.index
+    00:00:00 Loading synonym file: Keyword.syn
+    00:00:00 Loaded 3700 synonyms (9.4 ms)
+    00:00:00 Pass 1 started
+    00:00:00 Total number of entities: 1000
+    00:00:00 Sorting entities
+    00:00:00 Pass 1 finished (14.5 ms)
+    00:00:00 Pass 2 started
+    00:00:00 Pass 2 finished (13.3 ms)
+    00:00:00 Processed attribute Title (20.0 ms)
+    00:00:00 Processed attribute Year (0.3 ms)
+    00:00:00 Processed attribute Author.Id (0.5 ms)
+    00:00:00 Processed attribute Author.Name (10.7 ms)
+    00:00:00 Processed attribute Author.Affiliation (2.3 ms)
+    00:00:00 Processed attribute Keyword (20.6 ms)
+    00:00:00 Pass 3 started
+    00:00:00 Pass 3 finished (15.5 ms, 73 page faults)
+    00:00:00 Post-processing started
+    00:00:00 Optimized attribute Title (0.1 ms)
+    00:00:00 Optimized attribute Year (0.0 ms)
+    00:00:00 Optimized attribute Author.Id (0.0 ms)
+    00:00:00 Optimized attribute Author.Name (0.5 ms)
+    00:00:00 Optimized attribute Author.Affiliation (0.2 ms)
+    00:00:00 Optimized attribute Keyword (0.6 ms)
+    00:00:00 Global optimization
+    00:00:00 Post-processing finished (17.2 ms)
+    00:00:00 Finalizing index
+    00:00:00 Total time: 157.6 ms
+    00:00:00 Peak memory usage: 23 MB (commit) + 0 MB (data file) = 23 MB</pre></div></div>
+<div class="section" title="Understanding natural language"><div class="titlepage"><div><div><h1 class="title"><a id="ch08lvl1sec51"/>Understanding natural language</h1></div></div></div><p>After we have built an index, we<a class="indexterm" id="id449"/> can start creating our grammar file. This specifies what natural language the service can understand, and how it can translate into semantic query expressions. Open the <code class="literal">academic.xml</code> file to see an example of how a grammar file can look.</p><p>The grammar is based on a <span class="strong"><strong>W3C</strong></span> standard for speech recognition, called <span class="strong"><strong>SRGS</strong></span>. The top-level element is the grammar element. This requires a <code class="literal">root </code>attribute to specify the root rule, which is the starting point of the grammar.</p><p>To allow <a class="indexterm" id="id450"/>attribute references, we add the <code class="literal">import</code> element. This needs to be a child of the <code class="literal">grammar</code> element, and should come before anything else. It contains two required attributes: the name of the schema file to import, and a name that elements can use for referencing the schema. Note that the schema file must be in the same folder as the grammar file.</p><p>Next in line is the <code class="literal">rule</code> element. This defines a structural unit, which specifies what query expressions the service can interpret. A <code class="literal">rule</code> element requires an <code class="literal">id</code> attribute. Optionally, you can add an <code class="literal">example</code> element, which is used to describe phrases that may be accepted by the <code class="literal">rule</code> element. In that case, this will be a child element of the rule.</p><p>A <code class="literal">rule</code> element also contains an <code class="literal">item</code> element. This groups a sequence of grammar constructs, and can be used to indicate repetitions of the sequence. Alternatively, it can be used to specify alternatives, together with one-of elements.</p><p>One-of elements specify expansions among one of the item elements. The item by may be defined as a one-of element, with written by and authored <span class="emphasis"><em>by</em></span> as expansions.</p><p>Using the <code class="literal">ruleref</code> element allows us to create more complex expressions by using simpler rules. It simply references other rules by adding a URI attribute.</p><p>The <code class="literal">attrref</code> element references an <code class="literal">index</code> attribute, which allows us to match against attributes in the index. The attribute URI is required, which must specify the index schema and attribute name to reference. This must match a schema that is imported through the <code class="literal">import</code> element.</p><p>The <code class="literal">tag</code> element defines the path through the grammar. This element allows you to assign variables or execute functions to help the flow of the grammar.</p><p>Once the grammar file is completed, we can compile it into binary grammar. This is done by running the following command:</p><div class="informalexample"><pre class="programlisting">kes.exe build_grammar Academic.xml Academic.grammar</pre></div><p>Running this command will produce output similar to the following:</p><div class="informalexample"><pre class="programlisting">Input XML: \Programs\KES\Example\Academic.xml
+Output Grammar: \Programs\KES\Example\Academic.grammar</pre></div></div>
+<div class="section" title="Local hosting and testing"><div class="titlepage"><div><div><h1 class="title"><a id="ch08lvl1sec52"/>Local hosting and testing</h1></div></div></div><p>With the<a class="indexterm" id="id451"/> index <a class="indexterm" id="id452"/>and grammar in place, we can go on to test the service locally. Locally testing the service allows for rapid prototyping, which allows us to define the scheme and grammar quickly.</p><p>When we are testing locally, the KES only supports up to 10,000 objects and 10 requests per second. It also terminates after a total of 1,000 requests have been executed. We will learn how to bypass these restrictions in a bit.</p><p>To host the KES locally, run the following command:</p><div class="informalexample"><pre class="programlisting">Kes.exe host_service Academic.grammar Academic.index -port 8080</pre></div><p>This will<a class="indexterm" id="id453"/> start up the service, running on port <code class="literal">8080</code>. To verify that it is working as <a class="indexterm" id="id454"/>intended, open your browser and go to <code class="literal">http://localhost:8080</code>.</p><p>Doing so should present you with the following screen:</p><div class="mediaobject"><img alt="Local hosting and testing" src="graphics/B12373_08_04.jpg"/></div><p>Running the KES as a local service also allows us to use the academic API for testing. We are going to make some modifications to our example application—created for the academic API—in order to support this.</p><p>First, we are <a class="indexterm" id="id455"/>going to modify the <code class="literal">WebRequest.cs</code> file. We need to make sure that we can<a class="indexterm" id="id456"/> change the endpoint, so add the following function to the class:</p><div class="informalexample"><pre class="programlisting">    public void SetEndpoint(string uri) {
+        _endpoint = uri;
+    }</pre></div><p>Next, we need to add a new <code class="literal">TextBox</code> element to the <code class="literal">MainView.xaml</code> file. This will allow us to enter a URL. This needs a corresponding string property in the <code class="literal">MainViewModel.cs</code> file. When changing this property, we need to call <code class="literal">SetEndpoint</code> on the <code class="literal">_webRequest</code> object. This can look as follows:</p><div class="informalexample"><pre class="programlisting">    private string _endpoint;
+    public string Endpoint {
+        get { return _endpoint; }
+        set {
+            _endpoint = value;
+            RaisePropertyChangedEvent("Endpoint");
+            _webRequest?.SetEndpoint(value);
+        }
+    }</pre></div><p>Finally, we need to update the constructor of our <code class="literal">ViewModel</code>. Change the first line to the following:</p><div class="informalexample"><pre class="programlisting">    Endpoint = "https://api.projectoxford.ai/academic/v1.0/";
+    _webRequest = new WebRequest(Endpoint, "API_KEY_HERE");</pre></div><p>This will let the default endpoint be the original API address, but allows us to use the application to test the KES locally.</p><p>By testing the application with the local endpoint, the following result can be produced:</p><div class="mediaobject"><img alt="Local hosting and testing" src="graphics/B12373_08_05.jpg"/></div><div class="note" style="" title="Note"><div class="inner"><h3 class="title"><a id="note12"/>Note</h3><p>Note that <code class="literal">evaluate</code> and <code class="literal">calchistogram</code> will need to update the attributes in the request of the test application for it to work with the local KES.</p></div></div></div>
+<div class="section" title="Going for scale"><div class="titlepage"><div><div><h1 class="title"><a id="ch08lvl1sec53"/>Going for scale</h1></div></div></div><p>While it is nice to be able to create local prototypes, the limitations ensure that we need to deploy the service elsewhere for production. In this case, this means deploying the KES to Microsoft Azure.</p><p>We will now look at the steps required to deploy the KES to Microsoft Azure.</p><div class="section" title="Hooking into Microsoft Azure"><div class="titlepage"><div><div><h2 class="title"><a id="ch08lvl2sec63"/>Hooking into Microsoft Azure</h2></div></div></div><p>The first step is to<a class="indexterm" id="id457"/> download <a class="indexterm" id="id458"/>the <span class="strong"><strong>Azure publish settings</strong></span> file. This needs to be saved as <code class="literal">AzurePublishSettings.xml</code> and stored in the directory in which <code class="literal">kes.exe</code> runs.</p><div class="note" style="" title="Note"><div class="inner"><h3 class="title"><a id="note13"/>Note</h3><p>You can find the<a class="indexterm" id="id459"/> Azure publish settings file at <a class="ulink" href="https://manage.windowsazure.com/publishsettings/">https://manage.windowsazure.com/publishsettings/</a>.</p></div></div><p>There are two ways to build and host the KES without restrictions. The first way is to boot up a <span class="strong"><strong>Windows virtual machine</strong></span> in Azure. On this VM, you should follow the same steps that we took locally. This allows for rapid prototyping, but without any restrictions.</p><p>The second way is to run <code class="literal">kes.exe</code> locally, but adding <code class="literal">--remote</code> as a parameter. This will create <a class="indexterm" id="id460"/>a temporary Azure <a class="indexterm" id="id461"/>VM, build the index, and upload the index to a specified target blob storage. An example command could look as follows:</p><div class="informalexample"><pre class="programlisting">kes.exe build_index
+http://&lt;account&gt;.blob.core.windows.net/&lt;container&gt;/Academic.schema http://&lt;account&gt;.blob.core.windows.net/&lt;container&gt;/Academic.full.data http://&lt;account&gt;.blob.core.windows.net/&lt;container&gt;/Academic.full.index
+--remote Large</pre></div><p>This process can take up to 10 minutes, so ideally, prototyping should be done locally, or through an Azure VM.</p></div><div class="section" title="Deploying the service"><div class="titlepage"><div><div><h2 class="title"><a id="ch08lvl2sec64"/>Deploying the service</h2></div></div></div><p>With the grammar and index in place and prototyping done, we can deploy the service to a Microsoft Azure cloud service.</p><div class="note" style="" title="Note"><div class="inner"><h3 class="title"><a id="note14"/>Note</h3><p>To learn how to create <a class="indexterm" id="id462"/>a Microsoft Azure cloud service, head over to <a class="ulink" href="https://azure.microsoft.com/en-us/documentation/articles/cloud-services-how-to-create-deploy/">https://azure.microsoft.com/en-us/documentation/articles/cloud-services-how-to-create-deploy/</a>.</p></div></div><p>To deploy the service to a staging slot, run the following command:</p><div class="informalexample"><pre class="programlisting">kes.exe deploy_service
+http://&lt;account&gt;.blob.core.windows.net/&lt;container&gt;/Academic.grammar
+http://&lt;account&gt;.blob.core.windows.net/&lt;container&gt;/Academic.index
+&lt;serviceName&gt; large --slot Staging</pre></div><p>This will allow us to perform basic tests before deploying the service to a production slot. When the testing is done, we can deploy it to production by running the same command again, specifying <code class="literal">Production</code> as the last parameter.</p><p>When the service is deployed, we can test it by visiting <code class="literal">http://&lt;serviceName&gt;.cloudapp.net</code> in a browser.</p></div></div>
+<div class="section" title="Answering FAQs using QnA Maker"><div class="titlepage"><div><div><h1 class="title"><a id="ch08lvl1sec54"/>Answering FAQs using QnA Maker</h1></div></div></div><p>QnA Maker<a class="indexterm" id="id463"/> allows<a class="indexterm" id="id464"/> us to use existing <span class="strong"><strong>frequently asked questions</strong></span> (<span class="strong"><strong>FAQs</strong></span>) to create a bot that answers these questions. We can generate a knowledge base from existing FAQs, and train a model from it.</p><p>To get started, head<a class="indexterm" id="id465"/> over to <a class="ulink" href="https://qnamaker.ai">https://qnamaker.ai</a>. Log on or register by clicking Sign in, in the upper-right corner. This will present you with the following screen:</p><div class="mediaobject"><img alt="Answering FAQs using QnA Maker" src="graphics/B12373_08_06.jpg"/></div></div>
+<div class="section" title="Creating a knowledge base from frequently asked questions"><div class="titlepage"><div><div><h1 class="title"><a id="ch08lvl1sec55"/>Creating a knowledge base from frequently asked questions</h1></div></div></div><p>If no services have<a class="indexterm" id="id466"/> been created, we can <a class="indexterm" id="id467"/>create one by clicking on the Create a knowledge base tab. This will present us with the following screen, as shown in the following two screenshots:</p><div class="mediaobject"><img alt="Creating a knowledge base from frequently asked questions" src="graphics/B12373_08_07.jpg"/></div><div class="mediaobject"><img alt="Creating a knowledge base from frequently asked questions" src="graphics/B12373_08_08.jpg"/></div><div class="orderedlist"><ol class="orderedlist arabic"><li class="listitem">Create a QnA service in Microsoft Azure by clicking the blue button in <span class="strong"><strong>S</strong></span><span class="strong"><strong>TEP 1</strong></span> in the screenshot.</li><li class="listitem">Connect the QnA service to the knowledge base.</li><li class="listitem">Enter a name for the service.</li><li class="listitem">Enter the baseline FAQs to use. This can either be in the form of one or more URLs, or a <a class="indexterm" id="id468"/>file containing <a class="indexterm" id="id469"/>question-and-answer pairs. For our example, we will be generating a knowledge base from the URL.</li><li class="listitem">Let the rest of the settings be default.</li><li class="listitem">Click <span class="strong"><strong>Create your KB</strong></span>.</li></ol></div><div class="note" style="" title="Note"><div class="inner"><h3 class="title"><a id="note15"/>Note</h3><p>If you do not have any FAQs to use, you can use <a class="ulink" href="https://www.microsoft.com/en-us/software-download/faq">https://www.microsoft.com/en-us/software-download/faq</a> from Microsoft.</p></div></div><p>Once the knowledge base has been created, you will be taken to a page with all the question-and-answer pairs. This is shown in the following screenshot:</p><div class="mediaobject"><img alt="Creating a knowledge base from frequently asked questions" src="graphics/B12373_08_09.jpg"/></div><p>On this page, we can look through all question-and-answer pairs, from all our FAQ sources. We can also add new pairs by clicking <span class="strong"><strong>Add QnA</strong></span> pair.</p></div>
+<div class="section" title="Training the model"><div class="titlepage"><div><div><h1 class="title"><a id="ch08lvl1sec56"/>Training the model</h1></div></div></div><p>Every time we <a class="indexterm" id="id470"/>make changes to the knowledge base, it is wise to click <span class="strong"><strong>Save</strong></span> and <span class="strong"><strong>Train</strong></span>. This will ensure that our model is up to date, with the most current question-and-answer pairs.</p><p>Once we have trained the model, we can test it. This can be done by clicking the <span class="strong"><strong>Test</strong></span> button on the right-hand side. This will present us with the following chat window:</p><div class="mediaobject"><img alt="Training the model" src="graphics/B12373_08_10.jpg"/></div><p>From this chat dialog, we can test some or all of our questions to verify that we get the correct answers. We can also improve the model by asking questions in different ways. In some cases, this will present us with the wrong answer.</p><p>If we have been presented <a class="indexterm" id="id471"/>with the wrong answer, we can change this by selecting the correct one. With any given question, the possible answers will be listed by clicking the Inspect button beneath the question, ordered by probability. Selecting the correct answer and retraining the model will ensure a correct answer when asking the same question later.</p></div>
+<div class="section" title="Publishing the model"><div class="titlepage"><div><div><h1 class="title"><a id="ch08lvl1sec57"/>Publishing the model</h1></div></div></div><p>Once we are<a class="indexterm" id="id472"/> done with training, it is time to publish the service. We can do so by clicking Publish in the top menu. Doing so will present us with a basic HTTP request that we can try, as shown in the following screenshot:</p><div class="mediaobject"><img alt="Publishing the model" src="graphics/B12373_08_11.jpg"/></div><p>In the preceding <a class="indexterm" id="id473"/>screenshot, we can see the endpoint to use, the required application ID, the subscription key, and a sample question in the request body. All those parameters are required to get a successful response.</p><p>A successful call to the service will provide us with a JSON response as follows:</p><div class="informalexample"><pre class="programlisting">{ "Answer": "Sample response", "Score": "0" }
+</pre></div><p>If we have an application that uses this, we can decide not to use the answer if the score has fallen below a certain threshold.</p><p>Typically, we would be using bots of different kinds to use this service. We can, for example, add this to a Skype bot or Slackbot, or simply integrate it with a chatbot on a customer support site.</p></div>
+<div class="section" title="Summary"><div class="titlepage"><div><div><h1 class="title"><a id="ch08lvl1sec58"/>Summary</h1></div></div></div><p>Throughout this chapter, we have learned about the Project Academic Knowledge API and Project Knowledge Exploration Service. We looked at how to interpret natural language queries to get query expressions for evaluation. Through this evaluation, we have retrieved academic papers from the Microsoft Academic Graph knowledge base. From there, we learned how to set up the Knowledge Exploration Service itself, going from defining the schemas all the way to deploying it to a Microsoft Azure cloud service. In the end, we learned how to set up a simple QnA Maker service.</p><p>In the next chapter, we will move on to looking at search APIs, learning how to utilize the different search APIs offered by Bing.</p></div></body></html>

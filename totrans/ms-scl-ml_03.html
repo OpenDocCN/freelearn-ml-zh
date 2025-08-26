@@ -1,0 +1,560 @@
+<html><head></head><body><div id="sbo-rt-content"><div class="chapter" title="Chapter 3. Working with Spark and MLlib"><div class="titlepage"><div><div><h1 class="title"><a id="ch03"/>Chapter 3. Working with Spark and MLlib</h1></div></div></div><p>Now that we are powered with the knowledge of where and how statistics and machine learning fits in the global data-driven enterprise architecture, let's stop at the specific implementations in Spark and MLlib, a machine learning library on top of Spark. Spark is a relatively new member of the big data ecosystem that is optimized for memory usage as opposed to disk. The data can be still spilled to disk as necessary, but Spark does the spill only if instructed to do so explicitly, or if the active dataset does not fit into the memory. Spark stores lineage information to recompute the active dataset if a node goes down or the information is erased from memory for some other reason. This is in contrast to the traditional MapReduce approach, where the data is persisted to the disk after each map or reduce task.</p><p>Spark is particularly suited for iterative or statistical machine learning algorithms over a distributed set of nodes and can scale out of core. The only limitation is the total memory and disk space available across all Spark nodes and the network speed. I will cover the basics of Spark architecture and implementation in this chapter.</p><p>One can direct Spark to execute data pipelines either on a single node or across a set of nodes with a simple change in the configuration parameters. Of course, this flexibility comes at a cost of slightly heavier framework and longer setup times, but the framework is very parallelizable and as most of modern laptops are already multithreaded and sufficiently powerful, this usually does not present a big issue.</p><p>In this chapter, we will cover the following topics:</p><div class="itemizedlist"><ul class="itemizedlist"><li class="listitem" style="list-style-type: disc">Installing and configuring Spark if you haven't done so yet</li><li class="listitem" style="list-style-type: disc">Learning the basics of Spark architecture and why it is inherently tied to the Scala language</li><li class="listitem" style="list-style-type: disc">Learning why Spark is the next technology after sequential implementations and Hadoop MapReduce</li><li class="listitem" style="list-style-type: disc">Learning about Spark components</li><li class="listitem" style="list-style-type: disc">Looking at the simple implementation of word count in Scala and Spark</li><li class="listitem" style="list-style-type: disc">Looking at the streaming word count implementation</li><li class="listitem" style="list-style-type: disc">Seeing how to create Spark DataFrames from either a distributed file or a distributed database</li><li class="listitem" style="list-style-type: disc">Learning about Spark performance tuning</li></ul></div><div class="section" title="Setting up Spark"><div class="titlepage"><div><div><h1 class="title"><a id="ch03lvl1sec22"/>Setting up Spark</h1></div></div></div><p>If you<a id="id154" class="indexterm"/> haven't done so yet, you can download the pre-build Spark package <a id="id155" class="indexterm"/>from <a class="ulink" href="http://spark.apache.org/downloads.html">http://spark.apache.org/downloads.html</a>. The latest release at the time of writing is <span class="strong"><strong>1.6.1</strong></span>:</p><div class="mediaobject"><img src="Images/B04935_03_01.jpg" alt="Setting up Spark" width="900" height="318"/><div class="caption"><p>Figure 03-1. The download site at http://spark.apache.org with recommended selections for this chapter</p></div></div><p>Alternatively, you can build the Spark by downloading the full source distribution from <a class="ulink" href="https://github.com/apache/spark">https://github.com/apache/spark</a>:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ git clone https://github.com/apache/spark.git</strong></span>
+<span class="strong"><strong>Cloning into 'spark'...</strong></span>
+<span class="strong"><strong>remote: Counting objects: 301864, done.</strong></span>
+<span class="strong"><strong>...</strong></span>
+<span class="strong"><strong>$ cd spark</strong></span>
+<span class="strong"><strong>$sh ./ dev/change-scala-version.sh 2.11</strong></span>
+<span class="strong"><strong>...</strong></span>
+<span class="strong"><strong>$./make-distribution.sh --name alex-build-2.6-yarn --skip-java-test --tgz -Pyarn -Phive -Phive-thriftserver -Pscala-2.11 -Phadoop-2.6</strong></span>
+<span class="strong"><strong>...</strong></span>
+</pre></div><p>The command will download the necessary dependencies and create the <code class="literal">spark-2.0.0-SNAPSHOT-bin-alex-spark-build-2.6-yarn.tgz</code> file in the Spark directory; the version is 2.0.0, as it is the next release version at the time of writing. In general, you do not want to build from trunk unless you are interested in the latest features. If you want a released version, you can checkout the corresponding tag. Full list of available versions is available via the <code class="literal">git branch –r</code> command. The <code class="literal">spark*.tgz</code> file is all you need to run Spark on <a id="id156" class="indexterm"/>any machine that has Java JRE.</p><p>The distribution comes with the <code class="literal">docs/building-spark.md</code> document that describes other options for building Spark and their descriptions, including incremental Scala compiler, zinc. Full Scala 2.11 support is in the works for the next Spark 2.0.0 release.</p></div></div></div>
+
+
+
+  
+<div id="sbo-rt-content"><div class="section" title="Understanding Spark architecture"><div class="titlepage"><div><div><h1 class="title"><a id="ch03lvl1sec23"/>Understanding Spark architecture</h1></div></div></div><p>A parallel<a id="id157" class="indexterm"/> execution involves splitting the workload into subtasks that<a id="id158" class="indexterm"/> are executed in different threads or on different nodes. Let's see how Spark does this and how it manages execution and communication between the subtasks.</p><div class="section" title="Task scheduling"><div class="titlepage"><div><div><h2 class="title"><a id="ch03lvl2sec16"/>Task scheduling</h2></div></div></div><p>Spark <a id="id159" class="indexterm"/>workload splitting is determined by the number <a id="id160" class="indexterm"/>of partitions for <span class="strong"><strong>Resilient Distributed Dataset</strong></span> (<span class="strong"><strong>RDD</strong></span>), the<a id="id161" class="indexterm"/> basic abstraction in Spark, and the pipeline structure. An RDD represents an immutable, partitioned collection of elements that can be operated on in parallel. While the specifics might depend on the mode in which Spark runs, the following diagram captures the Spark task/resource scheduling:</p><div class="mediaobject"><img src="Images/B04935_03_02.jpg" alt="Task scheduling" width="800" height="638"/><div class="caption"><p>Figure 03-2. A generic Spark task scheduling diagram. While not shown explicitly in the figure, Spark Context opens an HTTP UI, usually on port 4040 (the concurrent contexts will open 4041, 4042, and so on), which is present during a task execution. Spark Master UI is usually 8080 (although it is changed to 18080 in CDH) and Worker UI is usually 7078. Each node can run multiple executors, and each executor can run multiple tasks.</p></div></div><div class="note" title="Note" style=""><div class="inner"><h3 class="title"><a id="tip04"/>Tip</h3><p>You will find that Spark, as well as Hadoop, has a lot of parameters. Some of them are specified as environment variables (refer to the <code class="literal">$SPARK_HOME/conf/spark-env.sh</code> file), and yet some can be given as a command-line parameter. Moreover, some files with pre-defined names can contain parameters that will change the Spark behavior, such as <code class="literal">core-site.xml</code>. This might be confusing, and I will cover as much as possible in this and the following chapters. If you are working with <span class="strong"><strong>Hadoop Distributed File System</strong></span> (<span class="strong"><strong>HDFS</strong></span>), then the <code class="literal">core-site.xml</code> and <code class="literal">hdfs-site.xml</code> files will<a id="id162" class="indexterm"/> contain the pointer and specifications for the HDFS master. The requirement for picking this file is that it has to be on <code class="literal">CLASSPATH</code> Java process, which, again, may be set by either specifying <code class="literal">HADOOP_CONF_DIR</code> or <code class="literal">SPARK_CLASSPATH</code> environment variables. As is usual with open source, you need to grep the code sometimes to understand how various parameters work, so having a copy of the source tree on your laptop is a good idea.</p></div></div><p>Each node<a id="id163" class="indexterm"/> in the cluster can run one or more executors, and each<a id="id164" class="indexterm"/> executor can schedule a sequence of tasks to perform the Spark operations. Spark driver is responsible for scheduling the execution and works with the cluster scheduler, such as Mesos or YARN to schedule the available resources. Spark driver usually runs on the client machine, but in the latest release, it can also run in the cluster under the cluster manager. YARN and Mesos have the ability to dynamically manage the number of executors that run concurrently on each node, provided the resource constraints.</p><p>In the Standalone mode, <span class="strong"><strong>Spark Master</strong></span> does the work of the cluster scheduler—it might be less efficient in <a id="id165" class="indexterm"/>allocating resources, but it's better than nothing in the absence of preconfigured Mesos or YARN. Spark standard distribution contains shell scripts to start Spark in Standalone mode in the <code class="literal">sbin</code> directory. Spark Master and driver communicate directly with one or several Spark workers that run on individual nodes. Once the master is running, you can start Spark shell with the following command:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ bin/spark-shell --master spark://&lt;master-address&gt;:7077</strong></span>
+</pre></div><div class="note" title="Note" style=""><div class="inner"><h3 class="title"><a id="tip05"/>Tip</h3><p>Note that you can always run Spark in local mode, which means that all tasks will be executed in a single JVM, by specifying <code class="literal">--master local[2]</code>, where <code class="literal">2</code> is the number of threads that have to be at least <code class="literal">2</code>. In fact, we will be using the local mode very often in this book for running small examples.</p></div></div><p>Spark shell is an application from the Spark point of view. Once you start a Spark application, you will see it under <span class="strong"><strong>Running Applications</strong></span> in the Spark Master UI (or in the corresponding cluster manager), which can redirect you to the Spark application HTTP UI at port 4040, where one can see the subtask execution timeline and other important properties such as environment setting, classpath, parameters passed to the JVM, and information on resource usage (refer to <span class="emphasis"><em>Figure 3-3</em></span>):</p><div class="mediaobject"><img src="Images/B04935_03_03.jpg" alt="Task scheduling" width="1000" height="533"/><div class="caption"><p>Figure 03-3. Spark Driver UI in Standalone mode with time decomposition</p></div></div><p>As we <a id="id166" class="indexterm"/>saw, with Spark, one can easily switch between local <a id="id167" class="indexterm"/>and cluster mode by providing the <code class="literal">--master</code> command-line option, setting a <code class="literal">MASTER</code> environment variable, or modifying <code class="literal">spark-defaults.conf</code>, which should be on the classpath during the execution, or even set explicitly using the <code class="literal">setters</code> method on the <code class="literal">SparkConf</code> object directly in Scala, which will be covered later:</p><div class="informaltable"><table border="1"><colgroup><col style="text-align: left"/><col style="text-align: left"/><col style="text-align: left"/></colgroup><thead><tr><th style="text-align: left" valign="bottom">
+<p>Cluster Manager</p>
+</th><th style="text-align: left" valign="bottom">
+<p>MASTER env variable</p>
+</th><th style="text-align: left" valign="bottom">
+<p>Comments</p>
+</th></tr></thead><tbody><tr><td style="text-align: left" valign="top">
+<p>Local (single node, multiple threads)</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">local[n]</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<span class="emphasis"><em>n</em></span> is the number of threads to use, should be greater than or equal to <span class="emphasis"><em>2</em></span>. If you want Spark to communicate with other Hadoop tools such as Hive, you still need to point it to the cluster by either setting the <code class="literal">HADOOP_CONF_DIR</code> environment variable or copying the Hadoop <code class="literal">*-site.xml</code> configuration files into the <code class="literal">conf</code> subdirectory.</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>Standalone (Daemons running on the nodes)</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">spark:// master-address&gt;:7077</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>This has a set of start/stop scripts in the <code class="literal">$SPARK_HOME/sbin</code> directory. This also supports the HA mode. More <a id="id168" class="indexterm"/>details can be found at <a class="ulink" href="https://spark.apache.org/docs/latest/spark-standalone.html">https://spark.apache.org/docs/latest/spark-standalone.html</a>.</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>Mesos</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">mesos://host:5050</code> or <code class="literal">mesos://zk://host:2181</code>
+</p>
+<p> (multimaster)</p>
+</td><td style="text-align: left" valign="top">
+<p>Here, you need to set <code class="literal">MESOS_NATIVE_JAVA_LIBRARY=&lt;path to libmesos.so&gt;</code> and <code class="literal">SPARK_EXECUTOR_URI=&lt;URL of spark-1.5.0.tar.gz&gt;</code>. The default is fine-grained mode, where each Spark task runs as a separate Mesos task. Alternatively, the user can specify the coarse-grained mode, where the Mesos tasks persists for the duration of the application. The advantage is lower total start-up costs. This can use dynamic allocation (refer to the following URL) in coarse-grained mode. More <a id="id169" class="indexterm"/>details can be found at <a class="ulink" href="https://spark.apache.org/docs/latest/running-on-mesos.html">https://spark.apache.org/docs/latest/running-on-mesos.html</a>.</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>YARN</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">yarn</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>Spark driver can run either in the cluster or on the client node, which is managed by the <code class="literal">--deploy-mode</code> parameter (cluster or client, shell can only run in the client mode). Set <code class="literal">HADOOP_CONF_DIR</code> or <code class="literal">YARN_CONF_DIR</code> to point to the YARN config files. Use the <code class="literal">--num-executors</code> flag or <code class="literal">spark.executor.instances</code> property to set a fixed number of executors (default).</p>
+<p>Set <code class="literal">spark.dynamicAllocation.enabled</code> to <code class="literal">true</code> to dynamically create/kill executors depending on the application demand. More details are available <a id="id170" class="indexterm"/>at <a class="ulink" href="https://spark.apache.org/docs/latest/running-on-yarn.html">https://spark.apache.org/docs/latest/running-on-yarn.html</a>.</p>
+</td></tr></tbody></table></div><p>The most <a id="id171" class="indexterm"/>common ports are 8080, the master UI, and 4040, the <a id="id172" class="indexterm"/>application UI. Other Spark ports are summarized in the following table:</p><div class="informaltable"><table border="1"><colgroup><col style="text-align: left"/><col style="text-align: left"/><col style="text-align: left"/><col style="text-align: left"/><col style="text-align: left"/></colgroup><thead><tr><th colspan="2" style="text-align: center" valign="bottom">
+<p>Standalone ports</p>
+</th><th style="text-align: left" valign="bottom"> </th><th style="text-align: left" valign="bottom"> </th><th style="text-align: left" valign="bottom"> </th></tr><tr><th style="text-align: left" valign="bottom">
+<p>From</p>
+</th><th style="text-align: left" valign="bottom">
+<p>To</p>
+</th><th style="text-align: left" valign="bottom">
+<p>Default Port</p>
+</th><th style="text-align: left" valign="bottom">
+<p>Purpose</p>
+</th><th style="text-align: left" valign="bottom">
+<p>Configuration Setting</p>
+</th></tr></thead><tbody><tr><td style="text-align: left" valign="top">
+<p>Browser</p>
+</td><td style="text-align: left" valign="top">
+<p>Standalone Master</p>
+</td><td style="text-align: left" valign="top">
+<p>8080</p>
+</td><td style="text-align: left" valign="top">
+<p>Web UI</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">spark.master.ui.port /SPARK_MASTER_WEBUI_PORT</code>
+</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>Browser</p>
+</td><td style="text-align: left" valign="top">
+<p>Standalone worker</p>
+</td><td style="text-align: left" valign="top">
+<p>8081</p>
+</td><td style="text-align: left" valign="top">
+<p>Web UI</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">spark.worker.ui.port /SPARK_WORKER_WEBUI_PORT</code>
+</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>Driver / Standalone worker</p>
+</td><td style="text-align: left" valign="top">
+<p>Standalone Master</p>
+</td><td style="text-align: left" valign="top">
+<p>7077</p>
+</td><td style="text-align: left" valign="top">
+<p>Submit job to cluster / Join cluster</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">SPARK_MASTER_PORT</code>
+</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>Standalone master</p>
+</td><td style="text-align: left" valign="top">
+<p>Standalone worker</p>
+</td><td style="text-align: left" valign="top">
+<p>(random)</p>
+</td><td style="text-align: left" valign="top">
+<p>Schedule executors</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">SPARK_WORKER_PORT</code>
+</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>Executor / Standalone master</p>
+</td><td style="text-align: left" valign="top">
+<p>Driver</p>
+</td><td style="text-align: left" valign="top">
+<p>(random)</p>
+</td><td style="text-align: left" valign="top">
+<p>Connect to application / Notify executor state changes</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">spark.driver.port</code>
+</p>
+</td></tr><tr><td colspan="2" style="text-align: center" valign="bottom">
+<p><span class="strong"><strong>Other ports</strong></span></p>
+</td><td colspan="3" style="text-align: center" valign="top"> </td></tr><tr><td style="text-align: left" valign="bottom">
+<p><span class="strong"><strong>From</strong></span></p>
+</td><td style="text-align: left" valign="bottom">
+<p><span class="strong"><strong>To</strong></span></p>
+</td><td style="text-align: left" valign="bottom">
+<p><span class="strong"><strong>Default Port</strong></span></p>
+</td><td style="text-align: left" valign="bottom">
+<p><span class="strong"><strong>Purpose</strong></span></p>
+</td><td style="text-align: left" valign="bottom">
+<p><span class="strong"><strong>Configuration Setting</strong></span></p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>Browser</p>
+</td><td style="text-align: left" valign="top">
+<p>Application</p>
+</td><td style="text-align: left" valign="top">
+<p>4040</p>
+</td><td style="text-align: left" valign="top">
+<p>Web UI</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">spark.ui.port</code>
+</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>Browser</p>
+</td><td style="text-align: left" valign="top">
+<p>History server</p>
+</td><td style="text-align: left" valign="top">
+<p>18080</p>
+</td><td style="text-align: left" valign="top">
+<p>Web UI</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">spark.history.ui.port</code>
+</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>Driver</p>
+</td><td style="text-align: left" valign="top">
+<p>Executor</p>
+</td><td style="text-align: left" valign="top">
+<p>(random)</p>
+</td><td style="text-align: left" valign="top">
+<p>Schedule tasks</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">spark.executor.port</code>
+</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>Executor</p>
+</td><td style="text-align: left" valign="top">
+<p>Driver</p>
+</td><td style="text-align: left" valign="top">
+<p>(random)</p>
+</td><td style="text-align: left" valign="top">
+<p>File server for files and jars</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">spark.fileserver.port</code>
+</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>Executor</p>
+</td><td style="text-align: left" valign="top">
+<p>Driver</p>
+</td><td style="text-align: left" valign="top">
+<p>(random)</p>
+</td><td style="text-align: left" valign="top">
+<p>HTTP broadcast</p>
+</td><td style="text-align: left" valign="top">
+<p>
+<code class="literal">spark.broadcast.port</code>
+</p>
+</td></tr></tbody></table></div><p>Also, some <a id="id173" class="indexterm"/>of the documentation is available with the source <a id="id174" class="indexterm"/>distribution in the <code class="literal">docs</code> subdirectory, but may be out of date.</p></div><div class="section" title="Spark components"><div class="titlepage"><div><div><h2 class="title"><a id="ch03lvl2sec17"/>Spark components</h2></div></div></div><p>Since the<a id="id175" class="indexterm"/> emergence of Spark, multiple applications that<a id="id176" class="indexterm"/> benefit from Spark's ability to cache RDDs have been written: Shark, Spork (Pig on Spark), graph libraries (GraphX, GraphFrames), streaming, MLlib, and so on; some <a id="id177" class="indexterm"/>of these <a id="id178" class="indexterm"/>will be covered here and in later chapters.</p><p>In this section, I will cover major architecture components to collect, store, and analyze the data in Spark. While I will cover a more complete data life cycle architecture in <a class="link" href="ch02.xhtml" title="Chapter 2. Data Pipelines and Modeling">Chapter 2</a>, <span class="emphasis"><em>Data Pipelines and Modeling</em></span>, here are Spark-specific components:</p><div class="mediaobject"><img src="Images/B04935_03_04.jpg" alt="Spark components" width="800" height="424"/><div class="caption"><p>Figure 03-4.  Spark architecture and components.</p></div></div></div><div class="section" title="MQTT, ZeroMQ, Flume, and Kafka"><div class="titlepage"><div><div><h2 class="title"><a id="ch03lvl2sec18"/>MQTT, ZeroMQ, Flume, and Kafka</h2></div></div></div><p>All of these <a id="id179" class="indexterm"/>are different ways to reliably move data from one place to<a id="id180" class="indexterm"/> another without loss and duplication. They <a id="id181" class="indexterm"/>usually implement a publish-subscribe <a id="id182" class="indexterm"/>model, where multiple writers and readers can write <a id="id183" class="indexterm"/>and<a id="id184" class="indexterm"/> read from the same queues with<a id="id185" class="indexterm"/> different<a id="id186" class="indexterm"/> guarantees. Flume stands out as a first distributed log and event management implementation, but it is slowly replaced by Kafka, a fully functional publish-subscribe distributed message queue optionally persistent across a distributed set of nodes developed at LinkedIn. We covered Flume and Kafka briefly in the previous chapter. Flume configuration is file-based and is traditionally used to deliver messages from a Flume source to one or several Flume sinks. One of the popular sources is <code class="literal">netcat</code>—listening on raw data over a port. For example, the following configuration describes an agent receiving data and then writing them to HDFS every 30 seconds (default):</p><div class="informalexample"><pre class="programlisting"># Name the components on this agent
+a1.sources = r1
+a1.sinks = k1
+a1.channels = c1
+
+# Describe/configure the source
+a1.sources.r1.type = netcat
+a1.sources.r1.bind = localhost
+a1.sources.r1.port = 4987
+
+# Describe the sink (the instructions to configure and start HDFS are provided in the Appendix)
+a1.sinks.k1.type=hdfs
+a1.sinks.k1.hdfs.path=hdfs://localhost:8020/flume/netcat/data
+a1.sinks.k1.hdfs.filePrefix=chapter03.example
+a1.sinks.k1.channel=c1
+a1.sinks.k1.hdfs.writeFormat = Text
+
+# Use a channel which buffers events in memory
+a1.channels.c1.type = memory
+a1.channels.c1.capacity = 1000
+a1.channels.c1.transactionCapacity = 100
+
+# Bind the source and sink to the channel
+a1.sources.r1.channels = c1
+a1.sinks.k1.channel = c1</pre></div><p>This<a id="id187" class="indexterm"/> file is<a id="id188" class="indexterm"/> included as part of the code <a id="id189" class="indexterm"/>provided <a id="id190" class="indexterm"/>with this book in the <code class="literal">chapter03/conf</code> directory. Let's <a id="id191" class="indexterm"/>download<a id="id192" class="indexterm"/> and <a id="id193" class="indexterm"/>start Flume agent (check the MD5 sum <a id="id194" class="indexterm"/>with one provided at <a class="ulink" href="http://flume.apache.org/download.html">http://flume.apache.org/download.html</a>):</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ wget http://mirrors.ocf.berkeley.edu/apache/flume/1.6.0/apache-flume-1.6.0-bin.tar.gz</strong></span>
+<span class="strong"><strong>$ md5sum apache-flume-1.6.0-bin.tar.gz</strong></span>
+<span class="strong"><strong>MD5 (apache-flume-1.6.0-bin.tar.gz) = defd21ad8d2b6f28cc0a16b96f652099</strong></span>
+<span class="strong"><strong>$ tar xf apache-flume-1.6.0-bin.tar.gz</strong></span>
+<span class="strong"><strong>$ cd apache-flume-1.6.0-bin</strong></span>
+<span class="strong"><strong>$ ./bin/flume-ng agent -Dlog.dir=. -Dflume.log.level=DEBUG,console -n a1 -f ../chapter03/conf/flume.conf</strong></span>
+<span class="strong"><strong>Info: Including Hadoop libraries found via (/Users/akozlov/hadoop-2.6.4/bin/hadoop) for HDFS access</strong></span>
+<span class="strong"><strong>Info: Excluding /Users/akozlov/hadoop-2.6.4/share/hadoop/common/lib/slf4j-api-1.7.5.jar from classpath</strong></span>
+<span class="strong"><strong>Info: Excluding /Users/akozlov/hadoop-2.6.4/share/hadoop/common/lib/slf4j-log4j12-1.7.5.jar from classpath</strong></span>
+<span class="strong"><strong>...</strong></span>
+</pre></div><p>Now, in a separate window, you can type a <code class="literal">netcat</code> command to send text to the Flume agent:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ nc localhost 4987</strong></span>
+<span class="strong"><strong>Hello</strong></span>
+<span class="strong"><strong>OK</strong></span>
+<span class="strong"><strong>World</strong></span>
+<span class="strong"><strong>OK</strong></span>
+
+<span class="strong"><strong>...</strong></span>
+</pre></div><p>The<a id="id195" class="indexterm"/> Flume <a id="id196" class="indexterm"/>agent will first<a id="id197" class="indexterm"/> create a <code class="literal">*.tmp</code> file and then rename it to a file without <a id="id198" class="indexterm"/>extension (the file extension can be used to filter <a id="id199" class="indexterm"/>out <a id="id200" class="indexterm"/>files being written to):</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ bin/hdfs dfs -text /flume/netcat/data/chapter03.example.1463052301372</strong></span>
+<span class="strong"><strong>16/05/12 04:27:25 WARN util.NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable</strong></span>
+<span class="strong"><strong>1463052302380  Hello</strong></span>
+<span class="strong"><strong>1463052304307  World</strong></span>
+</pre></div><p>Here, each row<a id="id201" class="indexterm"/> is a <a id="id202" class="indexterm"/>Unix time in milliseconds and data received. In this case, we put the data into HDFS, from where they can be analyzed by a Spark/Scala program, we can exclude the files being written to by the <code class="literal">*.tmp</code> filename pattern. However, if you are really interested in up-to-the-last-minute values, Spark, as well as some other platforms, supports streaming, which I will cover in a few sections.</p></div><div class="section" title="HDFS, Cassandra, S3, and Tachyon"><div class="titlepage"><div><div><h2 class="title"><a id="ch03lvl2sec19"/>HDFS, Cassandra, S3, and Tachyon</h2></div></div></div><p>HDFS, Cassandra, S3, and Tachyon are the different ways to get the data into persistent storage and <a id="id203" class="indexterm"/>compute nodes as necessary with different guarantees. HDFS<a id="id204" class="indexterm"/> is a distributed storage implemented as a<a id="id205" class="indexterm"/> part of Hadoop, which serves as the backend for<a id="id206" class="indexterm"/> many products in the Hadoop ecosystem. HDFS <a id="id207" class="indexterm"/>divides <a id="id208" class="indexterm"/>each file into blocks, which <a id="id209" class="indexterm"/>are <a id="id210" class="indexterm"/>128 MB in size by default, and stores each block on at least three nodes. Although HDFS is reliable and supports HA, a general complain about HDFS storage is that it is slow, particularly for machine learning purposes. Cassandra is a general-purpose key/value storage that also stores multiple copies of a row and can be configured to support different levels of consistency to optimize read or write speeds. The advantage that Cassandra over HDFS model is that it does not have a central master node; the reads and writes are completed based on the consensus algorithm. This, however, may sometimes reflect on the Cassandra stability. S3 is the <a id="id211" class="indexterm"/>Amazon <a id="id212" class="indexterm"/>storage: The data is stored<a id="id213" class="indexterm"/> off-cluster, which<a id="id214" class="indexterm"/> affects the I/O speed. Finally, the <a id="id215" class="indexterm"/>recently <a id="id216" class="indexterm"/>developed <a id="id217" class="indexterm"/>Tachyon claims to utilize node's memory to<a id="id218" class="indexterm"/> optimize access to working sets across the nodes.</p><p>Additionally, new backends<a id="id219" class="indexterm"/> are being constantly developed, for example, Kudu from Cloudera (<a class="ulink" href="http://getkudu.io/kudu.pdf">http://getkudu.io/kudu.pdf</a>) and <span class="strong"><strong>Ignite File System</strong></span> (<span class="strong"><strong>IGFS</strong></span>) from <a id="id220" class="indexterm"/>GridGain (<a class="ulink" href="http://apacheignite.gridgain.org/v1.0/docs/igfs">http://apacheignite.gridgain.org/v1.0/docs/igfs)</a>. Both are open source and Apache-licensed.</p></div><div class="section" title="Mesos, YARN, and Standalone"><div class="titlepage"><div><div><h2 class="title"><a id="ch03lvl2sec20"/>Mesos, YARN, and Standalone</h2></div></div></div><p>As we <a id="id221" class="indexterm"/>mentioned before, Spark can run under different <a id="id222" class="indexterm"/>cluster resource schedulers. These are various<a id="id223" class="indexterm"/> implementations to schedule Spark's containers <a id="id224" class="indexterm"/>and tasks on the cluster. The schedulers can be viewed as cluster<a id="id225" class="indexterm"/> kernels, performing functions similar to the operating system kernel: resource <a id="id226" class="indexterm"/>allocation, scheduling, I/O optimization, application services, and UI.</p><p>Mesos is one of the original cluster managers and is built using the same principles as the Linux kernel, only at a different level of abstraction. A Mesos slave runs on every machine and provides API's for resource management and scheduling across entire datacenter and cloud environments. Mesos is written in C++.</p><p>YARN is a more recent cluster manager developed by Yahoo. Each node in YARN runs a <span class="strong"><strong>Node Manager</strong></span>, which <a id="id227" class="indexterm"/>communicates with the <span class="strong"><strong>Resource Manager</strong></span> which may run on a separate node<a id="id228" class="indexterm"/>. The resource manager schedules the task to satisfy memory and CPU constraints. The Spark driver itself can run either in the cluster, which is called the cluster mode for YARN. Otherwise, in the client mode, only Spark executors run in the cluster and the driver that schedules Spark pipelines runs on the same machine that runs Spark shell or submit program. The Spark executors will talk to the local host over a random open port in this case. YARN is written in Java with the consequences of unpredictable GC pauses, which might make latency's long tail fatter.</p><p>Finally, if none of these resource schedulers are available, the standalone deployment mode starts a <code class="literal">org.apache.spark.deploy.worker.Worker</code> process on each node that communicates with the Spark Master process run as <code class="literal">org.apache.spark.deploy.master.Master</code>. The worker process is completely managed by the master and can run multiple executors and tasks (refer to <span class="emphasis"><em>Figure 3-2</em></span>).</p><p>In practical<a id="id229" class="indexterm"/> implementations, it is advised to track the program parallelism and <a id="id230" class="indexterm"/>required resources through driver's UI and adjust the parallelism <a id="id231" class="indexterm"/>and available memory, increasing the parallelism<a id="id232" class="indexterm"/> if necessary. In the following section, we will start <a id="id233" class="indexterm"/>looking at how Scala and Scala in Spark address <a id="id234" class="indexterm"/>different problems.</p></div></div></div>
+
+
+
+  
+<div id="sbo-rt-content"><div class="section" title="Applications"><div class="titlepage"><div><div><h1 class="title"><a id="ch03lvl1sec24"/>Applications</h1></div></div></div><p>Let's consider a few practical examples and libraries in Spark/Scala starting with a very traditional problem of word counting.</p><div class="section" title="Word count"><div class="titlepage"><div><div><h2 class="title"><a id="ch03lvl2sec21"/>Word count</h2></div></div></div><p>Most modern<a id="id235" class="indexterm"/> machine learning algorithms require multiple passes over data. If the data fits in the memory of a single machine, the data is readily available and this does not present a performance bottleneck. However, if the data becomes too large to fit into RAM, one has a choice of either dumping pieces of the data on disk (or database), which is about 100 times slower, but has a much larger capacity, or splitting the dataset between multiple machines across the network and transferring the results. While there are still ongoing debates, for most practical systems, analysis shows that storing the data over a set of network connected nodes has a slight advantage over repeatedly storing and reading it from hard disks on a single node, particularly if we can split the workload effectively between multiple CPUs.</p><div class="note" title="Note" style=""><div class="inner"><h3 class="title"><a id="tip06"/>Tip</h3><p>An average disk has bandwidth of about 100 MB/sec and transfers with a few mms latency, depending on the rotation speed and caching. This is about 100 times slower than reading the data from memory, depending on the data size and caching implementation again. Modern data bus can transfer data at over 10 GB/sec. While the network speed still lags behind the direct memory access, particularly with standard TCP/IP kernel networking layer overhead, specialized hardware can reach tens of GB/sec and if run in parallel, it can be potentially as fast as reading from the memory. In practice, the network-transfer speeds are somewhere between 1 to 10 GB/sec, but still faster than the disk in most practical systems. Thus, we can potentially fit the data into combined memory of all the cluster nodes and perform iterative machine learning algorithms across a system of them.</p></div></div><p>One problem with<a id="id236" class="indexterm"/> memory, however, is that it is does not persist across node failures and reboots. A popular big data framework, Hadoop, made possible with the help of the original Dean/Ghemawat paper (Jeff Dean and Sanjay Ghemawat, <span class="emphasis"><em>MapReduce: Simplified Data Processing on Large Clusters</em></span>, OSDI, 2004.), is using exactly the disk layer persistence to guarantee fault tolerance and store intermediate results. A Hadoop MapReduce program would first run a <code class="literal">map</code> function on each row of a dataset, emitting one or more key/value pairs. These key/value pairs then would be sorted, grouped, and aggregated by key so that the records with the same key would end up being processed together on the same reducer, which might be running on same or another node. The reducer applies a <code class="literal">reduce</code> function that traverses all the values that were emitted for the same key and aggregates them accordingly. The persistence of intermediate results would guarantee that if a reducer fails for one or another reason, the partial computations can be discarded and the reduce computation can be restarted from the checkpoint-saved results. Many simple ETL-like applications traverse the dataset only once with very little information preserved as state from one record to another.</p><p>For example, one of the traditional applications of MapReduce is word count. The program needs to count the number of occurrences of each word in a document consisting of lines of text. In Scala, the word count is readily expressed as an application of the <code class="literal">foldLeft</code> method on a sorted list of words:</p><div class="informalexample"><pre class="programlisting">val lines = scala.io.Source.fromFile("...").getLines.toSeq
+val counts = lines.flatMap(line =&gt; line.split("\\W+")).sorted.
+  foldLeft(List[(String,Int)]()){ (r,c) =&gt;
+    r match {
+      case (key, count) :: tail =&gt;
+        if (key == c) (c, count+1) :: tail
+        else (c, 1) :: r
+        case Nil =&gt;
+          List((c, 1))
+  }
+}</pre></div><p>If I run this program, the output will be a list of (word, count) tuples. The program splits the lines into words, sorts the words, and then matches each word with the latest entry in the list of (word, count) tuples. The same computation in MapReduce would be expressed as follows:</p><div class="informalexample"><pre class="programlisting">val linesRdd = sc.textFile("hdfs://...")
+val counts = linesRdd.flatMap(line =&gt; line.split("\\W+"))
+    .map(_.toLowerCase)
+    .map(word =&gt; (word, 1)).
+    .reduceByKey(_+_)
+counts.collect</pre></div><p>First, we need to <a id="id237" class="indexterm"/>process each line of the text by splitting the line into words and generation <code class="literal">(word, 1)</code> pairs. This task is easily parallelized. Then, to parallelize the global count, we need to split the counting part by assigning a task to do the count for a subset of words. In Hadoop, we compute the hash of the word and divide the work based on the value of the hash.</p><p>Once the map task finds all the entries for a given hash, it can send the key/value pairs to the reducer, the sending part is usually called shuffle in MapReduce vernacular. A reducer waits until it receives all the key/value pairs from all the mappers, combines the values—a partial combine can also happen on the mapper, if possible—and computes the overall aggregate, which in this case is just sum. A single reducer will see all the values for a given word.</p><p>Let's look at the log output of the word count operation in Spark (Spark is very verbose by default, you can manage the verbosity level by modifying the <code class="literal">conf/log4j.properties</code> file by replacing <code class="literal">INFO</code> with <code class="literal">ERROR</code> or <code class="literal">FATAL</code>):</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ wget http://mirrors.sonic.net/apache/spark/spark-1.6.1/spark-1.6.1-bin-hadoop2.6.tgz</strong></span>
+<span class="strong"><strong>$ tar xvf spark-1.6.1-bin-hadoop2.6.tgz</strong></span>
+<span class="strong"><strong>$ cd spark-1.6.1-bin-hadoop2.6</strong></span>
+<span class="strong"><strong>$ mkdir leotolstoy</strong></span>
+<span class="strong"><strong>$ (cd leotolstoy; wget http://www.gutenberg.org/files/1399/1399-0.txt)</strong></span>
+<span class="strong"><strong>$ bin/spark-shell </strong></span>
+<span class="strong"><strong>Welcome to</strong></span>
+<span class="strong"><strong>      ____              __</strong></span>
+<span class="strong"><strong>     / __/__  ___ _____/ /__</strong></span>
+<span class="strong"><strong>    _\ \/ _ \/ _ `/ __/  '_/</strong></span>
+<span class="strong"><strong>   /___/ .__/\_,_/_/ /_/\_\   version 1.6.1</strong></span>
+<span class="strong"><strong>      /_/</strong></span>
+
+<span class="strong"><strong>Using Scala version 2.11.7 (Java HotSpot(TM) 64-Bit Server VM, Java 1.8.0_40)</strong></span>
+<span class="strong"><strong>Type in expressions to have them evaluated.</strong></span>
+<span class="strong"><strong>Type :help for more information.</strong></span>
+<span class="strong"><strong>Spark context available as sc.</strong></span>
+<span class="strong"><strong>SQL context available as sqlContext.</strong></span>
+<span class="strong"><strong>scala&gt; val linesRdd = sc.textFile("leotolstoy", minPartitions=10)</strong></span>
+<span class="strong"><strong>linesRdd: org.apache.spark.rdd.RDD[String] = leotolstoy MapPartitionsRDD[3] at textFile at &lt;console&gt;:27</strong></span>
+</pre></div><p>At this stage, the only thing that happened is metadata manipulations, Spark has not touched the data itself. Spark estimates that the size of the dataset and the number of partitions. By default, this is the number of HDFS blocks, but we can specify the minimum number<a id="id238" class="indexterm"/> of partitions explicitly with the <code class="literal">minPartitions</code> parameter:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>scala&gt; val countsRdd = linesRdd.flatMap(line =&gt; line.split("\\W+")).</strong></span>
+<span class="strong"><strong>     | map(_.toLowerCase).</strong></span>
+<span class="strong"><strong>     | map(word =&gt; (word, 1)).</strong></span>
+<span class="strong"><strong>     | reduceByKey(_+_)</strong></span>
+<span class="strong"><strong>countsRdd: org.apache.spark.rdd.RDD[(String, Int)] = ShuffledRDD[5] at reduceByKey at &lt;console&gt;:31</strong></span>
+</pre></div><p>We just defined another RDD derived from the original <code class="literal">linesRdd</code>:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>scala&gt; countsRdd.collect.filter(_._2 &gt; 99)</strong></span>
+<span class="strong"><strong>res3: Array[(String, Int)] = Array((been,1061), (them,841), (found,141), (my,794), (often,105), (table,185), (this,1410), (here,364), (asked,320), (standing,132), ("",13514), (we,592), (myself,140), (is,1454), (carriage,181), (got,277), (won,153), (girl,117), (she,4403), (moment,201), (down,467), (me,1134), (even,355), (come,667), (new,319), (now,872), (upon,207), (sister,115), (veslovsky,110), (letter,125), (women,134), (between,138), (will,461), (almost,124), (thinking,159), (have,1277), (answer,146), (better,231), (men,199), (after,501), (only,654), (suddenly,173), (since,124), (own,359), (best,101), (their,703), (get,304), (end,110), (most,249), (but,3167), (was,5309), (do,846), (keep,107), (having,153), (betsy,111), (had,3857), (before,508), (saw,421), (once,334), (side,163), (ough...</strong></span>
+</pre></div><p>Word count over 2 GB of text data—40,291 lines and 353,087 words—took under a second to read, split, and group by words.</p><p>With extended logging, you could see the following:</p><div class="itemizedlist"><ul class="itemizedlist"><li class="listitem" style="list-style-type: disc">Spark opens a few ports to communicate with the executors and users</li><li class="listitem" style="list-style-type: disc">Spark UI runs on port 4040 on <code class="literal">http://localhost:4040</code></li><li class="listitem" style="list-style-type: disc">You can read the file either from local or distributed storage (HDFS, Cassandra, and S3)</li><li class="listitem" style="list-style-type: disc">Spark will connect to Hive if Spark is built with Hive support</li><li class="listitem" style="list-style-type: disc">Spark uses lazy evaluation and executes the pipeline only when necessary or when output is required</li><li class="listitem" style="list-style-type: disc">Spark uses internal scheduler to split the job into tasks, optimize the execution, and execute the tasks</li><li class="listitem" style="list-style-type: disc">The results are stored into RDDs, which can either be saved or brought into RAM of the node executing the shell with collect method</li></ul></div><p>The art of <a id="id239" class="indexterm"/>parallel performance tuning is to split the workload between different nodes or threads so that the overhead is relatively small and the workload is balanced.</p></div><div class="section" title="Streaming word count"><div class="titlepage"><div><div><h2 class="title"><a id="ch03lvl2sec22"/>Streaming word count</h2></div></div></div><p>Spark supports listening on incoming streams, partitioning it, and computing aggregates close to <a id="id240" class="indexterm"/>real-time. Currently supported sources are Kafka, Flume, HDFS/S3, Kinesis, Twitter, as well as the traditional MQs such as ZeroMQ and MQTT. In Spark, streaming is implemented as micro-batches. Internally, Spark divides input data into micro-batches, usually from subseconds to minutes in size and performs RDD aggregation operations on these micro-batches.</p><p>For example, let's extend the Flume example that we covered earlier. We'll need to modify the Flume configuration file to create a Spark polling sink. Instead of HDFS, replace the sink section:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong># The sink is Spark</strong></span>
+<span class="strong"><strong>a1.sinks.k1.type=org.apache.spark.streaming.flume.sink.SparkSink</strong></span>
+<span class="strong"><strong>a1.sinks.k1.hostname=localhost</strong></span>
+<span class="strong"><strong>a1.sinks.k1.port=4989</strong></span>
+</pre></div><p>Now, instead of writing to HDFS, Flume will wait for Spark to poll for data:</p><div class="informalexample"><pre class="programlisting">
+object FlumeWordCount {
+  def main(args: Array[String]) {
+    // Create the context with a 2 second batch size
+    val sparkConf = new SparkConf().setMaster("local[2]").setAppName("FlumeWordCount")
+    val ssc = new StreamingContext(sparkConf, Seconds(2))
+    ssc.checkpoint("/tmp/flume_check")
+    val hostPort=args(0).split(":")
+    System.out.println("Opening a sink at host: [" + hostPort(0) + "] port: [" + hostPort(1).toInt + "]")
+    val lines = FlumeUtils.createPollingStream(ssc, hostPort(0), hostPort(1).toInt, StorageLevel.MEMORY_ONLY)
+    val words = lines
+      .map(e =&gt; new String(e.event.getBody.array)).map(_.toLowerCase).flatMap(_.split("\\W+"))
+      .map(word =&gt; (word, 1L))
+      .reduceByKeyAndWindow(_+_, _-_, Seconds(6), Seconds(2)).print
+    ssc.start()
+    ssc.awaitTermination()
+  }
+}</pre></div><p>To run the program, start the Flume agent in one window:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ ./bin/flume-ng agent -Dflume.log.level=DEBUG,console -n a1 –f ../chapter03/conf/flume-spark.conf</strong></span>
+<span class="strong"><strong>...</strong></span>
+</pre></div><p>Then run the <code class="literal">FlumeWordCount</code> object in another:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ cd ../chapter03</strong></span>
+<span class="strong"><strong>$ sbt "run-main org.akozlov.chapter03.FlumeWordCount localhost:4989</strong></span>
+<span class="strong"><strong>...</strong></span>
+</pre></div><p>Now, any<a id="id241" class="indexterm"/> text typed to the <code class="literal">netcat</code> connection will be split into words and counted every two seconds for a six second sliding window:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ echo "Happy families are all alike; every unhappy family is unhappy in its own way" | nc localhost 4987</strong></span>
+<span class="strong"><strong>...</strong></span>
+<span class="strong"><strong>-------------------------------------------</strong></span>
+<span class="strong"><strong>Time: 1464161488000 ms</strong></span>
+<span class="strong"><strong>-------------------------------------------</strong></span>
+<span class="strong"><strong>(are,1)</strong></span>
+<span class="strong"><strong>(is,1)</strong></span>
+<span class="strong"><strong>(its,1)</strong></span>
+<span class="strong"><strong>(family,1)</strong></span>
+<span class="strong"><strong>(families,1)</strong></span>
+<span class="strong"><strong>(alike,1)</strong></span>
+<span class="strong"><strong>(own,1)</strong></span>
+<span class="strong"><strong>(happy,1)</strong></span>
+<span class="strong"><strong>(unhappy,2)</strong></span>
+<span class="strong"><strong>(every,1)</strong></span>
+<span class="strong"><strong>...</strong></span>
+
+<span class="strong"><strong>-------------------------------------------</strong></span>
+<span class="strong"><strong>Time: 1464161490000 ms</strong></span>
+<span class="strong"><strong>-------------------------------------------</strong></span>
+<span class="strong"><strong>(are,1)</strong></span>
+<span class="strong"><strong>(is,1)</strong></span>
+<span class="strong"><strong>(its,1)</strong></span>
+<span class="strong"><strong>(family,1)</strong></span>
+<span class="strong"><strong>(families,1)</strong></span>
+<span class="strong"><strong>(alike,1)</strong></span>
+<span class="strong"><strong>(own,1)</strong></span>
+<span class="strong"><strong>(happy,1)</strong></span>
+<span class="strong"><strong>(unhappy,2)</strong></span>
+<span class="strong"><strong>(every,1)</strong></span>
+<span class="strong"><strong>...</strong></span>
+</pre></div><p>Spark/Scala allows to seamlessly switch between the streaming sources. For example, the same program <a id="id242" class="indexterm"/>for Kafka publish/subscribe topic model looks similar to the following:</p><div class="informalexample"><pre class="programlisting">object KafkaWordCount {
+  def main(args: Array[String]) {
+    // Create the context with a 2 second batch size
+    val sparkConf = new SparkConf().setMaster("local[2]").setAppName("KafkaWordCount")
+    val ssc = new StreamingContext(sparkConf, Seconds(2))
+    ssc.checkpoint("/tmp/kafka_check")
+    System.out.println("Opening a Kafka consumer at zk:[" + args(0) + "] for group group-1 and topic example")
+    val lines = KafkaUtils.createStream(ssc, args(0), "group-1", Map("example" -&gt; 1), StorageLevel.MEMORY_ONLY)
+    val words = lines
+      .flatMap(_._2.toLowerCase.split("\\W+"))
+      .map(word =&gt; (word, 1L))
+      .reduceByKeyAndWindow(_+_, _-_, Seconds(6), Seconds(2)).print
+    ssc.start()
+    ssc.awaitTermination()
+  }
+}</pre></div><p>To start the Kafka broker, first download the latest binary distribution and start ZooKeeper. ZooKeeper is a distributed-services coordinator and is required by Kafka even in a single-node deployment:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ wget http://apache.cs.utah.edu/kafka/0.9.0.1/kafka_2.11-0.9.0.1.tgz</strong></span>
+<span class="strong"><strong>...</strong></span>
+<span class="strong"><strong>$ tar xf kafka_2.11-0.9.0.1.tgz</strong></span>
+<span class="strong"><strong>$ bin/zookeeper-server-start.sh config/zookeeper.properties</strong></span>
+<span class="strong"><strong>...</strong></span>
+</pre></div><p>In another window, start the Kafka server:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ bin/kafka-server-start.sh config/server.properties</strong></span>
+<span class="strong"><strong>...</strong></span>
+</pre></div><p>Run the <code class="literal">KafkaWordCount</code> object:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ sbt "run-main org.akozlov.chapter03.KafkaWordCount localhost:2181"</strong></span>
+<span class="strong"><strong>...</strong></span>
+</pre></div><p>Now, publishing the stream of words into the Kafka topic will produce the window counts:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ echo "Happy families are all alike; every unhappy family is unhappy in its own way" | ./bin/kafka-console-producer.sh --broker-list localhost:9092 --topic example</strong></span>
+<span class="strong"><strong>...</strong></span>
+
+<span class="strong"><strong>$ sbt "run-main org.akozlov.chapter03.FlumeWordCount localhost:4989</strong></span>
+<span class="strong"><strong>...</strong></span>
+<span class="strong"><strong>-------------------------------------------</strong></span>
+<span class="strong"><strong>Time: 1464162712000 ms</strong></span>
+<span class="strong"><strong>-------------------------------------------</strong></span>
+<span class="strong"><strong>(are,1)</strong></span>
+<span class="strong"><strong>(is,1)</strong></span>
+<span class="strong"><strong>(its,1)</strong></span>
+<span class="strong"><strong>(family,1)</strong></span>
+<span class="strong"><strong>(families,1)</strong></span>
+<span class="strong"><strong>(alike,1)</strong></span>
+<span class="strong"><strong>(own,1)</strong></span>
+<span class="strong"><strong>(happy,1)</strong></span>
+<span class="strong"><strong>(unhappy,2)</strong></span>
+<span class="strong"><strong>(every,1)</strong></span>
+</pre></div><p>As you see, the <a id="id243" class="indexterm"/>programs output every two seconds. Spark streaming is sometimes called <span class="strong"><strong>micro-batch processing</strong></span>. Streaming has many<a id="id244" class="indexterm"/> other applications (and frameworks), but this is too big of a topic to be entirely considered here and needs to be covered separately. I'll cover some ML on streams of data in <a class="link" href="ch05.xhtml" title="Chapter 5. Regression and Classification">Chapter 5</a>, <span class="emphasis"><em>Regression and Classification</em></span>. Now, let's get back to more traditional SQL-like interfaces.</p></div><div class="section" title="Spark SQL and DataFrame"><div class="titlepage"><div><div><h2 class="title"><a id="ch03lvl2sec23"/>Spark SQL and DataFrame</h2></div></div></div><p>DataFrame was a<a id="id245" class="indexterm"/> relatively recent addition to Spark, introduced<a id="id246" class="indexterm"/> in version 1.3, allowing <a id="id247" class="indexterm"/>one to use the standard SQL language for data analysis. We already<a id="id248" class="indexterm"/> used some SQL commands in <a class="link" href="ch01.xhtml" title="Chapter 1. Exploratory Data Analysis">Chapter 1</a>, <span class="emphasis"><em>Exploratory Data Analysis</em></span> for the exploratory data analysis. SQL is really great for simple exploratory analysis and data aggregations.</p><p>According to the latest poll results, about 70% of Spark users use DataFrame. Although DataFrame recently became the most popular framework for working with tabular data, it is a relatively heavyweight object. The pipelines that use DataFrames may execute much slower than the ones that are based on Scala's vector or LabeledPoint, which will be discussed in the next chapter. The evidence from different developers is that the response times can be driven to tens or hundreds of milliseconds depending on the query, from submillisecond on simpler objects.</p><p>Spark implements its own shell for SQL, which can be invoked in addition to the standard Scala REPL shell: <code class="literal">./bin/spark-sql</code> can be used to access the existing Hive/Impala or relational DB tables:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ ./bin/spark-sql</strong></span>
+<span class="strong"><strong>…</strong></span>
+<span class="strong"><strong>spark-sql&gt; select min(duration), max(duration), avg(duration) from kddcup;</strong></span>
+<span class="strong"><strong>…</strong></span>
+<span class="strong"><strong>0  58329  48.34243046395876</strong></span>
+<span class="strong"><strong>Time taken: 11.073 seconds, Fetched 1 row(s)</strong></span>
+</pre></div><p>In <a id="id249" class="indexterm"/>standard<a id="id250" class="indexterm"/> Spark's REPL, the<a id="id251" class="indexterm"/> same query can be performed by running the <a id="id252" class="indexterm"/>following command:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ ./bin/spark-shell</strong></span>
+<span class="strong"><strong>…</strong></span>
+<span class="strong"><strong>scala&gt; val df = sqlContext.sql("select min(duration), max(duration), avg(duration) from kddcup"</strong></span>
+<span class="strong"><strong>16/05/12 13:35:34 INFO parse.ParseDriver: Parsing command: select min(duration), max(duration), avg(duration) from alex.kddcup_parquet</strong></span>
+<span class="strong"><strong>16/05/12 13:35:34 INFO parse.ParseDriver: Parse Completed</strong></span>
+<span class="strong"><strong>df: org.apache.spark.sql.DataFrame = [_c0: bigint, _c1: bigint, _c2: double]</strong></span>
+<span class="strong"><strong>scala&gt; df.collect.foreach(println)</strong></span>
+<span class="strong"><strong>…</strong></span>
+<span class="strong"><strong>16/05/12 13:36:32 INFO scheduler.DAGScheduler: Job 2 finished: collect at &lt;console&gt;:22, took 4.593210 s</strong></span>
+<span class="strong"><strong>[0,58329,48.34243046395876]</strong></span>
+</pre></div></div></div></div>
+
+
+
+  
+<div id="sbo-rt-content"><div class="section" title="ML libraries"><div class="titlepage"><div><div><h1 class="title"><a id="ch03lvl1sec25"/>ML libraries</h1></div></div></div><p>Spark, particularly<a id="id253" class="indexterm"/> with memory-based storage systems, claims to substantially improve the speed of data access within and between nodes. ML seems to be a natural fit, as many algorithms require multiple passes over the data, or repartitioning. MLlib is the open source library of choice, although private companies are catching, up with their own proprietary implementations.</p><p>As I will chow in <a class="link" href="ch05.xhtml" title="Chapter 5. Regression and Classification">Chapter 5</a>, <span class="emphasis"><em>Regression and Classification</em></span>, most of the standard machine learning algorithms can be expressed as an optimization problem. For example, classical linear regression minimizes the sum of squares of <span class="emphasis"><em>y</em></span> distance between the regression line and the actual value of <span class="emphasis"><em>y</em></span>:</p><div class="mediaobject"><img src="Images/B04935_03_01F.jpg" alt="ML libraries" width="134" height="57"/></div><p>Here, <span class="inlinemediaobject"><img src="Images/B04935_03_02F.jpg" alt="ML libraries" width="20" height="30"/></span> are the predicted values according to the linear expression:</p><div class="mediaobject"><img src="Images/B04935_03_03F.jpg" alt="ML libraries" width="107" height="30"/></div><p>
+<span class="emphasis"><em>A</em></span> is commonly <a id="id254" class="indexterm"/>called the slope, and <span class="emphasis"><em>B</em></span> the intercept. In a more generalized formulation, a linear optimization problem is to minimize an additive function:</p><div class="mediaobject"><img src="Images/B04935_03_04F.jpg" alt="ML libraries" width="285" height="57"/></div><p>Here, <span class="inlinemediaobject"><img src="Images/B04935_03_05F.jpg" alt="ML libraries" width="92" height="33"/></span> is a loss function and <span class="inlinemediaobject"><img src="Images/B04935_03_06F.jpg" alt="ML libraries" width="55" height="33"/></span> is a regularization function. The regularization function is an increasing function of model complexity, for example, the number of parameters (or a natural logarithm thereof). Most common loss functions are given in the following table:</p><div class="informaltable"><table border="1"><colgroup><col style="text-align: left"/><col style="text-align: left"/><col style="text-align: left"/></colgroup><thead><tr><th style="text-align: left" valign="bottom"> </th><th style="text-align: left" valign="bottom">
+<p>Loss function L</p>
+</th><th style="text-align: left" valign="bottom">
+<p>Gradient</p>
+</th></tr></thead><tbody><tr><td style="text-align: left" valign="top">
+<p>Linear</p>
+</td><td style="text-align: left" valign="top">
+<div class="mediaobject"><img src="Images/B04935_03_07F.jpg" alt="ML libraries" width="120" height="52"/></div>
+</td><td style="text-align: left" valign="top">
+<div class="mediaobject"><img src="Images/B04935_03_08F.jpg" alt="ML libraries" width="108" height="32"/></div>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>Logistic </p>
+</td><td style="text-align: left" valign="top">
+<div class="mediaobject"><img src="Images/B04935_03_09F.jpg" alt="ML libraries" width="165" height="40"/></div>
+</td><td style="text-align: left" valign="top">
+<div class="mediaobject"><img src="Images/B04935_03_10F.jpg" alt="ML libraries" width="218" height="73"/></div>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>Hinge</p>
+</td><td style="text-align: left" valign="top">
+<div class="mediaobject"><img src="Images/B04935_03_11F.jpg" alt="ML libraries" width="148" height="37"/></div>
+</td><td style="text-align: left" valign="top">
+<span class="inlinemediaobject"><img src="Images/B04935_03_13F.jpg" alt="ML libraries" width="232" height="30"/></span>
+</td></tr></tbody></table></div><p>The purpose of the <a id="id255" class="indexterm"/>regularizer is to penalize more complex models to avoid overfitting and improve generalization error: more MLlib currently supports the following regularizers:</p><div class="informaltable"><table border="1"><colgroup><col style="text-align: left"/><col style="text-align: left"/><col style="text-align: left"/></colgroup><thead><tr><th style="text-align: left" valign="bottom"> </th><th style="text-align: left" valign="bottom">
+<p>Regularizer R</p>
+</th><th style="text-align: left" valign="bottom">
+<p>Gradient</p>
+</th></tr></thead><tbody><tr><td style="text-align: left" valign="top">
+<p>L2</p>
+</td><td style="text-align: left" valign="top">
+<div class="mediaobject"><img src="Images/B04935_03_14F.jpg" alt="ML libraries" width="55" height="52"/></div>
+</td><td style="text-align: left" valign="top">
+<div class="mediaobject"><img src="Images/B04935_03_15F.jpg" alt="ML libraries" width="20" height="18"/></div>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>L1</p>
+</td><td style="text-align: left" valign="top">
+<div class="mediaobject"><img src="Images/B04935_03_16F.jpg" alt="ML libraries" width="37" height="37"/></div>
+</td><td style="text-align: left" valign="top">
+<div class="mediaobject"><img src="Images/B04935_03_17F.jpg" alt="ML libraries" width="72" height="33"/></div>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>Elastic net</p>
+</td><td style="text-align: left" valign="top">
+<div class="mediaobject"><img src="Images/B04935_03_18F.jpg" alt="ML libraries" width="180" height="52"/></div>
+</td><td style="text-align: left" valign="top">
+<div class="mediaobject"><img src="Images/B04935_03_19F.jpg" alt="ML libraries" width="182" height="33"/></div>
+</td></tr></tbody></table></div><p>Here, <span class="emphasis"><em>sign(w)</em></span> is the vector of the signs of all entries of <span class="emphasis"><em>w</em></span>.</p><p>Currently, MLlib includes implementation of the following algorithms:</p><div class="itemizedlist"><ul class="itemizedlist"><li class="listitem" style="list-style-type: disc">Basic statistics:<div class="itemizedlist"><ul class="itemizedlist"><li class="listitem" style="list-style-type: disc">Summary statistics</li><li class="listitem" style="list-style-type: disc">Correlations</li><li class="listitem" style="list-style-type: disc">Stratified sampling</li><li class="listitem" style="list-style-type: disc">Hypothesis testing</li><li class="listitem" style="list-style-type: disc">Streaming significance testing</li><li class="listitem" style="list-style-type: disc">Random data generation</li></ul></div></li><li class="listitem" style="list-style-type: disc">Classification and regression:<div class="itemizedlist"><ul class="itemizedlist"><li class="listitem" style="list-style-type: disc">Linear models (SVMs, logistic regression, and linear regression)</li><li class="listitem" style="list-style-type: disc">Naive Bayes</li><li class="listitem" style="list-style-type: disc">Decision trees</li><li class="listitem" style="list-style-type: disc">Ensembles of trees (Random Forests and Gradient-Boosted Trees)</li><li class="listitem" style="list-style-type: disc">Isotonic regression</li></ul></div></li><li class="listitem" style="list-style-type: disc">Collaborative <a id="id256" class="indexterm"/>filtering:<div class="itemizedlist"><ul class="itemizedlist"><li class="listitem" style="list-style-type: disc"><span class="strong"><strong>Alternating least squares</strong></span> (<span class="strong"><strong>ALS</strong></span>)</li></ul></div></li><li class="listitem" style="list-style-type: disc">Clustering:<div class="itemizedlist"><ul class="itemizedlist"><li class="listitem" style="list-style-type: disc">k-means</li><li class="listitem" style="list-style-type: disc">Gaussian<a id="id257" class="indexterm"/> mixture</li><li class="listitem" style="list-style-type: disc"><span class="strong"><strong>Power Iteration Clustering</strong></span> (<span class="strong"><strong>PIC</strong></span>)</li><li class="listitem" style="list-style-type: disc"><span class="strong"><strong>Latent Dirichlet allocation</strong></span> (<span class="strong"><strong>LDA</strong></span>)</li><li class="listitem" style="list-style-type: disc">Bisecting <a id="id258" class="indexterm"/>k-means</li><li class="listitem" style="list-style-type: disc">Streaming k-means</li></ul></div></li><li class="listitem" style="list-style-type: disc">Dimensionality <a id="id259" class="indexterm"/>reduction:<div class="itemizedlist"><ul class="itemizedlist"><li class="listitem" style="list-style-type: disc"><span class="strong"><strong>Singular Value Decomposition</strong></span> (<span class="strong"><strong>SVD</strong></span>)</li><li class="listitem" style="list-style-type: disc"><span class="strong"><strong>Principal Component Analysis</strong></span> (<span class="strong"><strong>PCA</strong></span>)</li></ul></div></li><li class="listitem" style="list-style-type: disc">Feature <a id="id260" class="indexterm"/>extraction and transformation</li><li class="listitem" style="list-style-type: disc">Frequent <a id="id261" class="indexterm"/>pattern mining:<div class="itemizedlist"><ul class="itemizedlist"><li class="listitem" style="list-style-type: disc">FP-growth Association rules</li><li class="listitem" style="list-style-type: disc">PrefixSpan</li></ul></div></li><li class="listitem" style="list-style-type: disc">Optimization:<div class="itemizedlist"><ul class="itemizedlist"><li class="listitem" style="list-style-type: disc"><span class="strong"><strong>Stochastic Gradient Descent</strong></span> (<span class="strong"><strong>SGD</strong></span>)</li><li class="listitem" style="list-style-type: disc"><span class="strong"><strong>Limited-Memory BFGS</strong></span> (<span class="strong"><strong>L-BFGS</strong></span>)</li></ul></div></li></ul></div><p>I will go over <a id="id262" class="indexterm"/>some of the algorithms in <a class="link" href="ch05.xhtml" title="Chapter 5. Regression and Classification">Chapter 5</a>, <span class="emphasis"><em>Regression and Classification</em></span>. More complex non-structured machine learning methods <a id="id263" class="indexterm"/>will be considered in <a class="link" href="ch06.xhtml" title="Chapter 6. Working with Unstructured Data">Chapter 6</a>, <span class="emphasis"><em>Working with Unstructured Data</em></span>.</p><div class="section" title="SparkR"><div class="titlepage"><div><div><h2 class="title"><a id="ch03lvl2sec24"/>SparkR</h2></div></div></div><p>R is an<a id="id264" class="indexterm"/> implementation of popular S programming language <a id="id265" class="indexterm"/>created by John Chambers while working at Bell Labs. R is currently supported by the <span class="strong"><strong>R Foundation for Statistical Computing</strong></span>. R's popularity has increased in recent years according to polls. SparkR provides a lightweight frontend to use Apache Spark from R. Starting with Spark 1.6.0, SparkR provides a distributed DataFrame implementation that supports operations such as selection, filtering, aggregation, and so on, which is similar to R DataFrames, dplyr, but on very large datasets. SparkR also supports distributed machine learning using MLlib.</p><p>SparkR required R version 3 or higher, and can be invoked via the <code class="literal">./bin/sparkR</code> shell. I will cover SparkR in <a class="link" href="ch08.xhtml" title="Chapter 8. Integrating Scala with R and Python">Chapter 8</a>, <span class="emphasis"><em>Integrating Scala with R and Python</em></span>.</p></div><div class="section" title="Graph algorithms – GraphX and GraphFrames"><div class="titlepage"><div><div><h2 class="title"><a id="ch03lvl2sec25"/>Graph algorithms – GraphX and GraphFrames</h2></div></div></div><p>Graph algorithms<a id="id266" class="indexterm"/> are one of the hardest to correctly<a id="id267" class="indexterm"/> distribute between nodes, unless the graph itself is naturally <a id="id268" class="indexterm"/>partitioned, that is, it can be represented by a set of<a id="id269" class="indexterm"/> disconnected subgraphs. Since the social networking analysis <a id="id270" class="indexterm"/>on a multi-million node scale became popular due to <a id="id271" class="indexterm"/>companies such as Facebook, Google, and LinkedIn, researches have been coming up with new approaches to formalize the graph representations, algorithms, and types of questions asked.</p><p>GraphX is a modern framework for graph computations described in a 2013 paper (<span class="emphasis"><em>GraphX: A Resilient Distributed Graph System on Spark</em></span> by Reynold Xin, Joseph Gonzalez, Michael Franklin, and Ion Stoica, GRADES (SIGMOD workshop), 2013). It has graph-parallel frameworks such as Pregel, and PowerGraph as predecessors. The graph is represented by two RDDs: one for vertices and another one for edges. Once the RDDs are joined, GraphX supports either Pregel-like API or MapReduce-like API, where the map function is applied to the node's neighbors and reduce is the aggregation step on top of the map results.</p><p>At the time of writing, GraphX includes the implementation for the following graph algorithms:</p><div class="itemizedlist"><ul class="itemizedlist"><li class="listitem" style="list-style-type: disc">PageRank</li><li class="listitem" style="list-style-type: disc">Connected components</li><li class="listitem" style="list-style-type: disc">Triangle counting</li><li class="listitem" style="list-style-type: disc">Label propagation</li><li class="listitem" style="list-style-type: disc">SVD++ (collaborative filtering)</li><li class="listitem" style="list-style-type: disc">Strongly connected components</li></ul></div><p>As GraphX is an open source library, changes to the list are expected. GraphFrames is a new implementation <a id="id272" class="indexterm"/>from Databricks that fully supports the following <a id="id273" class="indexterm"/>three <a id="id274" class="indexterm"/>languages: Scala, Java, and <a id="id275" class="indexterm"/>Python, and is build on top <a id="id276" class="indexterm"/>of DataFrames. I'll discuss specific implementations in <a class="link" href="ch07.xhtml" title="Chapter 7. Working with Graph Algorithms">Chapter 7</a>, <span class="emphasis"><em>Working with Graph Algorithms</em></span>.</p></div></div></div>
+
+
+
+  
+<div id="sbo-rt-content"><div class="section" title="Spark performance tuning"><div class="titlepage"><div><div><h1 class="title"><a id="ch03lvl1sec26"/>Spark performance tuning</h1></div></div></div><p>While <a id="id277" class="indexterm"/>efficient execution of the data pipeline is prerogative of the task scheduler, which is part of the Spark driver, sometimes Spark needs hints. Spark scheduling is primarily driven by the two parameters: CPU and memory. Other resources, such as disk and network I/O, of course, play an important part in Spark performance as well, but neither Spark, Mesos or YARN can currently do anything to actively manage them.</p><p>The first parameter to watch is the number of RDD partitions, which can be specified explicitly when reading the RDD from a file. Spark usually errs on the side of too many partitions as it provides more parallelism, and it does work in many cases as the task setup/teardown times are relatively small. However, one might experiment with decreasing the number of partitions, especially if one does aggregations.</p><p>The default number of partitions per RDD and the level of parallelism is determined by the <code class="literal">spark.default.parallelism</code> parameter, defined in the <code class="literal">$SPARK_HOME/conf/spark-defaults.conf</code> configuration file. The number of partitions for a specific RDD can also be explicitly changed by the <code class="literal">coalesce()</code> or <code class="literal">repartition()</code> methods.</p><p>The total number of cores and available memory is often the reason for deadlocks as the tasks cannot proceed further. One can specify the number of cores for each executor with the <code class="literal">--executor-cores</code> flag when invoking spark-submit, spark-shell, or PySpark from the command line. Alternatively, one can set the corresponding parameters in the <code class="literal">spark-defaults.conf</code> file discussed earlier. If the number of cores is set too high, the scheduler will not be able to allocate resources on the nodes and will deadlock.</p><p>In a similar way, <code class="literal">--executor-memory</code> (or the <code class="literal">spark.executor.memory</code> property) specifies the requested heap size for all the tasks (the default is 1g). If the executor memory is specified too high, again, the scheduler may be deadlocked or will be able to schedule only a limited number of executors on a node.</p><p>The implicit assumption in Standalone mode when counting the number of cores and memory is that Spark is the only running application—which may or may not be true. When running under Mesos or YARN, it is important to configure the cluster scheduler that it has the resources available to schedule the executors requested by the Spark Driver. The relevant YARN properties are: <code class="literal">yarn.nodemanager.resource.cpu-vcores</code> and <code class="literal">yarn.nodemanager.resource.memory-mb</code>. YARN may round the requested memory up a little. YARN's <code class="literal">yarn.scheduler.minimum-allocation-mb</code> and <code class="literal">yarn.scheduler.increment-allocation-mb</code> properties control the minimum and increment request values respectively.</p><p>JVMs can <a id="id278" class="indexterm"/>also use some memory off heap, for example, for interned strings and direct byte buffers. The value of the <code class="literal">spark.yarn.executor.memoryOverhead</code> property is added to the executor memory to determine the full memory request to YARN for each executor. It defaults to max (<span class="emphasis"><em>384, .07 * spark.executor.memory</em></span>).</p><p>Since Spark can internally transfer the data between executors and client node, efficient serialization is very important. I will consider different serialization frameworks in <a class="link" href="ch06.xhtml" title="Chapter 6. Working with Unstructured Data">Chapter 6</a>, <span class="emphasis"><em>Working with Unstructured Data</em></span>, but Spark uses Kryo serialization by default, which requires the classes to be registered explicitly in a static method. If you see a serialization error in your code, it is likely because the corresponding class has not been registered or Kryo does not support it, as it happens with too nested and complex data types. In general, it is recommended to avoid complex objects to be passed between the executors unless the object serialization can be done very efficiently.</p><p>Driver has similar parameters: <code class="literal">spark.driver.cores</code>, <code class="literal">spark.driver.memory</code>, and <code class="literal">spark.driver.maxResultSize</code>. The latter one sets the limit for the results collected from all the executors with the <code class="literal">collect</code> method. It is important to protect the driver process from out-of-memory exceptions. The other way to avoid out-of-memory exceptions and consequent problems are to either modify the pipeline to return aggregated or filtered results or use the <code class="literal">take</code> method instead.</p></div></div>
+
+
+
+  
+<div id="sbo-rt-content"><div class="section" title="Running Hadoop HDFS"><div class="titlepage"><div><div><h1 class="title"><a id="ch03lvl1sec27"/>Running Hadoop HDFS</h1></div></div></div><p>A distributed <a id="id279" class="indexterm"/>processing framework wouldn't be complete without distributed storage. One of them is HDFS. Even if Spark is run on local mode, it can still use a distributed file system at the backend. Like Spark breaks computations into subtasks, HDFS breaks a file into blocks and stores them across a set of machines. For HA, HDFS stores multiple copies of each block, the number of copies is called replication level, three by default (refer to <span class="emphasis"><em>Figure 3-5</em></span>).</p><p>
+<span class="strong"><strong>NameNode</strong></span><a id="id280" class="indexterm"/> is managing the HDFS storage by remembering the block locations and other metadata such as owner, file permissions, and block size, which are file-specific. <span class="strong"><strong>Secondary Namenode</strong></span> is a slight misnomer: its function is to merge the <a id="id281" class="indexterm"/>metadata modifications, edits, into fsimage, or a file that serves as a metadata database. The merge is required, as it is more practical to write modifications of fsimage to a separate file instead of applying each modification to the disk image of the fsimage directly (in addition to applying the corresponding changes in memory). Secondary <span class="strong"><strong>Namenode</strong></span> cannot serve as a second copy of the <span class="strong"><strong>Namenode</strong></span>. A <span class="strong"><strong>Balancer</strong></span> is <a id="id282" class="indexterm"/>run to move the blocks to maintain approximately equal disk usage across the servers—the initial block assignment to the nodes is supposed to be random, if enough space is available and the client is not run within the cluster. Finally, the <span class="strong"><strong>Client</strong></span><a id="id283" class="indexterm"/> communicates with the <span class="strong"><strong>Namenode</strong></span> to get the metadata and block locations, but after that, either reads or writes the data directly to the node, where a copy of the block resides. The client is the only component that can be run outside the HDFS cluster, but it needs network connectivity with all the nodes in the cluster.</p><p>If any of the node<a id="id284" class="indexterm"/> dies or disconnects from the network, the <span class="strong"><strong>Namenode</strong></span> notices the change, as it constantly maintains the contact with the nodes via heartbeats. If the node does not reconnect to the <span class="strong"><strong>Namenode</strong></span> within 10 minutes (by default), the <span class="strong"><strong>Namenode</strong></span> will start replicating the blocks in order to achieve the required replication level for the blocks that were lost on the node. A separate block scanner thread in the <span class="strong"><strong>Namenode</strong></span> will scan the blocks for possible bit rot—each block maintains a checksum—and will delete corrupted and orphaned blocks:</p><div class="mediaobject"><img src="Images/B04935_03_05.jpg" alt="Running Hadoop HDFS" width="800" height="950"/><div class="caption"><p>Figure 03-5. This is the HDFS architecture. Each block is stored in three separate locations (the replication level).</p></div></div><div class="orderedlist"><ol class="orderedlist arabic"><li class="listitem">To start HDFS<a id="id285" class="indexterm"/> on your machine (with replication level 1), download a <a id="id286" class="indexterm"/>Hadoop distribution, for example, from <a class="ulink" href="http://hadoop.apache.org">http://hadoop.apache.org</a>:<div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ wget ftp://apache.cs.utah.edu/apache.org/hadoop/common/h/hadoop-2.6.4.tar.gz</strong></span>
+<span class="strong"><strong>--2016-05-12 00:10:55--  ftp://apache.cs.utah.edu/apache.org/hadoop/common/hadoop-2.6.4/hadoop-2.6.4.tar.gz</strong></span>
+<span class="strong"><strong>           =&gt; 'hadoop-2.6.4.tar.gz.1'</strong></span>
+<span class="strong"><strong>Resolving apache.cs.utah.edu... 155.98.64.87</strong></span>
+<span class="strong"><strong>Connecting to apache.cs.utah.edu|155.98.64.87|:21... connected.</strong></span>
+<span class="strong"><strong>Logging in as anonymous ... Logged in!</strong></span>
+<span class="strong"><strong>==&gt; SYST ... done.    ==&gt; PWD ... done.</strong></span>
+<span class="strong"><strong>==&gt; TYPE I ... done.  ==&gt; CWD (1) /apache.org/hadoop/common/hadoop-2.6.4 ... done.</strong></span>
+<span class="strong"><strong>==&gt; SIZE hadoop-2.6.4.tar.gz ... 196015975</strong></span>
+<span class="strong"><strong>==&gt; PASV ... done.    ==&gt; RETR hadoop-2.6.4.tar.gz ... done.</strong></span>
+<span class="strong"><strong>...</strong></span>
+<span class="strong"><strong>$ wget ftp://apache.cs.utah.edu/apache.org/hadoop/common/hadoop-2.6.4/hadoop-2.6.4.tar.gz.mds</strong></span>
+<span class="strong"><strong>--2016-05-12 00:13:58--  ftp://apache.cs.utah.edu/apache.org/hadoop/common/hadoop-2.6.4/hadoop-2.6.4.tar.gz.mds</strong></span>
+<span class="strong"><strong>           =&gt; 'hadoop-2.6.4.tar.gz.mds'</strong></span>
+<span class="strong"><strong>Resolving apache.cs.utah.edu... 155.98.64.87</strong></span>
+<span class="strong"><strong>Connecting to apache.cs.utah.edu|155.98.64.87|:21... connected.</strong></span>
+<span class="strong"><strong>Logging in as anonymous ... Logged in!</strong></span>
+<span class="strong"><strong>==&gt; SYST ... done.    ==&gt; PWD ... done.</strong></span>
+<span class="strong"><strong>==&gt; TYPE I ... done.  ==&gt; CWD (1) /apache.org/hadoop/common/hadoop-2.6.4 ... done.</strong></span>
+<span class="strong"><strong>==&gt; SIZE hadoop-2.6.4.tar.gz.mds ... 958</strong></span>
+<span class="strong"><strong>==&gt; PASV ... done.    ==&gt; RETR hadoop-2.6.4.tar.gz.mds ... done.</strong></span>
+<span class="strong"><strong>...</strong></span>
+<span class="strong"><strong>$ shasum -a 512 hadoop-2.6.4.tar.gz</strong></span>
+<span class="strong"><strong>493cc1a3e8ed0f7edee506d99bfabbe2aa71a4776e4bff5b852c6279b4c828a0505d4ee5b63a0de0dcfecf70b4bb0ef801c767a068eaeac938b8c58d8f21beec  hadoop-2.6.4.tar.gz</strong></span>
+<span class="strong"><strong>$ cat !$.mds</strong></span>
+<span class="strong"><strong>hadoop-2.6.4.tar.gz:    MD5 = 37 01 9F 13 D7 DC D8 19  72 7B E1 58 44 0B 94 42</strong></span>
+<span class="strong"><strong>hadoop-2.6.4.tar.gz:   SHA1 = 1E02 FAAC 94F3 35DF A826  73AC BA3E 7498 751A 3174</strong></span>
+<span class="strong"><strong>hadoop-2.6.4.tar.gz: RMD160 = 2AA5 63AF 7E40 5DCD 9D6C  D00E EBB0 750B D401 2B1F</strong></span>
+<span class="strong"><strong>hadoop-2.6.4.tar.gz: SHA224 = F4FDFF12 5C8E754B DAF5BCFC 6735FCD2 C6064D58</strong></span>
+<span class="strong"><strong>                              36CB9D80 2C12FC4D</strong></span>
+<span class="strong"><strong>hadoop-2.6.4.tar.gz: SHA256 = C58F08D2 E0B13035 F86F8B0B 8B65765A B9F47913</strong></span>
+<span class="strong"><strong>                              81F74D02 C48F8D9C EF5E7D8E</strong></span>
+<span class="strong"><strong>hadoop-2.6.4.tar.gz: SHA384 = 87539A46 B696C98E 5C7E352E 997B0AF8 0602D239</strong></span>
+<span class="strong"><strong>                              5591BF07 F3926E78 2D2EF790 BCBB6B3C EAF5B3CF</strong></span>
+<span class="strong"><strong>                              ADA7B6D1 35D4B952</strong></span>
+<span class="strong"><strong>hadoop-2.6.4.tar.gz: SHA512 = 493CC1A3 E8ED0F7E DEE506D9 9BFABBE2 AA71A477</strong></span>
+<span class="strong"><strong>                              6E4BFF5B 852C6279 B4C828A0 505D4EE5 B63A0DE0</strong></span>
+<span class="strong"><strong>                              DCFECF70 B4BB0EF8 01C767A0 68EAEAC9 38B8C58D</strong></span>
+<span class="strong"><strong>                              8F21BEEC</strong></span>
+
+<span class="strong"><strong>$ tar xf hadoop-2.6.4.tar.gz</strong></span>
+<span class="strong"><strong>$ cd hadoop-2.6.4</strong></span>
+</pre></div></li><li class="listitem">To get the <a id="id287" class="indexterm"/>minimal HDFS configuration, modify the <code class="literal">core-site.xml</code> and <code class="literal">hdfs-site.xml</code> files, as follows:<div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ cat &lt;&lt; EOF &gt; etc/hadoop/core-site.xml</strong></span>
+<span class="strong"><strong>&lt;configuration&gt;</strong></span>
+<span class="strong"><strong>    &lt;property&gt;</strong></span>
+<span class="strong"><strong>        &lt;name&gt;fs.defaultFS&lt;/name&gt;</strong></span>
+<span class="strong"><strong>        &lt;value&gt;hdfs://localhost:8020&lt;/value&gt;</strong></span>
+<span class="strong"><strong>    &lt;/property&gt;</strong></span>
+<span class="strong"><strong>&lt;/configuration&gt;</strong></span>
+<span class="strong"><strong>EOF</strong></span>
+<span class="strong"><strong>$ cat &lt;&lt; EOF &gt; etc/hadoop/hdfs-site.xml</strong></span>
+<span class="strong"><strong>&lt;configuration&gt;</strong></span>
+<span class="strong"><strong>   &lt;property&gt;</strong></span>
+<span class="strong"><strong>        &lt;name&gt;dfs.replication&lt;/name&gt;</strong></span>
+<span class="strong"><strong>        &lt;value&gt;1&lt;/value&gt;</strong></span>
+<span class="strong"><strong>    &lt;/property&gt;</strong></span>
+<span class="strong"><strong>&lt;/configuration&gt;</strong></span>
+<span class="strong"><strong>EOF</strong></span>
+</pre></div><p>This will put the Hadoop HDFS metadata and data directories under the <code class="literal">/tmp/hadoop-$USER</code> directories. To make this more permanent, we can add the <code class="literal">dfs.namenode.name.dir</code>,<code class="literal"> dfs.namenode.edits.dir</code>, and <code class="literal">dfs.datanode.data.dir</code> parameters, but we will leave these out for now. For a more customized distribution, one can download a Cloudera<a id="id288" class="indexterm"/> version from <a class="ulink" href="http://archive.cloudera.com/cdh">http://archive.cloudera.com/cdh</a>.</p></li><li class="listitem">First, we<a id="id289" class="indexterm"/> need to write an empty metadata:<div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ bin/hdfs namenode -format</strong></span>
+<span class="strong"><strong>16/05/12 00:55:40 INFO namenode.NameNode: STARTUP_MSG: </strong></span>
+<span class="strong"><strong>/************************************************************</strong></span>
+<span class="strong"><strong>STARTUP_MSG: Starting NameNode</strong></span>
+<span class="strong"><strong>STARTUP_MSG:   host = alexanders-macbook-pro.local/192.168.1.68</strong></span>
+<span class="strong"><strong>STARTUP_MSG:   args = [-format]</strong></span>
+<span class="strong"><strong>STARTUP_MSG:   version = 2.6.4</strong></span>
+<span class="strong"><strong>STARTUP_MSG:   classpath =</strong></span>
+<span class="strong"><strong>...</strong></span>
+</pre></div></li><li class="listitem">Then start the <code class="literal">namenode</code>, <code class="literal">secondarynamenode</code>, and <code class="literal">datanode</code> Java processes (I usually open three different command-line windows to see the logs, but in a production environment, these are usually daemonized):<div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ bin/hdfs namenode &amp;</strong></span>
+<span class="strong"><strong>...</strong></span>
+<span class="strong"><strong>$ bin/hdfs secondarynamenode &amp;</strong></span>
+<span class="strong"><strong>...</strong></span>
+<span class="strong"><strong>$ bin/hdfs datanode &amp;</strong></span>
+<span class="strong"><strong>...</strong></span>
+</pre></div></li><li class="listitem">We are now ready to create the first HDFS file:<div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ date | bin/hdfs dfs –put – date.txt</strong></span>
+<span class="strong"><strong>...</strong></span>
+<span class="strong"><strong>$ bin/hdfs dfs –ls</strong></span>
+<span class="strong"><strong>Found 1 items</strong></span>
+<span class="strong"><strong>-rw-r--r-- 1 akozlov supergroup 29 2016-05-12 01:02 date.txt</strong></span>
+<span class="strong"><strong>$ bin/hdfs dfs -text date.txt</strong></span>
+<span class="strong"><strong>Thu May 12 01:02:36 PDT 2016</strong></span>
+</pre></div></li><li class="listitem">Of course, in <a id="id290" class="indexterm"/>this particular case, the actual file is stored only on one node, which is the same node we run <code class="literal">datanode</code> on (localhost). In my case, it is the following:<div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ cat /tmp/hadoop-akozlov/dfs/data/current/BP-1133284427-192.168.1.68-1463039756191/current/finalized/subdir0/subdir0/blk_1073741827</strong></span>
+<span class="strong"><strong>Thu May 12 01:02:36 PDT 2016</strong></span>
+</pre></div></li><li class="listitem">The <a id="id291" class="indexterm"/>Namenode UI can be found at <code class="literal">http://localhost:50070</code> and displays a host of information, including the HDFS usage and the list of DataNodes, the slaves of the HDFS Master node as follows:<div class="mediaobject"><img src="Images/B04935_03_06.jpg" alt="Running Hadoop HDFS" width="900" height="668"/><div class="caption"><p>Figure 03-6.  A snapshot of HDFS NameNode UI.</p></div></div></li></ol></div><p>The preceding <a id="id292" class="indexterm"/>figure shows HDFS Namenode HTTP UI in a single node deployment (usually, <code class="literal">http://&lt;namenode-address&gt;:50070</code>). The <span class="strong"><strong>Utilities</strong></span> | <span class="strong"><strong>Browse the file system</strong></span> tab allows you to browse and download the files from HDFS. Nodes can be added by starting DataNodes on a different node and pointing to the Namenode with the <code class="literal">fs.defaultFS=&lt;namenode-address&gt;:8020</code> parameter. The Secondary Namenode HTTP UI is usually at <code class="literal">http:&lt;secondarynamenode-address&gt;:50090</code>.</p><p>Scala/Spark by default will use the local file system. However, if the <code class="literal">core-site/xml</code> file is on the classpath or placed in the <code class="literal">$SPARK_HOME/conf</code> directory, Spark will use HDFS as the default.</p></div></div>
+
+
+
+  
+<div id="sbo-rt-content"><div class="section" title="Summary"><div class="titlepage"><div><div><h1 class="title"><a id="ch03lvl1sec28"/>Summary</h1></div></div></div><p>In this chapter, I covered the Spark/Hadoop and their relationship with Scala and functional programming at a very high level. I considered a classic word count example and it's implementation in Scala and Spark. I also provided high-level components of Spark ecosystem with specific examples of word count and streaming. I now have all the components to start looking at the specific implementation of classic machine learning algorithms in Scala/Spark. In the next chapter, I will start by covering supervised and unsupervised learning—a traditional division of learning algorithms for structured data.</p></div></div>
+
+
+
+  </body></html>

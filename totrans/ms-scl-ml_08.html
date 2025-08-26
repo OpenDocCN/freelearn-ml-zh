@@ -1,0 +1,792 @@
+<html><head></head><body><div id="sbo-rt-content"><div class="chapter" title="Chapter 8. Integrating Scala with R and Python"><div class="titlepage"><div><div><h1 class="title"><a id="ch08"/>Chapter 8. Integrating Scala with R and Python</h1></div></div></div><p>While Spark provides MLlib as a library for machine learning, in many practical situations, R or Python present a more familiar and time-tested interface for statistical computations. In particular, R's extensive statistical library includes very popular ANOVA/MANOVA methods of analyzing variance and variable dependencies/independencies, sets of statistical tests, and random number generators that are not currently present in MLlib. The interface from R to Spark is available under SparkR project. Finally, data analysts know Python's NumPy and SciPy linear algebra implementations for their efficiency as well as other time-series, optimization, and signal processing packages. With R/Python integration, all these familiar functionalities can be exposed to Scala/Spark users until the Spark/MLlib interfaces stabilize and the libraries make their way into the new framework while benefiting the users with Spark's ability to execute workflows in a distributed way across multiple machines.</p><p>When people program in R or Python, or with any statistical or linear algebra packages for this matter, they are usually not specifically focusing on the functional programming aspects. As I mentioned in <a class="link" href="ch01.xhtml" title="Chapter 1. Exploratory Data Analysis">Chapter 1</a>, <span class="emphasis"><em>Exploratory Data Analysis</em></span>, Scala should be treated as a high-level language and this is where it shines. Integration with highly efficient C and Fortran implementations, for <a id="id564" class="indexterm"/>example, of the freely available <span class="strong"><strong>Basic Linear Algebra Subprograms</strong></span> (<span class="strong"><strong>BLAS</strong></span>), <span class="strong"><strong>Linear Algebra </strong></span><a id="id565" class="indexterm"/>
+<span class="strong"><strong>Package</strong></span> (<span class="strong"><strong>LAPACK</strong></span>), and <span class="strong"><strong>Arnoldi Package</strong></span> (<span class="strong"><strong>ARPACK</strong></span>), is <a id="id566" class="indexterm"/>known to find its way into Java and thus <a id="id567" class="indexterm"/>Scala (<a class="ulink" href="http://www.netlib.org">http://www.netlib.org</a>, <a class="ulink" href="https://github.com/fommil/netlib-java">https://github.com/fommil/netlib-java</a>). I would like to leave Scala at what it's doing best. In this chapter, however, I will focus on how to use these languages with Scala/Spark.</p><p>I will use the publicly<a id="id568" class="indexterm"/> available United States Department of Transportation flights dataset for this chapter (<a class="ulink" href="http://www.transtats.bts.gov">http://www.transtats.bts.gov</a>).</p><p>In this chapter, we will cover the following topics:</p><div class="itemizedlist"><ul class="itemizedlist"><li class="listitem" style="list-style-type: disc">Installing R and configuring SparkR if you haven't done so yet</li><li class="listitem" style="list-style-type: disc">Learning about R (and Spark) DataFrames</li><li class="listitem" style="list-style-type: disc">Performing linear regression and ANOVA analysis with R</li><li class="listitem" style="list-style-type: disc">Performing <a id="id569" class="indexterm"/><span class="strong"><strong>Generalized Linear Model</strong></span> (<span class="strong"><strong>GLM</strong></span>) modeling with SparkR</li><li class="listitem" style="list-style-type: disc">Installing Python if you haven't done so yet</li><li class="listitem" style="list-style-type: disc">Learning how to use PySpark and call Python from Scala</li></ul></div><div class="section" title="Integrating with R"><div class="titlepage"><div><div><h1 class="title"><a id="ch08lvl1sec61"/>Integrating with R</h1></div></div></div><p>As with many<a id="id570" class="indexterm"/> advanced and carefully designed technologies, people usually either love or hate R as a language. One of the reason being that R was one of the first language implementations that tries to manipulate complex objects, even though most of them turn out to be just a list as opposed to struct or map as in more mature modern implementations. R was originally created at the University of Auckland by Ross Ihaka and Robert Gentleman around 1993, and had its roots in the S language developed at Bell Labs around 1976, when most of the commercial programming was still <a id="id571" class="indexterm"/>done in Fortran. While R incorporates some functional features such as passing functions as a parameter and map/apply, it conspicuously misses some others such as lazy evaluation and list comprehensions. With all this said, R has a very good help system, and if someone says that they never had to go back to the <code class="literal">help(…)</code> command to figure out how to run a certain data transformation or model better, they are either lying or just starting in R.</p><div class="section" title="Setting up R and SparkR"><div class="titlepage"><div><div><h2 class="title"><a id="ch08lvl2sec41"/>Setting up R and SparkR</h2></div></div></div><p>To run SparkR, you'll need <a id="id572" class="indexterm"/>R version 3.0 or later. Follow the given instructions for the installation, depending <a id="id573" class="indexterm"/>on you operating system.</p><div class="section" title="Linux"><div class="titlepage"><div><div><h3 class="title"><a id="ch08lvl3sec01"/>Linux</h3></div></div></div><p>On a Linux system, detailed<a id="id574" class="indexterm"/> installation documentation<a id="id575" class="indexterm"/> is available at <a class="ulink" href="https://cran.r-project.org/bin/linux">https://cran.r-project.org/bin/linux</a>. However, for example, on a <a id="id576" class="indexterm"/>Debian system, one installs it by running the following command:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong># apt-get update</strong></span>
+<span class="strong"><strong>...</strong></span>
+<span class="strong"><strong># apt-get install r-base r-base-dev</strong></span>
+<span class="strong"><strong>...</strong></span>
+</pre></div><p>To list installed/available packages on the Linux repository site, perform the following command:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong># apt-cache search "^r-.*" | sort</strong></span>
+<span class="strong"><strong>...</strong></span>
+</pre></div><p>R packages, which<a id="id577" class="indexterm"/> are a part of <code class="literal">r-base</code> and <code class="literal">r-recommended</code>, are installed into the <code class="literal">/usr/lib/R/library</code> directory. These can be updated using the usual package maintenance tools such as <code class="literal">apt-get</code> or aptitude. The other R packages available as precompiled Debian packages, <code class="literal">r-cran-*</code> and <code class="literal">r-bioc-*</code>, are installed into <code class="literal">/usr/lib/R/site-library</code>. The following command shows all packages that depend on <code class="literal">r-base-core</code>:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong># apt-cache rdepends r-base-core</strong></span>
+</pre></div><p>This comprises of a large number of contributed packages from CRAN and other repositories. If you want to install R packages that are not provided as package, or if you want to use newer<a id="id578" class="indexterm"/> versions, you need to build them from source that requires the <code class="literal">r-base-dev</code> development package that can be installed by the following command:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong># apt-get install r-base-dev</strong></span>
+</pre></div><p>This pulls in the basic requirements to compile R packages, such as the development tools group install. R packages may then be installed by the local user/admin from the CRAN source packages, typically from inside R using the <code class="literal">R&gt; install.packages()</code> function or <code class="literal">R CMD INSTALL</code>. For example, to install the R <code class="literal">ggplot2</code> package, run the following command:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>&gt; install.packages("ggplot2")</strong></span>
+<span class="strong"><strong>--- Please select a CRAN mirror for use in this session ---</strong></span>
+<span class="strong"><strong>also installing the dependencies 'stringi', 'magrittr', 'colorspace', 'Rcpp', 'stringr', 'RColorBrewer', 'dichromat', 'munsell', 'labeling', 'digest', 'gtable', 'plyr', 'reshape2', 'scales'</strong></span>
+</pre></div><p>This will download and optionally compile the package and its dependencies from one of the available sites. Sometime R is confused about the repositories; in this case, I recommend creating a <code class="literal">~/.Rprofile</code> file in the home directory pointing to the closest CRAN repository:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ cat &gt;&gt; ~/.Rprofile &lt;&lt; EOF</strong></span>
+<span class="strong"><strong>r = getOption("repos") # hard code the Berkeley repo for CRAN</strong></span>
+<span class="strong"><strong>r["CRAN"] = "http://cran.cnr.berkeley.edu"</strong></span>
+<span class="strong"><strong>options(repos = r)</strong></span>
+<span class="strong"><strong>rm(r)</strong></span>
+
+<span class="strong"><strong>EOF</strong></span>
+</pre></div><p>
+<code class="literal">~/.Rprofile</code> contains commands to customize your sessions. One of the commands I recommend to put<a id="id579" class="indexterm"/> in there is <code class="literal">options (prompt="R&gt; ")</code> to be<a id="id580" class="indexterm"/> able to distinguish the shell you are working in by the prompt, following the tradition of most tools in this book. The list of known <a id="id581" class="indexterm"/>mirrors is available at <a class="ulink" href="https://cran.r-project.org/mirrors.html">https://cran.r-project.org/mirrors.html</a>.
+</p><p>Also, it is good practice to specify the directory to install <code class="literal">system/site/user</code> packages via the following command, unless your OS setup does it already by putting these commands into <code class="literal">~/.bashrc</code> or system <code class="literal">/etc/profile</code>:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ export R_LIBS_SITE=${R_LIBS_SITE:-/usr/local/lib/R/site-library:/usr/lib/R/site-library:/usr/lib/R/library}</strong></span>
+<span class="strong"><strong>$ export R_LIBS_USER=${R_LIBS_USER:-$HOME/R/$(uname -i)-library/$( R --version | grep -o -E [0-9]+\.[</strong></span>
+<span class="strong"><strong>0-9]+ | head -1)}</strong></span>
+</pre></div></div><div class="section" title="Mac OS"><div class="titlepage"><div><div><h3 class="title"><a id="ch08lvl3sec02"/>Mac OS</h3></div></div></div><p>R for Mac OS can be<a id="id582" class="indexterm"/> downloaded, for example, from <a class="ulink" href="http://cran.r-project.org/bin/macosx">http://cran.r-project.org/bin/macosx</a>. The latest version at the time of the writing is 3.2.3. Always <a id="id583" class="indexterm"/>check the consistency of the downloaded <a id="id584" class="indexterm"/>package. To do so, run the following command:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ pkgutil --check-signature R-3.2.3.pkg</strong></span>
+<span class="strong"><strong>Package "R-3.2.3.pkg":</strong></span>
+<span class="strong"><strong>   Status: signed by a certificate trusted by Mac OS X</strong></span>
+<span class="strong"><strong>   Certificate Chain:</strong></span>
+<span class="strong"><strong>    1. Developer ID Installer: Simon Urbanek</strong></span>
+<span class="strong"><strong>       SHA1 fingerprint: B7 EB 39 5E 03 CF 1E 20 D1 A6 2E 9F D3 17 90 26 D8 D6 3B EF</strong></span>
+<span class="strong"><strong>       -----------------------------------------------------------------------------</strong></span>
+<span class="strong"><strong>    2. Developer ID Certification Authority</strong></span>
+<span class="strong"><strong>       SHA1 fingerprint: 3B 16 6C 3B 7D C4 B7 51 C9 FE 2A FA B9 13 56 41 E3 88 E1 86</strong></span>
+<span class="strong"><strong>       -----------------------------------------------------------------------------</strong></span>
+<span class="strong"><strong>    3. Apple Root CA</strong></span>
+<span class="strong"><strong>       SHA1 fingerprint: 61 1E 5B 66 2C 59 3A 08 FF 58 D1 4A E2 24 52 D1 98 DF 6C 60</strong></span>
+</pre></div><p>The environment <a id="id585" class="indexterm"/>settings in the preceding subsection also apply to the Mac OS setup.</p></div><div class="section" title="Windows"><div class="titlepage"><div><div><h3 class="title"><a id="ch08lvl3sec03"/>Windows</h3></div></div></div><p>R for Windows <a id="id586" class="indexterm"/>can be downloaded from <a class="ulink" href="https://cran.r-project.org/bin/windows/">https://cran.r-project.org/bin/windows/</a> as an exe installer. Run this executable as an administrator to install R.</p><p>One can usually <a id="id587" class="indexterm"/>edit the environment setting for <span class="strong"><strong>System/User</strong></span> by<a id="id588" class="indexterm"/> following the <span class="strong"><strong>Control Panel</strong></span> | <span class="strong"><strong>System and Security</strong></span> | <span class="strong"><strong>System</strong></span> | <span class="strong"><strong>Advanced system settings</strong></span> | <span class="strong"><strong>Environment Variables</strong></span> path from the Windows menu.</p></div><div class="section" title="Running SparkR via scripts"><div class="titlepage"><div><div><h3 class="title"><a id="ch08lvl3sec04"/>Running SparkR via scripts</h3></div></div></div><p>To run SparkR, one <a id="id589" class="indexterm"/>needs to run install the <code class="literal">R/install-dev.sh</code> script that comes with the Spark git tree. In fact, one only needs the shell script and the content of the <code class="literal">R/pkg</code> directory, which is not always included with the compiled Spark distributions:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ git clone https://github.com/apache/spark.git</strong></span>
+<span class="strong"><strong>Cloning into 'spark'...</strong></span>
+<span class="strong"><strong>remote: Counting objects: 301864, done.</strong></span>
+<span class="strong"><strong>...</strong></span>
+<span class="strong"><strong>$ cp –r R/{install-dev.sh,pkg) $SPARK_HOME/R</strong></span>
+<span class="strong"><strong>...</strong></span>
+<span class="strong"><strong>$ cd $SPARK_HOME</strong></span>
+<span class="strong"><strong>$ ./R/install-dev.sh</strong></span>
+<span class="strong"><strong>* installing *source* package 'SparkR' ...</strong></span>
+<span class="strong"><strong>** R</strong></span>
+<span class="strong"><strong>** inst</strong></span>
+<span class="strong"><strong>** preparing package for lazy loading</strong></span>
+<span class="strong"><strong>Creating a new generic function for 'colnames' in package 'SparkR'</strong></span>
+<span class="strong"><strong>...</strong></span>
+<span class="strong"><strong>$ bin/sparkR</strong></span>
+
+<span class="strong"><strong>R version 3.2.3 (2015-12-10) -- "Wooden Christmas-Tree"</strong></span>
+<span class="strong"><strong>Copyright (C) 2015 The R Foundation for Statistical Computing</strong></span>
+<span class="strong"><strong>Platform: x86_64-redhat-linux-gnu (64-bit)</strong></span>
+
+<span class="strong"><strong>R is free software and comes with ABSOLUTELY NO WARRANTY.</strong></span>
+<span class="strong"><strong>You are welcome to redistribute it under certain conditions.</strong></span>
+<span class="strong"><strong>Type 'license()' or 'licence()' for distribution details.</strong></span>
+
+<span class="strong"><strong>  Natural language support but running in an English locale</strong></span>
+
+<span class="strong"><strong>R is a collaborative project with many contributors.</strong></span>
+<span class="strong"><strong>Type 'contributors()' for more information and</strong></span>
+<span class="strong"><strong>'citation()' on how to cite R or R packages in publications.</strong></span>
+
+<span class="strong"><strong>Type 'demo()' for some demos, 'help()' for on-line help, or</strong></span>
+<span class="strong"><strong>'help.start()' for an HTML browser interface to help.</strong></span>
+<span class="strong"><strong>Type 'q()' to quit R.</strong></span>
+
+<span class="strong"><strong>Launching java with spark-submit command /home/alex/spark-1.6.1-bin-hadoop2.6/bin/spark-submit   "sparkr-shell" /tmp/RtmpgdTfmU/backend_port22446d0391e8 </strong></span>
+
+<span class="strong"><strong> Welcome to</strong></span>
+<span class="strong"><strong>    ____              __ </strong></span>
+<span class="strong"><strong>   / __/__  ___ _____/ /__ </strong></span>
+<span class="strong"><strong>  _\ \/ _ \/ _ `/ __/  '_/ </strong></span>
+<span class="strong"><strong> /___/ .__/\_,_/_/ /_/\_\   version  1.6.1 </strong></span>
+<span class="strong"><strong>    /_/ </strong></span>
+
+
+<span class="strong"><strong> Spark context is available as sc, SQL context is available as sqlContext</strong></span><span class="strong"><strong>&gt;</strong></span>
+</pre></div></div><div class="section" title="Running Spark via R's command line"><div class="titlepage"><div><div><h3 class="title"><a id="ch08lvl3sec05"/>Running Spark via R's command line</h3></div></div></div><p>Alternatively, we can also<a id="id590" class="indexterm"/> initialize Spark from the R command line <a id="id591" class="indexterm"/>directly (or from RStudio at <a class="ulink" href="http://rstudio.org/">http://rstudio.org/</a>) using the following commands:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>R&gt; library(SparkR, lib.loc = c(file.path(Sys.getenv("SPARK_HOME"), "R", "lib")))</strong></span>
+<span class="strong"><strong>...</strong></span>
+<span class="strong"><strong>R&gt; sc &lt;- sparkR.init(master = Sys.getenv("SPARK_MASTER"), sparkEnvir = list(spark.driver.memory="1g"))</strong></span>
+<span class="strong"><strong>...</strong></span>
+<span class="strong"><strong>R&gt; sqlContext &lt;- sparkRSQL.init(sc)</strong></span>
+</pre></div><p>As described previously in <a class="link" href="ch03.xhtml" title="Chapter 3. Working with Spark and MLlib">Chapter 3</a>, <span class="emphasis"><em>Working with Spark and MLlib</em></span>, the <code class="literal">SPARK_HOME</code> environment variable needs to point to your local Spark installation directory and <code class="literal">SPARK_MASTER</code> and <code class="literal">YARN_CONF_DIR</code> to the desired cluster manager (local, standalone, mesos, and YARN) and YARN configuration directory if one is using Spark with the YARN cluster manager.</p><p>Although most all<a id="id592" class="indexterm"/> of the distributions come with a UI, in the tradition of this book and for the purpose of this chapter I'll use the command line.</p></div></div><div class="section" title="DataFrames"><div class="titlepage"><div><div><h2 class="title"><a id="ch08lvl2sec42"/>DataFrames</h2></div></div></div><p>The<a id="id593" class="indexterm"/> DataFrames originally came from R and Python, so it is natural to see them in SparkR.</p><div class="note" title="Note" style=""><div class="inner"><h3 class="title"><a id="note08"/>Note</h3><p>Please note that the implementation of DataFrames in SparkR is on top of RDDs, so they work differently than the R DataFrames.</p></div></div><p>The question of when and where to store and apply the schema and other metadata like types has been a topic of active debate recently. On one hand, providing the schema early with the data enables thorough data validation and potentially optimization. On the other hand, it may be too restrictive for the original data ingest, whose goal is just to capture as much data as possible and perform data formatting/cleansing later on, the approach often referred as schema on read. The latter approach recently won more ground with the tools to work with evolving schemas such as Avro and automatic schema discovery tools, but for the purpose of this chapter, I'll assume that we have done the schema discovery part and can start working with a DataFrames.</p><p>Let's first download and extract a flight delay dataset from the United States Department of Transportation, as follows:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ wget http://www.transtats.bts.gov/Download/On_Time_On_Time_Performance_2015_7.zip</strong></span>
+<span class="strong"><strong>--2016-01-23 15:40:02--  http://www.transtats.bts.gov/Download/On_Time_On_Time_Performance_2015_7.zip</strong></span>
+<span class="strong"><strong>Resolving www.transtats.bts.gov... 204.68.194.70</strong></span>
+<span class="strong"><strong>Connecting to www.transtats.bts.gov|204.68.194.70|:80... connected.</strong></span>
+<span class="strong"><strong>HTTP request sent, awaiting response... 200 OK</strong></span>
+<span class="strong"><strong>Length: 26204213 (25M) [application/x-zip-compressed]</strong></span>
+<span class="strong"><strong>Saving to: "On_Time_On_Time_Performance_2015_7.zip"</strong></span>
+
+<span class="strong"><strong>100%[====================================================================================================================================================================================&gt;] 26,204,213   966K/s   in 27s     </strong></span>
+
+<span class="strong"><strong>2016-01-23 15:40:29 (956 KB/s) - "On_Time_On_Time_Performance_2015_7.zip" saved [26204213/26204213]</strong></span>
+
+<span class="strong"><strong>$ unzip -d flights On_Time_On_Time_Performance_2015_7.zip</strong></span>
+<span class="strong"><strong>Archive:  On_Time_On_Time_Performance_2015_7.zip</strong></span>
+<span class="strong"><strong>  inflating: flights/On_Time_On_Time_Performance_2015_7.csv  </strong></span>
+<span class="strong"><strong>  inflating: flights/readme.html</strong></span>
+</pre></div><p>If you have Spark running on the <a id="id594" class="indexterm"/>cluster, you want to copy the file in HDFS:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ hadoop fs –put flights .</strong></span>
+</pre></div><p>The <code class="literal">flights/readme.html</code> files gives you detailed metadata information, as shown in the following image:</p><div class="mediaobject"><img src="Images/B04935_08_01.jpg" alt="DataFrames" width="900" height="560"/><div class="caption"><p>Figure 08-1: Metadata provided with the On-Time Performance dataset released by the US Department of Transportation (for demo purposes only)</p></div></div><p>Now, I want you<a id="id595" class="indexterm"/> to analyze the delays of <code class="literal">SFO</code> returning flights and possibly find the factors contributing to the delay. Let's start with the R <code class="literal">data.frame</code>:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ bin/sparkR --master local[8]</strong></span>
+
+<span class="strong"><strong>R version 3.2.3 (2015-12-10) -- "Wooden Christmas-Tree"</strong></span>
+<span class="strong"><strong>Copyright (C) 2015 The R Foundation for Statistical Computing</strong></span>
+<span class="strong"><strong>Platform: x86_64-apple-darwin13.4.0 (64-bit)</strong></span>
+
+<span class="strong"><strong>R is free software and comes with ABSOLUTELY NO WARRANTY.</strong></span>
+<span class="strong"><strong>You are welcome to redistribute it under certain conditions.</strong></span>
+<span class="strong"><strong>Type 'license()' or 'licence()' for distribution details.</strong></span>
+
+<span class="strong"><strong>  Natural language support but running in an English locale</strong></span>
+
+<span class="strong"><strong>R is a collaborative project with many contributors.</strong></span>
+<span class="strong"><strong>Type 'contributors()' for more information and</strong></span>
+<span class="strong"><strong>'citation()' on how to cite R or R packages in publications.</strong></span>
+
+<span class="strong"><strong>Type 'demo()' for some demos, 'help()' for on-line help, or</strong></span>
+<span class="strong"><strong>'help.start()' for an HTML browser interface to help.</strong></span>
+<span class="strong"><strong>Type 'q()' to quit R.</strong></span>
+
+<span class="strong"><strong>[Previously saved workspace restored]</strong></span>
+
+<span class="strong"><strong>Launching java with spark-submit command /Users/akozlov/spark-1.6.1-bin-hadoop2.6/bin/spark-submit   "--master" "local[8]" "sparkr-shell" /var/folders/p1/y7ygx_4507q34vhd60q115p80000gn/T//RtmpD42eTz/backend_port682e58e2c5db </strong></span>
+
+<span class="strong"><strong> Welcome to</strong></span>
+<span class="strong"><strong>    ____              __ </strong></span>
+<span class="strong"><strong>   / __/__  ___ _____/ /__ </strong></span>
+<span class="strong"><strong>  _\ \/ _ \/ _ `/ __/  '_/ </strong></span>
+<span class="strong"><strong> /___/ .__/\_,_/_/ /_/\_\   version  1.6.1 </strong></span>
+<span class="strong"><strong>    /_/ </strong></span>
+
+
+<span class="strong"><strong> Spark context is available as sc, SQL context is available as sqlContext</strong></span>
+<span class="strong"><strong>&gt; flights &lt;- read.table(unz("On_Time_On_Time_Performance_2015_7.zip", "On_Time_On_Time_Performance_2015_7.csv"), nrows=1000000, header=T, quote="\"", sep=",")</strong></span>
+<span class="strong"><strong>&gt; sfoFlights &lt;- flights[flights$Dest == "SFO", ]</strong></span>
+<span class="strong"><strong>&gt; attach(sfoFlights)</strong></span>
+<span class="strong"><strong>&gt; delays &lt;- aggregate(ArrDelayMinutes ~ DayOfWeek + Origin + UniqueCarrier, FUN=mean, na.rm=TRUE)</strong></span>
+<span class="strong"><strong>&gt; tail(delays[order(delays$ArrDelayMinutes), ])</strong></span>
+<span class="strong"><strong>    DayOfWeek Origin UniqueCarrier ArrDelayMinutes</strong></span>
+<span class="strong"><strong>220         4    ABQ            OO           67.60</strong></span>
+<span class="strong"><strong>489         4    TUS            OO           71.80</strong></span>
+<span class="strong"><strong>186         5    IAH            F9           77.60</strong></span>
+<span class="strong"><strong>696         3    RNO            UA           79.50</strong></span>
+<span class="strong"><strong>491         6    TUS            OO          168.25</strong></span>
+<span class="strong"><strong>84          7    SLC            AS          203.25</strong></span>
+</pre></div><p>If you were flying from Salt Lake City on Sunday with Alaska Airlines in July 2015, consider yourself unlucky (we have only done simple analysis so far, so one shouldn't attach too much significance to this result). There may be multiple other random factors contributing to the delay.</p><p>Even though we<a id="id596" class="indexterm"/> ran the example in SparkR, we still used the R <code class="literal">data.frame</code>. If we want to analyze data across multiple months, we will need to distribute the load across multiple nodes. This is where the SparkR distributed DataFrame comes into play, as it can be distributed across multiple threads even on a single node. There is a direct way to convert the R DataFrame to SparkR DataFrame (and thus to RDD):</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>&gt; sparkDf &lt;- createDataFrame(sqlContext, flights)</strong></span>
+</pre></div><p>If I run it on a laptop, I will run out of memory. The overhead is large due to the fact that I need to transfer the data between multiple threads/nodes, we want to filter it as soon as possible:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>sparkDf &lt;- createDataFrame(sqlContext, subset(flights, select = c("ArrDelayMinutes", "DayOfWeek", "Origin", "Dest", "UniqueCarrier")))</strong></span>
+</pre></div><p>This will run even on my laptop. There is, of course, a reverse conversion from Spark's DataFrame to R's <code class="literal">data.frame</code>:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>&gt; rDf &lt;- as.data.frame(sparkDf)</strong></span>
+</pre></div><p>Alternatively, I can use the <code class="literal">spark-csv</code> package to read it from the <code class="literal">.csv</code> file, which, if the original <code class="literal">.csv</code> file is in a distributed filesystem such as HDFS, will avoid shuffling the data over network in a cluster setting. The only drawback, at least currently, is that Spark cannot read from the <code class="literal">.zip</code> files directly:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>&gt; $ ./bin/sparkR --packages com.databricks:spark-csv_2.10:1.3.0 --master local[8]</strong></span>
+
+<span class="strong"><strong>R version 3.2.3 (2015-12-10) -- "Wooden Christmas-Tree"</strong></span>
+<span class="strong"><strong>Copyright (C) 2015 The R Foundation for Statistical Computing</strong></span>
+<span class="strong"><strong>Platform: x86_64-redhat-linux-gnu (64-bit)</strong></span>
+
+<span class="strong"><strong>R is free software and comes with ABSOLUTELY NO WARRANTY.</strong></span>
+<span class="strong"><strong>You are welcome to redistribute it under certain conditions.</strong></span>
+<span class="strong"><strong>Type 'license()' or 'licence()' for distribution details.</strong></span>
+
+<span class="strong"><strong>  Natural language support but running in an English locale</strong></span>
+
+<span class="strong"><strong>R is a collaborative project with many contributors.</strong></span>
+<span class="strong"><strong>Type 'contributors()' for more information and</strong></span>
+<span class="strong"><strong>'citation()' on how to cite R or R packages in publications.</strong></span>
+
+<span class="strong"><strong>Type 'demo()' for some demos, 'help()' for on-line help, or</strong></span>
+<span class="strong"><strong>'help.start()' for an HTML browser interface to help.</strong></span>
+<span class="strong"><strong>Type 'q()' to quit R.</strong></span>
+
+<span class="strong"><strong>Warning: namespace 'SparkR' is not available and has been replaced</strong></span>
+<span class="strong"><strong>by .GlobalEnv when processing object 'sparkDf'</strong></span>
+<span class="strong"><strong>[Previously saved workspace restored]</strong></span>
+
+<span class="strong"><strong>Launching java with spark-submit command /home/alex/spark-1.6.1-bin-hadoop2.6/bin/spark-submit   "--master" "local[8]" "--packages" "com.databricks:spark-csv_2.10:1.3.0" "sparkr-shell" /tmp/RtmpfhcUXX/backend_port1b066bea5a03 </strong></span>
+<span class="strong"><strong>Ivy Default Cache set to: /home/alex/.ivy2/cache</strong></span>
+<span class="strong"><strong>The jars for the packages stored in: /home/alex/.ivy2/jars</strong></span>
+<span class="strong"><strong>:: loading settings :: url = jar:file:/home/alex/spark-1.6.1-bin-hadoop2.6/lib/spark-assembly-1.6.1-hadoop2.6.0.jar!/org/apache/ivy/core/settings/ivysettings.xml</strong></span>
+<span class="strong"><strong>com.databricks#spark-csv_2.10 added as a dependency</strong></span>
+<span class="strong"><strong>:: resolving dependencies :: org.apache.spark#spark-submit-parent;1.0</strong></span>
+<span class="strong"><strong>  confs: [default]</strong></span>
+<span class="strong"><strong>  found com.databricks#spark-csv_2.10;1.3.0 in central</strong></span>
+<span class="strong"><strong>  found org.apache.commons#commons-csv;1.1 in central</strong></span>
+<span class="strong"><strong>  found com.univocity#univocity-parsers;1.5.1 in central</strong></span>
+<span class="strong"><strong>:: resolution report :: resolve 189ms :: artifacts dl 4ms</strong></span>
+<span class="strong"><strong>  :: modules in use:</strong></span>
+<span class="strong"><strong>  com.databricks#spark-csv_2.10;1.3.0 from central in [default]</strong></span>
+<span class="strong"><strong>  com.univocity#univocity-parsers;1.5.1 from central in [default]</strong></span>
+<span class="strong"><strong>  org.apache.commons#commons-csv;1.1 from central in [default]</strong></span>
+<span class="strong"><strong>  ---------------------------------------------------------------------</strong></span>
+<span class="strong"><strong>  |                  |            modules            ||   artifacts   |</strong></span>
+<span class="strong"><strong>  |       conf       | number| search|dwnlded|evicted|| number|dwnlded|</strong></span>
+<span class="strong"><strong>  ---------------------------------------------------------------------</strong></span>
+<span class="strong"><strong>  |      default     |   3   |   0   |   0   |   0   ||   3   |   0   |</strong></span>
+<span class="strong"><strong>  ---------------------------------------------------------------------</strong></span>
+<span class="strong"><strong>:: retrieving :: org.apache.spark#spark-submit-parent</strong></span>
+<span class="strong"><strong>  confs: [default]</strong></span>
+<span class="strong"><strong>  0 artifacts copied, 3 already retrieved (0kB/7ms)</strong></span>
+
+<span class="strong"><strong> Welcome to</strong></span>
+<span class="strong"><strong>    ____              __ </strong></span>
+<span class="strong"><strong>   / __/__  ___ _____/ /__ </strong></span>
+<span class="strong"><strong>  _\ \/ _ \/ _ `/ __/  '_/ </strong></span>
+<span class="strong"><strong> /___/ .__/\_,_/_/ /_/\_\   version  1.6.1 </strong></span>
+<span class="strong"><strong>    /_/ </strong></span>
+
+
+<span class="strong"><strong> Spark context is available as sc, SQL context is available as sqlContext</strong></span>
+<span class="strong"><strong>&gt; sparkDf &lt;- read.df(sqlContext, "./flights", "com.databricks.spark.csv", header="true", inferSchema = "false")</strong></span>
+<span class="strong"><strong>&gt; sfoFlights &lt;- select(filter(sparkDf, sparkDf$Dest == "SFO"), "DayOfWeek", "Origin", "UniqueCarrier", "ArrDelayMinutes")</strong></span>
+<span class="strong"><strong>&gt; aggs &lt;- agg(group_by(sfoFlights, "DayOfWeek", "Origin", "UniqueCarrier"), count(sparkDf$ArrDelayMinutes), avg(sparkDf$ArrDelayMinutes))</strong></span>
+<span class="strong"><strong>&gt; head(arrange(aggs, c('avg(ArrDelayMinutes)'), decreasing = TRUE), 10)</strong></span>
+<span class="strong"><strong>   DayOfWeek Origin UniqueCarrier count(ArrDelayMinutes) avg(ArrDelayMinutes)   </strong></span>
+<span class="strong"><strong>1          7    SLC            AS                      4               203.25</strong></span>
+<span class="strong"><strong>2          6    TUS            OO                      4               168.25</strong></span>
+<span class="strong"><strong>3          3    RNO            UA                      8                79.50</strong></span>
+<span class="strong"><strong>4          5    IAH            F9                      5                77.60</strong></span>
+<span class="strong"><strong>5          4    TUS            OO                      5                71.80</strong></span>
+<span class="strong"><strong>6          4    ABQ            OO                      5                67.60</strong></span>
+<span class="strong"><strong>7          2    ABQ            OO                      4                66.25</strong></span>
+<span class="strong"><strong>8          1    IAH            F9                      4                61.25</strong></span>
+<span class="strong"><strong>9          4    DAL            WN                      5                59.20</strong></span>
+<span class="strong"><strong>10         3    SUN            OO                      5                59.00</strong></span>
+</pre></div><p>Note that we<a id="id597" class="indexterm"/> loaded the additional <code class="literal">com.databricks:spark-csv_2.10:1.3.0</code> package by supplying the <code class="literal">--package</code> flag on the command line; we can easily go distributed by using a Spark instance over a cluster of nodes or even analyze a larger dataset:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ for i in $(seq 1 6); do wget http://www.transtats.bts.gov/Download/On_Time_On_Time_Performance_2015_$i.zip; unzip -d flights On_Time_On_Time_Performance_2015_$i.zip; hadoop fs -put -f flights/On_Time_On_Time_Performance_2015_$i.csv flights; done</strong></span>
+
+<span class="strong"><strong>$ hadoop fs -ls flights</strong></span>
+<span class="strong"><strong>Found 7 items</strong></span>
+<span class="strong"><strong>-rw-r--r--   3 alex eng  211633432 2016-02-16 03:28 flights/On_Time_On_Time_Performance_2015_1.csv</strong></span>
+<span class="strong"><strong>-rw-r--r--   3 alex eng  192791767 2016-02-16 03:28 flights/On_Time_On_Time_Performance_2015_2.csv</strong></span>
+<span class="strong"><strong>-rw-r--r--   3 alex eng  227016932 2016-02-16 03:28 flights/On_Time_On_Time_Performance_2015_3.csv</strong></span>
+<span class="strong"><strong>-rw-r--r--   3 alex eng  218600030 2016-02-16 03:28 flights/On_Time_On_Time_Performance_2015_4.csv</strong></span>
+<span class="strong"><strong>-rw-r--r--   3 alex eng  224003544 2016-02-16 03:29 flights/On_Time_On_Time_Performance_2015_5.csv</strong></span>
+<span class="strong"><strong>-rw-r--r--   3 alex eng  227418780 2016-02-16 03:29 flights/On_Time_On_Time_Performance_2015_6.csv</strong></span>
+<span class="strong"><strong>-rw-r--r--   3 alex eng  235037955 2016-02-15 21:56 flights/On_Time_On_Time_Performance_2015_7.csv</strong></span>
+</pre></div><p>This will download and put the on-time performance data in the flight's directory (remember, as we discussed in <a class="link" href="ch01.xhtml" title="Chapter 1. Exploratory Data Analysis">Chapter 1</a>, <span class="emphasis"><em>Exploratory Data Analysis</em></span>, we would like to treat directories as big data datasets). We can now run the same analysis over the whole period of 2015 (for the available data):</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>&gt; sparkDf &lt;- read.df(sqlContext, "./flights", "com.databricks.spark.csv", header="true")</strong></span>
+<span class="strong"><strong>&gt; sfoFlights &lt;- select(filter(sparkDf, sparkDf$Dest == "SFO"), "DayOfWeek", "Origin", "UniqueCarrier", "ArrDelayMinutes")</strong></span>
+<span class="strong"><strong>&gt; aggs &lt;- cache(agg(group_by(sfoFlights, "DayOfWeek", "Origin", "UniqueCarrier"), count(sparkDf$ArrDelayMinutes), avg(sparkDf$ArrDelayMinutes)))</strong></span>
+<span class="strong"><strong>&gt; head(arrange(aggs, c('avg(ArrDelayMinutes)'), decreasing = TRUE), 10)</strong></span>
+<span class="strong"><strong>   DayOfWeek Origin UniqueCarrier count(ArrDelayMinutes) avg(ArrDelayMinutes)   </strong></span>
+<span class="strong"><strong>1          6    MSP            UA                      1            122.00000</strong></span>
+<span class="strong"><strong>2          3    RNO            UA                      8             79.50000</strong></span>
+<span class="strong"><strong>3          1    MSP            UA                     13             68.53846</strong></span>
+<span class="strong"><strong>4          7    SAT            UA                      1             65.00000</strong></span>
+<span class="strong"><strong>5          7    STL            UA                      9             64.55556</strong></span>
+<span class="strong"><strong>6          1    ORD            F9                     13             55.92308</strong></span>
+<span class="strong"><strong>7          1    MSO            OO                      4             50.00000</strong></span>
+<span class="strong"><strong>8          2    MSO            OO                      4             48.50000</strong></span>
+<span class="strong"><strong>9          5    CEC            OO                     28             45.86957</strong></span>
+<span class="strong"><strong>10         3    STL            UA                     13             43.46154</strong></span>
+</pre></div><p>Note that we used a <code class="literal">cache()</code> call to pin the dataset to the memory as we will use it again later. This time<a id="id598" class="indexterm"/> it's Minneapolis/United on Saturday! However, you probably already know why: there is only one record for this combination of <code class="literal">DayOfWeek</code>, <code class="literal">Origin</code>, and <code class="literal">UniqueCarrier</code>; it's most likely an outlier. The average over about <code class="literal">30</code> flights for the previous outlier was reduced to <code class="literal">30</code> minutes:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>&gt; head(arrange(filter(filter(aggs, aggs$Origin == "SLC"), aggs$UniqueCarrier == "AS"), c('avg(ArrDelayMinutes)'), decreasing = TRUE), 100)</strong></span>
+<span class="strong"><strong>  DayOfWeek Origin UniqueCarrier count(ArrDelayMinutes) avg(ArrDelayMinutes)</strong></span>
+<span class="strong"><strong>1         7    SLC            AS                     30            32.600000</strong></span>
+<span class="strong"><strong>2         2    SLC            AS                     30            10.200000</strong></span>
+<span class="strong"><strong>3         4    SLC            AS                     31             9.774194</strong></span>
+<span class="strong"><strong>4         1    SLC            AS                     30             9.433333</strong></span>
+<span class="strong"><strong>5         3    SLC            AS                     30             5.866667</strong></span>
+<span class="strong"><strong>6         5    SLC            AS                     31             5.516129</strong></span>
+<span class="strong"><strong>7         6    SLC            AS                     30             2.133333</strong></span>
+</pre></div><p>Sunday still remains a problem in terms of delays. The limit to the amount of data we can analyze now is <a id="id599" class="indexterm"/>only the number of cores on the laptop and nodes in the cluster. Let's look at more complex machine learning models now.</p></div><div class="section" title="Linear models"><div class="titlepage"><div><div><h2 class="title"><a id="ch08lvl2sec43"/>Linear models</h2></div></div></div><p>Linear methods play <a id="id600" class="indexterm"/>an important role in statistical modeling. As the name suggests, linear model assumes that the dependent variable is a weighted combination of independent variables. In R, the <code class="literal">lm</code> function performs a linear regression and reports the coefficients, as follows:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>R&gt; attach(iris)</strong></span>
+<span class="strong"><strong>R&gt; lm(Sepal.Length ~ Sepal.Width)</strong></span>
+
+<span class="strong"><strong>Call:</strong></span>
+<span class="strong"><strong>lm(formula = Sepal.Length ~ Sepal.Width)</strong></span>
+
+<span class="strong"><strong>Coefficients:</strong></span>
+<span class="strong"><strong>(Intercept)  Sepal.Width</strong></span>
+<span class="strong"><strong>     6.5262      -0.2234</strong></span>
+</pre></div><p>The <code class="literal">summary</code> function provides even more information:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>R&gt; model &lt;- lm(Sepal.Length ~ Sepal.Width + Petal.Length + Petal.Width)</strong></span>
+<span class="strong"><strong>R&gt; summary(model)</strong></span>
+
+<span class="strong"><strong>Call:</strong></span>
+<span class="strong"><strong>lm(formula = Sepal.Length ~ Sepal.Width + Petal.Length + Petal.Width)</strong></span>
+
+<span class="strong"><strong>Residuals:</strong></span>
+<span class="strong"><strong>     Min       1Q   Median       3Q      Max </strong></span>
+<span class="strong"><strong>-0.82816 -0.21989  0.01875  0.19709  0.84570 </strong></span>
+
+<span class="strong"><strong>Coefficients:</strong></span>
+<span class="strong"><strong>             Estimate Std. Error t value Pr(&gt;|t|)    </strong></span>
+<span class="strong"><strong>(Intercept)   1.85600    0.25078   7.401 9.85e-12 ***</strong></span>
+<span class="strong"><strong>Sepal.Width   0.65084    0.06665   9.765  &lt; 2e-16 ***</strong></span>
+<span class="strong"><strong>Petal.Length  0.70913    0.05672  12.502  &lt; 2e-16 ***</strong></span>
+<span class="strong"><strong>Petal.Width  -0.55648    0.12755  -4.363 2.41e-05 ***</strong></span>
+<span class="strong"><strong>---</strong></span>
+<span class="strong"><strong>Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1</strong></span>
+
+<span class="strong"><strong>Residual standard error: 0.3145 on 146 degrees of freedom</strong></span>
+<span class="strong"><strong>Multiple R-squared:  0.8586,  Adjusted R-squared:  0.8557 </strong></span>
+<span class="strong"><strong>F-statistic: 295.5 on 3 and 146 DF,  p-value: &lt; 2.2e-16</strong></span>
+</pre></div><p>While we considered generalized linear models in <a class="link" href="ch03.xhtml" title="Chapter 3. Working with Spark and MLlib">Chapter 3</a>, <span class="emphasis"><em>Working with Spark and MLlib</em></span>, and we will also consider the <code class="literal">glm</code> implementation in R and SparkR shortly, linear models provide <a id="id601" class="indexterm"/>more information in general and are an excellent tool for working with noisy data and selecting the relevant attribute for further analysis.</p><div class="note" title="Note" style=""><div class="inner"><h3 class="title"><a id="note09"/>Note</h3><p>
+<span class="strong"><strong>Data analysis life cycle</strong></span>
+</p><p>While most of the<a id="id602" class="indexterm"/> statistical books focus on the analysis and best use of available data, the results of statistical analysis in general should also affect the search for the new sources of information. In the complete data life cycle, discussed at the end of <a class="link" href="ch03.xhtml" title="Chapter 3. Working with Spark and MLlib">Chapter 3</a>, <span class="emphasis"><em>Working with Spark and MLlib</em></span>, a data scientist should always transform the latest variable importance results into the theories of how to collect data. For example, if the ink usage analysis for home printers points to an increase in ink usage for photos, one could potentially collect more information about the format of the pictures, sources of digital images, and paper the user prefers to use. This approach turned out to be very productive in a real business situation even though not fully automated.</p></div></div><p>Specifically, here is a<a id="id603" class="indexterm"/> short description of the output that linear models provide:</p><div class="itemizedlist"><ul class="itemizedlist"><li class="listitem" style="list-style-type: disc"><span class="strong"><strong>Residuals</strong></span>: These are <a id="id604" class="indexterm"/>statistics for the difference between the actual and predicted values. A lot of techniques exist to detect the problems with the models on patterns of the residual distribution, but this is out of scope of this book. A detailed residual table can be obtained with the <code class="literal">resid(model)</code> function.</li><li class="listitem" style="list-style-type: disc"><span class="strong"><strong>Coefficients</strong></span>: These are the actual linear combination coefficients; the t-value represents the ratio of the value of the coefficient to the estimate of the standard error: higher <a id="id605" class="indexterm"/>values mean a higher likelihood that this coefficient has a non-trivial effect on the dependent variable. The coefficients can also be obtained with <code class="literal">coef(model)</code> functions.</li><li class="listitem" style="list-style-type: disc"><span class="strong"><strong>Residual standard error</strong></span>: This reports the standard mean square error, the metric that is the<a id="id606" class="indexterm"/> target of optimization in a straightforward linear regression.</li><li class="listitem" style="list-style-type: disc"><span class="strong"><strong>Multiple R-squared</strong></span>: This is the fraction of the dependent variable variance that is explained by the model. The adjusted value accounts for the number of parameters in your model and is considered to be a better metric to avoid overfitting if the <a id="id607" class="indexterm"/>number of observations does not justify the complexity of the models, which happens even for big data problems.</li><li class="listitem" style="list-style-type: disc"><span class="strong"><strong>F-statistic</strong></span>: The measure <a id="id608" class="indexterm"/>of model quality. In plain terms, it measures how all the parameters in the model explain the dependent variable. The p-value provides the probability that the model explains the dependent variable just due to random chance. The values under 0.05 (or 5%) are, in general, considered satisfactory. While in general, a high value probably means that the model is probably not statistically valid and "nothing else matters, the low F-statistic does not always mean that the model will work well in practice, so it cannot be directly applied as a model acceptance criterion.</li></ul></div><p>Once the linear models are applied, usually more complex <code class="literal">glm</code> or recursive models, such as decision trees and the <code class="literal">rpart</code> function, are applied to find interesting variable interactions. Linear models are good for establishing baseline on the other models that can improve.</p><p>Finally, ANOVA is a standard technique to study the variance if the independent variables are discrete:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>R&gt; aov &lt;- aov(Sepal.Length ~ Species)</strong></span>
+<span class="strong"><strong>R&gt; summary(aov)</strong></span>
+<span class="strong"><strong>             Df Sum Sq Mean Sq F value Pr(&gt;F)    </strong></span>
+<span class="strong"><strong>Species       2  63.21  31.606   119.3 &lt;2e-16 ***</strong></span>
+<span class="strong"><strong>Residuals   147  38.96   0.265                   </strong></span>
+<span class="strong"><strong>---</strong></span>
+<span class="strong"><strong>Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1</strong></span>
+</pre></div><p>The measure of the model quality is F-statistics. While one can always run R algorithms with RDD using the pipe <a id="id609" class="indexterm"/>mechanism with <code class="literal">Rscript</code>, I will partially cover this functionality with respect to <span class="strong"><strong>Java Specification Request</strong></span> (<span class="strong"><strong>JSR</strong></span>) 223 Python<a id="id610" class="indexterm"/> integration later. In this section, I would like to explore specifically a generalized linear regression <code class="literal">glm</code> function that is implemented both in R and SparkR natively.</p></div><div class="section" title="Generalized linear model"><div class="titlepage"><div><div><h2 class="title"><a id="ch08lvl2sec44"/>Generalized linear model</h2></div></div></div><p>Once again, you can<a id="id611" class="indexterm"/> run either R <code class="literal">glm</code> or SparkR <code class="literal">glm</code>. The list of possible link and optimization functions for R implementation is provided in the following table:</p><p>The following list shows possible options for R <code class="literal">glm</code> implementation:</p><div class="informaltable"><table border="1"><colgroup><col style="text-align: left"/><col style="text-align: left"/><col style="text-align: left"/></colgroup><thead><tr><th style="text-align: left" valign="bottom">
+<p>Family</p>
+</th><th style="text-align: left" valign="bottom">
+<p>Variance</p>
+</th><th style="text-align: left" valign="bottom">
+<p>Link</p>
+</th></tr></thead><tbody><tr><td style="text-align: left" valign="top">
+<p>gaussian</p>
+</td><td style="text-align: left" valign="top">
+<p>gaussian</p>
+</td><td style="text-align: left" valign="top">
+<p>identity</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>binomial</p>
+</td><td style="text-align: left" valign="top">
+<p>binomial</p>
+</td><td style="text-align: left" valign="top">
+<p>logit, probit or cloglog</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>poisson</p>
+</td><td style="text-align: left" valign="top">
+<p>poisson</p>
+</td><td style="text-align: left" valign="top">
+<p>log, identity or sqrt</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>Gamma</p>
+</td><td style="text-align: left" valign="top">
+<p>Gamma</p>
+</td><td style="text-align: left" valign="top">
+<p>inverse, identity or log</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>inverse.gaussian</p>
+</td><td style="text-align: left" valign="top">
+<p>inverse.gaussian</p>
+</td><td style="text-align: left" valign="top">
+<p>1/mu^2</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>quasi</p>
+</td><td style="text-align: left" valign="top">
+<p>user-defined</p>
+</td><td style="text-align: left" valign="top">
+<p>user-defined</p>
+</td></tr></tbody></table></div><p>I will use a binary target, <code class="literal">ArrDel15</code>, which indicates whether the plane was more than 15 minutes late for the arrival. The independent variables will be <code class="literal">DepDel15</code>, <code class="literal">DayOfWeek</code>, <code class="literal">Month</code>, <code class="literal">UniqueCarrier</code>, <code class="literal">Origin</code>, and <code class="literal">Dest</code>:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>R&gt; flights &lt;- read.table(unz("On_Time_On_Time_Performance_2015_7.zip", "On_Time_On_Time_Performance_2015_7.csv"), nrows=1000000, header=T, quote="\"", sep=",")</strong></span>
+<span class="strong"><strong>R&gt; flights$DoW_ &lt;- factor(flights$DayOfWeek,levels=c(1,2,3,4,5,6,7), labels=c("Mon","Tue","Wed","Thu","Fri","Sat","Sun"))</strong></span>
+<span class="strong"><strong>R&gt; attach(flights)</strong></span>
+<span class="strong"><strong>R&gt; system.time(model &lt;- glm(ArrDel15 ~ UniqueCarrier + DoW_ + Origin + Dest, flights, family="binomial"))</strong></span>
+</pre></div><p>While you wait for the<a id="id612" class="indexterm"/> results, open another shell and run <code class="literal">glm</code> in the <code class="literal">SparkR</code> mode on the full seven months of data:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>sparkR&gt; cache(sparkDf &lt;- read.df(sqlContext, "./flights", "com.databricks.spark.csv", header="true", inferSchema="true"))</strong></span>
+<span class="strong"><strong>DataFrame[Year:int, Quarter:int, Month:int, DayofMonth:int, DayOfWeek:int, FlightDate:string, UniqueCarrier:string, AirlineID:int, Carrier:string, TailNum:string, FlightNum:int, OriginAirportID:int, OriginAirportSeqID:int, OriginCityMarketID:int, Origin:string, OriginCityName:string, OriginState:string, OriginStateFips:int, OriginStateName:string, OriginWac:int, DestAirportID:int, DestAirportSeqID:int, DestCityMarketID:int, Dest:string, DestCityName:string, DestState:string, DestStateFips:int, DestStateName:string, DestWac:int, CRSDepTime:int, DepTime:int, DepDelay:double, DepDelayMinutes:double, DepDel15:double, DepartureDelayGroups:int, DepTimeBlk:string, TaxiOut:double, WheelsOff:int, WheelsOn:int, TaxiIn:double, CRSArrTime:int, ArrTime:int, ArrDelay:double, ArrDelayMinutes:double, ArrDel15:double, ArrivalDelayGroups:int, ArrTimeBlk:string, Cancelled:double, CancellationCode:string, Diverted:double, CRSElapsedTime:double, ActualElapsedTime:double, AirTime:double, Flights:double, Distance:double, DistanceGroup:int, CarrierDelay:double, WeatherDelay:double, NASDelay:double, SecurityDelay:double, LateAircraftDelay:double, FirstDepTime:int, TotalAddGTime:double, LongestAddGTime:double, DivAirportLandings:int, DivReachedDest:double, DivActualElapsedTime:double, DivArrDelay:double, DivDistance:double, Div1Airport:string, Div1AirportID:int, Div1AirportSeqID:int, Div1WheelsOn:int, Div1TotalGTime:double, Div1LongestGTime:double, Div1WheelsOff:int, Div1TailNum:string, Div2Airport:string, Div2AirportID:int, Div2AirportSeqID:int, Div2WheelsOn:int, Div2TotalGTime:double, Div2LongestGTime:double, Div2WheelsOff:string, Div2TailNum:string, Div3Airport:string, Div3AirportID:string, Div3AirportSeqID:string, Div3WheelsOn:string, Div3TotalGTime:string, Div3LongestGTime:string, Div3WheelsOff:string, Div3TailNum:string, Div4Airport:string, Div4AirportID:string, Div4AirportSeqID:string, Div4WheelsOn:string, Div4TotalGTime:string, Div4LongestGTime:string, Div4WheelsOff:string, Div4TailNum:string, Div5Airport:string, Div5AirportID:string, Div5AirportSeqID:string, Div5WheelsOn:string, Div5TotalGTime:string, Div5LongestGTime:string, Div5WheelsOff:string, Div5TailNum:string, :string]</strong></span>
+<span class="strong"><strong>sparkR&gt; noNulls &lt;- cache(dropna(selectExpr(filter(sparkDf, sparkDf$Cancelled == 0), "ArrDel15", "UniqueCarrier", "format_string('%d', DayOfWeek) as DayOfWeek", "Origin", "Dest"), "any"))</strong></span>
+<span class="strong"><strong>sparkR&gt; sparkModel = glm(ArrDel15 ~ UniqueCarrier + DayOfWeek + Origin + Dest, noNulls, family="binomial")</strong></span>
+</pre></div><p>Here we try to build a<a id="id613" class="indexterm"/> model explaining delays as an effect of carrier, day of week, and origin on destination airports, which is captured by the formular construct <code class="literal">ArrDel15 ~ UniqueCarrier + DayOfWeek + Origin + Dest</code>.</p><div class="note" title="Note" style=""><div class="inner"><h3 class="title"><a id="note10"/>Note</h3><p>
+<span class="strong"><strong>Nulls, big data, and Scala</strong></span>
+</p><p>Note that in the SparkR case of <code class="literal">glm</code>, I had to explicitly filter out the non-cancelled flights and removed the NA—or nulls in the C/Java lingo. While R does this for you by<a id="id614" class="indexterm"/> default, NAs in big data are very common as the datasets are typically sparse and shouldn't be treated lightly. The fact that we have to deal with nulls explicitly in MLlib warns us about some additional information in the dataset and is definitely a welcome feature. The presence of an NA can carry <a id="id615" class="indexterm"/>information about the way the data was collected. Ideally, each NA should be accompanied by a small <code class="literal">get_na_info</code> method as to why this particular value was not available or collected, which leads us to the <code class="literal">Either</code> type in Scala.</p><p>Even though nulls are inherited from Java and a part of Scala, the <code class="literal">Option</code> and <code class="literal">Either</code> types are new and more robust mechanism to deal with special cases where nulls were traditionally used. Specifically, <code class="literal">Either</code> can provide a value or exception message as to why it was not computed; while <code class="literal">Option</code> can either provide a value or be <code class="literal">None</code>, which can be readily captured by the Scala pattern-matching framework.</p></div></div><p>One thing you will notice is that SparkR will run multiple threads, and even on a single node, it will consume CPU time from multiple cores and returns much faster even with a larger size of data. In my experiment on a 32-core machine, it was able to finish in under a minute (as opposed to 35 minutes for R <code class="literal">glm</code>). To get the results, as in the R model case, we need to run the <code class="literal">summary()</code> method:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>&gt; summary(sparkModel)</strong></span>
+<span class="strong"><strong>$coefficients</strong></span>
+<span class="strong"><strong>                     Estimate</strong></span>
+<span class="strong"><strong>(Intercept)      -1.518542340</strong></span>
+<span class="strong"><strong>UniqueCarrier_WN  0.382722232</strong></span>
+<span class="strong"><strong>UniqueCarrier_DL -0.047997652</strong></span>
+<span class="strong"><strong>UniqueCarrier_OO  0.367031995</strong></span>
+<span class="strong"><strong>UniqueCarrier_AA  0.046737727</strong></span>
+<span class="strong"><strong>UniqueCarrier_EV  0.344539788</strong></span>
+<span class="strong"><strong>UniqueCarrier_UA  0.299290120</strong></span>
+<span class="strong"><strong>UniqueCarrier_US  0.069837542</strong></span>
+<span class="strong"><strong>UniqueCarrier_MQ  0.467597761</strong></span>
+<span class="strong"><strong>UniqueCarrier_B6  0.326240578</strong></span>
+<span class="strong"><strong>UniqueCarrier_AS -0.210762769</strong></span>
+<span class="strong"><strong>UniqueCarrier_NK  0.841185903</strong></span>
+<span class="strong"><strong>UniqueCarrier_F9  0.788720078</strong></span>
+<span class="strong"><strong>UniqueCarrier_HA -0.094638586</strong></span>
+<span class="strong"><strong>DayOfWeek_5       0.232234937</strong></span>
+<span class="strong"><strong>DayOfWeek_4       0.274016179</strong></span>
+<span class="strong"><strong>DayOfWeek_3       0.147645473</strong></span>
+<span class="strong"><strong>DayOfWeek_1       0.347349366</strong></span>
+<span class="strong"><strong>DayOfWeek_2       0.190157420</strong></span>
+<span class="strong"><strong>DayOfWeek_7       0.199774806</strong></span>
+<span class="strong"><strong>Origin_ATL       -0.180512251</strong></span>
+<span class="strong"><strong>...</strong></span>
+</pre></div><p>The worst performer is <code class="literal">NK</code> (Spirit Airlines). Internally, SparkR uses limited-memory BFGS, which is a<a id="id616" class="indexterm"/> limited-memory quasi-Newton optimization method that is similar to the results obtained with R <code class="literal">glm</code> on the July data:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>R&gt; summary(model)</strong></span>
+
+<span class="strong"><strong>Call:</strong></span>
+<span class="strong"><strong>glm(formula = ArrDel15 ~ UniqueCarrier + DoW + Origin + Dest, </strong></span>
+<span class="strong"><strong>    family = "binomial", data = dow)</strong></span>
+
+<span class="strong"><strong>Deviance Residuals: </strong></span>
+<span class="strong"><strong>    Min       1Q   Median       3Q      Max  </strong></span>
+<span class="strong"><strong>-1.4205  -0.7274  -0.6132  -0.4510   2.9414  </strong></span>
+
+<span class="strong"><strong>Coefficients:</strong></span>
+<span class="strong"><strong>                  Estimate Std. Error z value Pr(&gt;|z|)    </strong></span>
+<span class="strong"><strong>(Intercept)     -1.817e+00  2.402e-01  -7.563 3.95e-14 ***</strong></span>
+<span class="strong"><strong>UniqueCarrierAS -3.296e-01  3.413e-02  -9.658  &lt; 2e-16 ***</strong></span>
+<span class="strong"><strong>UniqueCarrierB6  3.932e-01  2.358e-02  16.676  &lt; 2e-16 ***</strong></span>
+<span class="strong"><strong>UniqueCarrierDL -6.602e-02  1.850e-02  -3.568 0.000359 ***</strong></span>
+<span class="strong"><strong>UniqueCarrierEV  3.174e-01  2.155e-02  14.728  &lt; 2e-16 ***</strong></span>
+<span class="strong"><strong>UniqueCarrierF9  6.754e-01  2.979e-02  22.668  &lt; 2e-16 ***</strong></span>
+<span class="strong"><strong>UniqueCarrierHA  7.883e-02  7.058e-02   1.117 0.264066    </strong></span>
+<span class="strong"><strong>UniqueCarrierMQ  2.175e-01  2.393e-02   9.090  &lt; 2e-16 ***</strong></span>
+<span class="strong"><strong>UniqueCarrierNK  7.928e-01  2.702e-02  29.343  &lt; 2e-16 ***</strong></span>
+<span class="strong"><strong>UniqueCarrierOO  4.001e-01  2.019e-02  19.817  &lt; 2e-16 ***</strong></span>
+<span class="strong"><strong>UniqueCarrierUA  3.982e-01  1.827e-02  21.795  &lt; 2e-16 ***</strong></span>
+<span class="strong"><strong>UniqueCarrierVX  9.723e-02  3.690e-02   2.635 0.008423 ** </strong></span>
+<span class="strong"><strong>UniqueCarrierWN  6.358e-01  1.700e-02  37.406  &lt; 2e-16 ***</strong></span>
+<span class="strong"><strong>dowTue           1.365e-01  1.313e-02  10.395  &lt; 2e-16 ***</strong></span>
+<span class="strong"><strong>dowWed           1.724e-01  1.242e-02  13.877  &lt; 2e-16 ***</strong></span>
+<span class="strong"><strong>dowThu           4.593e-02  1.256e-02   3.656 0.000256 ***</strong></span>
+<span class="strong"><strong>dowFri          -2.338e-01  1.311e-02 -17.837  &lt; 2e-16 ***</strong></span>
+<span class="strong"><strong>dowSat          -2.413e-01  1.458e-02 -16.556  &lt; 2e-16 ***</strong></span>
+<span class="strong"><strong>dowSun          -3.028e-01  1.408e-02 -21.511  &lt; 2e-16 ***</strong></span>
+<span class="strong"><strong>OriginABI       -3.355e-01  2.554e-01  -1.314 0.188965    </strong></span>
+<span class="strong"><strong>...</strong></span>
+</pre></div><p>Other parameters of SparkR <code class="literal">glm</code> implementation are provided in the following table:</p><p>The following table<a id="id617" class="indexterm"/> shows a list of parameters for SparkR <code class="literal">glm</code> implementation:</p><div class="informaltable"><table border="1"><colgroup><col style="text-align: left"/><col style="text-align: left"/><col style="text-align: left"/></colgroup><thead><tr><th style="text-align: left" valign="bottom">
+<p>Parameter</p>
+</th><th style="text-align: left" valign="bottom">
+<p>Possible Values</p>
+</th><th style="text-align: left" valign="bottom">
+<p>Comments</p>
+</th></tr></thead><tbody><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">formula</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>A symbolic description like in R</p>
+</td><td style="text-align: left" valign="top">
+<p>Currently<a id="id618" class="indexterm"/> only a subset of formula operators are supported: '<code class="literal">~</code>', '<code class="literal">.</code>', '<code class="literal">:</code>', '<code class="literal">+</code>', and '<code class="literal">-</code>'</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">family</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>gaussian or binomial</p>
+</td><td style="text-align: left" valign="top">
+<p>Needs to be in <a id="id619" class="indexterm"/>quotes: gaussian -&gt; linear regression, binomial -&gt; logistic regression</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">data</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>DataFrame</p>
+</td><td style="text-align: left" valign="top">
+<p>Needs to be<a id="id620" class="indexterm"/> SparkR DataFrame, not <code class="literal">data.frame</code>
+</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">lambda</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>positive</p>
+</td><td style="text-align: left" valign="top">
+<p>Regularization<a id="id621" class="indexterm"/> coefficient</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">alpha</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>positive</p>
+</td><td style="text-align: left" valign="top">
+<p>Elastic-net <a id="id622" class="indexterm"/>mixing parameter (refer to glmnet's documentation for details)</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">standardize</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>TRUE or <a id="id623" class="indexterm"/>FALSE</p>
+</td><td style="text-align: left" valign="top">
+<p>User-defined</p>
+</td></tr><tr><td style="text-align: left" valign="top">
+<p>
+<code class="literal">solver</code>
+</p>
+</td><td style="text-align: left" valign="top">
+<p>l-bfgs, normal or auto</p>
+</td><td style="text-align: left" valign="top">
+<p>auto<a id="id624" class="indexterm"/> will choose the algorithm automatically, l-bfgs means limited-memory BFGS, normal means using normal equation as an analytical solution to the linear regression problem</p>
+</td></tr></tbody></table></div></div><div class="section" title="Reading JSON files in SparkR"><div class="titlepage"><div><div><h2 class="title"><a id="ch08lvl2sec45"/>Reading JSON files in SparkR</h2></div></div></div><p>Schema on Read is<a id="id625" class="indexterm"/> one of the convenient features of big data. The DataFrame class has the ability to figure out the schema of a text file containing a JSON<a id="id626" class="indexterm"/> record per line:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>[akozlov@Alexanders-MacBook-Pro spark-1.6.1-bin-hadoop2.6]$ cat examples/src/main/resources/people.json </strong></span>
+<span class="strong"><strong>{"name":"Michael"}</strong></span>
+<span class="strong"><strong>{"name":"Andy", "age":30}</strong></span>
+<span class="strong"><strong>{"name":"Justin", "age":19}</strong></span>
+
+<span class="strong"><strong>[akozlov@Alexanders-MacBook-Pro spark-1.6.1-bin-hadoop2.6]$ bin/sparkR</strong></span>
+<span class="strong"><strong>...</strong></span>
+
+<span class="strong"><strong>&gt; people = read.json(sqlContext, "examples/src/main/resources/people.json")</strong></span>
+<span class="strong"><strong>&gt; dtypes(people)</strong></span>
+<span class="strong"><strong>[[1]]</strong></span>
+<span class="strong"><strong>[1] "age"    "bigint"</strong></span>
+
+<span class="strong"><strong>[[2]]</strong></span>
+<span class="strong"><strong>[1] "name"   "string"</strong></span>
+
+<span class="strong"><strong>&gt; schema(people)</strong></span>
+<span class="strong"><strong>StructType</strong></span>
+<span class="strong"><strong>|-name = "age", type = "LongType", nullable = TRUE</strong></span>
+<span class="strong"><strong>|-name = "name", type = "StringType", nullable = TRUE</strong></span>
+<span class="strong"><strong>&gt; showDF(people)</strong></span>
+<span class="strong"><strong>+----+-------+</strong></span>
+<span class="strong"><strong>| age|   name|</strong></span>
+<span class="strong"><strong>+----+-------+</strong></span>
+<span class="strong"><strong>|null|Michael|</strong></span>
+<span class="strong"><strong>|  30|   Andy|</strong></span>
+<span class="strong"><strong>|  19| Justin|</strong></span>
+<span class="strong"><strong>+----+-------+</strong></span>
+</pre></div></div><div class="section" title="Writing Parquet files in SparkR"><div class="titlepage"><div><div><h2 class="title"><a id="ch08lvl2sec46"/>Writing Parquet files in SparkR</h2></div></div></div><p>As we<a id="id627" class="indexterm"/> mentioned in the previous chapter, the Parquet format is an efficient storage format, particularly for low cardinality columns. Parquet files can be<a id="id628" class="indexterm"/> read/written directly from R:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>&gt; write.parquet(sparkDf, "parquet")</strong></span>
+</pre></div><p>You can see that the new Parquet file is 66 times smaller that the original zip file downloaded from the DoT:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>[akozlov@Alexanders-MacBook-Pro spark-1.6.1-bin-hadoop2.6]$ ls –l On_Time_On_Time_Performance_2015_7.zip parquet/ flights/</strong></span>
+<span class="strong"><strong>-rw-r--r--  1 akozlov  staff  26204213 Sep  9 12:21 /Users/akozlov/spark/On_Time_On_Time_Performance_2015_7.zip</strong></span>
+
+<span class="strong"><strong>flights/:</strong></span>
+<span class="strong"><strong>total 459088</strong></span>
+<span class="strong"><strong>-rw-r--r--  1 akozlov  staff  235037955 Sep  9 12:20 On_Time_On_Time_Performance_2015_7.csv</strong></span>
+<span class="strong"><strong>-rw-r--r--  1 akozlov  staff      12054 Sep  9 12:20 readme.html</strong></span>
+
+<span class="strong"><strong>parquet/:</strong></span>
+<span class="strong"><strong>total 848</strong></span>
+<span class="strong"><strong>-rw-r--r--  1 akozlov  staff       0 Jan 24 22:50 _SUCCESS</strong></span>
+<span class="strong"><strong>-rw-r--r--  1 akozlov  staff   10000 Jan 24 22:50 _common_metadata</strong></span>
+<span class="strong"><strong>-rw-r--r--  1 akozlov  staff   23498 Jan 24 22:50 _metadata</strong></span>
+<span class="strong"><strong>-rw-r--r--  1 akozlov  staff  394418 Jan 24 22:50 part-r-00000-9e2d0004-c71f-4bf5-aafe-90822f9d7223.gz.parquet</strong></span>
+</pre></div></div><div class="section" title="Invoking Scala from R"><div class="titlepage"><div><div><h2 class="title"><a id="ch08lvl2sec47"/>Invoking Scala from R</h2></div></div></div><p>Let's assume that one <a id="id629" class="indexterm"/>has an exceptional implementation of a numeric method in Scala that we want to call from R. One way of doing this would be to use the R <code class="literal">system()</code> function that invokes <code class="literal">/bin/sh</code> on Unix-like systems. However, the <code class="literal">rscala</code> package is a more efficient way that starts a Scala interpreter and maintains communication over TCP/IP network connection.</p><p>Here, the Scala interpreter maintains the state (memoization) between the calls. Similarly, one can define functions, as follows:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>R&gt; scala &lt;- scalaInterpreter()</strong></span>
+<span class="strong"><strong>R&gt; scala %~% 'def pri(i: Stream[Int]): Stream[Int] = i.head #:: pri(i.tail filter  { x =&gt; { println("Evaluating " + x + "%" + i.head); x % i.head != 0 } } )'</strong></span>
+<span class="strong"><strong>ScalaInterpreterReference... engine: javax.script.ScriptEngine</strong></span>
+<span class="strong"><strong>R&gt; scala %~% 'val primes = pri(Stream.from(2))'</strong></span>
+<span class="strong"><strong>ScalaInterpreterReference... primes: Stream[Int]</strong></span>
+<span class="strong"><strong>R&gt; scala %~% 'primes take 5 foreach println'</strong></span>
+<span class="strong"><strong>2</strong></span>
+<span class="strong"><strong>Evaluating 3%2</strong></span>
+<span class="strong"><strong>3</strong></span>
+<span class="strong"><strong>Evaluating 4%2</strong></span>
+<span class="strong"><strong>Evaluating 5%2</strong></span>
+<span class="strong"><strong>Evaluating 5%3</strong></span>
+<span class="strong"><strong>5</strong></span>
+<span class="strong"><strong>Evaluating 6%2</strong></span>
+<span class="strong"><strong>Evaluating 7%2</strong></span>
+<span class="strong"><strong>Evaluating 7%3</strong></span>
+<span class="strong"><strong>Evaluating 7%5</strong></span>
+<span class="strong"><strong>7</strong></span>
+<span class="strong"><strong>Evaluating 8%2</strong></span>
+<span class="strong"><strong>Evaluating 9%2</strong></span>
+<span class="strong"><strong>Evaluating 9%3</strong></span>
+<span class="strong"><strong>Evaluating 10%2</strong></span>
+<span class="strong"><strong>Evaluating 11%2</strong></span>
+<span class="strong"><strong>Evaluating 11%3</strong></span>
+<span class="strong"><strong>Evaluating 11%5</strong></span>
+<span class="strong"><strong>Evaluating 11%7</strong></span>
+<span class="strong"><strong>11</strong></span>
+<span class="strong"><strong>R&gt; scala %~% 'primes take 5 foreach println'</strong></span>
+<span class="strong"><strong>2</strong></span>
+<span class="strong"><strong>3</strong></span>
+<span class="strong"><strong>5</strong></span>
+<span class="strong"><strong>7</strong></span>
+<span class="strong"><strong>11</strong></span>
+<span class="strong"><strong>R&gt; scala %~% 'primes take 7 foreach println'</strong></span>
+<span class="strong"><strong>2</strong></span>
+<span class="strong"><strong>3</strong></span>
+<span class="strong"><strong>5</strong></span>
+<span class="strong"><strong>7</strong></span>
+<span class="strong"><strong>11</strong></span>
+<span class="strong"><strong>Evaluating 12%2</strong></span>
+<span class="strong"><strong>Evaluating 13%2</strong></span>
+<span class="strong"><strong>Evaluating 13%3</strong></span>
+<span class="strong"><strong>Evaluating 13%5</strong></span>
+<span class="strong"><strong>Evaluating 13%7</strong></span>
+<span class="strong"><strong>Evaluating 13%11</strong></span>
+<span class="strong"><strong>13</strong></span>
+<span class="strong"><strong>Evaluating 14%2</strong></span>
+<span class="strong"><strong>Evaluating 15%2</strong></span>
+<span class="strong"><strong>Evaluating 15%3</strong></span>
+<span class="strong"><strong>Evaluating 16%2</strong></span>
+<span class="strong"><strong>Evaluating 17%2</strong></span>
+<span class="strong"><strong>Evaluating 17%3</strong></span>
+<span class="strong"><strong>Evaluating 17%5</strong></span>
+<span class="strong"><strong>Evaluating 17%7</strong></span>
+<span class="strong"><strong>Evaluating 17%11</strong></span>
+<span class="strong"><strong>Evaluating 17%13</strong></span>
+<span class="strong"><strong>17</strong></span>
+<span class="strong"><strong>R&gt; </strong></span>
+</pre></div><p>R from Scala can<a id="id630" class="indexterm"/> be invoked using the <code class="literal">!</code> or <code class="literal">!!</code> Scala operators and <code class="literal">Rscript</code> command:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>[akozlov@Alexanders-MacBook-Pro ~]$ cat &lt;&lt; EOF &gt; rdate.R</strong></span>
+<span class="strong"><strong>&gt; #!/usr/local/bin/Rscript</strong></span>
+<span class="strong"><strong>&gt; </strong></span>
+<span class="strong"><strong>&gt; write(date(), stdout())</strong></span>
+<span class="strong"><strong>&gt; EOF</strong></span>
+<span class="strong"><strong>[akozlov@Alexanders-MacBook-Pro ~]$ chmod a+x rdate.R</strong></span>
+<span class="strong"><strong>[akozlov@Alexanders-MacBook-Pro ~]$ scala</strong></span>
+<span class="strong"><strong>Welcome to Scala version 2.11.7 (Java HotSpot(TM) 64-Bit Server VM, Java 1.8.0_40).</strong></span>
+<span class="strong"><strong>Type in expressions to have them evaluated.</strong></span>
+<span class="strong"><strong>Type :help for more information.</strong></span>
+
+<span class="strong"><strong>scala&gt; import sys.process._</strong></span>
+<span class="strong"><strong>import sys.process._</strong></span>
+
+<span class="strong"><strong>scala&gt; val date = Process(Seq("./rdate.R")).!!</strong></span>
+<span class="strong"><strong>date: String =</strong></span>
+<span class="strong"><strong>"Wed Feb 24 02:20:09 2016</strong></span>
+<span class="strong"><strong>"</strong></span>
+</pre></div><div class="section" title="Using Rserve"><div class="titlepage"><div><div><h3 class="title"><a id="ch08lvl3sec06"/>Using Rserve</h3></div></div></div><p>A more efficient way is to use the similar TCP/IP binary transport protocol to communicate with R <a id="id631" class="indexterm"/>with <code class="literal">Rsclient/Rserve</code> (<a class="ulink" href="http://www.rforge.net/Rserve">http://www.rforge.net/Rserve</a>). To start <code class="literal">Rserve</code> on a<a id="id632" class="indexterm"/> node that has R installed, perform the following action:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>[akozlov@Alexanders-MacBook-Pro ~]$ wget http://www.rforge.net/Rserve/snapshot/Rserve_1.8-5.tar.gz</strong></span>
+
+<span class="strong"><strong>[akozlov@Alexanders-MacBook-Pro ~]$ R CMD INSTALL Rserve_1.8-5.tar</strong></span>
+<span class="strong"><strong>.gz</strong></span>
+<span class="strong"><strong>...</strong></span>
+<span class="strong"><strong>[akozlov@Alexanders-MacBook-Pro ~]$ R CMD INSTALL Rserve_1.8-5.tar.gz</strong></span>
+
+<span class="strong"><strong>[akozlov@Alexanders-MacBook-Pro ~]$ $ R -q CMD Rserve</strong></span>
+
+<span class="strong"><strong>R version 3.2.3 (2015-12-10) -- "Wooden Christmas-Tree"</strong></span>
+<span class="strong"><strong>Copyright (C) 2015 The R Foundation for Statistical Computing</strong></span>
+<span class="strong"><strong>Platform: x86_64-apple-darwin13.4.0 (64-bit)</strong></span>
+
+<span class="strong"><strong>R is free software and comes with ABSOLUTELY NO WARRANTY.</strong></span>
+<span class="strong"><strong>You are welcome to redistribute it under certain conditions.</strong></span>
+<span class="strong"><strong>Type 'license()' or 'licence()' for distribution details.</strong></span>
+
+<span class="strong"><strong>  Natural language support but running in an English locale</strong></span>
+
+<span class="strong"><strong>R is a collaborative project with many contributors.</strong></span>
+<span class="strong"><strong>Type 'contributors()' for more information and</strong></span>
+<span class="strong"><strong>'citation()' on how to cite R or R packages in publications.</strong></span>
+
+<span class="strong"><strong>Type 'demo()' for some demos, 'help()' for on-line help, or</strong></span>
+<span class="strong"><strong>'help.start()' for an HTML browser interface to help.</strong></span>
+<span class="strong"><strong>Type 'q()' to quit R.</strong></span>
+
+<span class="strong"><strong>Rserv started in daemon mode.</strong></span>
+</pre></div><p>By default, <code class="literal">Rserv</code> opens a connection on <code class="literal">localhost:6311</code>. The advantage of the binary network protocol is<a id="id633" class="indexterm"/> that it is platform-independent and multiple clients can communicate with the server. The clients can connect to <code class="literal">Rserve</code>.</p><p>Note that, while passing the results as a binary object has its advantages, you have to be careful with the type mappings between R and Scala. <code class="literal">Rserve</code> supports other clients, including Python, but I will also cover JSR 223-compliant scripting at the end of this chapter.</p></div></div></div></div></div>
+
+
+
+  
+<div id="sbo-rt-content"><div class="section" title="Integrating with Python"><div class="titlepage"><div><div><h1 class="title"><a id="ch08lvl1sec62"/>Integrating with Python</h1></div></div></div><p>Python has slowly<a id="id634" class="indexterm"/> established ground as a de-facto tool for data science. It has <a id="id635" class="indexterm"/>a command-line interface and decent visualization<a id="id636" class="indexterm"/> via matplotlib and ggplot, which is based on R's ggplot2. Recently, Wes McKinney, the creator of Pandas, the time series data-analysis package, has joined Cloudera to pave way for Python in big data.</p><div class="section" title="Setting up Python"><div class="titlepage"><div><div><h2 class="title"><a id="ch08lvl2sec48"/>Setting up Python</h2></div></div></div><p>Python is usually part <a id="id637" class="indexterm"/>of the default installation. Spark requires version 2.7.0+.</p><p>If you don't have <a id="id638" class="indexterm"/>Python on Mac OS, I recommend installing the Homebrew package manager from <a class="ulink" href="http://brew.sh">http://brew.sh</a>:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>[akozlov@Alexanders-MacBook-Pro spark(master)]$ ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install)"</strong></span>
+<span class="strong"><strong>==&gt; This script will install:</strong></span>
+<span class="strong"><strong>/usr/local/bin/brew</strong></span>
+<span class="strong"><strong>/usr/local/Library/...</strong></span>
+<span class="strong"><strong>/usr/local/share/man/man1/brew.1</strong></span>
+<span class="strong"><strong>…</strong></span>
+<span class="strong"><strong>[akozlov@Alexanders-MacBook-Pro spark(master)]$ brew install python</strong></span>
+<span class="strong"><strong>…</strong></span>
+</pre></div><p>Otherwise, on a Unix-like system, Python can be compiled from the source distribution:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ export PYTHON_VERSION=2.7.11</strong></span>
+<span class="strong"><strong>$ wget -O - https://www.python.org/ftp/python/$PYTHON_VERSION/Python-$PYTHON_VERSION.tgz | tar xzvf -</strong></span>
+<span class="strong"><strong>$ cd $HOME/Python-$PYTHON_VERSION</strong></span>
+<span class="strong"><strong>$ ./configure--prefix=/usr/local --enable-unicode=ucs4--enable-shared LDFLAGS="-Wl,-rpath /usr/local/lib"</strong></span>
+<span class="strong"><strong>$ make; sudo make altinstall</strong></span>
+<span class="strong"><strong>$ sudo ln -sf /usr/local/bin/python2.7 /usr/local/bin/python</strong></span>
+</pre></div><p>It is good practice to place it in a directory different from the default Python installation. It is normal to have multiple versions of Python on a single system, which usually does not lead to <a id="id639" class="indexterm"/>problems as Python separates the installation directories. For the purpose of this chapter, as for many machine learning takes, I'll also need a few packages. The packages and specific versions may differ across installations:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ wget https://bootstrap.pypa.io/ez_setup.py</strong></span>
+<span class="strong"><strong>$ sudo /usr/local/bin/python ez_setup.py</strong></span>
+<span class="strong"><strong>$ sudo /usr/local/bin/easy_install-2.7 pip</strong></span>
+<span class="strong"><strong>$ sudo /usr/local/bin/pip install --upgrade avro nose numpy scipy pandas statsmodels scikit-learn iso8601 python-dateutil python-snappy</strong></span>
+</pre></div><p>If everything compiles—SciPy uses a Fortran compiler and libraries for linear algebra—we are ready to use Python 2.7.11!</p><div class="note" title="Note" style=""><div class="inner"><h3 class="title"><a id="note11"/>Note</h3><p>Note that if one wants to use Python with the <code class="literal">pipe</code> command in a distributed environment, Python needs to be installed on every node in the network.</p></div></div></div><div class="section" title="PySpark"><div class="titlepage"><div><div><h2 class="title"><a id="ch08lvl2sec49"/>PySpark</h2></div></div></div><p>As <code class="literal">bin/sparkR</code> launches<a id="id640" class="indexterm"/> R with preloaded Spark context, <code class="literal">bin/pyspark</code> launches Python shell with preloaded Spark context and Spark driver running. The <a id="id641" class="indexterm"/>
+<code class="literal">PYSPARK_PYTHON</code> environment variable can be used to point to a specific Python version:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>[akozlov@Alexanders-MacBook-Pro spark-1.6.1-bin-hadoop2.6]$ export PYSPARK_PYTHON=/usr/local/bin/python</strong></span>
+<span class="strong"><strong>[akozlov@Alexanders-MacBook-Pro spark-1.6.1-bin-hadoop2.6]$ bin/pyspark </strong></span>
+<span class="strong"><strong>Python 2.7.11 (default, Jan 23 2016, 20:14:24) </strong></span>
+<span class="strong"><strong>[GCC 4.2.1 Compatible Apple LLVM 7.0.2 (clang-700.1.81)] on darwin</strong></span>
+<span class="strong"><strong>Type "help", "copyright", "credits" or "license" for more information.</strong></span>
+<span class="strong"><strong>Welcome to</strong></span>
+<span class="strong"><strong>      ____              __</strong></span>
+<span class="strong"><strong>     / __/__  ___ _____/ /__</strong></span>
+<span class="strong"><strong>    _\ \/ _ \/ _ `/ __/  '_/</strong></span>
+<span class="strong"><strong>   /__ / .__/\_,_/_/ /_/\_\   version 1.6.1</strong></span>
+<span class="strong"><strong>      /_/</strong></span>
+
+<span class="strong"><strong>Using Python version 2.7.11 (default, Jan 23 2016 20:14:24)</strong></span>
+<span class="strong"><strong>SparkContext available as sc, HiveContext available as sqlContext.</strong></span>
+<span class="strong"><strong>&gt;&gt;&gt;</strong></span>
+</pre></div><p>PySpark<a id="id642" class="indexterm"/> directly <a id="id643" class="indexterm"/>supports most of MLlib functionality on Spark RDDs (<a class="ulink" href="http://spark.apache.org/docs/latest/api/python">http://spark.apache.org/docs/latest/api/python</a>), but it is known to lag a few releases behind the <a id="id644" class="indexterm"/>Scala API (<a class="ulink" href="http://spark.apache.org/docs/latest/api/python">http://spark.apache.org/docs/latest/api/python</a>). As of the 1.6.0+ release, it also supports <a id="id645" class="indexterm"/>DataFrames (<a class="ulink" href="http://spark.apache.org/docs/latest/sql-programming-guide.html">http://spark.apache.org/docs/latest/sql-programming-guide.html</a>):</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>&gt;&gt;&gt; sfoFlights = sqlContext.sql("SELECT Dest, UniqueCarrier, ArrDelayMinutes FROM parquet.parquet")</strong></span>
+<span class="strong"><strong>&gt;&gt;&gt; sfoFlights.groupBy(["Dest", "UniqueCarrier"]).agg(func.avg("ArrDelayMinutes"), func.count("ArrDelayMinutes")).sort("avg(ArrDelayMinutes)", ascending=False).head(5)</strong></span>
+<span class="strong"><strong>[Row(Dest=u'HNL', UniqueCarrier=u'HA', avg(ArrDelayMinutes)=53.70967741935484, count(ArrDelayMinutes)=31), Row(Dest=u'IAH', UniqueCarrier=u'F9', avg(ArrDelayMinutes)=43.064516129032256, count(ArrDelayMinutes)=31), Row(Dest=u'LAX', UniqueCarrier=u'DL', avg(ArrDelayMinutes)=39.68691588785047, count(ArrDelayMinutes)=214), Row(Dest=u'LAX', UniqueCarrier=u'WN', avg(ArrDelayMinutes)=29.704453441295545, count(ArrDelayMinutes)=247), Row(Dest=u'MSO', UniqueCarrier=u'OO', avg(ArrDelayMinutes)=29.551724137931036, count(ArrDelayMinutes)=29)]</strong></span>
+</pre></div></div><div class="section" title="Calling Python from Java/Scala"><div class="titlepage"><div><div><h2 class="title"><a id="ch08lvl2sec50"/>Calling Python from Java/Scala</h2></div></div></div><p>As this is really a <a id="id646" class="indexterm"/>book about Scala, we should also mention that one can call Python code and its interpreter directly from Scala (or Java). There are a few <a id="id647" class="indexterm"/>options available that will be discussed in this chapter.</p><div class="section" title="Using sys.process._"><div class="titlepage"><div><div><h3 class="title"><a id="ch08lvl3sec07"/>Using sys.process._</h3></div></div></div><p>Scala, as well as <a id="id648" class="indexterm"/>Java, can call OS processes via spawning a separate thread, which we already used for interactive analysis in <a class="link" href="ch01.xhtml" title="Chapter 1. Exploratory Data Analysis">Chapter 1</a>, <span class="emphasis"><em>Exploratory Data Analysis</em></span>: the <code class="literal">.!</code> method will start the process and return the exit code, while <code class="literal">.!!</code> will return the string that contains the output:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>scala&gt; import sys.process._</strong></span>
+<span class="strong"><strong>import sys.process._</strong></span>
+
+<span class="strong"><strong>scala&gt; val retCode = Process(Seq("/usr/local/bin/python", "-c", "import socket; print(socket.gethostname())")).!</strong></span>
+<span class="strong"><strong>Alexanders-MacBook-Pro.local</strong></span>
+<span class="strong"><strong>retCode: Int = 0</strong></span>
+
+<span class="strong"><strong>scala&gt; val lines = Process(Seq("/usr/local/bin/python", "-c", """from datetime import datetime, timedelta; print("Yesterday was {}".format(datetime.now()-timedelta(days=1)))""")).!!</strong></span>
+<span class="strong"><strong>lines: String =</strong></span>
+<span class="strong"><strong>"Yesterday was 2016-02-12 16:24:53.161853</strong></span>
+<span class="strong"><strong>"</strong></span>
+</pre></div><p>Let's try a more complex SVD computation (similar to the one we used in SVD++ recommendation engine, but this time, it invokes BLAS C-libraries at the backend). I created a Python executable that takes a string representing a matrix and the required rank as an input and outputs an SVD approximation with the provided rank:</p><div class="informalexample"><pre class="programlisting">#!/usr/bin/env python
+
+import sys
+import os
+import re
+
+import numpy as np
+from scipy import linalg
+from scipy.linalg import svd
+
+np.set_printoptions(linewidth=10000)
+
+def process_line(input):
+    inp = input.rstrip("\r\n")
+    if len(inp) &gt; 1:
+        try:
+            (mat, rank) = inp.split("|")
+            a = np.matrix(mat)
+            r = int(rank)
+        except:
+            a = np.matrix(inp)
+            r = 1
+        U, s, Vh = linalg.svd(a, full_matrices=False)
+        for i in xrange(r, s.size):
+            s[i] = 0
+        S = linalg.diagsvd(s, s.size, s.size)
+        print(str(np.dot(U, np.dot(S, Vh))).replace(os.linesep, ";"))
+
+if __name__ == '__main__':
+    map(process_line, sys.stdin)</pre></div><p>Let's call it <code class="literal">svd.py</code> and <a id="id649" class="indexterm"/>put in in the current directory. Given a matrix and rank as an input, it produces an approximation of a given rank:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ echo -e "1,2,3;2,1,2;3,2,1;7,8,9|3" | ./svd.py</strong></span>
+<span class="strong"><strong>[[ 1.  2.  3.]; [ 2.  1.  2.]; [ 3.  2.  1.]; [ 7.  8.  9.]]</strong></span>
+</pre></div><p>To call it from Scala, let's define the following <code class="literal">#&lt;&lt;&lt;</code> method in our DSL:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>scala&gt; implicit class RunCommand(command: String) {</strong></span>
+<span class="strong"><strong>     |   def #&lt;&lt;&lt; (input: String)(implicit buffer: StringBuilder) =  {</strong></span>
+<span class="strong"><strong>     |     val process = Process(command)</strong></span>
+<span class="strong"><strong>     |     val io = new ProcessIO (</strong></span>
+<span class="strong"><strong>     |       in  =&gt; { in.write(input getBytes "UTF-8"); in.close},</strong></span>
+<span class="strong"><strong>     |       out =&gt; { buffer append scala.io.Source.fromInputStream(out).getLines.mkString("\n"); buffer.append("\n"); out.close() },</strong></span>
+<span class="strong"><strong>     |       err =&gt; { scala.io.Source.fromInputStream(err).getLines().foreach(System.err.println) })</strong></span>
+<span class="strong"><strong>     |     (process run io).exitValue</strong></span>
+<span class="strong"><strong>     |   }</strong></span>
+<span class="strong"><strong>     | }</strong></span>
+<span class="strong"><strong>defined class RunCommand</strong></span>
+</pre></div><p>Now, we can use the <code class="literal">#&lt;&lt;&lt;</code> operator to call Python's SVD method:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>scala&gt; implicit val buffer = new StringBuilder()</strong></span>
+<span class="strong"><strong>buffer: StringBuilder =</strong></span>
+
+<span class="strong"><strong>scala&gt; if ("./svd.py" #&lt;&lt;&lt; "1,2,3;2,1,2;3,2,1;7,8,9|1" == 0)  Some(buffer.toString) else None</strong></span>
+<span class="strong"><strong>res77: Option[String] = Some([[ 1.84716691  2.02576751  2.29557674]; [ 1.48971176  1.63375041  1.85134741]; [ 1.71759947  1.88367234  2.13455611]; [ 7.19431647  7.88992728  8.94077601]])</strong></span>
+</pre></div><p>Note that as we requested<a id="id650" class="indexterm"/> the resulting matrix rank to be one, all rows and columns are linearly dependent. We can even pass several lines of input at a time, as follows:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>scala&gt; if ("./svd.py" #&lt;&lt;&lt; """</strong></span>
+<span class="strong"><strong>     | 1,2,3;2,1,2;3,2,1;7,8,9|0</strong></span>
+<span class="strong"><strong>     | 1,2,3;2,1,2;3,2,1;7,8,9|1</strong></span>
+<span class="strong"><strong>     | 1,2,3;2,1,2;3,2,1;7,8,9|2</strong></span>
+<span class="strong"><strong>     | 1,2,3;2,1,2;3,2,1;7,8,9|3""" == 0) Some(buffer.toString) else None</strong></span>
+<span class="strong"><strong>res80: Option[String] =</strong></span>
+<span class="strong"><strong>Some([[ 0.  0.  0.]; [ 0.  0.  0.]; [ 0.  0.  0.]; [ 0.  0.  0.]]</strong></span>
+<span class="strong"><strong>[[ 1.84716691  2.02576751  2.29557674]; [ 1.48971176  1.63375041  1.85134741]; [ 1.71759947  1.88367234  2.13455611]; [ 7.19431647  7.88992728  8.94077601]]</strong></span>
+<span class="strong"><strong>[[ 0.9905897   2.02161614  2.98849663]; [ 1.72361156  1.63488399  1.66213642]; [ 3.04783513  1.89011928  1.05847477]; [ 7.04822694  7.88921926  9.05895373]]</strong></span>
+<span class="strong"><strong>[[ 1.  2.  3.]; [ 2.  1.  2.]; [ 3.  2.  1.]; [ 7.  8.  9.]])</strong></span>
+</pre></div></div><div class="section" title="Spark pipe"><div class="titlepage"><div><div><h3 class="title"><a id="ch08lvl3sec08"/>Spark pipe</h3></div></div></div><p>SVD decomposition is usually a pretty heavy operation, so the relative overhead of calling Python in this case is small. We can avoid this overhead if we keep the process running and supply <a id="id651" class="indexterm"/>several lines at a time, like we did in the last example. Both Hadoop MR and Spark implement this approach. For example, in Spark, the whole computation will take only one line, as shown in the following:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>scala&gt; sc.parallelize(List("1,2,3;2,1,2;3,2,1;7,8,9|0", "1,2,3;2,1,2;3,2,1;7,8,9|1", "1,2,3;2,1,2;3,2,1;7,8,9|2", "1,2,3;2,1,2;3,2,1;7,8,9|3"),4).pipe("./svd.py").collect.foreach(println)</strong></span>
+<span class="strong"><strong>[[ 0.  0.  0.]; [ 0.  0.  0.]; [ 0.  0.  0.]; [ 0.  0.  0.]]</strong></span>
+<span class="strong"><strong>[[ 1.84716691  2.02576751  2.29557674]; [ 1.48971176  1.63375041  1.85134741]; [ 1.71759947  1.88367234  2.13455611]; [ 7.19431647  7.88992728  8.94077601]]</strong></span>
+<span class="strong"><strong>[[ 0.9905897   2.02161614  2.98849663]; [ 1.72361156  1.63488399  1.66213642]; [ 3.04783513  1.89011928  1.05847477]; [ 7.04822694  7.88921926  9.05895373]]</strong></span>
+<span class="strong"><strong>[[ 1.  2.  3.]; [ 2.  1.  2.]; [ 3.  2.  1.]; [ 7.  8.  9.]]</strong></span>
+</pre></div><p>The whole pipeline is ready to be distributed across a cluster of multicore workstations! I think you will be in love with Scala/Spark already.</p><p>Note that debugging the pipelined executions might be tricky as the data is passed from one process to another using OS pipes.</p></div><div class="section" title="Jython and JSR 223"><div class="titlepage"><div><div><h3 class="title"><a id="ch08lvl3sec09"/>Jython and JSR 223</h3></div></div></div><p>For completeness, we<a id="id652" class="indexterm"/> need to mention Jython, a Java<a id="id653" class="indexterm"/> implementation of Python (as opposed to a more familiar C implementation, also called CPython). Jython avoids the problem of passing input/output via OS pipelines by allowing the users to compile Python source code to Java byte codes, and running the resulting bytecodes on any Java virtual machine. As Scala also runs in Java virtual machine, it can use the Jython classes directly, although the reverse is not true in general; Scala classes sometimes are not compatible to be used by Java/Jython.</p><div class="note" title="Note" style=""><div class="inner"><h3 class="title"><a id="note12"/>Note</h3><p>
+<span class="strong"><strong>JSR 223</strong></span>
+</p><p>In this <a id="id654" class="indexterm"/>particular case, the request is for "Scripting for the JavaTM Platform" and was originally filed on Nov 15th 2004 (<a class="ulink" href="https://www.jcp.org/en/jsr/detail?id=223">https://www.jcp.org/en/jsr/detail?id=223</a>). At the beginning, it was targeted towards the ability of the Java servlet to work with multiple scripting languages. The<a id="id655" class="indexterm"/> specification requires the scripting language maintainers to provide a Java JAR with corresponding implementations. Portability issues hindered practical implementations, particularly when platforms require complex interaction with OS, such as dynamic linking in C or Fortran. Currently, only a handful languages are supported, with R and Python being supported, but in incomplete form.</p></div></div><p>Since Java 6, JSR 223: Scripting for Java added the <code class="literal">javax.script</code> package that allows multiple scripting languages to be called through the same API as long as the language provides a script engine. To add the Jython scripting language, download the latest Jython JAR from the<a id="id656" class="indexterm"/> Jython site at <a class="ulink" href="http://www.jython.org/downloads.html">http://www.jython.org/downloads.html</a>:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>$ wget -O jython-standalone-2.7.0.jar http://search.maven.org/remotecontent?filepath=org/python/jython-standalone/2.7.0/jython-standalone-2.7.0.jar</strong></span>
+
+<span class="strong"><strong>[akozlov@Alexanders-MacBook-Pro Scala]$ scala -cp jython-standalone-2.7.0.jar </strong></span>
+<span class="strong"><strong>Welcome to Scala version 2.11.7 (Java HotSpot(TM) 64-Bit Server VM, Java 1.8.0_40).</strong></span>
+<span class="strong"><strong>Type in expressions to have them evaluated.</strong></span>
+<span class="strong"><strong>Type :help for more information.</strong></span>
+
+<span class="strong"><strong>scala&gt; import javax.script.ScriptEngine;</strong></span>
+<span class="strong"><strong>...</strong></span>
+<span class="strong"><strong>scala&gt; import javax.script.ScriptEngineManager;</strong></span>
+<span class="strong"><strong>...</strong></span>
+<span class="strong"><strong>scala&gt; import javax.script.ScriptException;</strong></span>
+<span class="strong"><strong>...</strong></span>
+<span class="strong"><strong>scala&gt; val manager = new ScriptEngineManager();</strong></span>
+<span class="strong"><strong>manager: javax.script.ScriptEngineManager = javax.script.ScriptEngineManager@3a03464</strong></span>
+
+<span class="strong"><strong>scala&gt; val engines = manager.getEngineFactories();</strong></span>
+<span class="strong"><strong>engines: java.util.List[javax.script.ScriptEngineFactory] = [org.python.jsr223.PyScriptEngineFactory@4909b8da, jdk.nashorn.api.scripting.NashornScriptEngineFactory@68837a77, scala.tools.nsc.interpreter.IMain$Factory@1324409e]</strong></span>
+</pre></div><p>Now, I can use the Jython/Python scripting engine:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>scala&gt; val engine = new ScriptEngineManager().getEngineByName("jython");</strong></span>
+<span class="strong"><strong>engine: javax.script.ScriptEngine = org.python.jsr223.PyScriptEngine@6094de13</strong></span>
+
+<span class="strong"><strong>scala&gt; engine.eval("from datetime import datetime, timedelta; yesterday = str(datetime.now()-timedelta(days=1))")</strong></span>
+<span class="strong"><strong>res15: Object = null</strong></span>
+
+<span class="strong"><strong>scala&gt; engine.get("yesterday")</strong></span>
+<span class="strong"><strong>res16: Object = 2016-02-12 23:26:38.012000</strong></span>
+</pre></div><p>It is worth giving a disclaimer here that not all Python modules are available in Jython. Modules that require a C/Fortran dynamic linkage for the library that doesn't exist in Java are not likely to work in Jython. Specifically, NumPy and SciPy are not supported in Jython as they rely on C/Fortran. If you discover some other missing modules, you can try copying the <code class="literal">.py</code> file from a Python distribution to a <code class="literal">sys.path</code> Jython directory—if this works, consider <a id="id657" class="indexterm"/>yourself lucky.</p><p>Jython has the <a id="id658" class="indexterm"/>advantage of accessing Python-rich modules without the necessity of starting the Python runtime on each call, which might result in a significant performance saving:</p><div class="informalexample"><pre class="programlisting"><span class="strong"><strong>scala&gt; val startTime = System.nanoTime</strong></span>
+<span class="strong"><strong>startTime: Long = 54384084381087</strong></span>
+
+<span class="strong"><strong>scala&gt; for (i &lt;- 1 to 100) {</strong></span>
+<span class="strong"><strong>     |   engine.eval("from datetime import datetime, timedelta; yesterday = str(datetime.now()-timedelta(days=1))")</strong></span>
+<span class="strong"><strong>     |   val yesterday = engine.get("yesterday")</strong></span>
+<span class="strong"><strong>     | }</strong></span>
+
+<span class="strong"><strong>scala&gt; val elapsed = 1e-9 * (System.nanoTime - startTime)</strong></span>
+<span class="strong"><strong>elapsed: Double = 0.270837934</strong></span>
+
+<span class="strong"><strong>scala&gt; val startTime = System.nanoTime</strong></span>
+<span class="strong"><strong>startTime: Long = 54391560460133</strong></span>
+
+<span class="strong"><strong>scala&gt; for (i &lt;- 1 to 100) {</strong></span>
+<span class="strong"><strong>     |   val yesterday = Process(Seq("/usr/local/bin/python", "-c", """from datetime import datetime, timedelta; print(datetime.now()-timedelta(days=1))""")).!!</strong></span>
+<span class="strong"><strong>     | }</strong></span>
+
+<span class="strong"><strong>scala&gt; val elapsed = 1e-9 * (System.nanoTime - startTime)</strong></span>
+<span class="strong"><strong>elapsed: Double = 2.221937263</strong></span>
+</pre></div><p>Jython JSR 223 call is 10 times faster!</p></div></div></div></div>
+
+
+
+  
+<div id="sbo-rt-content"><div class="section" title="Summary"><div class="titlepage"><div><div><h1 class="title"><a id="ch08lvl1sec63"/>Summary</h1></div></div></div><p>R and Python are like bread and butter for a data scientist. Modern frameworks tend to be interoperable and borrow from each other's strength. In this chapter, I went over the plumbing of interoperability with R and Python. Both of them have packages (R) and modules (Python) that became very popular and extend the current Scala/Spark functionality. Many consider R and Python existing libraries to be crucial for their implementations.</p><p>This chapter demonstrated a few ways to integrate these packages and provide the tradeoffs of using these integrations so that we can proceed on to the next chapter, looking at the NLP, where functional programming has been traditionally used from the start.</p></div></div>
+
+
+
+  </body></html>

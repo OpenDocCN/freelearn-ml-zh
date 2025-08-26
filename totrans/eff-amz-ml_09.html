@@ -1,0 +1,758 @@
+<html><head></head><body>
+        <section>
+
+            <header>
+                <h1 class="header-title">Building a Streaming Data Analysis Pipeline</h1>
+            </header>
+
+            <article>
+                
+<p>In this final chapter of the book, we will build an end-to-end streaming data pipeline that integrates Amazon ML within the <span>Kinesis Firehose, AWS Lambda, and Redshift pipeline. We </span>extend the Amazon ML capabilities by integrating it with these other AWS data services to implement real-time Tweet classification. </p>
+<p>In a second part of the chapter, we show how to address problems beyond a simple regression and classification and use Amazon ML for <strong>Named Entity Recognition</strong> and content-based recommender systems. </p>
+<p>The topics covered in this chapter are as follows:</p>
+<ul>
+<li>Training a twitter classification model </li>
+<li>Streaming data with Kinesis</li>
+<li>Storing with Redshift</li>
+<li>Using AWS Lambda for processing</li>
+<li>Named entity recognition and recommender systems</li>
+</ul>
+<p>In the chapter's conclusion, we will summarize Amazon ML's strengths and weaknesses.</p>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    
+
+        <section>
+
+            <header>
+                <h1 class="header-title">Streaming Twitter sentiment analysis</h1>
+            </header>
+
+            <article>
+                
+<p>In this chapter, our main project consists of real-time sentiment classification of Tweets. This will allow us to demonstrate how to use an Amazon ML model that we've trained to process real-time data streams, by leveraging the AWS data ecosystem.</p>
+<p>We will build an infrastructure of AWS services that includes the following:</p>
+<ul>
+<li><strong>Amazon ML</strong>: to provide a real-time classification endpoint</li>
+<li><strong>Kinesis firehose</strong>: To collect the Tweets</li>
+<li><strong>AWS Lambda</strong>: To call an Amazon ML streaming endpoint</li>
+<li><strong>Redshift</strong>: To store the Tweets and their sentiment</li>
+<li><strong>S3</strong>: To act as a temporary store for the Tweets collected by Kinesis Firehose</li>
+<li><strong>AWS Cloudwatch</strong>: To debug and monitor</li>
+</ul>
+<p>We will also write the necessary Python scripts that feed the Tweets to Kinesis Firehose.</p>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    
+
+        <section>
+
+            <header>
+                <h1 class="header-title">Popularity contest on twitter</h1>
+            </header>
+
+            <article>
+                
+<p>All good data science projects start with a question. We wanted a social network question not <span>tied to a current political or societal context. We will be looking into the popularity of vegetables on twitter. We want to know w</span>hat the most popular vegetables on twitter are. It's a question that could stand the test of time and be adapted to other lists of things, such as fruits, beverages, weather conditions, animals, and even brands and politicians. The results will surprise you... or not.</p>
+<p>We will start by training a binary classification Amazon ML model using a large public twitter sentiment analysis dataset.</p>
+<p>There are many available sentiment analysis libraries that can, with a few lines of code, and given a piece of text, return a sentiment score or a polarity (positive, neutral, negative). <kbd>TextBlob</kbd> is such a library in Python. It is available at <a href="https://textblob.readthedocs.io">https://textblob.readthedocs.io</a>. Built on top of <strong>NLTK</strong>, <span><kbd>TextBlob</kbd> is a powerful library to extract information from documents. Besides sentiment analysis, it can carry out some aspects of speech tagging, classification, tokenization, named entity recognition, as well as many other features. We compare <kbd>TextBlob</kbd> results with our own Amazon ML classification model.</span> Our goal, first and foremost, is to learn how to make these AWS services work together seamlessly. Our vegetable popularity contest on social media will follow these steps:</p>
+<ol>
+<li>We start by training a twitter sentiment classification model on Amazon ML and creating a real-time prediction endpoint.</li>
+<li>We set up a Kinesis Firehose that stores content on S3.</li>
+<li>We write a simple Python script called a <kbd>producer</kbd> that collects the Tweets from the twitter API and sends them to Kinesis. At this point, Kinesis Firehose stores the Tweets in S3.</li>
+</ol>
+<ol start="4">
+<li>We move on from storing streaming data in S3 to storing streaming data in Redshift. To do so, we must launch a Redshift cluster and create the required tables.</li>
+<li>Finally, we add an AWS Lambda function to our pipeline in order to interrogate our Amazon ML classification endpoint.</li>
+<li>Throughout the project, we use AWS CloudWatch to check the status and debug our data pipeline.</li>
+</ol>
+<p>We end up with a collection of Tweets, with two types of sentiment scoring that we can compare. We will look at the ranking of vegetables according to the two methods, their variability, and the inter-rate agreement between the two methods, and we will try to assess which one is better. It's worth noting at this point that we refrain from any involved text processing of Tweets. Tweets are a very specific type of textual content that contains URLs, emoticons, abbreviations, slang, and hashtags. There is a large number of publications on sentiment analysis for twitter that explore different preprocessing and information extraction techniques. We will not use any particular feature extraction technique and restrict ourselves to a simple bag-of-words approach. Our comparison between sentiment analysis via Amazon ML and TextBlog is a proof of concept, not a benchmark.</p>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    
+
+        <section>
+
+            <header>
+                <h1 class="header-title">The training dataset and the model</h1>
+            </header>
+
+            <article>
+                
+<p>The first step in our project is to train a sentiment analysis and classification Amazon ML model for Tweets. Fortunately, we have access to a rather large twitter sentiment dataset composed of over 1.5M Tweets tagged 0/1 for negative/positive sentiments. The dataset is available at <a href="http://thinknook.com/twitter-sentiment-analysis-training-corpus-dataset-2012-09-22/">http://thinknook.com/twitter-sentiment-analysis-training-corpus-dataset-2012-09-22/</a>. This dataset is an aggregation of two twitter sentiment analysis datasets:</p>
+<ul>
+<li><strong>University of Michigan Sentiment Analysis</strong> competition on Kaggle: <a href="https://inclass.kaggle.com/c/si650winter11">https://inclass.kaggle.com/c/si650winter11</a></li>
+<li><strong>Twitter Sentiment Corpus</strong> by <em>Niek Sanders</em>: <a href="http://www.sananalytics.com/lab/twitter-sentiment/">http://www.sananalytics.com/lab/twitter-sentiment/</a></li>
+</ul>
+<p>This Twitter <strong>Sentiment Analysis</strong> Dataset contains 1,578,627 classified Tweets. Each row is tagged with 0/1 for negative/positive sentiment. We use a sample of that dataset (approximately 10%, 158K Tweets) to train a classification model in Amazon ML. We load the dataset on S3, and train and evaluate a binary classification model using the Amazon ML service. We apply no specific text transformation on the texts. The recipe is as follows:</p>
+<pre>
+{<br/> "groups": {},<br/> "assignments": {},<br/> "outputs": [<br/>     "ALL_BINARY",<br/>     "ALL_TEXT"<br/> ]<br/>}
+</pre>
+<p>We set the model to have mild L2 regularization and 100 passes. Training the model takes a bit of time (over 10 minutes) to complete, probably due to a large number of samples in play. The model evaluation shows pretty good overall performances with an AUC of 0.83. Roughly two-thirds of the Tweets are properly classified by the Amazon ML model. The predictions are smoothly distributed across the range of class probabilities, as shown by the model's evaluation graph:</p>
+<div class="CDPAlignCenter CDPAlign"><img class=" image-border" height="339" src="assets/B05028_10_01.png" width="434"/></div>
+<p>We now create a real-time prediction endpoint from the model's page by clicking on the <span class="packt_screen">Create endpoint</span> button at the bottom of the page:</p>
+<div class="CDPAlignCenter CDPAlign"><img class=" image-border" height="82" src="assets/B05028_10_02.png" width="447"/></div>
+<p>The endpoint URL is of the form <kbd>https://realtime.machinelearning.us-east-1.amazonaws.com</kbd>. We will use that endpoint to classify new Tweets through requests from the Lambda service. Let's test whether our Amazon ML classifier works as expected with the following Python script:</p>
+<pre>
+import boto3<br/>client = boto3.client('machinelearning')<br/>client.predict(<br/>   MLModelId = "ml-ZHqxUjPNQTq",<br/>   Record = { "SentimentText": "Hello world, this is a great day" },<br/>   PredictEndpoint = "https://realtime.machinelearning.us-east-1.amazonaws.com"<br/>)
+</pre>
+<p>The sentence <kbd>Hello world, this is a great day</kbd> returns a score of <em>0.91</em> for the probability that the sentence is positive, and classifies the sentence as <em>1</em>, while a <kbd>Hello world, this is a sad day</kbd> sentence returns a probability of <em>0.08</em>, and classifies the sentence as 0. The words <kbd>great</kbd> and <kbd>sad</kbd> are the words driving the sentiment classification. The classifier is working as expected.</p>
+<p>Let's now switch our attention to the Kinesis service.</p>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    
+
+        <section>
+
+            <header>
+                <h1 class="header-title">Kinesis</h1>
+            </header>
+
+            <article>
+                
+<p>Kinesis is a multiform service organized around three subservices: <strong>Streams</strong>, <strong>Firehose</strong>, and <strong>Analytics</strong>. Kinesis acts as a highly available pipeline to stream messages between data producers and data consumers.</p>
+<ul>
+<li>Data producers are sources of data coming from streaming APIs, IoT devices, system logs, and other high volume data streams</li>
+<li>Data consumers will most commonly be used to store, process data, or trigger alerts</li>
+</ul>
+<div class="packt_tip"><span>Kinesis is able to handle up to 500 Terabytes of data per hour. We use Kinesis at its minimal level and with its most simple configuration. Readers interested in the more complex usage of Kinesis should read the AWS documentation at <a href="https://aws.amazon.com/documentation/kinesis/">https://aws.amazon.com/documentation/kinesis/</a>. A good overview of the different concepts and elements behind AWS Kinesis on the blog post at <a href="https://www.sumologic.com/blog/devops/kinesis-streams-vs-firehose/">https://www.sumologic.com/blog/devops/kinesis-streams-vs-firehose/</a>.</span></div>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    
+
+        <section>
+
+            <header>
+                <h1 class="header-title">Kinesis Stream</h1>
+            </header>
+
+            <article>
+                
+<p>Kinesis Stream is used to collect streaming data given by a producer and processed by a consumer. It's the simplest of the three Kinesis services as it does not store the data in any way. Kinesis Stream mainly acts like a buffer, and the data is kept available between 24 hours to 168 hours. An IoT device or a log service would typically act as the producer and send data to the Kinesis stream. At the same time, a consumer is running to process that data. Consumers services that trigger alerts (SMS, e-mails) based on event detection algorithms, real-time dashboards updated in real time, data aggregators, or anything that retrieves the data synchronously. Both producer and consumer must be running simultaneously for the Kinesis stream to function. If your producer and consumer are scripts running on your local machine, they must both be running in parallel.</p>
+<p>It is possible to add processing to the incoming data by adding an AWS Lambda function to the stream. The whole data pipeline will now follow these steps:</p>
+<ol>
+<li>A custom application or script sends records to the stream (the producer).</li>
+<li>AWS Lambda polls the stream and invokes your Lambda function when new records are detected.</li>
+<li><span>AWS Lambda executes the Lambda function and sends back the record, original or modified, to the Kinesis Stream.</span></li>
+</ol>
+<p>We will not be using Kinesis Streams since we want to store the data we are collecting. Kinesis stream is a good way to start with the Kinesis service. </p>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    
+
+        <section>
+
+            <header>
+                <h1 class="header-title">Kinesis Analytics</h1>
+            </header>
+
+            <article>
+                
+<p><strong>Kinesis Analytics</strong> is AWS's most recent add-on to the Kinesis mix. Kinesis Analytics allows you analyzing<span> real-time streaming data with standard SQL queries. The idea is to go from querying a static representation of the data to a dynamic one that evolves as the data streams in. Instead of using AWS Lambda to process the data via a scripting language, the goal is to process the data in SQL and feed the results to dashboards or alerting systems. We will not be using Kinesis Analytics, but instead, focus on Kinesis Firehose.</span></p>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    
+
+        <section>
+
+            <header>
+                <h1 class="header-title">Setting up Kinesis Firehose</h1>
+            </header>
+
+            <article>
+                
+<p>We will focus on the Kinesis Firehose service, which offers two important features: data received can be fed to an AWS Lambda function for extra processing, and the resulting data can be stored on S3 or on a Redshift database.</p>
+<p>We will start by setting up a Kinesis Firehose delivery stream that stores data on S3 without any Lambda functionality:</p>
+<ol>
+<li>Go to the Kinesis Firehose dashboard at <a href="https://console.aws.amazon.com/firehose/">https://console.aws.amazon.com/firehose/</a> and click on <span class="packt_screen">Create Delivery Stream.</span></li>
+<li>Fill in the following fields:
+<ul>
+<li><span class="packt_screen">Destination</span>: <kbd>Amazon S3</kbd></li>
+<li><span class="packt_screen">Delivery stream name</span>: <kbd>veggieTweets</kbd> (or choose your own name)</li>
+<li><span class="packt_screen">S3 bucket</span>: <kbd>aml.packt</kbd></li>
+<li><span class="packt_screen">S3 prefix</span>: <kbd>veggies</kbd></li>
+</ul>
+</li>
+<li>Click on <span class="packt_screen">Next</span>:</li>
+</ol>
+<div class="CDPAlignCenter CDPAlign"><img class=" image-border" height="212" src="assets/B05028_10_05.png" width="377"/></div>
+<p>Note that the <span class="packt_screen">S3 prefix</span> field corresponds to a folder in your S3 bucket. You should now go to S3 and create a <kbd>veggies</kbd> folder in your bucket. Mimic the setup from the next screenshot:</p>
+<div class="CDPAlignCenter CDPAlign"><img class=" image-border" height="315" src="assets/B05028_10_06.png" width="627"/></div>
+<ol>
+<li>For the moment, we will keep the <span class="packt_screen">Data transformation with AWS Lambda</span> disabled.</li>
+<li>Enable <span class="packt_screen">Error Logging,</span> since we will need to debug our data delivery errors with CloudWatch Logs.</li>
+<li>For the <span class="packt_screen">IAM</span> role, select <span class="packt_screen">Firehose Delivery IAM Role</span>. You will be taken to the IAM service and guided through the creation of the required role. You can choose an existing policy and create a new one. The Role/Policy wizard will handle the details. Click on <span class="packt_screen">Allow</span> to be redirected to the initial Firehose configuration screen.</li>
+<li>Click on <span class="packt_screen">Next</span>, review the details of the Firehose delivery stream, and click on <span class="packt_screen">Create Delivery Stream</span>.</li>
+</ol>
+<p>We now have a Kinesis Firehose delivery stream that will, once we send data to it, store data in the S3 <span class="packt_screen">packt.aml/veggies</span> location. We now need to create a producer script that will send the data to the Kinesis Firehose service.</p>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    
+
+        <section>
+
+            <header>
+                <h1 class="header-title">Producing tweets</h1>
+            </header>
+
+            <article>
+                
+<p>A Kinesis producer can take many shapes as long as it sends data to the Kinesis Stream. We will use the Python Firehose SDK and write a simple script that collects Tweets from the twitter API, filters some of them, and sends them to the Kinesis Firehose. We use the Python-Twitter library.</p>
+<div class="packt_tip">There are several Twitter API Python packages available on GitHub. Two of the more popular ones, <kbd>Twitter</kbd> and <kbd>Python-Twitter</kbd> (<a href="https://pypi.python.org/pypi/python-twitter/">https://pypi.python.org/pypi/python-twitter/</a>) share the same import calls <kbd>import twitter</kbd>, but not the same method calls, which can lead to confusion and time being wasted.</div>
+<p>The Python-Twitter package offers a <span><kbd>GetSearch</kbd> method that takes either a query string <kbd>term</kbd> or a <kbd>raw_query</kbd> as a parameter for the Twitter search:<br/></span></p>
+<ul>
+<li>The <span>query string (<kbd>term</kbd> ) corresponds to the keywords you would write down on the Twitter website search bar; for instance, <kbd>term = brocolli OR potato OR tomato</kbd>.</span></li>
+<li><span>The <kbd>raw_query</kbd> parameter takes for input the parameter part of the URL once you've hit the search button: the string after the <kbd>?</kbd> in the URL. You can build advanced queries from the twitter advanced search page <a href="https://twitter.com/search-advanced">https://twitter.com/search-advanced</a>. For instance, our search for "<em>brocolli OR potato OR tomato</em>" translates to a <kbd>raw_query = q=brocolli%20OR%20potato%20OR%20tomato&amp;src=typd</kbd>. We use the <kbd>raw_query</kbd> parameter in our call to the search API.</span></li>
+<li>To obtain your own Twitter development API keys, go to <a href="https://apps.twitter.com/">https://apps.twitter.com/</a> and create an application.</li>
+</ul>
+<p>We first define a class that initializes the access to the twitter API. This class has a <kbd>capture</kbd> method, which runs a search, given a raw query. Save the following code in a <kbd>tweets.py</kbd> file:</p>
+<pre>
+import twitter<br/>class ATweets():<br/>    def __init__(self, raw_query):<br/>         self.twitter_api = twitter.Api(consumer_key='your own key',<br/>              consumer_secret= 'your own key',<br/>              access_token_key='your own key',<br/>              access_token_secret='your own key')<br/>         self.raw_query = raw_query<br/><br/>    # capture the tweets: see http://python-twitter.readthedocs.io/en/latest/twitter.html <br/>    def capture(self):<br/>        statuses = self.twitter_api.GetSearch(<br/>             raw_query = self.raw_query,<br/>             lang = 'en',<br/>             count=100, result_type='recent', include_entities=True<br/>        )<br/>     return statuses
+</pre>
+<p>Given this class and a <kbd>raw_query</kbd> string, gathering Tweets consists in initializing the <kbd>ATweets</kbd> class with the <kbd>raw_query</kbd> and applying the capture method on the instantiated object as such:</p>
+<pre>
+tw = ATweets(raw_query) <br/>statuses = tw.capture()
+</pre>
+<p>Here, <kbd>statuses</kbd> is a list of Tweets, each containing many elements. We only use a few of these elements. Now that we can gather Tweets from the <kbd>Twitter</kbd> API, we need a producer script that will send the Tweets to Kinesis. The producer Python script is as follows:</p>
+<pre>
+from tweets import ATweets<br/>import json<br/>import boto3<br/><br/># The kinesis firehose delivery stream we send data to<br/>stream_name = "veggieTweets" <br/><br/># Initialize the firehose client<br/>firehose = boto3.client('firehose')<br/><br/># Our own homemade list of vegetables, feel free to add seasoning<br/>vegetables = ['artichoke','asparagus', 'avocado', 'brocolli','cabbage', 'carrot', 'cauliflower','celery', 'chickpea', 'corn','cucumber', 'eggplant','endive', 'garlic', 'green beans', 'kale', 'leek', 'lentils', 'lettuce','mushroom','okra', 'onion','parsnip', 'potato','pumpkin', 'radish','turnip', 'quinoa', 'rice', 'spinach', 'squash' , 'tomato', 'yams', 'zuchinni']<br/><br/># Loop over all vegetables<br/>for veggie in vegetables:<br/> # for a given veggie define the query and capture the tweets<br/> raw_query = 'f=tweets&amp;vertical=default&amp;l=en&amp;q={0}&amp;src=typd'.format(veggie)<br/> # capture the tweets<br/> tw = ATweets(raw_query)<br/> statuses = tw.capture()<br/> # and for each tweet, cleanup, add other data and send to firehose<br/> for status in statuses:<br/> # remove commas and line returns from tweets<br/> clean_tweet = ''.join([s for s in st.text if s not in [',', 'n']])<br/> # and build the record to be sent as a comma separated string followed by a line return<br/> record = ','.join([str(st.id), st.user.screen_name,veggie, clean_tweet]) + 'n'<br/> # send the record to firehose<br/> response=firehose.put_record(DeliveryStreamName = stream_name, Record={'Data': record} )
+</pre>
+<p>Save that code to a <kbd>producer.py</kbd> file in the same folder as the <kbd>tweets.py</kbd> file.<br/>
+As you may have noticed, we restricted the Twitter search to English Tweets by specifying <kbd>lang = 'en'</kbd> in the call to <kbd>GetSearch</kbd>. However, that did not produce the expected results, and many non-English Tweets were returned. In a later version of the producer script, we add the following conditions to the Tweets themselves before sending them to the Firehose, actually filtering out non-English tweets shorter than 10 characters or those send as retweets: </p>
+<pre>
+(st.lang=='en') &amp; (st.retweeted_status is None) &amp; (len(st.text) &gt; 10):
+</pre>
+<p>We are now ready to run our producer script. One last important detail to pay attention to is that calls to the Twitter API are capped. If you call the API too often, you will have to wait longer and longer between your requests until they are allowed to go through. There are reliable ways to deal with these restrictions, and it's easy to find code online that show you how to delay your API calls. We will simply use the <kbd>watch</kbd> command line with a delay of 10 minutes (600 s) between calls. The <kbd>watch</kbd> command simply executes whatever command you write afterwards, every nth second. To run your producer code, launch a terminal, and run the following command:</p>
+<pre>
+<strong>$ watch -n 600 python producer.py</strong>
+</pre>
+<p>Every 10 minutes, tweets will be captured and sent to Kinesis Firehose. To verify that both your script and delivery stream work, go to your S3 bucket and the <kbd>aml.packt/veggies</kbd> folder. You should see files piling up. The files are saved by Kinesis in subfolders structured by date/year/month/day and hour. The filenames in the last subfolder follow a format similar to <kbd>veggieTweets-2-2017-04-02-19-21-51-1b78a44f-12b2-40ce-b324-dbf4bb950458</kbd>. In these files, you will find the records as they have been defined in the producer code. Our producer code sends comma-separated data formatted as tweet ID/twitter username/vegetable/tweet content. An example of such as record is as follows:</p>
+<pre>
+848616357398753280,laurenredhead,artichoke,Artichoke gelatin dogs. Just one of many delicious computer-algorithm generated recipe titles:https://t.co/mgI8HtTGfs
+</pre>
+<p>We will now set up Redshift so that these tweets and related elements end up stored in an SQL database.</p>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    
+
+        <section>
+
+            <header>
+                <h1 class="header-title">The Redshift database</h1>
+            </header>
+
+            <article>
+                
+<p>We saw how to create a Redshift cluster in <a href="https://cdp.packtpub.com/effective_amazon_machine_learning/wp-admin/post.php?post=688&amp;action=edit">Chapter 8</a>, <em>Creating Datasources from Redshift</em>, we won't go through the steps again. For our vegetable contest project, we create a vegetable cluster and a <kbd>vegetablesdb</kbd> database. Wait till the endpoint for the cluster is ready and the endpoint is defined, and then connect to your Redshift database via this <kbd>Psql</kbd> command:</p>
+<pre>
+$ psql --host=vegetables.cenllwot8v9r.us-east-1.redshift.amazonaws.com --port=5439 --username=alexperrier --password --dbname=vegetablesdb
+</pre>
+<p>Once connected to the database, create the following table with this SQL query:</p>
+<pre>
+CREATE TABLE IF NOT EXISTS tweets (<br/> id BIGINT primary key,<br/> screen_name varchar(255),<br/> veggie varchar(255),<br/> text varchar(65535)<br/>);
+</pre>
+<p>Note that there are no <kbd>blob</kbd> or <kbd>text</kbd> data types in Redshift SQL. We defined the tweets as <kbd>varchar(65535)</kbd>, which is probably far too large, but since we used <kbd>varchar</kbd> and not <kbd>char</kbd>, the volume occupied by the data shrank to the actual length of the text and not the whole <span>65KB.</span> In that table, we only capture the ID of the tweet, the tweet itself, what vegetable the tweet was associated with, and the screen name of the person writing the tweet. We disregard any other tweet elements.</p>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    
+
+        <section>
+
+            <header>
+                <h1 class="header-title">Adding Redshift to the Kinesis Firehose</h1>
+            </header>
+
+            <article>
+                
+<p>This part is delicate as several pieces from different services must fit together:</p>
+<ul>
+<li>The data structure, table declaration, and Kinesis Redshift configuration</li>
+<li>The data fields aggregation and subsequent parsing</li>
+<li>The role and associated policies</li>
+</ul>
+<p>The fields of the Redshift table that stores the data need to be synchronized in three different places:</p>
+<ol>
+<li>The Redshift table with a proper definition of fields.</li>
+<li>The script that sends the data to Kinesis. Depending on how the record sent to Kinesis is aggregated together and later parsed by Redshift, the script must concatenate the same number of fields in the same order as the ones defined in the <span><span>Redshift table. For instance, when we write <kbd>record = ','.join([str(st.id)</kbd></span></span>, <span><span><kbd>st.user.screen_name,veggie, clean_tweet]) + 'n'</kbd> in the script, it implies that the table has four fields with the right types: <kbd>int</kbd> , <kbd>varchar</kbd>, <kbd>varchar</kbd></span></span>, <span><span>and <kbd>varchar</kbd>. </span></span></li>
+<li>The columns as defined in the Kinesis Firehose definition. </li>
+</ol>
+<p>For that last point, we need to go back to the Firehose dashboard, create a new stream, and define it as a Redshift-based delivery stream. Click on <span class="packt_screen">Create Delivery Stream</span>, and select Redshift as the destination. Follow the different screens and fill in the following values:</p>
+<ul>
+<li><span class="packt_screen">S3 bucket</span>: Your own bucket</li>
+<li><span class="packt_screen">S3 prefix</span>: We keep the prefix veggies</li>
+<li><span class="packt_screen">Data transformation</span>: Disabled for now</li>
+<li><span class="packt_screen">Redshift cluster</span>: <kbd>Vegetables</kbd></li>
+<li><span class="packt_screen">Redshift database</span>: <kbd>Vegetablesdb</kbd></li>
+<li><span class="packt_screen">Redshift table columns</span>: ID, <kbd>screen_name</kbd>, veggie, text (<strong>this one is important</strong>)</li>
+<li><span class="packt_screen">Redshift username</span>: The username you access Redshift with</li>
+<li><span class="packt_screen">Redshift COPY options</span>: Delimiter ',' (<strong>very important too</strong>)</li>
+</ul>
+<p>Once created, your Kinesis Firehose stream should resemble the following screenshot:</p>
+<div class="CDPAlignCenter CDPAlign"><img class=" image-border" height="312" src="assets/B05028_10_03.png" width="634"/></div>
+<p>Notice the <kbd>COPY</kbd> command in the bottom right corner of the screen, which is reproduced here: </p>
+<pre>
+<strong>COPY tweets (id,screen_name, veggie,tb_polarity, text) FROM 's3://aml.packt/&lt;manifest&gt;' CREDENTIALS 'aws_iam_role=arn:aws:iam::&lt;aws-account-id&gt;:role/&lt;role-name&gt;' MANIFEST delimiter ',';</strong>
+</pre>
+<p>This command indicates how Redshift will ingest the data that Kinesis sends to S3, what fields it expects, and how it will parse the different fields (for instance, separated by a comma). There are other potential <kbd>COPY</kbd> formats including JSON or CSV. We found this one to be simple and working. It's important that the way the record is defined and formatted in the producer script (four variables separated by commas) corresponds to the COPY part of the <kbd>table name (name of the four fields)</kbd> command with the right definition of the delimiter <kbd>','</kbd>.</p>
+<div class="packt_tip">This COPY command is also a good way to debug the pipeline when the data is not getting recorded into the database. Psql into the database, and run the same query in order to get useful error messages on why the queries are failing.</div>
+<p>It's now time for a word on role-based access control.</p>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    
+
+        <section>
+
+            <header>
+                <h1 class="header-title">Setting up the roles and policies</h1>
+            </header>
+
+            <article>
+                
+<p>There are two types of access control in AWS: key based and role based. Key based is much easier to set up but cannot be used to make Kinesis, Redshift, and S3 talk to each other, as AWS indicates at <a href="http://docs.aws.amazon.com/redshift/latest/dg/copy-usage_notes-access-permissions.html">http://docs.aws.amazon.com/redshift/latest/dg/copy-usage_notes-access-permissions.html</a>:</p>
+<p>With role-based access control, your cluster temporarily assumes an IAM role on your behalf. Then, based on the authorizations granted to the role, your cluster can access the required AWS resources. An IAM role is similar to an IAM user, in that it is an AWS identity with permission policies that determine what the identity can and cannot do in AWS. However, instead of being uniquely associated with one user, a role can be assumed by any entity that needs it. Also, a role doesn’t have any credentials (a password or access keys) associated with it. Instead, if a role is associated with a cluster, access keys are created dynamically and provided to the cluster. We recommend using role-based access control because it provides more secure, fine-grained control of access to AWS resources and sensitive user data.</p>
+<p>We must create the right role for your user to <span>be able to access Redshift,</span> and then we must give it the necessary policies.<br/>
+There are three steps: </p>
+<ol>
+<li>First, authorize Amazon Redshift to access other AWS services on your behalf. Follow the instructions at: <a href="http://docs.aws.amazon.com/redshift/latest/mgmt/authorizing-redshift-service.html">http://docs.aws.amazon.com/redshift/latest/mgmt/authorizing-redshift-service.html</a></li>
+<li>Second<span>,</span> attach the role in clustering. Take a look at <a href="http://docs.aws.amazon.com/redshift/latest/mgmt/copy-unload-iam-role.html">http://docs.aws.amazon.com/redshift/latest/mgmt/copy-unload-iam-role.html</a>.</li>
+<li>Finally, using the console to manage IAM role associations, perform the following steps:
+<ol>
+<li>Go to Redshift, and click on Manage <span class="packt_screen">IAM Roles.</span></li>
+<li>Select from the available roles.</li>
+<li>Wait for the status to go from <span class="packt_screen">Modifying</span> to <span><span class="packt_screen">Available</span></span>.</li>
+</ol>
+</li>
+</ol>
+<div class="packt_tip">Roles and policies in AWS, when trying to have different services connect with one another, can be challenging and time consuming. There is an obvious need for strict access control for production-level applications and services, but the lack of a more relaxed or loose generalized access level to allow for proof of concepts and pet projects is definitely missing from the AWS platform. The general hacking idea when facing role-related access problems is to go to the <span class="packt_screen">IAM Role</span> page and attach the policies you think are necessary to the role giving you trouble. Trial and error will get you there in the end.</div>
+<p>If all goes well, when you run the producer script, you should see the following happening:</p>
+<ul>
+<li>Files and date-based subfolders are created in the <kbd>{bucket}/veggies</kbd> folder</li>
+<li>Graphs and queries should show up or be updated in the Redshift cluster page</li>
+<li>On the Firehose delivery stream page, check the <span class="packt_screen">S3 Logs</span> and <span class="packt_screen">Redshift Logs</span> tabs for error messages</li>
+<li>Your <kbd>vegetablesdb.tweets</kbd> should start filling up with rows of content.</li>
+</ul>
+<p>If that's not the case and you are not seeing tweets in your database, it's time to start debugging.</p>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    
+
+        <section>
+
+            <header>
+                <h1 class="header-title">Dependencies and debugging</h1>
+            </header>
+
+            <article>
+                
+<p>Connecting up the different services -- Firehose, Redshift, S3 is not a straightforward task if you're not a seasoned AWS user. Many details need to be ironed out, and the documentation is not always clear, and sometimes, too complex. Many errors can also happen in a hidden fashion, and it's not always obvious where the error is happening and how to detect it, let alone make sense of it. Of all the bugs and problems we had to solve, these were the most time-consuming ones.</p>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    
+
+        <section>
+
+            <header>
+                <h1 class="header-title">Data format synchronization</h1>
+            </header>
+
+            <article>
+                
+<p>If you send some data to Redshift, it needs to be parsed by Redshift. You are sending a string formatted as <kbd>id, username</kbd>, <kbd>sentiment, tweet</kbd> or a JSON string <kbd>{id: 'id'</kbd>, <kbd>username:'twetterin_chief'</kbd>, <kbd>sentiment: '0.12'</kbd>, <kbd>tweet:'Hello world it's a beautiful day'}</kbd>. You need to make sure that the Redshift configuration in Kinesis follows the format of your data. You do so in the Kinesis-<span>Redshift</span> configuration screen with the two following fields:</p>
+<ul>
+<li>The <span class="packt_screen">Redshift table columns</span></li>
+<li>The <span class="packt_screen">Redshift COPY options</span></li>
+</ul>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    
+
+        <section>
+
+            <header>
+                <h1 class="header-title">Debugging</h1>
+            </header>
+
+            <article>
+                
+<p>When you run your producer, and the data does not end up in the redshift table, you should remember that there is a delay. That delay is set when you create the Kinesis delivery stream, and is set, by default, to 3,600 seconds. Set it to a minimum of 60 seconds if you want to avoid long waits. These are the places to check when your data is not streaming in your database:</p>
+<ol>
+<li><strong>Check S3</strong>: The S3 prefix corresponds to a folder in the bucket you have defined. If there are errors, you will see a new subfolder called <kbd>errors</kbd> or <kbd>processing errors</kbd>. Click through the subfolders until you reach the actual error file, make it public (there's a button), download the file, and examine it. It will sometimes contain useful information. The error subfolder also contains a manifest file. The manifest file is useful to reprocess failed files.</li>
+<li>Connect to your Redshift database, and check the <kbd>STL_LOAD_ERRORS</kbd> table with <kbd>select * from <span>STL_LOAD_ERRORS</span></kbd>. If the problem is caused by an SQL-based error (probably parsing related), useful information will show up there. The error messages are not always explanatory though. In our case, that table was showing the first tweet Redshift failed to ingest, which helped a lot in figuring out what was wrong. In the end, the problem we were facing was that some characters were taken as column delimiters by Redshift. We removed these characters from the tweets directly in the producer.</li>
+</ol>
+<ol start="3">
+<li>Check the <strong>Redshift queries</strong> page, where you will see the latest queries. If you see that the queries have been terminated instead of completed, you have an SQL-query-related problem.</li>
+<li>In the end, a good debugging method is to connect to your database and run the COPY query shown in the Kinesis delivery stream recap page without forgetting to replace the account ID and the role name with the right values. This will mimic how Redshift is actually trying to ingest the data from the S3 buckets. If it fails, the related errors will bring you more information.</li>
+</ol>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    
+
+        <section>
+
+            <header>
+                <h1 class="header-title">Preprocessing with Lambda</h1>
+            </header>
+
+            <article>
+                
+<p>We would now like to send the tweets for sentiment classification to our Amazon ML model. In order to do that, we will enable the data transformation available in the Kinesis Firehose delivery stream page and use a Lambda function:</p>
+<div class="CDPAlignCenter CDPAlign"><img class=" image-border" height="166" src="assets/B05028_10_04.png" width="408"/></div>
+<p>AWS Lambda is a data-processing service that allows you to run scripts (in a variety of languages, including Python 2.7, but not Python 3). It is used in conjunction with other services, such as Kinesis, as a data processing add-on. You can divert your data stream, send it to Lambda for processing, and, if you wish, have the result sent back to the initial stream. You can also use Lambda to call other services, such as sending alerts or using other storage services. </p>
+<p>The main default of AWS Lambda is that the choice of packages you can import into your Python script is limited. Trying to import packages, such as <kbd>scikit-learn</kbd>, NLTK, or for that matter, any package not already available, is rather complex. For a guide for how to use <kbd>scikit-learn</kbd> on AWS Lambda, go to  <a href="https://serverlesscode.com/post/deploy-scikitlearn-on-lamba/">https://serverlesscode.com/post/deploy-scikitlearn-on-lamba/</a> or <a href="https://serverlesscode.com/post/deploy-scikitlearn-on-lamba/">https://serverlesscode.com/post/deploy-scikitlearn-on-lamba/</a>. This significantly restricts what can be done out of the box with Lambda. Our use of AWS Lambda is much simpler. We will use AWS Lambda to do the following:</p>
+<ol>
+<li>Catch the data from Kinesis Firehose.</li>
+<li>Parse the data and extract the tweet.</li>
+<li>Send the data to Amazon ML real time end point.</li>
+<li>Extract the classification score from the response.</li>
+<li>Send back the data along with the classification score to the Kinesis Firehose delivery stream.</li>
+</ol>
+<p>Go to AWS Lambda, and click on <span class="packt_screen">Create Lambda Function</span>.  Then perform the following steps:</p>
+<ol>
+<li>Select the <span class="packt_screen">Blank Function</span> blueprint and the <span class="packt_screen">Python 2.7 runtime</span>.</li>
+<li>Do not configure a trigger.</li>
+<li>Fill in the <span class="packt_screen">Name</span> as <kbd>vegetablesLambda</kbd>, and select <span class="packt_screen">Python 2.7 Runtime</span>.</li>
+</ol>
+<p>Finally, paste the following code in the inline editor:</p>
+<pre>
+from __future__ import print_function<br/><br/>import base64<br/>import boto3<br/>import logging<br/><br/>logger = logging.getLogger()<br/>logger.setLevel(logging.INFO)<br/><br/>ml_client = boto3.client('machinelearning')<br/><br/>print('Loading function')<br/><br/>def lambda_handler(event, context):<br/>  output = []<br/>  for record in event['records']:<br/>     payload = base64.b64decode(record['data'])<br/>     payload = payload.split(',')<br/>     tweet = payload.pop(4)<br/><br/>     predicted_label, predicted_score = get_sentiment(tweet)<br/><br/>     payload.append(str(predicted_label) )<br/>     payload.append(str(predicted_score) )<br/>     payload.append(tweet)<br/>     payload = ','.join(payload)<br/><br/>     output_record = {<br/>       'recordId': record['recordId'],<br/>       'result': 'Ok',<br/>       'data': base64.b64encode(payload)<br/>     }<br/>     output.append(output_record)<br/>     return {'records': output}
+</pre>
+<p>The <kbd>lambda_handler</kbd> function is triggered automatically by the Kinesis Firehose. It catches and parses <span>the message (aka the payload) <kbd>event['records']</kbd>, extracts the tweets,</span> and calls a <kbd>get_sentiment()</kbd> function that returns a sentiment score and a sentiment label. Finally, it adds the sentiment numbers back to the record, <span>rebuilds the payload, and sends it back to Kinesis</span>. The <kbd>get_sentiment()</kbd> function sends the tweet to our Amazon classification endpoint and returns the  <kbd>predicted_label</kbd>, and <kbd>predicted_score</kbd>.  It is defined in the following script:</p>
+<pre>
+def get_sentiment(tweet):<br/><br/>   response = ml_client.predict(<br/>       MLModelId = "ml-ZHqxUjPNQTq",<br/>       Record = { "SentimentText": tweet },<br/>       PredictEndpoint = "https://realtime.machinelearning.us-east-1.amazonaws.com"<br/>   )<br/>   predicted_label = response['Prediction']['predictedLabel']<br/>   predicted_score = response['Prediction']['predictedScores'][predicted_label]<br/><br/>   return predicted_label, predicted_score
+</pre>
+<p><span><span>Since we added two new elements to the payload, we also need to add them to the Redshift table and to the Kinesis-Redshift configuration. To recreate the <kbd>tweets</kbd> table in Redshift, run the following query:<br/></span></span></p>
+<pre>
+drop table if exists tweets;<br/>CREATE TABLE IF NOT EXISTS tweets (<br/> id BIGINT primary key,<br/> screen_name varchar(255),<br/> veggie varchar(255),<br/> ml_label int,<br/> ml_score float,<br/> text varchar(65535)<br/>);
+</pre>
+<p>At the Kinesis level, change the <span class="packt_screen">Redshift table columns</span> field to <kbd>id,screen_name</kbd>, <kbd>veggie,ml_label</kbd>, <kbd>ml_score, text</kbd>.</p>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    
+
+        <section>
+
+            <header>
+                <h1 class="header-title">Analyzing the results</h1>
+            </header>
+
+            <article>
+                
+<p>We now have a complete pipeline of streaming data that is caught, transformed, and stored. Once you have collected a few thousand tweets, you are ready to analyze your data. There are a couple of things that remain to be done before we can get the answers we set out to find at the beginning of this chapter:</p>
+<ul>
+<li>What are the most popular vegetables on twitter?</li>
+<li>How does <kbd>TextBlob</kbd> compare to our Amazon ML classification model?</li>
+</ul>
+<p>Our simple producer does not attempt to handle duplicate tweets. However, in the end, our dataset has many duplicate tweets. Broccoli and carrots are less frequent Tweet subjects than one could expect them to be. So, as we collect about a hundred tweets every 10 minutes, many tweets end up being collected several times. We also still need to obtain a sentiment score and related classes from <kbd>TextBlob</kbd>. </p>
+<p>We will now download our collected dataset of tweets, remove duplicates, and use the <kbd>TextBlob</kbd> classification.</p>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    
+
+        <section>
+
+            <header>
+                <h1 class="header-title">Download the dataset from RedShift</h1>
+            </header>
+
+            <article>
+                
+<p>The right way to download data from Redshift is to connect to the database using Psql and use the <kbd>Unload</kbd> command to dump the results of an SQL query in S3. The following command exports all the tweets to the <kbd>s3://aml.packt/data/veggies/results/</kbd> location using an appropriate role:</p>
+<pre>
+<span>unload ('select * from tweets') to 's3://aml.packt/data/veggies/results/' iam_role 'arn:aws:iam::0123456789012:role/MyRedshiftRole';</span>
+</pre>
+<p>We can then download the files and aggregate them:</p>
+<pre>
+# Download<br/>$ aws s3 cp s3://aml.packt/data/veggies/results/0000_part_00 data/<br/>$ aws s3 cp s3://aml.packt/data/veggies/results/0001_part_00 data/<br/># Combine<br/>$ cp data/0000_part_00 data/veggie_tweets.tmp<br/>$ cat data/0001_part_00 &gt;&gt; data/veggie_tweets.tmp
+</pre>
+<p>The <kbd>veggie_tweets.csv</kbd> file is not comma separated. The values are separated by the <kbd>|</kbd> character. We can replace all the pipes in the file with commas with the following command line:</p>
+<pre>
+$ sed 's/|/,/g' data/veggie_tweets.tmp &gt; data/veggie_tweets.csv
+</pre>
+<p>We are now ready to load the data into a pandas dataframe:</p>
+<pre>
+import pandas as pd<br/>df = pd.read_csv('data/veggie_tweets.csv')
+</pre>
+<p>Note that we could have also used <kbd>|</kbd> as a delimiter when loading the pandas dataframe with <kbd>df = pd.read_csv('data/veggie_tweets.tmp'</kbd>, <kbd>delimiter = '|'</kbd>, <kbd>header=None</kbd>, <kbd>names = ['id'</kbd>, <kbd>'username'</kbd>, <kbd>'vegetable'</kbd>, <kbd>'ml_label'</kbd>, <kbd>'ml_score'</kbd>, <kbd>'text']</kbd>).</p>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    
+
+        <section>
+
+            <header>
+                <h1 class="header-title">Sentiment analysis with TextBlob</h1>
+            </header>
+
+            <article>
+                
+<p><kbd>TextBlob</kbd> gives you sentiment analysis, scoring, and classification in a couple of Python lines. For the given a text, initialize a <kbd>TextBlob</kbd> instance, and retrieve its polarity with these two lines of code:</p>
+<pre>
+from textblob import TextBlob<span><br/></span>print(TextBlob(text).sentiment)
+</pre>
+<p>The <kbd>TextBlob</kbd> sentiment object has a polarity and a subjectivity score. The polarity of a text ranges from -1 to +1, negative to positive, and the subjectivity from 0 to 1, very objective to very subjective. For instance, the sentence <kbd>I love brocoli</kbd> returns <kbd>Sentiment(polarity=0.5</kbd>, <kbd>subjectivity=0.6)</kbd>, while the sentence <kbd>I hate brocoli</kbd> returns a sentiment of <kbd>Sentiment(polarity=-0.8</kbd>, <kbd>subjectivity=0.9)</kbd>.  We can add the <kbd>TextBlob</kbd> sentiment whenever we process the tweet, either within the producer or once we've downloaded the dataset with these simple lines:</p>
+<pre>
+from textblob import TextBlob<br/>df['tb_polarity'] = 0<br/>for i, row in df.iterrows():<br/>    df.loc[i, 'tb_polarity'] = TextBlob(row['text']).sentiment.polarity
+</pre>
+<p>Each row of our dataframe now also has a sentiment score.</p>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    
+
+        <section>
+
+            <header>
+                <h1 class="header-title">Removing duplicate tweets</h1>
+            </header>
+
+            <article>
+                
+<p>In all Twitter-based NLP analysis, you end up dealing with bots, even when collecting tweets about vegetables! In our dataset, we had many versions of promotion tweets where the text was the same across tweets, but the links and users were different. We remove duplicate tweets by first removing the URL from the tweets and then using the <span><kbd>drop_duplicates</kbd> Pandas method.<br/></span>Noting that all URLs in Tweets start with <kbd>https://t.co/</kbd>, it's easy to remove all URLs from the Tweets. We will create a new tweet column without URLs in our dataframe. We enter the following line, which, given a tweet, returns the tweet without URLs:</p>
+<pre>
+' '.join([token for token tk in tweet.split(' ') if 'https://t.co/' not in tk])
+</pre>
+<p>When working with pandas dataframes, a very practical way to create new columns based on some operation on other columns of the dataframe is to combine the apply method with a Lambda function. The overall pattern to create a <kbd>new_column</kbd> from <kbd>existing_column</kbd> is:</p>
+<pre>
+df['new_column'] = df[existing_column].apply( <br/>                      lambda existing_column : {<br/>                         some operation or function on existing_column <br/>                      } <br/>                   )
+</pre>
+<p>We apply this pattern to create the <kbd>no_urls</kbd> column containing the tweets with no urls:</p>
+<pre>
+df['no_urls'] = df['text'].apply(<br/>                   lambda tweet : ' '.join(<br/>                       [tk for  tk in tweet.split(' ') if 'https://t.co/' not in tk]<br/>                   )<br/>                )
+</pre>
+<p>The <kbd>no_urls</kbd> columns no longer contain any URLs. We can now remove duplicates based on this column with the following line:</p>
+<pre>
+df.drop_duplicates(subset= ['no_urls'], inplace = True)
+</pre>
+<p>This removed about 30% of our tweets. </p>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    
+
+        <section>
+
+            <header>
+                <h1 class="header-title">And what is the most popular vegetable?</h1>
+            </header>
+
+            <article>
+                
+<p>It's interesting to compare the sentiment score distributions between our Amazon ML model and <kbd>TextBlob</kbd>. We can see in the following plot that our Amazon ML model is good at separating positive and negative tweets, while <kbd>TextBlob</kbd> has a more centered distribution. In fact, a significant portion of tweets were scored as 0 (neutral) by <kbd>TextBlob</kbd>. We removed them from the histogram:</p>
+<div class="CDPAlignCenter CDPAlign"><img class=" image-border" height="473" src="assets/B05028_10_07.png" width="473"/></div>
+<p>According to our Amazon ML model, the most popular vegetables on Twitter are green beans, followed by asparagus and garlic. According to <kbd>TextBlob</kbd>, <span class="packt_screen">cauliflower</span> is ranked fourth favorite, followed by <span class="packt_screen">leeks</span> and <span class="packt_screen">cucumber</span>. The following plot shows the 10 vegetables with the larger amount of tweets and their respective sentiment scores obtained with <kbd>TextBlob</kbd> and our own Amazon ML binary classifier:</p>
+<div class="CDPAlignCenter CDPAlign"><img class=" image-border" height="429" src="assets/B05028_10_08.png" width="429"/></div>
+<p>The striking result is that green beans are the least popular vegetables according to <kbd>TextBlob</kbd>. It so happens that <kbd>TextBlob</kbd> gives a negative <em>-0.2</em> sentiment score to the word <kbd>green</kbd>. So the phrase <kbd>green beans</kbd> directly scores <em>-0.2</em>. </p>
+<p>Our Amazon ML model seems to be more reliable than <kbd>TextBlob</kbd>. After all, green beans are bound to be more popular than cauliflower!</p>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    
+
+        <section>
+
+            <header>
+                <h1 class="header-title">Going beyond classification and regression</h1>
+            </header>
+
+            <article>
+                
+<p>Although Amazon ML is set to solve classification and regression problems, the service can also be used for other supervised data science problems. In this last section, we looked at two classic problems: Recommender systems and named entity recognition.</p>
+<ul>
+<li><strong>Making recommendations</strong>: A recommender system seeks to predict the rating or preference that a user would give to an item. There are several strategies to build recommender systems: </li>
+<li><strong>Collaborative filtering</strong>: This involves using the behavioral patterns of similar users to predict a given user's preferences. It's the other people also bought this approach.</li>
+<li><strong>Content-based filtering</strong>: This is the strategy where the features of a certain content are used to group similar products or content. </li>
+</ul>
+<p>To use Amazon ML for recommendations, you can frame your solution as a content-based recommendation problem. One way to do this is to extract features for your products and users and build a training dataset where the outcome is binary: the user either liked the product or did not. The recommender system is transformed into a binary recommendation problem.</p>
+<p><span><span><strong>Named entity recognition: </strong>Named entity recognition seeks to locate and classify entities in the text into predefined categories, such as the names of persons, organizations, locations, and so forth. Amazon ML can also be used for named entity recognition problems. The idea is to use single words, and extract features as training data. Potential features could include the following:</span></span></p>
+<ul>
+<li>The word itself</li>
+<li><kbd>ngram()</kbd> or <kbd>osb()</kbd> of the context around the word, such as the previous and subsequent three words. </li>
+<li>Prefixes and suffixes</li>
+<li>The predicted class of the previous three words</li>
+<li>The length of the word</li>
+<li>Whether the word is capitalized?</li>
+<li>Whether the word has a hyphen?</li>
+<li>The first word in the sentence</li>
+<li>The frequency of the word in your dataset</li>
+<li>Numeric features -- is the word a number?</li>
+<li>Part of speech of the word or surrounding words</li>
+</ul>
+<p><span><span><span>Some of these feature extraction methods are available in Amazon ML; others will need external processing.</span></span></span></p>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    
+
+        <section>
+
+            <header>
+                <h1 class="header-title">Summary</h1>
+            </header>
+
+            <article>
+                
+<p>In this chapter, we leveraged the power of the AWS ecosystem to build a real-time streaming data classification pipeline. Our pipeline was able to classify streaming tweets using an Amazon ML classification endpoint.  The AWS data ecosystem is diverse and complex, and for a given problem, there are often several possible solutions and architectures. The <strong>Kinesis-Lambda-Redshift-Machine</strong> <strong>Learning</strong> architecture we built is simple, yet very powerful. </p>
+<p>The true strength of the Amazon ML service lies in its ease of use and simplicity. Training and evaluating a model from scratch can be done in a few minutes with a few clicks, and it can result in very good performances. Using the <strong>AWS CLI</strong> and the SDK, more complex data flows and model explorations can easily be implemented. The service is agile enough to become a part of a wider data flow by providing real-time classification and regression. </p>
+<p>Underneath the simple interface, the machine learning expertise of Amazon shines at many levels. From the automated data transformations, to the tuning of the stochastic gradient algorithm, there are many elements that drive the overall performance of the models. A good balance between user control over the models and automatic optimization is achieved. The user can try several types of regularization and data transformations to optimize the models and the feature set, but the overall feeling is that using the default parameters would often work as well. </p>
+<p>The service simplicity has some drawbacks, mostly in terms of limited data transformation and the absence of any embedded cross-validation mechanisms, which are central to a data science workflow. </p>
+<p>In the end, Amazon ML is a useful regression and classification service that brings machine learning automatization closer. What matters in a data science project, as in any other software project, is the true costs of ownership. Compared to a home-grown solution, Amazon ML wins in terms of ease of use, maintainability, resources costs, and often performance.</p>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    </body></html>
