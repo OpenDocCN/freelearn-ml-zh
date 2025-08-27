@@ -1,0 +1,8 @@
++   [R 推荐系统构建指南](README.md)
++   [前言](bd-recsys-r_0.md)
++   [第一章. 推荐系统入门](bd-recsys-r_1.md)
++   [第二章：推荐系统中使用的数据挖掘技术](bd-recsys-r_2.md)
++   [第三章。推荐系统](bd-recsys-r_3.md)
++   [第四章：评估推荐系统](bd-recsys-r_4.md)
++   [第五章. 案例研究 – 构建您自己的推荐引擎](bd-recsys-r_5.md)
++   [附录 A. 参考文献](bd-recsys-r_6.md)
