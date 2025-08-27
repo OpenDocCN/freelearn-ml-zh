@@ -1,6 +1,6 @@
-# Python 应用监督学习
+# 微软 Azure 机器学习
 
-> 原文：[`annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47`](https://annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47)
+> 原文：[`annas-archive.org/md5/a97d8454fc892c5e06976d6083fbe5df`](https://annas-archive.org/md5/a97d8454fc892c5e06976d6083fbe5df)
 > 
 > 译者：[飞龙](https://github.com/wizardforcel)
 > 
