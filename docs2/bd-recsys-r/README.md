@@ -1,6 +1,6 @@
-# Python 应用监督学习
+# R 推荐系统构建指南
 
-> 原文：[`annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47`](https://annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47)
+> 原文：[`annas-archive.org/md5/5643d791b5330511d9d6cee88149f2fc`](https://annas-archive.org/md5/5643d791b5330511d9d6cee88149f2fc)
 > 
 > 译者：[飞龙](https://github.com/wizardforcel)
 > 

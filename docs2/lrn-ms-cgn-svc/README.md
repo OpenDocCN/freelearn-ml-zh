@@ -1,6 +1,6 @@
-# Python 应用监督学习
+# 微软认知服务学习指南
 
-> 原文：[`annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47`](https://annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47)
+> 原文：[`annas-archive.org/md5/d574e5ef7c17b4f651431caa0b5defbd`](https://annas-archive.org/md5/d574e5ef7c17b4f651431caa0b5defbd)
 > 
 > 译者：[飞龙](https://github.com/wizardforcel)
 > 

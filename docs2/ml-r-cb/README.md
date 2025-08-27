@@ -1,6 +1,6 @@
-# Python 应用监督学习
+# R 机器学习秘籍
 
-> 原文：[`annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47`](https://annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47)
+> 原文：[`annas-archive.org/md5/167951e4c9873bc214756c25a63518c8`](https://annas-archive.org/md5/167951e4c9873bc214756c25a63518c8)
 > 
 > 译者：[飞龙](https://github.com/wizardforcel)
 > 
