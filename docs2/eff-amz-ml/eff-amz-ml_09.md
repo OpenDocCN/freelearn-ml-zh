@@ -1,4 +1,4 @@
-# 构建流式数据分析管道
+# 第九章：构建流式数据分析管道
 
 在本书的最后一章，我们将构建一个端到端的流式数据处理管道，该管道将 Amazon ML 集成到 Kinesis Firehose、AWS Lambda 和 Redshift 管道中。我们通过将其与其他 AWS 数据服务集成来扩展 Amazon ML 的功能，以实现实时推文分类。
 

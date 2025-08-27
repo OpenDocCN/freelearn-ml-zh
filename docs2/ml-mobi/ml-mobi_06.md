@@ -1,4 +1,4 @@
-# ML Kit SDK
+# 第六章：ML Kit SDK
 
 在本章中，我们将讨论由 Firebase 在 2018 年 Google I/O 大会上宣布的 ML Kit。此 SDK 将 Google 的移动机器学习产品打包在一个统一的框架下。
 

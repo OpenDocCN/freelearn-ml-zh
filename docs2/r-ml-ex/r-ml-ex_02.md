@@ -1,4 +1,4 @@
-## 向量
+## 第二章：向量
 
 ```py
 seq family of functions to initialize vectors in different ways.
@@ -344,7 +344,7 @@ NULL
 ```py
 > list.sample <- list(
 +     1:5,
- +     c("first", "second", "third"),
++     c("first", "second", "third"),
 +     c(TRUE, FALSE, TRUE, TRUE),
 +     cos,
 +     matrix(1:9, nrow = 3, ncol = 3)

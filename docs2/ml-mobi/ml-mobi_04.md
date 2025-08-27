@@ -1,4 +1,4 @@
-# Android 中的 TensorFlow Mobile
+# 第四章：Android 中的 TensorFlow Mobile
 
 在上一章中，我们专注于监督学习和无监督学习，并学习了不同类型的机器学习算法。在本章中，我们将介绍 TensorFlow for mobile，并通过使用 TensorFlow for mobile 的示例程序进行实现。在第九章 神经网络的移动应用中，我们将使用它来实现一个分类算法。但在我们能够使用它实现机器学习算法之前，我们需要了解 TensorFlow for mobile 的工作原理，并能够编写使用它的示例。本章的目标是介绍 TensorFlow、TensorFlow Lite、TensorFlow for mobile 及其工作方式，并尝试使用 TensorFlow for mobile 在 Android 上的实际操作示例。
 
