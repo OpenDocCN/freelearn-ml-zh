@@ -1,0 +1,583 @@
+<html><head></head><body>
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Tracking Visually Salient Objects</h1>
+                </header>
+            
+            <article>
+                
+<p>The goal of this chapter is to track multiple visually salient objects in a video sequence at once. Instead of labeling the objects of interest in the video ourselves, we will let the algorithm decide which regions of a video frame are worth tracking.</p>
+<p>We have previously learned how to detect simple objects of interest (such as a human hand) in tightly controlled scenarios and how to infer geometrical features of a visual scene from camera motion. In this chapter, we ask what we can learn about a visual scene by looking at the<span> </span><em>image statistics</em><span> </span>of a large number of frames.</p>
+<p>In this chapter, we will cover the following topics:</p>
+<ul>
+<li>Planning the app</li>
+<li>Setting up the app</li>
+<li>Mapping visual saliency</li>
+<li>Understanding mean-shift tracking</li>
+<li>Learning about the OpenCV Tracking API</li>
+<li>Putting it all together</li>
+</ul>
+<p><span>By analyzing the</span><span> </span><strong>Fourier spectrum</strong><span> </span><span>of natural images, we will build a</span><span> </span><strong>saliency map</strong><span>, which allows us to label certain statistically interesting patches of the image as (potential or actual)</span><span> </span><em>proto-objects</em><span>. We will then feed the location of all the proto-objects to a</span><span> </span><strong>mean-shift tracker</strong><span>, which</span><span> will allow us to keep track of where the objects move from one frame to the next.</span></p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Getting started</h1>
+                </header>
+            
+            <article>
+                
+<p><span>This chapter uses <strong>OpenCV 4.1.0</strong>, as well as the additional packages <strong>NumPy</strong> (</span><a href="http://www.numpy.org"><span class="URLPACKT">http://www.numpy.org</span></a><span>), <strong>wxPython 2.8</strong> (</span><a href="http://www.wxpython.org/download.php"><span class="URLPACKT">http://www.wxpython.org/download.php</span></a><span>), and <strong>matplotlib</strong> (</span><a href="http://www.matplotlib.org/downloads.html"><span class="URLPACKT">http://www.matplotlib.org/downloads.html</span></a><span>). Although parts of the algorithms presented in this chapter have been added to an optional Saliency module of the <strong>OpenCV 3.0.0</strong> release, there is currently no Python API for it, so we will write our own code.</span></p>
+<p><span>The code for this chapter can be found in the</span><span> book's GitHub repository, available at </span><a href="https://github.com/PacktPublishing/OpenCV-4-with-Python-Blueprints-Second-Edition/tree/master/chapter6">https://github.com/PacktPublishing/OpenCV-4-with-Python-Blueprints-Second-Edition/tree/master/chapter6</a><span>.</span></p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Understanding visual saliency</h1>
+                </header>
+            
+            <article>
+                
+<p><strong>Visual saliency</strong><span> </span>is a technical term from <em>cognitive psychology</em> that tries to describe the visual quality of certain objects or items that allows them to grab our immediate attention. Our brains constantly drive our gaze toward the<span> </span><em>important</em><span> </span>regions of the visual scene and keep track of them over time, allowing us to quickly scan our surroundings for interesting objects and events while neglecting the less important parts.</p>
+<p>An example of a regular RGB image and its conversion to a <strong>saliency map</strong>, where the statistically interesting<span> </span><em>pop-out</em><span> </span>regions appear bright and the others dark, is shown in the following screenshot:</p>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/0f8d0894-fb45-4c57-8cb4-57c13bbc2256.png" style="width:36.83em;height:18.50em;"/></p>
+<p><span><strong>Fourier analysis</strong> will enable us to get a general understanding of natural image statistics, which will help us build a model of what general image backgrounds look like. By comparing and contrasting the background model to a specific image frame, we can locate subregions of the image that</span><span> </span><em>pop out</em><span> </span><span>of their surroundings (as shown in the previous screenshot). Ideally, these subregions correspond to the image patches that tend to grab our immediate attention when looking at the image.</span></p>
+<p>Traditional models might try to associate particular features with each target (much like our feature-matching approach in<span> </span><a href="905b17f6-8eea-4d33-9291-17ea93371f2d.xhtml"><span class="ChapterrefPACKT">Chapter 3</span></a>,<span> </span><em>Finding Objects via Feature Matching and Perspective Transforms</em>), which would convert the problem to the detection of specific categories of objects. However, these models require manual labeling and training. But what if the features or the number of the objects to track is not known?</p>
+<p>Instead, we will try to mimic what the brain does, that is, tune our algorithm to the statistics of the natural images, so that we can immediately locate the patterns or subregions that "<em>grab our attention</em>" in the visual scene (that is, patterns that deviate from these statistical regularities) and flag them for further inspection. The result is an algorithm that works for any number of proto-objects in the scene, such as tracking all the players on a soccer field. Refer to the following set of screenshots to see it in action:</p>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/d7c88c8b-71f0-46b1-b61c-ee21b3c2e9d5.png" style="width:36.42em;height:26.83em;"/></p>
+<p><span>As we can see in these four screenshots, once all the potentially</span><span> </span><em>interesting</em><span> </span><span>patches of an image have been located, we can track their movement over many frames using a simple yet effective method called <strong>object</strong> <strong>mean-shift tracking</strong>. Because it is possible to have multiple proto-objects in the scene that might change appearance over time, we need to be able to distinguish between them and keep track of all of them.</span></p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Planning the app</h1>
+                </header>
+            
+            <article>
+                
+<p>To build the app, we need to combine the two main features discussed previously—a saliency map and<strong> </strong>object tracking<strong>. </strong>The final app will convert each RGB frame of a video sequence into a saliency map, extract all the interesting proto-objects, and feed them to a mean-shift tracking algorithm. To do this, we need the following components:</p>
+<ul>
+<li><kbd>main</kbd>: This is the main function routine (in<span> </span><kbd>chapter6.py</kbd>) to start the application.</li>
+<li><kbd>saliency.py</kbd>: <span>This </span>is a module to generate a saliency map and proto-object map from an RGB color image. It includes the following functions:
+<ul>
+<li><kbd>get_saliency_map</kbd>: <span>This </span>is a function to convert an RGB color image to a saliency map.</li>
+<li><kbd>get_proto_objects_map</kbd>: <span>This </span>is a function to convert a saliency map into a binary mask containing all the proto-objects.</li>
+<li><kbd>plot_power_density</kbd>: <span>This </span>is a function to display the two-dimensional power density of an RGB color image, which is helpful to understand the Fourier transform.</li>
+<li><kbd>plot_power_spectrum</kbd>: <span>This </span>is a function to display the radially averaged power spectrum of an RGB color image, which is helpful to understand natural image statistics.</li>
+<li><kbd>MultiObjectTracker</kbd>: <span>This </span>is a class that tracks multiple objects in a video using mean-shift tracking. It includes the following public methods:
+<ul>
+<li><kbd>MultiObjectTracker.advance_frame</kbd>: <span>This </span>is a method to update the tracking information for a new frame, using the mean-shift algorithm on the saliency map of the current frame to update the positions of boxes from the previous frame to the current frame.</li>
+<li><kbd><span>MultiObjectTracker.draw_good_boxes</span></kbd>: <span>This </span>is a method to illustrate tracking results in the current frame.</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<p>In the following sections, we will discuss these steps in detail.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Setting up the app</h1>
+                </header>
+            
+            <article>
+                
+<p>In order to run our app, we will need to execute the <kbd>main</kbd> function ,which reads a frame of a video stream, generates a saliency map, extracts the location of the proto-objects, and tracks these locations from one frame to the next.</p>
+<p>Let's learn about the <kbd>main</kbd> function routine in the next section.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Implementing the main function </h1>
+                </header>
+            
+            <article>
+                
+<p>The main process flow is handled by the <kbd>main</kbd> function in<span> </span><kbd>chapter6.py</kbd>, which instantiates the tracker  (<kbd>MultipleObjectTracker</kbd>) and opens a video file showing the number of soccer players on the field:</p>
+<pre>import cv2<br/>from os import path<br/><br/>from saliency import get_saliency_map, get_proto_objects_map<br/>from tracking import MultipleObjectsTracker<br/><br/><br/>def main(video_file='soccer.avi', roi=((140, 100), (500, 600))):<br/>    if not path.isfile(video_file):<br/>        print(f'File "{video_file}" does not exist.')<br/>        raise SystemExit<br/><br/>    # open video file<br/>    video = cv2.VideoCapture(video_file)<br/><br/>    # initialize tracker<br/>    mot = MultipleObjectsTracker()</pre>
+<p>The function will then read the video frame by frame and extract some meaningful region of interest (for illustration purposes):</p>
+<pre>    while True: 
+        success, img = video.read() 
+        if success: 
+            if roi: 
+                # grab some meaningful ROI 
+                img = img[roi[0][0]:roi[1][0], <br/>                     roi[0][1]:roi[1][1]] </pre>
+<p>After that, the region of interest will be passed to a function that will generate a saliency map of the region. Then, <em>interesting</em><span> proto-objects will be generated based on the saliency map, which </span><span>finally</span><span> </span><span>will be fed into the tracker together with the region of interest.</span><span> The output of the tracker is the input region annotated with bounding boxes as shown in the preceding set of screenshots:</span></p>
+<pre>        saliency = get_saliency_map(img, use_numpy_fft=False,<br/>                                    gauss_kernel=(3, 3))<br/>        objects = get_proto_objects_map(saliency, use_otsu=False)<br/>        cv2.imshow('tracker', mot.advance_frame(img, objects))</pre>
+<p>The app will run through all the frames of the video until the end of the file is reached or the user presses the<span> </span><kbd><span class="KeyPACKT">q</span></kbd><span> </span>key:</p>
+<pre>if cv2.waitKey(100) &amp; 0xFF == ord('q'): 
+    break </pre>
+<p>In the next section, we'll learn about the <kbd>MultiObjectTracker</kbd> class.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Understanding the MultiObjectTracker class</h1>
+                </header>
+            
+            <article>
+                
+<p>The constructor of the tracker class is straightforward. All it does is set up the termination criteria for mean-shift tracking and store the conditions for the minimum contour area (<kbd>min_area</kbd>) and the minimum average speed normalized by object size (<kbd>min_speed_per_pix</kbd>) to be considered in the subsequent computation steps:</p>
+<pre>    def __init__(self, min_object_area: int = 400,<br/>                 min_speed_per_pix: float = 0.02):<br/>        self.object_boxes = []<br/>        self.min_object_area = min_object_area<br/>        self.min_speed_per_pix = min_speed_per_pix<br/>        self.num_frame_tracked = 0<br/>        # Setup the termination criteria, either 100 iteration or move by at<br/>        # least 1 pt<br/>        self.term_crit = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT,<br/>                          5, 1)</pre>
+<p>From then on, the user may call the<span> </span><kbd>advance_frame</kbd><span> </span>method to feed a new frame to the tracker.</p>
+<p>However, before we make use of all this functionality, we need to learn about image statistics and how to generate a saliency map.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Mapping visual saliency</h1>
+                </header>
+            
+            <article>
+                
+<p>As already mentioned earlier in the chapter, visual saliency tries to describe the visual quality of certain objects or items that allows them to grab our immediate attention. Our brains constantly drive our gaze toward the important regions of the visual scene, as if it were shining a flashlight on different subregions of the visual world, allowing us to quickly scan our surroundings for interesting objects and events while neglecting the less important parts.</p>
+<p>It is thought that this is an evolutionary strategy to deal with the constant<span> </span><strong>information overflow</strong><span> </span>that comes with living in a visually rich environment. For example, if you take a casual walk through a jungle, you want to be able to notice the attacking tiger in the bush to your left before admiring the intricate color pattern on the butterfly's wings in front of you. As a result, the visually salient objects have the remarkable quality of<span> </span><em>popping out</em><span> </span>of their surroundings, much like the target bars in the following screenshot:</p>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/485b2aad-27a3-42e6-8d95-420cef08611a.png" style="width:37.08em;height:18.25em;"/></p>
+<p>Identifying the visual quality that makes these targets pop out may not always be trivial though. If you are viewing the image on the left in color, you may immediately notice the only red bar in the image. However, if you are looking at this image in grayscale, the target bar may be a little difficult to find (it is the fourth bar from the top, fifth bar from the left).</p>
+<p>Similar to color saliency, there is a visually salient bar in the image on the right. Although the target bar is of unique color in the left-hand image and of unique orientation in the right-hand image, we put the two characteristics together and suddenly the unique target bar does not pop out anymore:</p>
+<div class="packt_figure CDPAlignCenter CDPAlign"><img src="assets/809dd314-8c2a-4d16-a671-a35b1e6dce54.png" style="width:14.42em;height:14.42em;"/></div>
+<p>In the preceding display, there is again one bar that is unique and different from all the other ones. However, because of the way the distracting items were designed, there is little salience to guide you toward the target bar. Instead, you find yourself scanning the image, seemingly at random, looking for something interesting. (<em>Hint</em>: the target is the only red and almost vertical bar in the image, second row from the top, third column from the left.)</p>
+<p><em>What does this have to do with computer vision, you ask?</em> Quite a lot, actually. Artificial vision systems suffer from information overload much like you and me, except that they know even less about the world than we do. <em>What if we could extract some insights from biology and use them to teach our algorithms something about the world?</em></p>
+<p>Imagine a dashboard camera in your car that automatically focuses on the most relevant traffic sign. Imagine a surveillance camera that is part of a wildlife observation station that will automatically detect and track the sighting of the <em>notoriously shy platypus</em> but will ignore everything else. <em>How can we teach the algorithm what is important and what is not? How can we make that platypus "pop out"?</em></p>
+<p>Thus, we enter the <span>Fourier analysis domain.</span></p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Learning about Fourier analysis</h1>
+                </header>
+            
+            <article>
+                
+<p>To find the visually salient subregions of an image, we need to look at its<span> </span><strong>frequency spectrum</strong>. So far we have treated all our images and video frames in the<span> </span><strong>spatial domain</strong>, that is, by analyzing the pixels or studying how the image intensity changes in different subregions of the image. However, the images can also be represented in the<span> </span><strong>frequency domain</strong>, that is, by analyzing the pixel frequencies or studying how often and with what periodicity the pixels show up in the image.</p>
+<p>An image can be transformed from the space domain into the frequency domain by applying the<span> </span><strong>Fourier transform</strong>. In the frequency domain, we no longer think in terms of image coordinates<span> </span>(<em>x</em>,<em>y</em>). Instead, we aim to find the spectrum of an image. Fourier's radical idea basically boils down to the following question—<em>what if any signal or image could be transformed into a series of circular paths (also called <strong>harm</strong><strong>onics</strong>)?</em></p>
+<p>For example, think of a rainbow. <em>Beautiful, isn't it?</em> In a rainbow, white sunlight (composed of many different colors or parts of the spectrum) is spread into its spectrum. Here, the color spectrum of the sunlight is exposed when the rays of light pass through raindrops (much like white light passing through a glass prism). The Fourier transform aims to do the same thing—to recover all the different parts of the spectrum that are contained in the sunlight.</p>
+<p>A similar thing can be achieved for arbitrary images. In contrast to rainbows, where frequency corresponds to electromagnetic frequency, with images we consider spatial frequency, that is, the spatial periodicity of the pixel values. In an image of a prison cell, you can think of spatial frequency as (the inverse of) the distance between two adjacent prison bars.</p>
+<p>The insights that can be gained from this change of perspective are very powerful. Without going into too much detail, let's just remark that a Fourier spectrum comes with both a magnitude and a phase. While the magnitude describes the number/amount of different frequencies in the image, the phase talks about the spatial location of these frequencies. The following screenshot shows a natural image on the left and the corresponding Fourier magnitude spectrum (of the grayscale version) on the right:</p>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/279133b7-af17-4229-b8f7-84b8a1881114.png" style="width:62.17em;height:18.83em;"/></p>
+<p>The magnitude spectrum on the right tells us which frequency components are the most prominent (bright) in the grayscale version of the image on the left. The spectrum is adjusted so that the center of the image corresponds to zero frequency in <em>x</em> and <em>y</em>. The further you move to the border of the image, the higher the frequency gets. This particular spectrum is telling us that there are a lot of low-frequency components in the image on the left (clustered around the center of the image).</p>
+<p>In OpenCV, this transformation can be achieved with the help of<span> the </span><strong>Discrete Fourier Transform</strong><span> </span>(<strong>DFT</strong>). Let's construct a function that does the job. It consists of the following steps:</p>
+<ol>
+<li>First, convert the image to grayscale if necessary. The function accepts both grayscale and RGB color images, so we need to make sure that we operate on a single-channel image:</li>
+</ol>
+<pre style="padding-left: 60px">def calc_magnitude_spectrum(img: np.ndarray):<br/>    if len(img.shape) &gt; 2:<br/>        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)</pre>
+<ol start="2">
+<li><strong>​</strong>We resize the image to an optimal size. It turns out that the performance of a DFT depends on the image size. It tends to be fastest for the image sizes that are multiples of the number 2. It is therefore generally a good idea to pad the image with 0:</li>
+</ol>
+<pre style="padding-left: 60px">    rows, cols = img.shape<br/>    nrows = cv2.getOptimalDFTSize(rows)<br/>    ncols = cv2.getOptimalDFTSize(cols)<br/>    frame = cv2.copyMakeBorder(img, 0, ncols-cols, 0, nrows-rows,<br/>                               cv2.BORDER_CONSTANT, value=0)</pre>
+<ol start="3">
+<li>Then we apply the DFT. This is a single function call in NumPy. The result is a <span>two-dimensional </span>matrix of complex numbers:</li>
+</ol>
+<pre style="padding-left: 60px">img_dft = np.fft.fft2(img) </pre>
+<ol start="4">
+<li>Then, transform the real and complex values to magnitude. A complex number has a real and complex (imaginary) part. To extract the magnitude, we take the absolute value:</li>
+</ol>
+<pre style="padding-left: 60px">magn = np.abs(img_dft) </pre>
+<ol start="5">
+<li>Then we switch to a logarithmic scale. It turns out that the dynamic range of the Fourier coefficients is usually too large to be displayed on the screen. We have some low and some high changing values that we can't observe like this. Therefore, the high values will all turn out as white points, and the low ones as black points.</li>
+</ol>
+<p style="padding-left: 60px">To use the grayscale values for visualization, we can transform our linear scale to a logarithmic one:</p>
+<pre style="padding-left: 60px">log_magn = np.log10(magn)</pre>
+<ol start="6">
+<li>We then shift quadrants, to center the spectrum on the image. This makes it easier to visually inspect the magnitude <kbd>spectrum</kbd>:</li>
+</ol>
+<pre style="padding-left: 60px">spectrum = np.fft.fftshift(log_magn) </pre>
+<ol start="7">
+<li>We <kbd>return</kbd> the result for plotting:</li>
+</ol>
+<pre style="padding-left: 60px">return spectrum/np.max(spectrum)*255 </pre>
+<p style="padding-left: 60px"><span>The result can be plotted with </span><kbd>pyplot</kbd>.</p>
+<p>Now that we understand what the Fourier spectrum of an image is and how to calculate it, let's analyze natural scene statistics in the next section.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Understanding the natural scene statistics</h1>
+                </header>
+            
+            <article>
+                
+<p>The human brain figured out how to focus on visually salient objects a long time ago. The natural world in which we live has some statistical regularities that make it uniquely<span> </span><em>natural</em>, as opposed to a chessboard pattern or a random company logo. Probably, the most commonly known statistical regularity is the <em>1/f</em> law. It states that the amplitude of the ensemble of natural images obeys a <em>1/f</em> distribution (as shown in the following screenshot). This is sometimes also referred to as<span> </span><strong>scale invariance</strong>.</p>
+<p>A one-dimensional power spectrum (as a function of frequency) of a <span>two-dimensional</span><span> </span>image can be visualized with the following<span> </span><kbd>plot_power_spectrum</kbd><span> </span>function. We can use a similar recipe as for the magnitude spectrum used previously, but we will have to make sure that we correctly collapse the <span>two-dimensional</span><span> </span>spectrum onto a single axis:</p>
+<ol>
+<li>Define the function and convert the image to grayscale if necessary (this is the same as earlier):</li>
+</ol>
+<pre style="padding-left: 60px">def plot_power_spectrum(frame: np.ndarray, use_numpy_fft=True) -&gt; None:<br/>    if len(frame.shape) &gt; 2:<br/>        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)</pre>
+<ol start="2">
+<li>Expand the image to its optimal size (<span>this is the </span>same as earlier):</li>
+</ol>
+<pre style="padding-left: 60px">rows, cols = frame.shape
+nrows = cv2.getOptimalDFTSize(rows) 
+ncols = cv2.getOptimalDFTSize(cols) 
+frame = cv2.copyMakeBorder(frame, 0, ncols-cols, 0, <br/>     nrows-rows, cv2.BORDER_CONSTANT, value = 0)</pre>
+<ol start="3">
+<li>We then apply the DFT and get the log spectrum. Here we give the user an option (via the<span> </span><kbd>use_numpy_fft</kbd> <span>flag</span>) to use either NumPy's or OpenCV's Fourier tools:</li>
+</ol>
+<pre style="padding-left: 60px">    if use_numpy_fft:<br/>        img_dft = np.fft.fft2(frame)<br/>        spectrum = np.log10(np.real(np.abs(img_dft))**2)<br/>    else:<br/>        img_dft = cv2.dft(np.float32(frame), flags=cv2.DFT_COMPLEX_OUTPUT)<br/>        spectrum = np.log10(img_dft[:, :, 0]**2 + img_dft[:, :, 1]**2)</pre>
+<ol start="4">
+<li>We then perform radial averaging. This is the tricky part. It would be wrong to simply average the <span>two-dimensional</span><span> </span>spectrum in the direction of <em>x</em> or <em>y</em>. What we are interested in is a spectrum as a function of frequency, independent of the exact orientation. This is sometimes also called the<span> </span><strong>Radially Averaged Power Spectrum</strong><span> </span>(<strong>RAPS</strong>).</li>
+</ol>
+<p style="padding-left: 60px">It can be achieved by summing up all the frequency magnitudes, starting at the center of the image, looking into all possible (radial) directions, from some frequency<span> </span><kbd>r</kbd><span> </span>to<span> </span><kbd>r+dr</kbd>. We use the binning function of NumPy's histogram to sum up the numbers, and accumulate them in the <kbd>histo</kbd> <span>variable:</span></p>
+<pre style="padding-left: 60px">L = max(frame.shape) 
+freqs = np.fft.fftfreq(L)[:L/2] 
+dists = np.sqrt(np.fft.fftfreq(frame.shape[0])<br/>     [:,np.newaxis]**2 + np.fft.fftfreq<br/>         (frame.shape[1])**2) 
+dcount = np.histogram(dists.ravel(), bins=freqs)[0] 
+histo, bins = np.histogram(dists.ravel(), bins=freqs,<br/>     weights=spectrum.ravel())</pre>
+<ol start="5">
+<li>We then plot the result and, finally, we can plot the accumulated numbers in <kbd>histo</kbd>, but must not forget to normalize these by the bin size (<kbd>dcount</kbd>):</li>
+</ol>
+<pre style="padding-left: 60px">centers = (bins[:-1] + bins[1:]) / 2 
+plt.plot(centers, histo/dcount) 
+plt.xlabel('frequency') 
+plt.ylabel('log-spectrum') 
+plt.show() </pre>
+<p style="padding-left: 60px">The result is a function that is inversely proportional to the frequency. If you want to be absolutely certain of the <em>1/f</em> property, you could take<span> </span><kbd>np.log10</kbd><span> </span>of all the <em>x</em> values and make sure the curve is decreasing in a roughly linear fashion. On a linear <em>x</em> axis and logarithmic <em>y</em> axis, the plot looks like the following screenshot:</p>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/61fc8f5b-f196-4e26-8c1b-bec7ca65c16f.png" style="width:32.08em;height:25.58em;"/></p>
+<p>This property is quite remarkable. It states that if we were to average all the spectra of all the images ever taken of natural scenes (neglecting all the ones taken with fancy image filters, of course), we would get a curve that would look remarkably like the one shown in the preceding image.</p>
+<p>But, going back to the image of a peaceful little boat on the <strong>Limmat</strong> river, <em>what about single images?</em> We have just looked at the power spectrum of this image and witnessed the <em>1/f</em> property. <em>How can we use our knowledge of natural image statistics to tell an algorithm not to stare at the tree on the left, but instead focus on the boat that is chugging in the water?</em> The following photo depicts a scene at the Limmat river:</p>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/1ff3b240-c2b0-48ef-8e70-0e6b6cb0f53a.png" style="width:43.00em;height:24.08em;"/></p>
+<p>This is where we realize what saliency really means.</p>
+<p>Let's see how to generate a saliency map with the spectral residual approach in the next section.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Generating a saliency map with the spectral residual approach</h1>
+                </header>
+            
+            <article>
+                
+<p>The things that deserve our attention in an image are not the image patches that follow the <em>1/f</em> law, but the patches that stick out of the smooth curves, in other words, statistical anomalies. These anomalies are termed the <strong>spectral residual</strong><span> </span>of an image and correspond to the potentially<span> </span><em>interesting</em><span> </span>patches of an image (or proto-objects). A map that shows these statistical anomalies as bright spots is called a <strong>saliency map</strong>.</p>
+<div class="packt_infobox"><span>The spectral residual approach described here is based on the original scientific publication article <em>Saliency Detection: A Spectral Residual Approach</em> by</span><span> </span>Xiaodi Hou<span> </span><span>and</span><span> </span>Liqing Zhang<span> </span><span>(2007),</span><span> IEEE Transactions on Computer Vision and Pattern Recognition (CVPR), p.1-8, DOI: 10.1109/CVPR.2007.383267.</span></div>
+<p><span>The saliency map of a single channel can be generated with the </span><kbd>_get_channel_sal_magn</kbd><span> function </span><span>using the following process. I</span>n order to generate a saliency map based on the spectral residual approach, we need to process each channel of an input image separately (a single channel in the case of a grayscale input image, and three separate channels in the case of an RGB input image):</p>
+<ol>
+<li>Calculate the (<kbd>magnitude</kbd> and phase of the) Fourier spectrum of an image, by again using either the<span> </span><kbd>fft</kbd><span> </span>module of NumPy or the OpenCV functionality:</li>
+</ol>
+<pre style="padding-left: 60px">def _calc_channel_sal_magn(channel: np.ndarray,<br/>                           use_numpy_fft: bool = True) -&gt; np.ndarray:<br/>    if use_numpy_fft:<br/>        img_dft = np.fft.fft2(channel)<br/>        magnitude, angle = cv2.cartToPolar(np.real(img_dft),<br/>                                           np.imag(img_dft))<br/>    else:<br/>        img_dft = cv2.dft(np.float32(channel),<br/>                          flags=cv2.DFT_COMPLEX_OUTPUT)<br/>        magnitude, angle = cv2.cartToPolar(img_dft[:, :, 0],<br/>                                           img_dft[:, :, 1])</pre>
+<ol start="2">
+<li>Calculate the log amplitude of the Fourier spectrum. We will clip the lower bound of magnitudes to <kbd>1e-9</kbd> in order to prevent a division by 0 while calculating the log:</li>
+</ol>
+<pre style="padding-left: 60px">log_ampl = np.log10(magnitude.clip(min=1e-9)) </pre>
+<ol start="3">
+<li>Approximate the averaged spectrum of a typical natural image by convolving the image with a local averaging filter:</li>
+</ol>
+<pre style="padding-left: 60px">log_ampl_blur = cv2.blur(log_amlp, (3, 3)) </pre>
+<ol start="4">
+<li>Calculate the spectral <kbd>residual</kbd>. The spectral <kbd>residual</kbd> primarily contains the non-trivial (or unexpected) parts of a scene:</li>
+</ol>
+<pre style="padding-left: 60px">residual = np.exp(log_ampl - log_ampl_blur)</pre>
+<ol start="5">
+<li>Calculate the saliency map by using the inverse Fourier transform, again either via the<span> </span><kbd>fft</kbd><span> </span>module in NumPy or with OpenCV:</li>
+</ol>
+<pre style="padding-left: 60px">    if use_numpy_fft:<br/>        real_part, imag_part = cv2.polarToCart(residual, angle)<br/>        img_combined = np.fft.ifft2(real_part + 1j * imag_part)<br/>        magnitude, _ = cv2.cartToPolar(np.real(img_combined),<br/>                                       np.imag(img_combined))<br/>    else:<br/>        img_dft[:, :, 0], img_dft[:, :, 1] =%MCEPASTEBIN% cv2.polarToCart(residual,<br/>                                                             angle)<br/>        img_combined = cv2.idft(img_dft)<br/>        magnitude, _ = cv2.cartToPolar(img_combined[:, :, 0],<br/>                                       img_combined[:, :, 1])<br/><br/>    return magnitude</pre>
+<p><span>A single-channel saliency map (</span><kbd>magnitude</kbd><span>) is used by </span><kbd>get_saliency_map</kbd><span>, where the procedure is repeated for all channels of the input image. If the input image is grayscale, we are pretty much done:</span></p>
+<pre>def get_saliency_map(frame: np.ndarray,<br/>                     small_shape: Tuple[int] = (64, 64),<br/>                     gauss_kernel: Tuple[int] = (5, 5),<br/>                     use_numpy_fft: bool = True) -&gt; np.ndarray:<br/>    frame_small = cv2.resize(frame, small_shape)<br/>    if len(frame.shape) == 2:<br/>        # single channelsmall_shape[1::-1]<br/>        sal = _calc_channel_sal_magn(frame, use_numpy_fft)<br/><br/></pre>
+<p>However, if the input image has multiple channels, as is the case for an RGB color image, we need to consider each channel separately:</p>
+<pre>    else:<br/>        sal = np.zeros_like(frame_small).astype(np.float32)<br/>        for c in range(frame_small.shape[2]):<br/>            small = frame_small[:, :, c]<br/>            sal[:, :, c] = _calc_channel_sal_magn(small, use_numpy_fft)</pre>
+<p>The overall salience of a multichannel image is then determined by the average overall channels:</p>
+<pre style="padding-left: 60px">sal = np.mean(sal, 2) </pre>
+<p>Finally, we need to apply some post-processing, such as an optional blurring stage to make the result appear smoother:</p>
+<pre>    if gauss_kernel is not None:<br/>        sal = cv2.GaussianBlur(sal, gauss_kernel, sigmaX=8, sigmaY=0)</pre>
+<p>Also, we need to square the values in<span> </span><kbd>sal</kbd><span> </span>in order to highlight the regions of high salience, as outlined by the authors of the original paper. In order to display the image, we scale it back up to its original resolution and normalize the values, so that the largest value is 1.</p>
+<p><span>Next, normalize the values in <kbd>sal</kbd> so that the largest value is 1, then square them</span> <span>in order to highlight the regions of high salience as outlined by the authors of the original paper, and, lastly, scale back to its original resolution in order to display the image:</span></p>
+<pre>        sal = sal**2 
+        sal = np.float32(sal)/np.max(sal) 
+        sal = cv2.resize(sal, self.frame_orig.shape[1::-1]) <br/>    sal /= np.max(sal)<br/>    return cv2.resize(sal ** 2, frame.shape[1::-1])</pre>
+<p>The resulting saliency map then looks like the following:</p>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/27395e81-da35-4002-a05c-f4d7041789d1.png" style="width:38.58em;height:21.58em;"/></p>
+<p>Now we can clearly spot the boat in the water (in the lower-left corner), which appears as one of the most salient subregions of the image. There are other salient regions, too, such as the <strong>Grossmünster</strong> on the right (<em>have you guessed the city yet?</em>).</p>
+<div class="packt_infobox"><span>By the way, the fact that these two areas are the most salient ones in the image seems to be clear and indisputable evidence that the algorithm is aware of the ridiculous number of church towers in the city center of <strong>Zurich</strong>, effectively prohibiting any chance of them being labeled as "<em>salient</em>".<br/></span></div>
+<p>In the next section, we'll see how to detect proto-objects in a scene.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Detecting proto-objects in a scene</h1>
+                </header>
+            
+            <article>
+                
+<p>In a sense, the saliency map is already an explicit representation of proto-objects, as it contains only the<span> </span><em>interesting</em><span> </span>parts of an image. So now that we have done all the hard work, all that is left to do in order to obtain a proto-object map is to threshold the saliency map.</p>
+<p>The only open parameter to consider here is the threshold. Setting the threshold too low will result in labeling a lot of regions as proto-objects, including some that might not contain anything of interest (false alarm). On the other hand, setting the threshold too high will ignore most of the salient regions in the image and might leave us with no proto-objects at all.</p>
+<p>The authors of the original spectral residual paper chose to label only those regions of the image as proto-objects whose saliency was larger than three times the mean saliency of the image. We give the user the choice either to implement this threshold or to go with the <strong>Otsu threshold</strong> by setting the input flag<span> </span><kbd>use_otsu</kbd><span> </span>to<span> </span><kbd>True</kbd>:</p>
+<pre>def get_proto_objects_map(saliency: np.ndarray, use_otsu=True) -&gt; np.ndarray: </pre>
+<p>We then convert saliency to <kbd>uint8</kbd> precision <span>so that it can be pass</span><span>ed to </span><kbd>cv2.threshold</kbd>, set parameters for thresholding, and, finally, we apply thresholding and return the proto-objects:</p>
+<pre>    saliency = np.uint8(saliency * 255)<br/>    if use_otsu:<br/>        thresh_type = cv2.THRESH_OTSU<br/>        # For threshold value, simply pass zero.<br/>        thresh_value = 0<br/>    else:<br/>        thresh_type = cv2.THRESH_BINARY<br/>        thresh_value = np.mean(saliency) * 3<br/><br/>    _, img_objects = cv2.threshold(saliency,<br/>                                   thresh_value, 255, thresh_type)<br/>    return img_objects</pre>
+<p>The resulting proto-objects mask looks as follows:</p>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/f3fabb1e-cfd2-493c-b3d2-33ab7c3e469f.png" style="width:35.50em;height:20.00em;"/></p>
+<p>The proto-objects mask then serves as an input to the tracking algorithm, which we will see in the next section.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Understanding mean-shift tracking</h1>
+                </header>
+            
+            <article>
+                
+<p>So far we used the salience detector discussed previously to find bounding boxes of proto-objects. We could simply apply the algorithm to every frame of a video sequence and get a good idea of the location of the objects. However, what is getting lost is correspondence information.</p>
+<p>Imagine a video sequence of a busy scene, such as from a city center or a sports stadium. Although a saliency map could highlight all the proto-objects in every frame of a recorded video, the algorithm would have no way to establish a correspondence between proto-objects from the previous frame and proto-objects in the current frame. </p>
+<p>Also, the proto-objects map might contain some <em>false positives</em>, and we need an approach to select the most probable boxes that correspond to real-world objects. Such <em>false positives</em> can be noticed in the following example:</p>
+<div class="packt_figure CDPAlignCenter CDPAlign"><img src="assets/faf177a8-dc30-43e4-846f-ddaf5292e74d.png" style="width:51.67em;height:19.58em;"/></div>
+<p>Note that the bounding boxes extracted from the proto-objects map made (at least) three mistakes in the preceding example—it missed highlighting a player (upper-left), merged two players into the same bounding box, and highlighted some additional arguably non-interesting (although visually salient) objects. In order to improve these results and maintain correspondence, we want to take advantage<span> of a tracking algorithm.</span></p>
+<p>To solve the correspondence problem, we could use the methods we have learned about previously, such as feature matching and optical flow, but in this case, we will use the mean-shift algorithm for tracking.</p>
+<p>Mean-shift is a simple yet very effective technique for tracking arbitrary objects. The intuition behind the mean-shift is to consider the pixels in a small region of interest (say, the bounding box of an object we want to track) as sampled from an underlying probability density function that best describes a target.</p>
+<p>Consider, for example, the following image:</p>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/152dad47-0db3-4d62-a1ff-dff96e83c526.png" style="width:22.08em;height:14.42em;"/></p>
+<p>Here, the small gray dots represent samples from a probability distribution. Assume that the closer the dots, the more similar they are to each other. Intuitively speaking, what mean-shift is trying to do is to find the densest region in this landscape and draw a circle around it. The algorithm might start out centering a circle over a region of the landscape that is not dense at all (the dashed circle). Over time, it will slowly move toward the densest region (the solid circle) and anchor on it.</p>
+<p>If we design the landscape to be more meaningful than dots, we can use mean-shift tracking to find the objects of interest in the scene. F<span>or example, if we assign to each dot some value for correspondence between the color histogram of an object and the color histogram of a </span>neighborhood of an image of the same size as the object, we can use mean-shift on the resulting dots to track the object. It is the latter approach that is usually associated with mean-shift tracking. In our case, we will simply use the saliency map itself.</p>
+<p>Mean-shift has many applications (such as clustering, or finding the mode of probability density functions), but it is also particularly well suited to target tracking. In OpenCV, the algorithm is implemented in<span> </span><kbd>cv2.meanShift</kbd> and accepts a <span>two-dimensional </span>array (for example, a grayscale image such as a saliency map) and window (in our case, we use the bounding box of an object) as input. It returns new positions of the window in accordance with the mean-shift algorithm as follows:</p>
+<ol>
+<li>It fixes a window position.</li>
+<li>It computes the mean of the data within the window.</li>
+<li>It shifts the window to the mean and repeats until convergence. <span>We can control the length and accuracy of the iterative method by specifying the termination criteria.</span></li>
+</ol>
+<p>Next, let's see how the algorithm tracks and visually maps (with bounding boxes) a player on the field.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Automatically tracking all players on a soccer field</h1>
+                </header>
+            
+            <article>
+                
+<p>Our goal is to combine the saliency detector with mean-shift tracking to automatically track all the players on a soccer field. The proto-objects identified by the saliency detector will serve as input to the mean-shift tracker. Specifically, we will focus on a video sequence from the Alfheim dataset, which can be freely obtained from<span> </span><a href="http://home.ifi.uio.no/paalh/dataset/alfheim/"><span class="URLPACKT">http://home.ifi.uio.no/paalh/dataset/alfheim/</span></a>.</p>
+<p>The reason for combining the two algorithms (saliency map and mean-shift tracking), is to maintain correspondence information between objects in different frames as well as to<span> remove some false positives and improve the accuracy of detected objects</span>. </p>
+<p>The hard work is done by the previously introduced<span> </span><kbd>MultiObjectTracker</kbd><span> </span>class and its<span> </span><kbd>advance_frame</kbd><span> </span>method. The<span> </span><kbd>advance_frame</kbd><span> </span>method is called whenever a new frame arrives, and accepts proto-objects and saliency as input:</p>
+<pre>    def advance_frame(self,<br/>                      frame: np.ndarray,<br/>                      proto_objects_map: np.ndarray,<br/>                      saliency: np.ndarray) -&gt; np.ndarray:</pre>
+<p>The following steps are covered in this method:</p>
+<ol>
+<li>Create contours from <kbd>proto_objects_map</kbd> and find bounding rectangles for all contours that have an area greater than <kbd>min_object_area</kbd>. The latter is the candidate bounding boxes for tracking with the mean shift algorithm: </li>
+</ol>
+<pre style="padding-left: 30px">        object_contours, _ = cv2.findContours(proto_objects_map, 1, 2)<br/>        object_boxes = [cv2.boundingRect(contour)<br/>                        for contour in object_contours<br/>                        if cv2.contourArea(contour) &gt; self.min_object_area]</pre>
+<ol start="2">
+<li>The candidate boxes might be not the best ones for tracking them throughout the frames. For example, in this case, if two players are close to each other, they result in a single object box. We need some approach to select the best boxes. We could think about some algorithm that will analyze boxes tracked from previous frames in combination with boxes obtained from saliency, and deduce the most probable boxes. </li>
+</ol>
+<p style="padding-left: 60px">But we will do it in a simple manner here—if the number of boxes from the saliency map doesn't increase, boxes from the previous frame to the current frame using the saliency map of the current frame are tracked, which are saved as <kbd>objcect_boxes</kbd><span>:</span></p>
+<pre style="padding-left: 30px">        if len(self.object_boxes) &gt;= len(object_boxes):<br/>            # Continue tracking with meanshift if number of salient objects<br/>            # didn't increase<br/>            object_boxes = [cv2.meanShift(saliency, box, self.term_crit)[1]<br/>                            for box in self.object_boxes]<br/>            self.num_frame_tracked += 1</pre>
+<ol start="3">
+<li>If it did increase, we reset the tracking information, which is the number of frames through which the objects were tracked and the initial centers of the objects were calculated:</li>
+</ol>
+<pre style="padding-left: 30px">        else:<br/>            # Otherwise restart tracking<br/>            self.num_frame_tracked = 0<br/>            self.object_initial_centers = [<br/>                (x + w / 2, y + h / 2) for (x, y, w, h) in object_boxes]</pre>
+<ol start="4">
+<li>Finally, save the boxes and make an illustration of the tracking information on the frame:</li>
+</ol>
+<pre style="color: black;padding-left: 90px">self.object_boxes = object_boxes<br/>return self.draw_good_boxes(copy.deepcopy(frame))</pre>
+<p>We are interested in boxes that move. For that purpose, we calculate the displacements of each box from their initial location at the start of tracking. We suppose that objects that appear larger on a frame should move faster, hence we normalize the displacements on box width:</p>
+<pre>    def draw_good_boxes(self, frame: np.ndarray) -&gt; np.ndarray:<br/>        # Find total displacement length for each object<br/>        # and normalize by object size<br/>        displacements = [((x + w / 2 - cx)**2 + (y + w / 2 - cy)**2)**0.5 / w<br/>                         for (x, y, w, h), (cx, cy)<br/>                         in zip(self.object_boxes, self.object_initial_centers)]</pre>
+<p>Next, we draw boxes and their number, which have average displacement per frame (or speed) greater than the value that we specified on the initialization of the tracker. A small number is added in order not to divide by 0 on the first frame of tracking: </p>
+<pre>        for (x, y, w, h), displacement, i in zip(<br/>                self.object_boxes, displacements, itertools.count()):<br/>            # Draw only those which have some avarage speed<br/>            if displacement / (self.num_frame_tracked + 0.01) &gt; self.min_speed_per_pix:<br/>                cv2.rectangle(frame, (x, y), (x + w, y + h),<br/>                              (0, 255, 0), 2)<br/>                cv2.putText(frame, str(i), (x, y),<br/>                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255))<br/>        return frame</pre>
+<p><span>Now you understand how it is possible to implement tracking using the mean-shift algorithm. This is only one approach for tracking out of many others on offer. Mean-shift tracking might particularly fail when the objects rapidly change in size, as would be the case if an object of interest were to come straight at the camera.</span></p>
+<p><span>For such cases, OpenCV has a different algorithm, <kbd>cv2.CamShift</kbd>, which also takes into account rotations and changes in size, where <strong>CAMShift</strong> stands for <strong>Continuously Adaptive Mean-Shift</strong></span>. <span>Moreover, </span>OpenCV has a range of available trackers that can be used out of the box and are referred to as the <strong>OpenCV Tracking API</strong>. Let's learn about them in the next section.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">​Learning about the OpenCV Tracking API </h1>
+                </header>
+            
+            <article>
+                
+<p>We have applied the mean-shift algorithm on the saliency map for tracking salient objects. Surely, not all the objects in the world are salient, so we can't use that approach for tracking any object. As mentioned previously, we could also use an HSV histogram in combination with the mean-shift algorithm to track objects. The latter does not require a saliency map—if a region is selected, that approach will try to track selected objects throughout the consequent frames. </p>
+<p><span>In this section, we will create a script that is able to track an object throughout a video using the tracking algorithms available in OpenCV.</span> All these algorithms have the same API and are referred to collectively as the OpenCV Tracking API. These algorithms track single objects—once the initial bounding box is provided to the algorithm, it will try to maintain the new positions of the box throughout the consequent frames. Surely, it's also possible to track multiple objects in the scene by creating a new tracker for each object.</p>
+<p>First of all, we import the libraries that we will use and define our constants:</p>
+<pre>import argparse<br/>import time<br/><br/>import cv2<br/>import numpy as np<br/><br/># Define Constants<br/>FONT = cv2.FONT_HERSHEY_SIMPLEX<br/>GREEN = (20, 200, 20)<br/>RED = (20, 20, 255)</pre>
+<p class="mce-root">OpenCV currently has eight built-in trackers. We define a map of the constructors of all trackers:</p>
+<pre>trackers = {<br/>    'BOOSTING': cv2.TrackerBoosting_create,<br/>    'MIL': cv2.TrackerMIL_create,<br/>    'KCF': cv2.TrackerKCF_create,<br/>    'TLD': cv2.TrackerTLD_create,<br/>    'MEDIANFLOW': cv2.TrackerMedianFlow_create,<br/>    'GOTURN': cv2.TrackerGOTURN_create,<br/>    'MOSSE': cv2.TrackerMOSSE_create,<br/>    'CSRT': cv2.TrackerCSRT_create<br/>}</pre>
+<p>Our script will be able to accept the name of the tracker and a path to a video as arguments. In order to achieve this, we create arguments, set their default values, and parse them with the previously imported <kbd>argparse</kbd> module:</p>
+<pre># Parse arguments<br/>parser = argparse.ArgumentParser(description='Tracking API demo.')<br/>parser.add_argument(<br/>    '--tracker',<br/>    default="KCF",<br/>    help=f"One of {trackers.keys()}")<br/>parser.add_argument(<br/>    '--video',<br/>    help="Video file to use",<br/>    default="videos/test.mp4")<br/>args = parser.parse_args()</pre>
+<p>Then, we make sure that such a tracker exists and we try to read the first frame from the specified video.</p>
+<p>Now that we have set up the script and can accept parameters, the next thing to do is to instantiate the tracker:</p>
+<ol>
+<li>First of all, it's a good idea to make the script case-insensitive and check whether the passed tracker exists at all:</li>
+</ol>
+<pre style="padding-left: 60px"><span>tracker_name = args.tracker.upper()</span><br/><span>assert tracker_name in trackers, f"Tracker should be one of {trackers.keys()}"</span></pre>
+<ol start="2">
+<li>Open the video and read the first <kbd>frame</kbd>. Then, break the script if the video cannot be read:</li>
+</ol>
+<pre style="padding-left: 60px">video = cv2.VideoCapture(args.video)<br/>assert video.isOpened(), "Could not open video"<br/>ok, frame = video.read()<br/>assert ok, "Video file is not readable"</pre>
+<ol start="3">
+<li>Select a region of interest (using a bounding box) for tracking throughout the video. OpenCV has a user-interface-based implementation for that:</li>
+</ol>
+<pre style="color: black;padding-left: 60px">bbox = cv2.selectROI(frame, False)</pre>
+<p style="padding-left: 60px" class="mce-root"><span>Once this method is called, an interface will appear where you can select a box. Once the <em>Enter</em> key is pressed, the coordinates for the selected box are returned.</span></p>
+<ol start="4">
+<li>Initiate the tracker with the first frame and the selected bounding box:</li>
+</ol>
+<pre style="padding-left: 60px">tracker = trackers[tracker_name]()<br/>tracker.init(frame, bbox)</pre>
+<p>Now we have an instance of the tracker that has been initiated with the first frame and selected a bounding box of interest. We update the tracker with the next frames to find the new location of the object in the bounding box. <span>We also estimate the <strong>frames per second</strong> (<strong>FPS</strong>) of the selected tracking algorithm using the </span><kbd>time</kbd><span> module:</span></p>
+<pre>for ok, frame in iter(video.read, (False, None)): <br/>    # Time in seconds<br/>    start_time = time.time()<br/>    # Update tracker<br/>    ok, bbox = tracker.update(frame)<br/>    # Calcurlate FPS<br/>    fps = 1 / (time.time() - start_time)</pre>
+<p>All the calculations are done by this point. Now we illustrate the results for each iteration: </p>
+<pre>    if ok:<br/>        # Draw bounding box<br/>        x, y, w, h = np.array(bbox, dtype=np.int)<br/>        cv2.rectangle(frame, (x, y), (x + w, y + w), GREEN, 2, 1)<br/>    else:<br/>        # Tracking failure<br/>        cv2.putText(frame, "Tracking failed", (100, 80), FONT, 0.7, RED, 2)<br/>    cv2.putText(frame, f"{tracker_name} Tracker",<br/>                (100, 20), FONT, 0.7, GREEN, 2)<br/>    cv2.putText(frame, f"FPS : {fps:.0f}", (100, 50), FONT, 0.7, GREEN, 2)<br/>    cv2.imshow("Tracking", frame)<br/><br/>    # Exit if ESC pressed<br/>    if cv2.waitKey(1) &amp; 0xff == 27:<br/>        break</pre>
+<p><span>If a bounding box w</span><span>as returned by the algorithm, we draw that box on the frame, otherwise, we illustrate that the tracking failed, which means that the selected algorithm failed to find the object in the current frame. Also, we type the name of the tracker and the current FPS on the frame.</span></p>
+<p class="mce-root">You can run this script on different videos with different algorithms in order to see how the algorithms behave, especially how they handle occlusions, fast-moving objects, and objects that change a lot in appearance. After trying the algorithms, you might also be interested to read the original papers of the algorithms to find out implementation details.</p>
+<p>In order to track multiple objects using these algorithms, OpenCV has a convenient wrapper class that combines multiple instances of the tracker and updates them simultaneously. In order to use it, first, we create an instance of the class:</p>
+<pre>multiTracker = cv2.MultiTracker_create()</pre>
+<p>Next, for each bounding box of interest, a new tracker is created (MIL tracker, in this case) and added to the <kbd>multiTracker</kbd> object:</p>
+<pre>for bbox in bboxes:<br/>    multiTracker.add(cv2.TrackerMIL_create(), frame, bbox)</pre>
+<p>Finally, the new positions of the bounding boxes are obtained by updating the <kbd>multiTracker</kbd> object with a new frame:</p>
+<pre>success, boxes = multiTracker.update(frame)</pre>
+<p>As an exercise, you might want to replace the mean-shift tracking in the application for tracking salient objects with one of the trackers introduced in this chapter. In order to do it, you can use <kbd>multiTracker</kbd> with one of the trackers to update the positions of bounding boxes for proto-objects.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Putting it all together</h1>
+                </header>
+            
+            <article>
+                
+<p>The result of our app can be seen in the following set of screenshots:</p>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/1b1ed6e4-7749-467f-ac3b-0c8e47276039.png" style="width:52.00em;height:38.33em;"/></p>
+<p>Throughout the video sequence, the algorithm is able to pick up the location of the players and successfully track them frame by frame by using mean-shift tracking.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Summary</h1>
+                </header>
+            
+            <article>
+                
+<p>In this chapter, we explored a way to label the potentially<span> </span><em>interesting</em><span> </span>objects in a visual scene, even if their shape and number are unknown. We explored natural image statistics using Fourier analysis and implemented a  method for extracting the visually salient regions in the natural scenes. Furthermore, we combined the output of the salience detector with a tracking algorithm to track multiple objects of unknown shape and number in a video sequence of a soccer game.</p>
+<p>We have introduced other, more complex tracking algorithms available in OpenCV, which you can use to replace mean-shift tracking in the application or even create your own application. Of course, it would also be possible to replace the mean-shift tracker with a previously studied technique such as feature matching or optic flow.</p>
+<p>In the next chapter, we will move on to the fascinating field of machine learning, which will allow us to build more powerful descriptors of objects. Specifically, we will focus on both detection (<em>the where</em>) and identification (<em>the what</em>) of street signs in images. This will allow us to train a classifier that could be used in a dashboard camera in your car and will familiarize us with the important concepts of machine learning and object recognition.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Dataset attribution</h1>
+                </header>
+            
+            <article>
+                
+<p>"<em>Soccer video and player position dataset</em>,"<span> <em>S. A. Pettersen, D. Johansen, H. Johansen, V. Berg-Johansen, V. R. Gaddam, A. Mortensen, R. Langseth, C. Griwodz, H. K. Stensland,</em> and <em>P. Halvorsen</em>, in Proceedings of the International Conference on Multimedia Systems (MMSys), Singapore, March 2014, pp. 18-23.</span></p>
+
+
+            </article>
+
+            
+        </section>
+    </body></html>

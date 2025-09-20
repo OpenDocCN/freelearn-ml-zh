@@ -1,0 +1,865 @@
+<html><head></head><body>
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Learning to Detect and Track Objects</h1>
+                </header>
+            
+            <article>
+                
+<p>In the previous chapter, you got your hands on deep convolutional neural networks and built deep classification and localization networks <span>using transfer learning</span>. You have started your deep learning journey and have familiarized yourself with a range of deep learning concepts. You now understand how deep models are trained and you are ready to learn about more advanced deep learning concepts.</p>
+<p>In this chapter, you will continue your deep learning journey, first using object detection models to detect multiple objects of different types in a<span> video of a relevant scene such as a street view with cars and people. </span>After that, you will learn how su<span>ch models</span><span> </span><span>are built and trained.</span></p>
+<p><span>In general, robust object detection models have a wide range of applications nowadays. Those areas include but are not limited to medicine, robotics, surveillance, and many others. Understanding how they work will allow you to use them for building your own real-life applications, as well as elaborating on new models on top of them.</span></p>
+<p>After we cover object detection, we will implement the<strong><span> Simple Online and Realtime Tracking</span></strong> <span>(</span><strong><span>Sort</span></strong><span>)</span><strong> </strong>algorithm, which is able to robustly track detected objects throughout frames. During the implementation of the Sort algorithm, you will also get acquainted with the <strong>Kalman filter</strong>, which in general is an important algorithm when working with time series. </p>
+<p>A combination of a good detector and tracker finds multiple applications in industrial problems. In this chapter, we'll limit the applications by counting the total objects by their type as they appear throughout the video of the relevant scene. Once you understand how this specific task is achieved,<span> </span><span>you will probably</span><span> </span><span>have your own usage ideas that will end up in your own applications.</span></p>
+<p><span>For example, having a good object tracker allows you to answer statistical questions such as which part of the scene appears more condensed? And, where do objects move more slowly or quickly during the observation time? In some scenarios, you might be interested in monitoring the trajectories of specific objects, estimating their speed or the time that they spend in different areas of the scene. Having a good tracker is the solution for all of these things.</span></p>
+<p>In this chapter, we will cover the following topics:</p>
+<ul>
+<li>Preparing the app</li>
+<li>Preparing the main script</li>
+<li><span>Detecting objects with SSD</span></li>
+<li>Understanding object detectors</li>
+<li><span>Tracking detected objects</span></li>
+<li>Implementing a Sort tracker</li>
+<li><span>Understanding the Kalman filter</span></li>
+<li>Seeing the app in action</li>
+</ul>
+<p>Let's start the chapter by pointing out the technical requirements and planning the app.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Getting started</h1>
+                </header>
+            
+            <article>
+                
+<p>As mentioned in all of the chapters of the book, you need an appropriate installation of <strong>OpenCV</strong>, <strong>SciPy</strong>, and <strong>NumPY</strong>. </p>
+<p>You can find the code that we present in this chapter at the GitHub repository at <span><a href="https://github.com/PacktPublishing/OpenCV-4-with-Python-Blueprints-Second-Edition/tree/master/chapter10">https://github.com/PacktPublishing/OpenCV-4-with-Python-Blueprints-Second-Edition/tree/master/chapter10</a></span>.</p>
+<div class="mce-root packt_infobox">When running the app with Docker, the Docker container should have appropriate access to the <strong>X11 server</strong>. This app cannot run in <strong>headless mode</strong>. The best environment to run the app with Docker is a <strong>Linux</strong> desktop environment. On <strong>macOS</strong>, you can use <strong>xQuartz </strong>(refer, to <a href="https://www.xquartz.org/">https://www.xquartz.org/</a>) in order to create an accessible X11 server.</div>
+<p><span>You can also use one of the available Docker files in the repository in order to run the app.</span></p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Planning the app</h1>
+                </header>
+            
+            <article>
+                
+<p>As mentioned previously, the final app will be able to detect, track, and count objects in a scene. This will require the following components:</p>
+<ul>
+<li><kbd>main.py</kbd>: This is the main script for detecting, tracking, and counting objects in real time.</li>
+<li><kbd>sort.py</kbd>: This is the module that implements the tracking algorithm.</li>
+</ul>
+<p>We will first prepare the main script. During the preparation, you will learn how to use detection networks, as well as how they work and how they are trained. In the same script, we will use the tracker to track and count objects.</p>
+<p><span>After preparin</span><span>g the main script, we will prepare the tracking algorithm and will be able to run the app. Let's now start with the preparation of the main script.</span></p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Preparing the main script </h1>
+                </header>
+            
+            <article>
+                
+<p>The main script will be responsible for the complete logic of the app. It will process a video stream and use <span>an object-detection deep convolutional neural network combined with the tracking algorithm that we will prepare later in this chapter.</span></p>
+<p><span>The algorithm is used to track objects from frame to frame. It will also be responsible for illustrating results. The script will accept arguments and have some intrinsic constants, which are defined in the following initialization steps of the script:</span></p>
+<ol>
+<li>As with any other script, we start by importing all the required modules:</li>
+</ol>
+<pre style="padding-left: 60px">import argparse<br/><br/>import cv2<br/>import numpy as np<br/><br/>from classes import CLASSES_90<br/>from sort import Sort</pre>
+<p style="padding-left: 60px">We will use <kbd>argparse</kbd> as we want our script to accept arguments. We store the object classes in a separate file in order not to contaminate our script. Finally, we import our <kbd>Sort</kbd> tracker, which we will build later in the chapter.</p>
+<ol start="2">
+<li>Next, we create and parse arguments:</li>
+</ol>
+<pre style="padding-left: 60px">parser = argparse.ArgumentParser()<br/>parser.add_argument("-i", "--input",<br/>                    help="Video path, stream URI, or camera ID ", default="demo.mkv")<br/>parser.add_argument("-t", "--threshold", type=float, default=0.3,<br/>                    help="Minimum score to consider")<br/>parser.add_argument("-m", "--mode", choices=['detection', 'tracking'], default="tracking",<br/>                    help="Either detection or tracking mode")<br/><br/>args = parser.parse_args()</pre>
+<p style="padding-left: 60px">Our first argument is the input, which can be a path to a video, the ID of a camera (<kbd>0</kbd> for the default camera), or a video stream <strong>Universal Resource Identifier</strong> (<strong>URI</strong>). For example, you will be able to connect the app to a remote IP camera using the <strong><span>Real-time Transport Control Protocol</span></strong> (<strong>RTCP</strong>).</p>
+<p style="padding-left: 60px">The networks that we will use will predict the bounding boxes of objects. Each bounding box will have a score, which will specify how probable it is that the bounding box contains an object of a certain type.</p>
+<p style="padding-left: 60px">The next parameter is <kbd>threshold</kbd>, which specifies the minimal value of the score. If the score is below <kbd>threshold</kbd>, then we will not consider the detection. The last parameter is <kbd>mode</kbd>, in which we want to run the script. If we run it in <kbd>detection</kbd> mode, the flow of the algorithm will stop after detecting objects and will not proceed further with tracking. The results of object detections will be illustrated in the frame.</p>
+<ol start="3">
+<li>OpenCV accepts the ID of a camera as an integer. If we specify the ID of a camera, the input argument will be a string instead of an integer. Hence, we need to convert it to an integer if required:</li>
+</ol>
+<pre style="padding-left: 60px">if args.input.isdigit():<br/>    args.input = int(args.input)</pre>
+<ol start="4">
+<li>Next, we define the required constants:</li>
+</ol>
+<pre style="padding-left: 60px">TRACKED_CLASSES = ["car", "person"]<br/>BOX_COLOR = (23, 230, 210)<br/>TEXT_COLOR = (255, 255, 255)<br/>INPUT_SIZE = (300,300)</pre>
+<p>In this app, we will track cars and people. We will illustrate bounding boxes in a yellowish color and write text in white. We'll also define the standard input size of the <strong>Single Shot Detector</strong> (<strong>SSD</strong>) model that we are going to use for detection. </p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Detecting objects with SSD</h1>
+                </header>
+            
+            <article>
+                
+<p>OpenCV has methods for importing models built with deep learning frameworks. We load the TensorFlow SSD model as follows:</p>
+<pre>config = "./ssd_mobilenet_v1_coco_2017_11_17.pbtxt.txt"<br/>model = "frozen_inference_graph.pb"<br/>detector = cv2.dnn.readNetFromTensorflow(model,config)</pre>
+<p>The first parameter of the <kbd>readNetFromTensorflow</kbd> method accepts a path to a file that contains a TensorFlow model in binary <strong>Protobuf</strong> (<strong>Protocol Buffers</strong>) format. The second parameter is optional. It is a path to a text file that contains a graph definition of the model, again in Protobuf format.</p>
+<p>Surely, the model file itself might contain the graph definition and OpenCV can read that definition from the model file. But, with many networks, it might be required to create a separate definition, as OpenCV cannot interpret all operations available in TensorFlow and those operations should be replaced with operations that OpenCV can interpret.</p>
+<p>Let's now define functions that will be useful for illustrating detections. The first function is for illustrating a single bounding box:</p>
+<pre>def illustrate_box(image: np.ndarray, box: np.ndarray, caption: str) -&gt; None:</pre>
+<p><span>From the previous code, the <kbd>illustrate_box</kbd> function accepts an image, a normalized bounding box as an array of four coordinates specifying two opposite corners of the box. It also accepts a caption for the box. Then, the following steps are covered in the function:</span></p>
+<ol>
+<li>It first extracts the size of the image:</li>
+</ol>
+<pre style="padding-left: 60px">rows, cols = frame.shape[:2]</pre>
+<ol start="2">
+<li>It then extracts the two points, scales them by the size of the image, and converts them into integers:</li>
+</ol>
+<pre style="padding-left: 60px">points = box.reshape((2, 2)) * np.array([cols, rows])<br/>p1, p2 = points.astype(np.int32)</pre>
+<ol start="3">
+<li>After that, we draw the corresponding <kbd>rectangle</kbd> using the two points:</li>
+</ol>
+<pre style="padding-left: 60px">cv2.rectangle(image, tuple(p1), tuple(p2), BOX_COLOR, thickness=4)</pre>
+<ol start="4">
+<li>Finally, we put the caption near the first point:</li>
+</ol>
+<pre style="padding-left: 60px">cv2.putText(<br/>    image,<br/>    caption,<br/>    tuple(p1),<br/>    cv2.FONT_HERSHEY_SIMPLEX,<br/>    0.75,<br/>    TEXT_COLOR,<br/>    2)</pre>
+<p class="mce-root">The second function will illustrate all <kbd>detections</kbd>, given as follows:</p>
+<pre>def illustrate_detections(dets: np.ndarray, frame: np.ndarray) -&gt; np.ndarray:<br/>    class_ids, scores, boxes = dets[:, 0], dets[:, 1], dets[:, 2:6]<br/>    for class_id, score, box in zip(class_ids, scores, boxes):<br/>        illustrate_box(frame, box, f"{CLASSES_90[int(class_id)]} {score:.2f}")<br/>    return frame</pre>
+<p>From the preceding code snippet, the second function accepts detections as a two-dimensional <kbd>numpy</kbd> array and a frame on which it illustrates the detections. Each detection consists of the class ID of the detected object, a score specifying the probability that the bounding box contains an object of the specified class, and the bounding box of the detection itself.</p>
+<p>The function first extracts the previously stated values for all detections, then illustrates each bounding box of the detection using the <kbd>illustrate_box</kbd> methods. The class name and <kbd>score</kbd> are added as the caption for the box. </p>
+<p> Let's now connect to the camera:</p>
+<pre>cap = cv2.VideoCapture(args.input)</pre>
+<p>We pass the <kbd>input</kbd> argument to <kbd>VideoCapture</kbd>, which, as mentioned previously, can be a video file, stream, or camera ID.</p>
+<p><span>Now that we have loaded the network, defined the required functions for illustration, and opened the video capture, we are ready to iterate over frames, detect objects, and illustrate the results. We use a <kbd>for</kbd> loop for this purpose:</span></p>
+<pre>for res, frame in iter(cap.read, (False, None)):</pre>
+<p>The body of the loop contains the following steps:</p>
+<ol>
+<li>It sets the frame as the input of the <kbd>detector</kbd> network: </li>
+</ol>
+<pre style="padding-left: 60px">detector.setInput(<br/>    cv2.dnn.blobFromImage(<br/>        frame,<br/>        size=INPUT_SIZE,<br/>        swapRB=True,<br/>        crop=False))</pre>
+<p style="padding-left: 60px"><kbd>blobFromImage</kbd> creates a four-dimensional input for the network from the provided image. It also resizes the image to the input size and swaps the red and blue channels of the image as the network is trained on RGB images, whereas OpenCV reads frames in BGR.</p>
+<ol start="2">
+<li>Then it makes a prediction with the network and gets the output in the desired format:</li>
+</ol>
+<pre style="color: black;padding-left: 60px">detections = detector.forward()[0, 0, :, 1:]</pre>
+<p style="color: black;padding-left: 60px">From the previous code, <kbd>forward</kbd> stands for forward propagation. The result is a two-dimensional <kbd>numpy</kbd> array. The first index of the array specifies the detection number, and the second index represents a specific detection, which is expressed by the object class, score, and four values specifying two corner coordinates of the bounding box.</p>
+<ol start="3">
+<li>After that, it extracts <kbd>scores</kbd> from <kbd>detections</kbd>, and filters out the ones that have a very low score:</li>
+</ol>
+<pre style="color: black;padding-left: 60px">scores = detections[:, 1]<br/>detections = detections[scores &gt; 0.3]</pre>
+<ol start="4">
+<li>In the cases when the script is running in <kbd>detection</kbd> mode, illustrate <kbd>detections</kbd> right away:</li>
+</ol>
+<pre style="padding-left: 60px">if args.mode == "detection":<br/>    out = illustrate_detections(detections, frame)<br/>    cv2.imshow("out", out)</pre>
+<ol start="5">
+<li>Then we have to set termination criteria:</li>
+</ol>
+<pre style="padding-left: 60px">if cv2.waitKey(1) == 27:<br/>    exit()</pre>
+<p>Now we have everything ready to run our script in detection mode. A sample result is shown in the image that follows:</p>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/c5b10d54-39ae-4182-bbc9-b48ba3457076.png" style="width:41.92em;height:23.58em;"/></p>
+<p class="mce-root"><span>You can note in the frame from the preceding image that the SSD model has successfully detected all the cars and the single individual (person) visible in the scene. Let's now look at how we can use other object detectors.</span></p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Using other detectors</h1>
+                </header>
+            
+            <article>
+                
+<p>In this chapter, we are using an object detector to get bounding boxes with their object types, which will be further processed by the Sort algorithm for tracking. In general, it does not matter by what exact means the boxes are obtained. In our case, we have used an SSD pre-trained model. Let's now understand how to replace it with a different model. </p>
+<p>Let's first understand how we can use<span> </span><span>YOLO</span><span> </span><span>for this purpose. YOLO is also a single-stage detector and stands for</span> <strong>You Only Look Once</strong> <span>(</span><strong>YOLO</strong><span>). The original YOLO models are based on </span><strong>Darknet</strong><span>, which is another </span><span>open-source neural network framework and is written in C++ and CUDA. OpenCV has the ability to load networks based on Darknet, similarly to how it loads TensorFlow models. </span></p>
+<p>In order to load a YOLO model, you should first download the files containing the network configuration and the network weights.</p>
+<div class="packt_infobox">The latter can be done by visiting <a href="https://pjreddie.com/darknet/yolo/">https://pjreddie.com/darknet/yolo/</a>. In our case, as an example, we will use <span><strong>YOLOv3-tiny</strong>, which is the most lightweight one at the time of writing.</span></div>
+<p><span>Once you have downloaded the network configuration and weights, you can load them similarly to how you loaded the SSD model:</span></p>
+<pre>detector = cv2.dnn.readNetFromDarknet("yolov3-tiny.cfg", "yolov3-tiny.weights")</pre>
+<p>The difference is that the <kbd>readNetFromDarknet</kbd><span> </span>function is used instead of <kbd>readNetFromTensorflow</kbd>. </p>
+<p>In order to use this detector instead of the SSD, we have several things to do:</p>
+<ul>
+<li>We have to change the size of the input:</li>
+</ul>
+<pre style="color: black;padding-left: 60px">INPUT_SIZE = (320, 320)</pre>
+<p style="color: black;padding-left: 60px">The network is originally trained in with the specified size. If you have a high-resolution input video stream and you want the network to detect small objects in the scene, you can set the input to a different size, which is a multiplier of 160, for example, size (640, 480). The larger the input size, the more small objects will be detected, but the network will make predictions slower.</p>
+<ul>
+<li>We have to change class names:</li>
+</ul>
+<pre style="color: black;padding-left: 60px">with open("coco.names") as f:<br/>    CLASSES_90 = f.read().split("\n")</pre>
+<p style="color: black;padding-left: 60px">Although the YOLO network is trained on the <strong>COCO</strong> dataset, the IDs of the objects are different. You can still run with the previous class names, but you will have the wrong names of the classes in that case.</p>
+<div class="packt_infobox"><br/>
+You can download the file from the darknet repository <a href="https://github.com/pjreddie/darknet">https://github.com/pjreddie/darknet</a>. </div>
+<ul>
+<li>We have to slightly change the input:</li>
+</ul>
+<pre style="color: black;padding-left: 60px">detector.setInput(<br/>    cv2.dnn.blobFromImage(<br/>        frame,<br/>        scalefactor=1 / 255.0,<br/>        size=INPUT_SIZE,<br/>        swapRB=True,<br/>        crop=False))</pre>
+<p style="color: black;padding-left: 60px">In comparison with the input for SSD, we add <kbd>scalefactor</kbd>, which normalizes the input.</p>
+<p>Now we are ready to successfully make predictions. Although, we are not completely ready to display the results with this detector. The problem is that the predictions of the YOLO model have a different format.</p>
+<p>Each detection consists of the coordinates of the center of the bounding box: the width, the height of the bounding box, and a one-hot vector representing the probabilities of each type of object in the bounding box. In order to finalize the integration, we have to bring the detections in the format that we use in the app. The latter can be accomplished with the following steps:</p>
+<ol>
+<li>We extract the center coordinates of the bounding boxes:</li>
+</ol>
+<pre style="color: black;padding-left: 60px">centers = detections[:, 0:2]</pre>
+<ol start="2">
+<li>We then also extract the width and height of the bounding boxes:</li>
+</ol>
+<pre style="color: black;padding-left: 60px">sizes = detections[:, 2:4]</pre>
+<ol start="3">
+<li>Then, we extract <kbd><span>scores_</span>one_hot</kbd>:</li>
+</ol>
+<pre style="color: black;padding-left: 60px">scores_one_hot = detections[:, 5:]</pre>
+<ol start="4">
+<li>Then, we find the <kbd>class_ids</kbd> of the maximum scores:</li>
+</ol>
+<pre style="color: black;padding-left: 60px">class_ids = np.argmax(scores_one_hot, axis=1)</pre>
+<ol start="5">
+<li>After that, we extract the maximum scores:</li>
+</ol>
+<pre style="color: black;padding-left: 60px">scores = np.max(scores_one_hot, axis=1)</pre>
+<ol start="6">
+<li>Then, we construct <kbd>detections</kbd> in the format consumed by the rest of the app using the results obtained in the previous steps:</li>
+</ol>
+<pre style="color: black;padding-left: 60px">detections = np.concatenate(<br/>    (class_ids[:, None], scores[:, None], centers - sizes / 2, centers + sizes / 2), axis=1)<br/>detections = detections[scores &gt; 0.3]</pre>
+<p>Now we can successfully run the app with the new detector. Depending on your needs, the available resources, and the required accuracy, you might want to use other detection models, such as other versions of SSD or<span> </span><strong>Mask-RCNN</strong>, which is one of the most accurate object detection networks at the time of writing, although it is much slower than the SSD models.</p>
+<p>You can try to load your model of choice with OpenCV, as we have done for both YOLO and SSD in this chapter. With this approach, you might encounter difficulties loading the model. For example, you might have to adapt the network configuration such that all the operations in the network can be processed by OpenCV.</p>
+<p>The latter is particularly due to the fact that modern deep learning frameworks develop quite fast and OpenCV at least needs time to catch up to include all new operations. Another approach that you might prefer is to run a model using the original framework, similarly to what we did in <a href="8baf5d4c-f1e9-4b76-b957-e19682cb9e68.xhtml">Chapter 9</a>, <em>Learning to Classify and Localize Objects</em>. </p>
+<p>So now that we understand how to use detectors, let's look at how they work in the next section.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Understanding object detectors</h1>
+                </header>
+            
+            <article>
+                
+<p>In <a href="8baf5d4c-f1e9-4b76-b957-e19682cb9e68.xhtml">Chapter 9</a><span>,</span><em><span> </span>Learning to Classify and Localize Objects</em>, we learned how to use the feature maps of a certain layer of a convolutional neural network to predict the bounding box of an object in the scene, which in our case was a head.</p>
+<p>You might note that the difference between the localization network that we composed and the detection networks (that we used in this chapter) is that the detection networks predict multiple bounding boxes instead of a single one, as well as assigning a class to each of the bounding boxes.</p>
+<p>Let's now make a smooth transition between the two architectures so that you can understand how object detection networks like YOLO and SSD work.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">The single-object detector</h1>
+                </header>
+            
+            <article>
+                
+<p>First of all, let's look at how to predict the class in parallel with the box. In <a href="8baf5d4c-f1e9-4b76-b957-e19682cb9e68.xhtml">Chapter 9</a><span>,</span><em><span> </span>Learning to Classify and Localize Objects</em><span>,</span> you also learned how to make a classifier. Nothing limits us to combining classification with localization in a single network. That is done by connecting the classification and localization blocks to the same feature map of the base network and training it all together with a loss function, which is a sum of localization and classification losses. You can create and train such a network as an exercise.</p>
+<p>The question remains, <em>what if there is no object in the scene?</em> To resolve this, we can simply add one more class that corresponds to the background and assign zero to the loss of the bounding box predictor when training. As a result, you will have a detector that detects multiple classes of objects but can only detect one object in the scene. Let's now look at how we can predict multiple boxes instead of one, and hence, arrive at a complete architecture of an object detector. </p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">The sliding-window approach</h1>
+                </header>
+            
+            <article>
+                
+<p>One of the earliest approaches to create an architecture that can detect multiple objects in the scene was the <strong>sliding-window</strong> approach. With this approach, you first build a classifier for objects of interest. Then, you pick a rectangle (a window) of a size that is several or many times smaller than the image where you want to detect an object. After that, you slide it across all possible locations in the image and classify whether there is an object of the chosen type in each position of the rectangle.</p>
+<p class="mce-root"><span>During sliding, a sliding size of between a fraction of the box size and the complete box size is used. The procedure is repeated with different sizes of the sliding window. Finally, you pick the window positions that have a class score above some threshold and you report that those window positions with their sizes are the bounding boxes of the chosen object classes.</span></p>
+<p>The problem with this approach is, first of all, that a lot of classifications should be done on a single image, and hence the architecture of the detector will be quite heavy. Another problem is that the objects are localized only with the precision of the sliding size. Also, the sizes of the detection bounding boxes have to be equal to the sizes of the sliding windows. Surely, the detection could be improved if the slide size was reduced and the number of window sizes was increased, but this would result in an even greater computational cost. </p>
+<p>One of the ideas you <span>already </span>might have come up with is to combine the single-object detector with the sliding-window approach and take advantage of both.  For example, you could split the image into regions. For example, we could take a 5 x 5 grid and run the single-object detector in each cell of the grid.</p>
+<p>You could go even further by creating more grids with a larger or smaller size, or by making the grid cells overlap. As a mini-project to get a deep understanding of the ideas covered, you might like to implement them and play with the results. Still, with these approaches, we make the architectures heavier, that is, once we enlarge the grid size or the number of grids in order to improve the accuracy.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Single-pass detectors</h1>
+                </header>
+            
+            <article>
+                
+<p>In the previously stated ideas, we have used single-object classification or detection networks to achieve multiple-object detection. In all scenarios, for each predefined region, we feed the network with the complete image or part of it multiple times. In other words, we have multiple passes that result in heavy architecture.</p>
+<p><em>Wouldn't it be nice to have a network that, once fed with an image, detects all the objects in the scene in a single pass?</em> An idea that you could try is to make more outputs for our single-object detector so that it predicts multiple boxes instead of one. This is a good idea, but there is a problem. Suppose we have multiple dogs in the scene that could appear in different locations and in different numbers.</p>
+<p class="mce-root"><span><em>How should we make an invariant correspondence between the dogs and the outputs?</em> If we make an attempt to train such a network by assigning boxes to the outputs, for example, from left to right, we will simply end up with predictions that are close to the average value of all positions.</span></p>
+<p>Networks such as SSD and YOLO tackle the issues and implement multiscale and multibox detection in a single pass. We can sum up their architecture with the following three components:</p>
+<ul>
+<li>First of all, they have a position-aware multibox detector connected to a feature map. We have discussed the training problem that arises when connecting several box predictors to the complete feature map. The problem with SSD and YOLO is solved by having a predictor that is connected to a small region of the feature map instead of a complete feature map.</li>
+</ul>
+<p style="padding-left: 60px">It predicts boxes in the region of the image that corresponds to just that exact region of the feature map. Then, the same predictor predicts across all possible locations of the feature map. This operation is implemented using convolutional layers. There are convolutional kernels, with their activations, that slide across the feature map and have coordinates and classes as their output feature maps.</p>
+<p style="padding-left: 60px">For example, you can obtain a similar operation if you go back to the code of the localization model and replace the last two layers, which flatten the output and create four fully connected neurons for predicting box coordinates with a convolutional layer with four kernels. Also, since the predictors act in a certain region and are aware only about that region, they predict coordinates that are relative to that region, instead of predicting coordinates that are relative to the complete image.</p>
+<ul>
+<li>Both YOLO and SSD predict several boxes in each location instead of a single one. They predict offset coordinates from several <strong>default boxes</strong>, which are also called <strong>anchor boxes</strong>. These boxes are chosen sizes and shapes that are close to the objects in the dataset or the natural scene, so that relative coordinates have small values and even the default boxes match the object bounding boxes pretty well.</li>
+</ul>
+<p style="padding-left: 60px">For example, a car usually appears as a wide box and a person usually appears as a tall box. Multiple boxes allow you to achieve better accuracy as well as to have multiple predictions in the same area. For example, if a person is sitting on a bike somewhere in the image and we have a single box, then we would omit one of the objects. With multiple anchor boxes, the objects will correspond to different anchor boxes.</p>
+<ul>
+<li>Besides having multisize anchor boxes, they use several feature maps with different sizes to accomplish multiscale prediction. If the prediction module is connected to the top feature maps of the network with a small size, it is responsible for large objects.</li>
+</ul>
+<p style="padding-left: 60px">If it is connected to one of the bottom feature maps, it is responsible for small objects. Once all the multibox predictions in the chosen feature maps are made, the results are translated to the absolute coordinates of the image and concatenated. As a result, we obtain the predictions in the form that we used in this chapter.</p>
+<div class="packt_infobox">If you are interested in more implementation details, we advise you to read corresponding papers, as well as to analyze the corresponding implementation code. </div>
+<p>So now that you understand how the detectors work, you are probably also interested in the principles of their training. However, before we understand those principles, let's understand the metric called <strong>Intersection over Union</strong>, which is heavily used when training and evaluating these networks as well as filtering their predictions.</p>
+<p>We will also implement a function to compute this metric, which we will use when building the Sort algorithm for tracking. Hence, you should note that understanding this metric is important not only for object detection but also for tracking.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Learning about Intersection over Union</h1>
+                </header>
+            
+            <article>
+                
+<p><strong>I<span>ntersection over </span>U</strong><span><strong>nion</strong> (<strong>IoU</strong>), which is</span> also called the <strong>Jaccard index</strong>, is defined as the size of the intersection divided by the size of the union and has the following formula:</p>
+<p class="CDPAlignCenter CDPAlign"><img class="fm-editor-equation" src="assets/9e471002-bc57-445c-9aec-b4281d4824a6.png" style="width:8.42em;height:2.67em;"/></p>
+<p><span>That formula is equivalent to the following:</span></p>
+<p class="CDPAlignCenter CDPAlign"><span> </span><img class="fm-editor-equation" src="assets/889c18e0-6464-4bdf-9561-0af7113b054e.png" style="width:9.42em;height:2.83em;"/></p>
+<p>In the following diagram, we illustrate IoU for two boxes:</p>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/b405602e-a935-4138-b019-46269ae54bc7.png" style="width:13.25em;height:5.50em;"/></p>
+<p>In the previous diagram, the union is the total area of the complete figure and the intersection is the part where the boxes overlap. The IoU can have a value in the range of (0,1) and reaches the maximal value only when the boxes match exactly. Once the boxes are separated, it becomes zero.</p>
+<p>Let's define a function that accepts two bounding boxes and returns their <kbd>iou</kbd> value:</p>
+<pre>def iou(a: np.ndarray, b: np.ndarray) -&gt; float:</pre>
+<p class="mce-root">In order to calculate the <kbd>iou</kbd> value, the following steps are necessary:</p>
+<ol>
+<li>We first extract the top-left and bottom-right coordinates of both bounding boxes:</li>
+</ol>
+<pre style="color: black;padding-left: 60px">a_tl, a_br = a[:4].reshape((2, 2))<br/>b_tl, b_br = b[:4].reshape((2, 2))</pre>
+<ol start="2">
+<li>Then, we get the element-wise <kbd>maximum</kbd> of the two top-left corners:</li>
+</ol>
+<pre style="color: black;padding-left: 60px">int_tl = np.maximum(a_tl, b_tl)</pre>
+<p style="color: black;padding-left: 60px" class="mce-root">The two arrays are compared element-wise and the result will be a new array containing the larger values of the corresponding indexes in the array. In our case, maximum <em>x</em> and <em>y</em> coordinates are obtained and stored in <kbd>int_tl</kbd>. If the boxes intersect, this is the top-left corner of the intersection.</p>
+<ol start="3">
+<li>Then, we get the element-wise <kbd>minimum</kbd> of the bottom-right corners:</li>
+</ol>
+<pre style="color: black;padding-left: 60px">int_br = np.minimum(a_br, b_br)</pre>
+<p style="color: black;padding-left: 60px" class="mce-root">Similar to the previous case, this is the bottom-right corner of the intersection if the boxes intersect.</p>
+<ol start="4">
+<li>Then, we calculate areas of the bounding boxes:</li>
+</ol>
+<pre style="color: black;padding-left: 60px">a_area = np.product(a_br - a_tl)<br/>b_area = np.product(b_br - b_tl)</pre>
+<p style="padding-left: 60px">The difference between the bottom-right and the top-left corner coordinates of a box is the width and height of the box, hence the product of the elements of the resulting array is the area of the bounding box.</p>
+<ol start="5">
+<li>After that, we calculate the intersection area:</li>
+</ol>
+<pre style="color: black;padding-left: 60px">int_area = np.product(np.maximum(0., int_br - int_tl))</pre>
+<p style="color: black;padding-left: 60px">If the boxes do not overlap, at least one element of the resulting array will be negative. Negative values are replaced with zeros. Hence, in such cases, the area is zero, as expected. </p>
+<ol start="6">
+<li>And at last, we calculate IoU and <kbd>return</kbd> the result:</li>
+</ol>
+<pre style="color: black;padding-left: 60px">return int_area / (a_area + b_area - int_area)</pre>
+<p>So, now that you have understood what IoU is and have built a function to compute it, you are ready to learn how the detection networks used are trained.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Training SSD- and YOLO-like networks </h1>
+                </header>
+            
+            <article>
+                
+<p>You are already aware that networks such as YOLO and SSD predict objects with predefined anchor boxes. Out of all available boxes, only one box is chosen, which corresponds to the object. During prediction time, the box is assigned with the class of the object and the offsets are predicted.</p>
+<p><em>So, the question is, how do we choose that single box?</em> You might already have guessed that IoU is used for that purpose. The correspondence between the ground truth boxes and anchor boxes can be made as follows:</p>
+<ol>
+<li>Create a matrix that contains all IoU values of all possible ground truth and anchor box pairs. Say, the row corresponds to the ground truth box and the column corresponds to anchor box. </li>
+<li>Find the maximal element in the matrix and assign the corresponding boxes to each other. Remove the row and column of the maximal element from the matrix.</li>
+<li> Repeat <em>step 2</em> until there are no ground truth boxes available, or in other words, until all the rows of the matrix are removed.</li>
+</ol>
+<p>Once the assignment is done, all that is left to do is to define a loss function for each box, sum the results as the total loss and train the network. The loss for the box offsets bounding boxes which contain objects can be simply defined as IoU—the greater the IoU, the closer the bounding box is to the ground truth, hence, it's negated value should be reduced.</p>
+<p>The anchor boxes that do not contain objects do not contribute to the loss. The loss of object classes is also straightforward—the anchor boxes that do not have assignments are trained with the background class and the ones that do have assignments are trained with their corresponding classes.</p>
+<p>Each of the considered networks has some modifications to the described loss so that it achieves better performance on the specific network. You can pick a network and define the loss described here on your own, which will be a good exercise for you. If you are building your own app and you need the corresponding trained network with relatively high accuracy in a limited amount of time, you might consider using the training methods that come with the code base of the corresponding network.</p>
+<p><span>So, now that you have understood how to train these networks, let's continue the <kbd>main</kbd> script of the app and integrate it with the Sort tracker in the next section.</span></p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Tracking detected objects</h1>
+                </header>
+            
+            <article>
+                
+<p>Once we can successfully detect objects in each frame, we can track them by associating detections between frames. As mentioned previously, in this chapter, we are using the Sort algorithm for multiple-object tracking, which stands for <strong>Simple Online and Realtime Tracking</strong>.</p>
+<p>Given sequences of multiple bounding boxes, this algorithm associates the boxes of sequence elements and fine-tunes the bounding box coordinates based on physical principles. One of the principles is that a physical object cannot rapidly change its speed or direction of movement. For example, under normal conditions, a moving car cannot reverse its movement direction between two consequent frames.</p>
+<p>We suppose that the detector annotates the objects correctly and we instantiate one <strong>Multiple Object Trackers</strong> (<kbd>mots</kbd>) for each class of objects that we want to track:</p>
+<pre>TRACKED_CLASSES = ["car", "person"]<br/>mots = {CLASSES_90.index(tracked_class): Sort()<br/>            for tracked_class in TRACKED_CLASSES}</pre>
+<p>We store the instances in a  dictionary. The keys in the dictionary are set to the corresponding class IDs. We will track the detected objects using the following function:</p>
+<pre>def track(dets: np.ndarray,<br/>          illustration_frame: np.ndarray = None):<br/>    for class_id, mot in mots.items():</pre>
+<p class="mce-root">The function accepts detections and an optional illustration frame. The main loop of the function iterates over the multi-object trackers that we have instantiated. Then, for each multi-object tracker, the following steps are covered:</p>
+<ol>
+<li>We first extract detections of the object type of the current multi-object tracker from all the passed detections:</li>
+</ol>
+<pre style="padding-left: 60px">class_dets = dets[dets[:, 0] == class_id]</pre>
+<ol start="2">
+<li>Then, we update the tracker by passing the bounding boxes of the current object type to the <kbd>update</kbd> method of the tracker: </li>
+</ol>
+<pre style="padding-left: 60px">sort_boxes = mot.update(class_dets[:, 2:6])</pre>
+<p style="padding-left: 60px">The <kbd>update</kbd> method returns the bounding box coordinates of the tracked objects associated with the IDs of the object.</p>
+<ol start="3">
+<li>If the illustration frame is provided, illustrate the boxes in the frame:</li>
+</ol>
+<pre style="color: black;padding-left: 60px">if illustration_frame is not None:<br/>    for box in sort_boxes:<br/>        illustrate_box(illustration_frame, box[:4],<br/>            f"{CLASSES_90[class_id]} {int(box[4])}")</pre>
+<p style="padding-left: 60px" class="mce-root"><span>For each returned result, the corresponding bounding box will be drawn using our previously defined </span><kbd>illustrate_box</kbd> <span>function. Each box will be annotated with the class name and the ID of the box.</span></p>
+<p>We also want to define a function that will print general information about tracking on the frame:</p>
+<pre>def illustrate_tracking_info(frame: np.ndarray) -&gt; np.ndarray:<br/>    for num, (class_id, tracker) in enumerate(trackers.items()):<br/>        txt = f"{CLASSES_90[class_id]}:Total:{tracker.count} Now:{len(tracker.trackers)}"<br/>        cv2.putText(frame, txt, (0, 50 * (num + 1)),<br/>                    cv2.FONT_HERSHEY_SIMPLEX, 0.75, TEXT_COLOR, 2)<br/>    return frame</pre>
+<p>For each <span>class of </span>tracked objects, the function will write the total number of tracked objects and the number of currently tracked objects.</p>
+<p>Now that we have defined the functions for tracking and illustration, we are ready to modify the main loop, which iterates over frames, so that we can run our app in tracking mode:</p>
+<pre>if args.mode == "tracking"<br/>    out = frame<br/>    track(detections, frame)<br/>    illustrate_tracking_info(out)</pre>
+<p>From the previous snippet, if the app runs in tracking mode, the detected objects of the chosen classes will be tracked throughout frames using our <kbd>track</kbd> function and tracking information will be shown on the frame.</p>
+<p>What's left to do is to elaborate on the tracking algorithm in order to finalize the complete app. We will do that in the next section with the help of the Sort tracker.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Implementing a Sort tracker</h1>
+                </header>
+            
+            <article>
+                
+<p><span>The Sort algorithm is a simple yet robust real-time tracking algorithm for the multiple-object tracking of detected objects in video sequences. The algorithm has a mechanism to associate detections and trackers that results in a maximum of one detection box for each tracked object.</span></p>
+<p><span>For each tracked object, the algorithm creates an instance of a single object-tracking class. Based on physical principles such as an object cannot rapidly change size or speed, the class instance can predict the feature location of the object and maintain tracking from frame to frame. The latter is achieved with the help of the <strong>Kalman</strong> filter.</span></p>
+<p><span>We import the modules that we will use in the implementation of the algorithm as follows:</span></p>
+<pre>import numpy as np<br/>from scipy.optimize import linear_sum_assignment<br/>from typing import Tuple<br/>import cv2</pre>
+<p>As usual, the main dependencies are <kbd>numpy</kbd> and OpenCV. The unfamiliar <kbd>linear_sum_assignment</kbd> method will be used when associating detected objects with tracked ones.</p>
+<p>Let's now dive into the algorithm by first understanding what the Kalman Filter is, which is used in the<span> implementation of a single box tracker </span><span>in the next section.</span></p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Understanding the Kalman filter</h1>
+                </header>
+            
+            <article>
+                
+<p>The Kalman filter is a statistical model that has a wide range of applications in signal processing, control theory, and statistics. The Kalman filter is a complex model, but it could be thought of as an algorithm to <strong>de-noise</strong> the observations of an object that contain a lot of noise over time when we know the dynamics of the system with certain accuracy. </p>
+<p>Let's look at an example, to illustrate how the Kalman filter works. Imagine we want to find the location of a train that moves on rails. The train will have a velocity, but unfortunately, the only measurements we have are from radar, which only shows the location of the train.</p>
+<p>We would like to accurately measure the location of the train. If we were to look at each radar measurement, we could learn the location of the train from it, but what if the radar is not very reliable and has high measurement noise. For example, the locations that radar reported are as shown in the following diagram:</p>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/ebcecf52-a143-4b3b-8b77-b4f520b2e9e7.png" style="width:37.58em;height:28.17em;"/></p>
+<p><em>What can we tell about the real location of the train at 3 p.m.?</em> Well, there is a possibility that the train was at <span class="packt_screen">position 5</span>, but since we know that trains are heavy and change their speed very slowly, it would be very hard for the train to reverse its direction of travel twice in quick succession, to go to <span class="packt_screen">position 5</span> and back. So, we can use some knowledge of how things work, and the previous observations, to make more reliable predictions about the location of the train.</p>
+<p>For example, if we assumed that we could describe the train by its location and velocity, we would define the state to be the following:</p>
+<p class="CDPAlignCenter CDPAlign"><img class="fm-editor-equation" src="assets/750b462b-f85a-4033-950e-5dad31c8ac07.png" style="width:6.25em;height:1.75em;"/></p>
+<div class="packt_infobox">Here, <em>x</em> is the location of the train and <em>v</em> is the velocity of the train.</div>
+<p>Now we need a way to describe our model of the world, which is called the <strong>state-transition model</strong>—for a train, it is simple:</p>
+<p style="padding-left: 30px"><img src="assets/1ad60428-2633-4c3e-b254-98e617c14c06.png" style="width:53.25em;height:3.50em;"/></p>
+<p>We could write this in a matrix form using the state variable, <em>s</em>:</p>
+<p class="CDPAlignCenter CDPAlign"><img class="fm-editor-equation" src="assets/d3421676-135c-46cd-b1ad-eaa96ee347ba.png" style="width:19.00em;height:2.83em;"/></p>
+<div class="packt_infobox"> The matrix, <em>F</em>, is called the <strong>state-transition matrix</strong>.</div>
+<p>As such, we believe that the train doesn't change its velocity and moves at a constant speed. This means that there should be a straight line on the graph of observations, but that's too restrictive and we know that no real system behaves that way, so we allow for some noise being present in the system, that is, <strong>process noise</strong>:</p>
+<p class="CDPAlignCenter CDPAlign"><img class="fm-editor-equation" src="assets/e0482ee7-1982-4c30-95b1-56dc7dc3c2d9.png" style="width:12.42em;height:1.42em;"/></p>
+<p>Once we make statistical assumptions about the nature of the process noise, this will become a statistical framework, which is usually what happens. But, this way, if we are uncertain about our state transition model, but certain about observations, surely the best solution would still be what the instruments reported. So, we need to tie our state to our observations. Notice that we are observing <em>x</em>, so the observation could be recovered by multiplying the state by a simple row matrix:</p>
+<p class="CDPAlignCenter CDPAlign"><img class="fm-editor-equation" src="assets/4e49b45c-88d5-43ae-b353-8ab4cb95ff8b.png" style="width:14.00em;height:2.75em;"/></p>
+<p>But, as we said, we have to allow for the observations being imperfect (maybe our radar is very old, and sometimes has erroneous readings), that is, we need to allow for <strong>observation noise</strong>; thus, the final observation is the following:</p>
+<p class="CDPAlignCenter CDPAlign"><img class="fm-editor-equation" src="assets/d9a16bcf-3bfc-4d3e-b41c-3c5fee17584d.png" style="width:10.25em;height:1.42em;"/></p>
+<p>Now, if we can characterize process noise and observation noise, the Kalman filter will be able to give us good predictions for the locations of the train at each point, using only the observations <em>before</em> that time. The best way to parametrize noise is with a covariance matrix:</p>
+<p style="padding-left: 30px"><img src="assets/0db437b2-e554-45dd-897c-93bbbe583257.png" style="width:45.67em;height:3.00em;"/></p>
+<p style="padding-left: 30px">The Kalman filter has a recursive <strong>state-transition model</strong>, so we have to supply the initial value of the state. If we pick it to be <kbd>(0, 0)</kbd>, and if we assume that <strong>process</strong> <strong>noise</strong> and <strong>measurement noise</strong> are equally probable (this is a terrible assumption in real life), the Kalman filter will give us the following predictions for each point in time:</p>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/48a67f29-b7f5-4978-9136-1d11bfd56edb.png" style="width:37.00em;height:27.75em;"/></p>
+<p>Since we believe our observations as much as our assumption that the velocity doesn't change, we got a smoothed curve (blue) that is not as extreme, but it is still not that convincing. So, we have to make sure that we encode our intuition in the variables that we pick.</p>
+<p>Now, if we say that the <strong>signal-to-noise ratio</strong>, that is, the square root of the ratio of covariances, is 10, we will get the following results:</p>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/d8fea792-6cd0-4bf0-b92b-c1036e39613e.png" style="width:39.67em;height:29.83em;"/></p>
+<p>As you can see, the velocity does indeed move very slowly, but we seem to have underestimated how far the train has gone. <em>Or have we?</em></p>
+<p>It's a really hard task to tune the Kalman filter, and there are many algorithms for doing that, but unfortunately, none are perfect. For this chapter, we will not cover those; we will try to pick parameters that make sense, and we will see that those parameters give decent results.</p>
+<p>Now let's revisit our single car tracking model, and see how we should model our system dynamics.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Using a box tracker with the Kalman filter</h1>
+                </header>
+            
+            <article>
+                
+<p><span>First, we have to figure out how to model each car's state. It might be better to start with the observation model; that is, <em>what can we measure about each car?</em></span></p>
+<p><span>Well, the object detectors give us boxes, but the way they are presented is not the best physical interpretation; similar to the train example given previously, we want variables we can reason about and that are closer to the underlying dynamics of the traffic. So, we use the following observation model:<br/></span></p>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/79301632-1b42-4f7e-a72e-bad89cc97138.png" style="width:21.83em;height:5.42em;"/></p>
+<p class="CDPAlignLeft CDPAlign">Here, <em>u</em> and <em>v</em> are the <span>horizontal and vertical pixel locations</span><span> of the center of the target</span>, and <em><span>s</span></em> <span>and</span> <em><span>r</span></em> <span>repre</span><span>sent the scale (area) and the aspect ratio of the target’s bou</span><span>nd</span><span>ing box respectively</span>. Since our cars are moving around the screen and are moving further away or coming closer, both coordinates and the size of the bounding boxes will change over time.</p>
+<p>Assuming that nobody is driving like a lunatic, the velocities of the cars in the image should stay more or less constant; that's why we can limit our model to the location and velocities of the objects. So, the state we will take is the following:</p>
+<p class="CDPAlignCenter CDPAlign"><img class="fm-editor-equation" src="assets/b31bf4a5-3f32-4b71-ba2c-ba7e570f2441.png" style="width:15.50em;height:1.83em;"/></p>
+<div class="packt_infobox">We have used a notation where the dot on top of a variable means the rate of change of that variable.</div>
+<p>The <strong>state transition model</strong> will be that the velocities and the aspect ratio stay constant over time (with some <strong>process noise</strong>). In the following screenshot, we have visualized all the boundary boxes, and their corresponding states (the location of the center and the velocity vector):</p>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/b9b6ae4a-1f4e-4ab9-ac0f-0ed8e474079f.png" style="width:41.00em;height:23.00em;"/></p>
+<p>As you can see, we have set up the model so that what it observes is slightly different from what we receive from our tracker․ So, in the next section, we'll go over the transformation functions we need to go from a boundary box to and from the state space of the Kalman Filter.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Converting boundary boxes to observations</h1>
+                </header>
+            
+            <article>
+                
+<p>In order to pass the boundary boxes to the Kalman filter, we will have to define a transformation function from each boundary box to the observation model, and, in order to use the predicted boundary boxes for object tracking, we need to define a function from a state to a boundary box.</p>
+<p>Let's start with a transformation function from a boundary box to an observation:</p>
+<ol>
+<li>First, we calculate the center coordinates of the boundary box:</li>
+</ol>
+<pre style="padding-left: 60px">def bbox_to_observation(bbox):<br/>    x, y = (bbox[0:2] + bbox[2:4]) / 2</pre>
+<ol start="2">
+<li>Next, we calculate the width and height of the box, which we will use to calculate the size (that is, the area) and the scale:</li>
+</ol>
+<pre style="padding-left: 60px">    w, h = bbox[2:4] - bbox[0:2]</pre>
+<ol start="3">
+<li>Then, we calculate the size of <kbd>bbox</kbd>, that is, the area:</li>
+</ol>
+<pre style="padding-left: 60px">    s = w * h</pre>
+<ol start="4">
+<li>After that, we calculate the aspect ratio, which is done just by dividing the width by the height:</li>
+</ol>
+<pre style="padding-left: 60px">    r = w / h</pre>
+<ol start="5">
+<li>Then <kbd>return</kbd> the result as a 4 x 1 matrix:</li>
+</ol>
+<pre style="padding-left: 60px">    return np.array([x, y, s, r])[:, None].astype(np.float64)</pre>
+<p>Now, since we know that we have to define the inverse transformation as well, let's define <kbd>state_to_bbox</kbd>:</p>
+<ol>
+<li>It takes a 7 x 1 matrix as an argument and unpacks all the components that we need to construct a boundary box:</li>
+</ol>
+<pre style="padding-left: 60px">def state_to_bbox(x):<br/>    center_x, center_y, s, r, _, _, _ = x.flatten()</pre>
+<ol start="2">
+<li>Then, it calculates the width and the height of the boundary box, from the aspect ratio and scale:</li>
+</ol>
+<pre style="padding-left: 60px">    w = np.sqrt(s * r)<br/>    h = s / w</pre>
+<ol start="3">
+<li>After that, it calculates the coordinates of the center:</li>
+</ol>
+<pre style="padding-left: 60px">    center = np.array([center_x, center_y])</pre>
+<ol start="4">
+<li>Then, it calculates the half size of the box as a <kbd>numpy</kbd> tuple, and uses it to calculate the coordinates of the opposite corners of the box:</li>
+</ol>
+<pre style="padding-left: 60px">    half_size = np.array([w, h]) / 2<br/>    corners = center - half_size, center + half_size</pre>
+<ol start="5">
+<li>Then, we return the boundary box as a one-dimensional <kbd>numpy</kbd> array:</li>
+</ol>
+<pre style="padding-left: 60px">    return np.concatenate(corners).astype(np.float64)</pre>
+<p>Geared with the transformation functions, let's see how we can use OpenCV to build a Kalman filter.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Implementing a Kalman filter</h1>
+                </header>
+            
+            <article>
+                
+<p><span>Now, geared with our model, let's get our hands dirty and write a class that handles all this magic. </span>We are going to write a custom class that will use <kbd>cv2.KalmanFilter</kbd> as a Kalman filter, but we will add some helper attributes to be able to keep track of each object.</p>
+<p>First, let's take a look at the initialization of the class, where we will set up our Kalman filter by passing the state model, transition matrix, and initial parameters:</p>
+<ol>
+<li>We first start by initializing the class with the boundary box—<kbd>bbox</kbd>—and the label for the <kbd>label</kbd> object: </li>
+</ol>
+<pre style="color: black;padding-left: 60px">class KalmanBoxTracker:<br/>    def __init__(self, bbox, label):</pre>
+<ol start="2">
+<li>Then we set up some helper variables that will let us filter boxes as they appear and disappear in the tracker:</li>
+</ol>
+<pre style="padding-left: 60px">        self.id = label<br/>        self.time_since_update = 0<br/>        self.hit_streak = 0</pre>
+<ol start="3">
+<li>Then, we initialize <kbd>cv2.KalmanFilter</kbd> with the correct dimensionality and data type:</li>
+</ol>
+<pre style="padding-left: 60px">        self.kf = cv2.KalmanFilter(dynamParams=7, measureParams=4, type=cv2.CV_64F)</pre>
+<ol start="4">
+<li>We set the transition matrix and the corresponding process' <strong>noise covariance matrix</strong>. The covariance matrix is a simple model that involves the movement of each object with the current constant velocity in the horizontal and vertical directions, and becomes bigger or smaller using a constant rate:</li>
+</ol>
+<pre style="padding-left: 60px">        self.kf.transitionMatrix = np.array(<br/>            [[1, 0, 0, 0, 1, 0, 0],<br/>             [0, 1, 0, 0, 0, 1, 0],<br/>             [0, 0, 1, 0, 0, 0, 1],<br/>             [0, 0, 0, 1, 0, 0, 0],<br/>             [0, 0, 0, 0, 1, 0, 0],<br/>             [0, 0, 0, 0, 0, 1, 0],<br/>             [0, 0, 0, 0, 0, 0, 1]], dtype=np.float64)</pre>
+<ol start="5">
+<li>We also set how certain we are about the constant speed process. We choose a <strong>diagonal covariance matrix</strong>; that is, our state variable is not correlated, and we set the variance for location variables as <kbd>10</kbd>, and as 10,000 for velocity variables. We believe that location changes are more predictable than velocity changes:</li>
+</ol>
+<pre style="padding-left: 60px">        self.kf.processNoiseCov = np.diag([10, 10, 10, 10, 1e4, 1e4, 1e4]).astype(np.float64)</pre>
+<ol start="6">
+<li>Then, we set the <strong>Observation model</strong> to be the following matrix, which implies that we are just measuring the first four variables in the state, that is, all the location variables:</li>
+</ol>
+<pre style="padding-left: 60px">        self.kf.measurementMatrix = np.array(<br/>            [[1, 0, 0, 0, 0, 0, 0],<br/>             [0, 1, 0, 0, 0, 0, 0],<br/>             [0, 0, 1, 0, 0, 0, 0],<br/>             [0, 0, 0, 1, 0, 0, 0]], dtype=np.float64)</pre>
+<ol start="7">
+<li>Now that we have set the measurement of the noise covariance, we believe that the horizontal and vertical locations are greater than the aspect ratio and the zoom, so we give smaller values to those two measurement variances:</li>
+</ol>
+<pre style="padding-left: 60px">        self.kf.measurementNoiseCov = np.diag([10, 10, 1e3, 1e3]).astype(np.float64)<br/><br/></pre>
+<ol start="8">
+<li>Finally, we set the initial position and the uncertainty associated with the Kalman filter:</li>
+</ol>
+<pre style="padding-left: 60px">        self.kf.statePost = np.vstack((convert_bbox_to_z(bbox), [[0], [0], [0]]))<br/>        self.kf.errorCovPost = np.diag([1, 1, 1, 1, 1e-2, 1e-2, 1e-4]).astype(np.float64)</pre>
+<p>After we are done setting up the Kalman filter, we need to be able to actually predict the new position of the object when it moves. We will do that by defining two more methods—<kbd>update</kbd> and <kbd>predict</kbd>. The <kbd>update</kbd> method will update the Kalman filter based on a new observation, and the <kbd>predict</kbd> method will predict a new position based on previous evidence. Now let's take a look at the <kbd>update</kbd> method:</p>
+<pre>    def update(self, bbox):<br/>        self.time_since_update = 0<br/>        self.hit_streak += 1<br/><br/>        self.kf.correct(bbox_to_observation(bbox))</pre>
+<p>As you can see, the <kbd>update</kbd> method takes a boundary box of the new location, <kbd>bbox</kbd>, converts it to an observation, and calls the <kbd>correct</kbd> method on the OpenCV implementation. We have only added some variables to keep track of how long it has been since we have updated the object that we are tracking.</p>
+<p>Now let's take a look at the <kbd>predict</kbd> function; its procedure is explained in the following steps:</p>
+<ol>
+<li>It first checks whether we have called <kbd>predict</kbd> twice in a row; <span>if we have</span> called it twice in a row, then it sets <kbd>self.hit_streak</kbd> to <kbd>0</kbd>:</li>
+</ol>
+<pre style="padding-left: 60px">    def predict(self):<br/>        if self.time_since_update &gt; 0:<br/>            self.hit_streak = 0</pre>
+<ol start="2">
+<li>Then it increments <kbd>self.time_since_update</kbd> by <kbd>1</kbd>, so we keep track of how long we have been tracking this object:</li>
+</ol>
+<pre style="padding-left: 60px">        self.time_since_update += 1</pre>
+<ol start="3">
+<li>Then we call the <kbd>predict</kbd> method of the OpenCV implementation and return a boundary box that corresponds with the prediction:</li>
+</ol>
+<pre style="padding-left: 60px">        return state_to_bbox(self.kf.predict())</pre>
+<p>So, now that we have implemented a single-object tracker, the next step is to create a mechanism that can associate a detection box with a tracker, which we will do in the next section.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Associating detections with trackers</h1>
+                </header>
+            
+            <article>
+                
+<p>In the Sort algorithm, decisions about whether two bounding boxes should be considered to be of the same object are made based on<strong> </strong>Intersection over Union. Previously in this chapter, you learned about this metric and implemented a function to compute it. Here, we'll define a function that will associate detection and tracking boxes based on their IoU value:</p>
+<pre>def associate_detections_to_trackers(detections: np.ndarray, trackers: np.ndarray,<br/>          iou_threshold: float = 0.3) -&gt; Tuple[np.ndarray, np.ndarray, np.ndarray]:</pre>
+<p>The function accepts the bounding boxes of detections and the predicted boxes of trackers, as well as an IoU threshold. It returns matches as an array of pairs of corresponding indexes in the corresponding arrays, indexes of unmatched boxes of detections, and indexes of unmatched boxes of trackers. In order to achieve this, it takes the following steps:</p>
+<ol>
+<li>First, it initializes a matrix in which the IoU values of each possible pair of boxes will be stored: </li>
+</ol>
+<pre style="padding-left: 60px">iou_matrix = np.zeros((len(detections), len(trackers)), dtype=np.float32)</pre>
+<ol start="2">
+<li>Then, we iterate overdetection and tracker boxes, calculate IoU for each pair, and store the resulting values in the matrix: </li>
+</ol>
+<pre style="padding-left: 60px">for d, det in enumerate(detections):<br/>    for t, trk in enumerate(trackers):<br/>        iou_matrix[d, t] = iou(det, trk)</pre>
+<ol start="3">
+<li>Using <kbd>iou_matrix</kbd>, we will find matching pairs such that the sum of the values of the IoUs of these pairs gets the maximal possible value: </li>
+</ol>
+<pre style="padding-left: 60px">row_ind, col_ind = linear_sum_assignment(-iou_matrix)</pre>
+<p style="padding-left: 60px">For this purpose, we have used the <strong>Hungarian algorithm</strong>, which is implemented as the <kbd>linear_sum_assignment</kbd> function. It is a combinatorial optimization algorithm that solves the <strong>assignment problem</strong>.</p>
+<p style="padding-left: 60px">In order to use this algorithm, we have passed the opposite values of <kbd>iou_matrix</kbd>. The algorithm associates indexes such that the total sum is minimal. Hence, we find the maximal value when we negate the matrix. The straightforward way to find these associations would be to iterate over all possible combinations and pick the one that has the maximal value.</p>
+<p style="padding-left: 60px">The problem with the latter approach is that the time complexity of it will be exponential and hence it will be too slow once we have multiple detections and trackers. Meanwhile, the Hungarian algorithm has a time complexity of <strong><em>O(n<sup>3</sup>)</em></strong>.</p>
+<ol start="4">
+<li>Then we change the format of the result of the algorithm so that it appears as pairs of matched indexes in a <kbd><span>numpy</span></kbd> array: </li>
+</ol>
+<pre style="color: black;padding-left: 60px">matched_indices = np.transpose(np.array([row_ind, col_ind]))</pre>
+<ol start="5">
+<li>Then get the intersection over union values of the matches from <kbd>iou_matrix</kbd>: </li>
+</ol>
+<pre style="padding-left: 60px">iou_values = np.array([iou_matrix[detection, tracker]<br/>                       for detection, tracker in matched_indices])</pre>
+<ol start="6">
+<li>Filter out matches that have an IoU value that is too low: </li>
+</ol>
+<pre style="padding-left: 60px">good_matches = matched_indices[iou_values &gt; 0.3]</pre>
+<ol start="7">
+<li>Then, find the indexes of the detection boxes that were not matched: </li>
+</ol>
+<pre style="padding-left: 60px">unmatched_detections = np.array(<br/>    [i for i in range(len(detections)) if i not in good_matches[:, 0]])</pre>
+<ol start="8">
+<li>After that, find the indexes of the tracker boxes that were not matched: </li>
+</ol>
+<pre style="padding-left: 60px">unmatched_trackers = np.array(<br/>    [i for i in range(len(trackers)) if i not in good_matches[:, 1]])</pre>
+<ol start="9">
+<li>At last, it returns the matches as well as the indexes of the unmatched detection and tracker boxes: </li>
+</ol>
+<pre style="padding-left: 60px">return good_matches, unmatched_detections, unmatched_trackers</pre>
+<p>So, now that we have mechanisms to track a single object and to associate detections with single-object trackers, what's left to do is to create a class that will use these mechanisms to track multiple objects throughout frames. We will do this in the next section and then the algorithm will be complete.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Defining the main class of the tracker</h1>
+                </header>
+            
+            <article>
+                
+<p>The constructor of the class is given as follows:</p>
+<pre>class Sort:<br/>    def __init__(self, max_age=2, min_hits=3):<br/>        self.max_age = max_age<br/>        self.min_hits = min_hits<br/>        self.trackers = []<br/>        self.count = 0</pre>
+<p class="mce-root">It stores two parameters:</p>
+<ul>
+<li class="mce-root">The first parameter is <kbd>max_age</kbd>, which specifies how many consecutive times a tracker of a certain object can remain without an associated box before we consider the object to have gone from the scene and delete the tracker.</li>
+<li class="mce-root">The second parameter is <kbd>min_hits</kbd>, which specifies how many consecutive times a tracker should be associated with a box so that we consider it to be a certain object. It also creates properties for storing the trackers and counting the total number of trackers during the instance lifetime.  </li>
+</ul>
+<p>We also define a method for creating an ID of a tracker:</p>
+<pre>def next_id(self):<br/>    self.count += 1<br/>    return self.count</pre>
+<p>The method increments the count of the trackers by one and returns the number as the ID.</p>
+<p>Now we are ready to define the <kbd>update</kbd> method, which will do the heavy lifting:</p>
+<pre>def update(self, dets):</pre>
+<p>The <kbd>update</kbd> method accepts detection boxes and covers the following steps:</p>
+<ol>
+<li>For all available <kbd>trackers</kbd>, it predicts their new locations and removes <kbd>trackers</kbd> with failed predictions right away: </li>
+</ol>
+<pre style="padding-left: 60px">self.trackers = [<br/>    tracker for tracker in self.trackers if not np.any(<br/>        np.isnan(<br/>            tracker.predict()))]</pre>
+<ol start="2">
+<li> We then get the predicted boxes of the <kbd>trackers</kbd>: </li>
+</ol>
+<pre style="padding-left: 60px">trks = np.array([tracker.current_state for tracker in self.trackers])</pre>
+<ol start="3">
+<li>Then, we associate the boxes predicted by the trackers with the detection boxes: </li>
+</ol>
+<pre style="padding-left: 60px">matched, unmatched_dets, unmatched_trks = associate_detections_to_trackers(<br/>    dets, trks)</pre>
+<ol start="4">
+<li>We then update the matched <kbd>trackers</kbd> with the associated detections: </li>
+</ol>
+<pre style="padding-left: 60px">for detection_num, tracker_num in matched:<br/>    self.trackers[tracker_num].update(dets[detection_num])</pre>
+<ol start="5">
+<li>For all unmatched detections, we c<span>reate new <kbd>trackers</kbd> that are initialized with the corresponding bounding box: </span></li>
+</ol>
+<pre style="padding-left: 60px">for i in unmatched_dets:<br/>    self.trackers.append(KalmanBoxTracker(dets[i, :], self.next_id()))</pre>
+<ol start="6">
+<li>We then compose the <kbd>return</kbd> value as an <kbd>array</kbd> of the tracker box and tracker ID concatenations of the relevant trackers: </li>
+</ol>
+<pre style="padding-left: 60px">ret = np.array([np.concatenate((trk.current_state, [trk.id + 1]))<br/>                for trk in self.trackers<br/>                if trk.time_since_update &lt; 1 and trk.hit_streak &gt;= self.min_hits])</pre>
+<p style="padding-left: 60px">In the previous codes snippet, we consider only those <kbd>trackers</kbd> that were updated with a detection box in the current frame and that have at least a <kbd>hit_streak</kbd> consecutive association with detection boxes. Depending on the particular application of the algorithm, you might want to change this behavior to make it a better fit for your needs.</p>
+<ol start="7">
+<li>We then clean up the <kbd>trackers</kbd> by removing the ones that have not been updated with a new bounding box for a while: </li>
+</ol>
+<pre style="padding-left: 60px">self.trackers = [<br/>    tracker for tracker in self.trackers if tracker.time_since_update &lt;= self.max_age]</pre>
+<ol start="8">
+<li> At last, we <kbd>return</kbd> the results: </li>
+</ol>
+<pre style="padding-left: 60px">return ret</pre>
+<p>So, now that we have completed the implementation of the algorithm, we have everything ready to run the app and see it in action. </p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Seeing the app in action</h1>
+                </header>
+            
+            <article>
+                
+<p> </p>
+<p>Once we run our app, it will use a passed video or another video stream, then process it and illustrate the results:</p>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/fbd2cba6-34ff-4bb2-a4f1-0a88c752c84e.png" style="width:42.08em;height:23.67em;"/></p>
+<p>On each processed frame, it will display the object type, a bounding box, and the number of each tracked object. It will also display general information about tracking in the top-left corner of the frame. This general information consists of the total number of tracked video objects <span>throughout </span>for each type of tracked object, as well as the tracked objects currently available in the scene.  </p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Summary</h1>
+                </header>
+            
+            <article>
+                
+<p>Throughout this chapter, we have used an object detection network and combined it with a tracker to track and count objects over time. After reading through the chapter, you should now understand how detection networks work and understand their training mechanisms.</p>
+<p>You have learned how you can import models built with other frameworks into OpenCV and bind them into an application that processes a video or uses other video streams such as your camera or a remote IP camera. You have implemented a simple, yet robust, algorithm for tracking, which, in combination with a robust detector network, allows the answering of multiple statistical questions related to video data.</p>
+<p>You can now use and train object detection networks of your choice in order to create your own highly accurate applications that implement their functionality around object detection and tracking. </p>
+<p>Throughout the course of the book, you have made yourself familiar with a background in one of the main branches of machine learning, called <strong>computer vision</strong>. You started by using simple approaches such as image filters and shape analysis techniques. Then, you proceeded with classical feature extraction approaches and built several practical apps based on these approaches. After that, you learned about the statistical properties of a natural scene and you were able to use these properties to track unknown objects.</p>
+<p>Next, you started to learn about, use, and train supervised models such as <strong>Support Vector Machines</strong> (<strong>SVMs</strong>) and <strong>cascading classifiers</strong>. Having all this theoretical and practical knowledge about classical computer vision approaches, you dived into deep learning models, which nowadays give state-of-the-art results for many machine learning problems, especially in the field of computer vision.</p>
+<p>You now understand how <strong>convolutional networks</strong> work and how deep learning models are trained, and you have built and trained your own networks on top of other pre-trained models. Having all this knowledge and practice, you can analyze, understand, and apply other computer vision models as well as elaborating on new models once you come up with new ideas. You are ready<span> to work on your own <strong>c</strong><strong>omputer vision</strong> projects, which might change the world!</span></p>
+
+
+            </article>
+
+            
+        </section>
+    </body></html>

@@ -1,0 +1,725 @@
+<html><head></head><body>
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Finding Objects via Feature Matching and Perspective Transforms</h1>
+                </header>
+            
+            <article>
+                
+<p>In the previous chapter, you learned how to detect and track a simple object (the silhouette of a hand) in a very controlled environment. To be more specific, we instructed the user of our app to place the hand in the central region of the screen and then made assumptions about the size and shape of the object (the hand). In this chapter, we want to detect and track objects of arbitrary sizes, possibly viewed from several different angles or under partial occlusion.</p>
+<p>For this, we will make use of feature descriptors, which are a way of capturing the important properties of our object of interest. We do this so that the object can be located even when it is embedded in a busy visual scene. We will apply our algorithm to the live stream of a webcam and do our best to keep the algorithm robust yet simple enough to run in real time.</p>
+<p>In this chapter, we will cover the following topics:</p>
+<ul>
+<li>Listing the tasks performed by the app</li>
+<li>Planning the app</li>
+<li>Setting up the app</li>
+<li>Understanding the process flow</li>
+<li>Learning feature extraction</li>
+<li><span><span>Looking at feature detection</span></span></li>
+<li>Understanding feature descriptors</li>
+<li>Understanding feature matching</li>
+<li>Learning feature tracking</li>
+<li>Seeing the algorithm in action</li>
+</ul>
+<p><span>The goal of this chapter is to develop an app that can detect and track an object of interest in the video stream of a</span> <span>webcam—even if the object is viewed from different angles or distances or under partial occlusion. Such an</span><span> object can be the cover image of a book, a drawing, or anything else that has a sophisticated surface structure.</span></p>
+<p><span>Once the template image is provided, the app will be able to detect that object, estimate its boundaries, and then track it in the video stream.</span></p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Getting started</h1>
+                </header>
+            
+            <article>
+                
+<p>This chapter has been tested with <strong>OpenCV 4.1.1</strong>.</p>
+<div class="packt_infobox">Note that you might have to obtain the so-called extra modules from <a href="https://github.com/Itseez/opencv_contrib">https://github.com/Itseez/opencv_contrib</a>.</div>
+<p class="mce-root">We install OpenCV with <kbd>OPENCV_ENABLE_NONFREE</kbd> and the <kbd>OPENCV_EXTRA_MODULES_PATH</kbd> variable set in order to get <strong>Speeded-Up Robust Features</strong><span> (</span><strong>SURF</strong><span>) </span>and the <strong>Fast Library for Approximate Nearest Neighbors</strong><span> </span><span>(</span><strong>FLANN</strong><span>)</span><span> </span>installed. You can also use the Docker files available in the repository, which contain all the required installations.</p>
+<p class="mce-root">Additionally, note that you may have to obtain a license to use <strong>SURF</strong> in commercial applications. </p>
+<p>The code for this chapter can be found in the GitHub book repository available at <a href="https://github.com/PacktPublishing/OpenCV-4-with-Python-Blueprints-Second-Edition/tree/master/chapter3">https://github.com/PacktPublishing/OpenCV-4-with-Python-Blueprints-Second-Edition/tree/master/chapter3</a>. </p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Listing the tasks performed by the app</h1>
+                </header>
+            
+            <article>
+                
+<p>The app will analyze each captured frame to perform the following tasks:</p>
+<ul>
+<li><strong>Feature extraction</strong>: We will describe an object of interest with <strong>Speeded-Up Robust Features</strong> (<strong>SURF</strong>), which is an algorithm used to find distinctive keypoints in an image that are both scale-invariant and rotation invariant. These keypoints will help us to make sure that we are tracking the right object over multiple frames because the appearance of the object might change from time to time. It is important to find keypoints that do not depend on the viewing distance or viewing angle of the object (hence, the scale and rotation invariance).</li>
+<li><strong>Feature matching</strong>: We will try to establish a correspondence between keypoints using the <strong>Fast Library for Approximate Nearest Neighbors</strong> (<strong>FLANN</strong>) to see whether a frame contains keypoints similar to the keypoints from our object of interest. If we find a good match, we will mark the object on each frame.</li>
+<li><strong>Feature tracking</strong>: We will keep track of the located object of interest from frame to frame using various forms of <strong>early</strong> <strong>outlier detection</strong> and <strong>outlier rejection</strong> to speed up the algorithm.</li>
+<li><strong>Perspective transform</strong>: We will then reverse any translations and rotations that the object has undergone by <strong>warping the perspective</strong> so that the object appears upright in the center of the screen. This creates a cool effect in which the object seems frozen in a position while the entire surrounding scene rotates around it.</li>
+</ul>
+<p>An example of the first three steps, namely, the feature extraction, matching, and tracking is shown in the following screenshot:</p>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/a5306700-6259-401a-8bee-8823fa90ff4c.png" style="width:49.83em;height:22.08em;"/></p>
+<p><span>The screenshot contains a template image of our object of interest on the left and a handheld printout of the template image on the right. Matching features in the two frames are connected with blue lines, and the located object is outlined in green on the right.</span></p>
+<p>The last step is to transform the located object so that it is projected onto the frontal plane, as depicted in the following photograph:</p>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/07ffe9d6-54e5-4355-9322-6ddd5afb49a8.png" style="width:41.75em;height:31.25em;"/></p>
+<p>The image <span>looks roughly like the original template image, appearing close-up, while the entire scene seems to warp around it.</span></p>
+<p><span>Let's first plan the application that we are going to create in this chapter.</span></p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Planning the app</h1>
+                </header>
+            
+            <article>
+                
+<p>The final app will consist of a Python class for detecting, matching, and tracking image features, as well as a script that accesses the webcam and displays each processed frame.</p>
+<p>The project will contain the following modules and scripts:</p>
+<ul>
+<li><kbd>feature_matching</kbd>: This module contains an algorithm for feature extraction, feature matching, and feature tracking. We separate this algorithm from the rest of the application so that it can be used as a standalone module.</li>
+<li><kbd>feature_matching.FeatureMatching</kbd>: This class implements the entire feature-matching process flow. It accepts a <strong>Blue, Green, Red (BGR)</strong> camera frame and tries to locate an object of interest in it.</li>
+<li><kbd>chapter3</kbd>: This is the main script for the chapter.</li>
+<li><kbd>chapter3.main</kbd>: This is the main function routine for starting the application, accessing the camera, sending each frame for processing to an instance of the <kbd>FeatureMatching</kbd> class, and for displaying results.</li>
+</ul>
+<p>Let's set up the application before going into the details of the feature-matching algorithm.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Setting up the app</h1>
+                </header>
+            
+            <article>
+                
+<p>Before we can get down to the nitty-gritty of our feature<span class="MsoCommentReference">-</span>matching algorithm, we need to make sure that we can access the webcam and display the video stream.</p>
+<p>Let's learn how to run the application in the next section.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Running the app – the main() function routine</h1>
+                </header>
+            
+            <article>
+                
+<p>To run our app, we will need to execute the <kbd>main()</kbd> function <span>routine. The following steps show us the execution of <kbd>main()</kbd> routine: </span></p>
+<ol>
+<li><span>The function first accesses the webcam with the </span><kbd>VideoCapture</kbd><span> method by passing </span><kbd>0</kbd><span> as an argument, which is a reference to the default webcam. If it can not access the webcam, the app will be terminated:</span></li>
+</ol>
+<pre style="padding-left: 60px;">import cv2 as cv<br/>from feature_matching import FeatureMatching<br/><br/>def main():<br/>    capture = cv.VideoCapture(0)<br/>    assert capture.isOpened(), "Cannot connect to camera"</pre>
+<ol start="2">
+<li>Then, the desired frame size and frame per second of the video stream is set. The following snippet shows the code for setting the frame size and frame per second of the video:</li>
+</ol>
+<pre style="padding-left: 60px;"> capture.set(cv.CAP_PROP_FPS, 10)<br/> capture.set(cv.CAP_PROP_FRAME_WIDTH, 640)<br/> capture.set(cv.CAP_PROP_FRAME_HEIGHT, 480)</pre>
+<ol start="3">
+<li>Next, an instance o<span>f the <kbd>FeatureMatching</kbd> class is initialized</span><span> with a path to a template (or training) file that depicts the object </span><span>of interest. The following code shows the <kbd>FeatureMatching</kbd> class:</span></li>
+</ol>
+<pre style="padding-left: 60px;">matching = FeatureMatching(train_image='train.png')</pre>
+<ol start="4">
+<li>After that, to process the frames from the camera, we create an iterator from the <kbd>capture.read</kbd> function, which will terminate when the function fails to return frame (<kbd>(False,None)</kbd>). <span>This can be seen in the following code block:</span></li>
+</ol>
+<pre style="padding-left: 60px;">    for success, frame in iter(capture.read, (False, None)):<br/>        cv.imshow("frame", frame)<br/>        match_succsess, img_warped, img_flann = matching.match(frame)</pre>
+<p style="padding-left: 60px;"><span>In the previous code block, the</span><span> </span><kbd>FeatureMatching.match</kbd><span> method processes the <strong>BGR</strong> image (<kbd>capture.read</kbd> returns <kbd>frame</kbd> in BGR format)</span><span>. </span><span>If the object is detected in the current frame, the </span><kbd>match</kbd><span> method will report </span><kbd>match_success=True</kbd><span> and return the warped image as well as the image that illustrates the matches—</span><kbd>img_flann</kbd><span>.</span></p>
+<p>Let's move on and display the results in which our match method will return.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Displaying results</h1>
+                </header>
+            
+            <article>
+                
+<p>In fact, we can display the results only if the <kbd>match</kbd> method returns a result, right? This can be seen in the following block:</p>
+<pre>        if match_succsess:<br/>            cv.imshow("res", img_warped)<br/>            cv.imshow("flann", img_flann)<br/>        if cv.waitKey(1) &amp; 0xff == 27:<br/>            break</pre>
+<p><span>Displaying images in OpenCV is straightforward and is done by the </span><kbd>imshow</kbd><span> method, which accepts the name of a window and an image. Additionally, l</span><span>oop termination criteria on the </span><em>Esc </em><span>keypress are set. </span></p>
+<p>Now that we have set up our app, let's take a look at the process flow in the next section.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Understanding the process flow</h1>
+                </header>
+            
+            <article>
+                
+<p>Features are extracted, matched, and tracked by the <kbd>FeatureMatching</kbd> class<span>—</span>especially by the public <kbd>match</kbd> method. However, before we can begin analyzing the incoming video stream, we have some homework to do. It might not be clear right away what some of these things mean (especially for SURF and FLANN), but we will discuss these steps in detail in the following sections.</p>
+<p>For now, we only have to worry about initialization:</p>
+<pre>class FeatureMatching: 
+     def __init__(self, train_image: str = "train.png") -&gt; None:</pre>
+<p>The following steps cover the initialization process:</p>
+<ol>
+<li>The following line sets up a SURF detector, which we will use for detecting and extracting features from images (see the <em>Learning feature extraction</em> section for further details), with a Hessian threshold between 300 and 500, that is, <kbd>400</kbd>:</li>
+</ol>
+<pre style="padding-left: 60px;">self.f_extractor = cv.xfeatures2d_SURF.create(hessianThreshold=400)</pre>
+<ol start="2">
+<li>We load a template of our object of interest (<kbd>self.img_obj</kbd>), or print an error if it cannot be found:</li>
+</ol>
+<pre style="padding-left: 60px;">self.img_obj = cv.imread(train_image, cv.CV_8UC1)<br/>assert self.img_obj is not None, f"Could not find train image {train_image}"</pre>
+<ol start="3">
+<li class="mce-root"><span>Also, we store the shape of the image (</span><kbd>self.sh_train</kbd><span>) for convenience</span><span>:</span></li>
+</ol>
+<pre style="color: black; padding-left: 60px;">self.sh_train = self.img_obj.shape[:2]</pre>
+<p style="padding-left: 60px;">We will call the template image the <strong>train image</strong>, as our algorithm will be trained to find this image, and every incoming frame a <strong>query image</strong>, as we will use these images to query the <strong>train image</strong>. The following photograph is the train image:</p>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/b9a54a7d-1b81-4d52-9efb-541bd1f28003.png" style="width:28.00em;height:28.00em;"/></p>
+<div class="packt_figref CDPAlignCenter CDPAlign"><span>Image credit—</span>Lenna.png<span> </span><span>by Conor Lawless</span><span> is licensed under </span>CC BY 2.0</div>
+<p style="padding-left: 60px;"><span>The previous train image has a size of 512 x 512 pixels and will be used to train the algorithm.</span></p>
+<ol start="4">
+<li>Next, we apply SURF to the object of interest. This can be done with a convenient function call that returns both a list of keypoints and the descriptor (you can refer to the <em>Learning feature extraction</em> section for further explanation):</li>
+</ol>
+<pre style="padding-left: 60px;">self.key_train, self.desc_train = \<br/>    self.f_extractor.detectAndCompute(self.img_obj, None)</pre>
+<p style="padding-left: 60px;">We will do the same with each incoming frame and then compare lists of features across images.</p>
+<ol start="5">
+<li>Now, we set up a FLANN object that will be used to match the features of the train and query images (refer to the <em>Understanding feature matching</em> section for further details). This requires the specification of some additional parameters via dictionaries, such as which algorithm to use and how many trees to run in parallel:</li>
+</ol>
+<pre style="padding-left: 60px;">index_params = {"algorithm": 0, "trees": 5}<br/>search_params = {"checks": 50}<br/>self.flann = cv.FlannBasedMatcher(index_params, search_params)</pre>
+<ol start="6">
+<li>Finally, initialize some additional bookkeeping variables. These will come in handy when we want to make our feature tracking both faster and more accurate. For example, we will keep track of the latest computed homography matrix and of the number of frames we have spent without locating our object of interest (refer to the <em>Learning feature tracking</em> section for more details):</li>
+</ol>
+<pre style="padding-left: 60px;">self.last_hinv = np.zeros((3, 3))<br/>self.max_error_hinv = 50.<br/>self.num_frames_no_success = 0<br/>self.max_frames_no_success = 5</pre>
+<p>Then, the bulk of the work is done by the <strong><kbd>FeatureMatching.match</kbd> </strong>method. This method follows the procedure elaborated here:</p>
+<ol>
+<li>It extracts interesting image features from each incoming video frame. </li>
+<li>It matches features between the template image and the video frame. This is done in <kbd>FeatureMatching.match_features</kbd>. If no such match is found, it skips to the next frame.</li>
+<li>It finds the corner points of the template image in the video frame. This is done in the <kbd>detect_corner_points</kbd> function. If any of the corners lie (significantly) outside the frame, it skips to the next frame.</li>
+<li>It calculates the area of the quadrilateral that the four corner points span. If the area is either too small or too large, it skips to the next frame.</li>
+<li>It outlines the corner points of the template image in the current frame.</li>
+<li>It finds the perspective transform that is necessary to bring the located object from the current frame to the <kbd>frontoparallel</kbd> plane. If the result is significantly different from the result we got recently for an earlier frame, it skips to the next frame.</li>
+<li>It warps the perspective of the current frame to make the object of interest appear centered and upright.</li>
+</ol>
+<p>In the following sections, we will discuss the previous steps in detail.</p>
+<p>Let's first take a look at the feature extraction step in the next section. This step is the core of our algorithm. It will find informative areas in the image and represent them in a lower dimensionality so that we can use those representations afterward to decide whether two images contain similar features. </p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Learning feature extraction</h1>
+                </header>
+            
+            <article>
+                
+<p>Generally speaking, in machine learning, feature extraction is a process of dimensionality reduction of the data that results in an informative description of a data element. </p>
+<p>In computer vision, a feature is usually an <em>interesting area</em> of an image. It is a measurable property of an image that is very informative about what the image represents. Usually, the grayscale value of an individual pixel (that is, the <em>raw data</em>) does not tell us a lot about the image as a whole. Instead, we need to derive a property that is more informative.</p>
+<p>For example, knowing that there are patches in the image that look like eyes, a nose, and a mouth will allow us to reason about how likely it is that the image represents a face. In this case, the number of resources required to describe the data is drastically reduced. The data refers to, for example, whether<span> we are seeing an image of a face.</span> Does the image contain two eyes, a nose, or a mouth?</p>
+<p>More low-level features, such as the presence of edges, corners, blobs, or ridges, may be more informative generally. Some features may be better than others, depending on the application.</p>
+<p>Once we have made up our mind about what is our favorite feature, we first need to come up with a way to check whether or not the image contains such features. Additionally, we need to find out where it contains them and then create a descriptor of the feature. Let's learn how to detect features in the next section.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Looking at feature detection</h1>
+                </header>
+            
+            <article>
+                
+<p>In computer vision, the process of finding areas of interest in an image is called feature detection. Under the hood, <span>for each point of the image,</span> a feature detection algorithm decides whether an image point contains a feature of interest. OpenCV provides a whole range of feature detection (and description) algorithms.</p>
+<p>In OpenCV, the details of the algorithms are encapsulated and all of them have similar APIs. Here are some of the algorithms: </p>
+<ul>
+<li><strong>Harris corner detection</strong>: We know that edges are areas with high-intensity changes in all directions. Harris and Stephens came up with this algorithm, which is a fast way of finding such areas. This algorithm is implemented as <kbd>cv2.cornerHarris</kbd> in OpenCV.</li>
+<li><strong>Shi-Tomasi corner detection</strong>: Shi and Tomasi developed a corner detection algorithm, and this algorithm is usually better than Harris corner detection by finding the <em>N</em> strongest corners. This algorithm is implemented as <kbd>cv2.goodFeaturesToTrack</kbd> in OpenCV.</li>
+<li><strong>Scale-Invariant Feature Transform</strong> (<strong>SIFT</strong>): Corner detection is not sufficient when the scale of the image changes. To this end, David Lowe developed a method to describe keypoints in an image that are independent of orientation and size (hence the term <strong>scale-invariant</strong>). The algorithm is implemented as <kbd>cv2.xfeatures2d_SIFT</kbd> in OpenCV2 but has been moved to the <em>extra</em> modules in OpenCV3 since its code is proprietary.</li>
+<li><strong>SURF</strong>: SIFT has proven to be really good, but it is not fast enough for most applications. This is where SURF comes in, which replaces the expensive Laplacian of a Gaussian (function) from SIFT with a box filter. The algorithm is implemented as <kbd>cv2.xfeatures2d_SURF</kbd> in OpenCV2, but, like SIFT, it has been moved to the <em>extra</em> modules in OpenCV3 since its code is proprietary.</li>
+</ul>
+<p>OpenCV has support for even more feature descriptors, such as <strong>Features from Accelerated Segment Test</strong> (<strong>FAST</strong>), <strong>Binary</strong> <strong>Robust Independent Elementary Features</strong> (<strong>BRIEF</strong>), and <strong>Oriented FAST and Rotated BRIEF</strong> (<strong>ORB</strong>), the latter being an open source alternative to SIFT or SURF.</p>
+<p>In the next section, we'll learn how to use SURF to detect features in an image.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Detecting features in an image with SURF</h1>
+                </header>
+            
+            <article>
+                
+<p>In the remainder of this chapter, we will make use of the SURF detector. The SURF algorithm can be roughly divided into two distinct steps, which are detecting points of interest and formulating a descriptor.</p>
+<p>SURF relies on the Hessian corner detector for interest point detection, which requires the setting of a minimal <kbd>minhessianThreshold</kbd>. This threshold determines how large the output from the Hessian filter must be in order for a point to be used as an interesting point. </p>
+<p>When the value is larger, fewer interest points are obtained, but they are theoretically more salient and vice <span>versa. </span>Feel free to experiment with different values.</p>
+<p>In this chapter, we will choose a value of <kbd>400</kbd>, as we did earlier in <kbd>FeatureMatching.__init__</kbd>, where we created a SURF descriptor with the following code snippet:</p>
+<pre>self.f_extractor = cv2.xfeatures2d_SURF.create(hessianThreshold=400)</pre>
+<p>The keypoints in the image can be obtained in a single step, which is given as follows:</p>
+<pre>key_query = self.f_extractor.detect(img_query)</pre>
+<p><span>Here, </span><kbd>key_query</kbd><span> is a list of instances of </span><kbd>cv2.KeyPoint</kbd><span> and has the length of the number of detected keypoints. Each </span><kbd>KeyPoint</kbd><span> contains information about the location (</span><kbd>KeyPoint.pt</kbd><span>), the size ( </span><kbd>KeyPoint.size </kbd><span>), and other useful information about our point of interest. </span></p>
+<p>We can now easily draw the keypoints using the following function:</p>
+<pre>img_keypoints = cv2.drawKeypoints(img_query, key_query, None,<br/>     (255, 0, 0), 4)<br/>cv2.imshow("keypoints",img_keypoints) </pre>
+<p><span><span>Depending on an image, the number of detected keypoints can be very large and unclear when visualized; we</span></span> check it with <kbd>len(keyQuery)</kbd>. If you care only about drawing the keypoints, try setting <kbd>min_hessian</kbd> to a large value until the number of returned keypoints provides a good illustration.</p>
+<div class="packt_infobox"><br/>
+Note that SURF is protected by patent laws. Therefore, if you wish to use SURF in a commercial application, you will be required to obtain a license.</div>
+<p>In order to <span>complete </span>our feature extraction algorithm, we need to obtain descriptors for our detected keypoints, which we will do in the next section.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Obtaining feature descriptors with SURF</h1>
+                </header>
+            
+            <article>
+                
+<p><span>The </span>process of extracting features from an image with OpenCV using SURF is also a single step. It is done by the <kbd>compute</kbd> method of our feature extractor. The latter accepts an image and the keypoints of the image as arguments:</p>
+<pre>key_query, desc_query = self.f_extractor.compute(img_query, key_query)</pre>
+<p class="mce-root">Here, <kbd>desc_query</kbd><span> </span>is a <kbd>NumPY</kbd> ndarray with shape <kbd>(num_keypoints, descriptor_size)</kbd>. You can see that each descriptor is a vector in an <em>n</em>-dimensional space (<em>n</em>-length array of numbers). Each vector describes the corresponding key point and provides some meaningful information about our complete image.</p>
+<p>Hence, we have completed our feature extraction algorithm that had to provide meaningful information about our image in reduced dimensionality. It's up to the creator of the algorithm to decide what kind of information is contained in the descriptor vector, but at the very least the vectors should be such that they are closer to similar keypoints than for keypoints that appear different. </p>
+<p>Our feature extraction algorithm also has a convenient method to combine the processes of feature detection and descriptor creation:</p>
+<pre>key_query, desc_query = self.f_extractor.detectAndCompute (img_query, None)</pre>
+<p>It returns both keypoints and descriptors in a single step and accepts a mask of an area of interest, which, in our case, is the complete image.</p>
+<p><span>As we have extracted our features, the next step is to query and train images that contain similar features, which is accomplished by a feature matching algorithm. So, let's</span> learn about feature matching in the next section.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Understanding feature matching</h1>
+                </header>
+            
+            <article>
+                
+<p>Once we have extracted features and their descriptors from two (or more) images, we can start asking whether some of these features show up in both (or all) images. For example, if we have descriptors for both our object of interest (<kbd>self.desc_train</kbd>) and the current video frame (<kbd>desc_query</kbd>), we can try to find regions of the current frame that look like our object of interest.</p>
+<p>This is done by the following method, which makes use of FLANN:</p>
+<pre>good_matches = self.match_features(desc_query)</pre>
+<p>The process of finding frame-to-frame correspondences can be formulated as the search for the nearest neighbor from one set of descriptors for every element of another set.</p>
+<p>The first set of descriptors is usually called the <strong>train set</strong>, because, in machine learning, these descriptors are used to train a model, such as the model of the object that we want to detect. In our case, the train set corresponds to the descriptor of the template image (our object of interest). Hence, we call our template image the <strong>train image</strong> (<kbd>self.img_train</kbd>).</p>
+<p>The second set is usually called the <strong>query set</strong> because we continually ask whether it contains our train image. In our case, the query set corresponds to the descriptor of each incoming frame. Hence, we call a frame the <strong>query image</strong> (<kbd>img_query</kbd>).</p>
+<p>Features can be matched in any number of ways, for example, with the help of a brute-force matcher (<kbd>cv2.BFMatcher</kbd>) that looks for each descriptor in the first set and the closest descriptor in the second set by trying each one (an exhaustive search).</p>
+<p>In the next section, we'll learn how to match features across images with FLANN.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Matching features across images with FLANN</h1>
+                </header>
+            
+            <article>
+                
+<p>The alternative is to use an approximate <strong>k-nearest neighbor</strong> (<strong>kNN</strong>) algorithm to find correspondences, which is based on the fast third-party library, FLANN. A FLANN match is performed with the following code snippet, where we use kNN with <kbd>k=2</kbd>:</p>
+<pre>def match_features(self, desc_frame: np.ndarray) -&gt; List[cv2.DMatch]:<br/>        matches = self.flann.knnMatch(self.desc_train, desc_frame, k=2)</pre>
+<p>The result of <kbd>flann.knnMatch</kbd> is a list of correspondences between two sets of descriptors, both contained in the <kbd>matches</kbd> variable. These are the train set, because it corresponds to the pattern image of our object of interest, and the query set, because it corresponds to the image in which we are searching for our object of interest.</p>
+<p>Now that we have found the nearest neighbors of our features, let's move ahead and find out how we can remove outliers in the next section.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Testing the ratio for outlier removal</h1>
+                </header>
+            
+            <article>
+                
+<p>The more correct matches that are found (which means that more pattern-to-image correspondences exist), the higher the chance that the pattern is present in the image. However, some matches might be false positives.</p>
+<p>A well-known technique for removing outliers is called the ratio test. Since we performed kNN-matching with <kbd>k=2</kbd>, the two nearest descriptors are returned for each match. The first match is the closest neighbor and the second match is the second-closest neighbor. Intuitively, a correct match will have a much closer first neighbor than its second-closest neighbor. On the other hand, the two closest neighbors will be at a similar distance from an incorrect match.</p>
+<p>Therefore, we can find out how good a match is by looking at the difference between the distances. The<strong> </strong>ratio test says that the match is good only if the distance ratio between the first match and the second match is smaller than a given number (usually around 0.5). In our case, this number is chosen to be <kbd>0.7</kbd>. The following snippet finds good matches:</p>
+<pre># discard bad matches, ratio test as per Lowe's paper<br/>good_matches = [ x[0] for x in matches <br/>    if x[0].distance &lt; 0.7 * x[1].distance]</pre>
+<p><span>To remove all matches that do not satisfy this requirement, we filter the list of matches and store the good matches in the </span><kbd>good_matches</kbd><span> list.</span></p>
+<p>Then, we pass the matches we found to <kbd>FeatureMatching.match</kbd> so that they can be processed further:</p>
+<pre>return good_matches </pre>
+<p>However, before elaborating on our algorithm, let's first visualize our matches in the next section.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Visualizing feature matches</h1>
+                </header>
+            
+            <article>
+                
+<p>In OpenCV, we can easily draw matches using <kbd>cv2.drawMatches</kbd>. Here, we create our own function for educational purposes as well as for ease of customization of function behavior:</p>
+<pre>def draw_good_matches(img1: np.ndarray,<br/>                      kp1: Sequence[cv2.KeyPoint],<br/>                      img2: np.ndarray,<br/>                      kp2: Sequence[cv2.KeyPoint],<br/>                      matches: Sequence[cv2.DMatch]) -&gt; np.ndarray:</pre>
+<p>The function accepts two images, namely, in our case, the image of the object of interest and the current video frame. It also accepts keypoints from both images as well as the matches. It will draw the images next to each other on a single illustration image, illustrate the matches on the image, and return the image. The latter is achieved with the following steps:</p>
+<ol>
+<li>Create a new output image of a size that will fit the two images together; make it three-channel i<span>n order to draw colored lines on the image:</span></li>
+</ol>
+<pre style="padding-left: 60px;">rows1, cols1 = img1.shape[:2]<br/>rows2, cols2 = img2.shape[:2]<br/>out = np.zeros((max([rows1, rows2]), cols1 + cols2, 3), dtype='uint8')</pre>
+<ol start="2">
+<li>Place the first image on the left of the new image and the second image on the right of the first image:</li>
+</ol>
+<pre style="padding-left: 60px;">out[:rows1, :cols1, :] = img1[..., None]<br/>out[:rows2, cols1:cols1 + cols2, :] = img2[..., None]</pre>
+<p style="padding-left: 60px;">In these expressions, we used the broadcasting rules of the NumPy arrays, which are rules for operations on arrays when their shapes do not match but<span> meet certain constraints instead. </span>Here, <kbd>img[...,None]</kbd> assigns one rule to channel (third) dimension of the two-dimensional grayscale image (array). Next, once <kbd>NumPy</kbd> meets a dimension that does not match, but <span>instead</span> has the value of one, it broadcasts the array. It means the same value is used for all three channels. </p>
+<ol start="3">
+<li>For each matching pair of points between both images, we want to draw a small blue circle on each image and connect the two circles with a line. For this purpose, iterate over the list of matching keypoints with a <kbd>for</kbd> loop, extract the center coordinates from the corresponding keypoints, and shift the coordinate of the second center for drawing:</li>
+</ol>
+<pre style="padding-left: 60px;">for m in matches:<br/>    c1 = tuple(map(int,kp1[m.queryIdx].pt))<br/>    c2 = tuple(map(int,kp2[m.trainIdx].pt))<br/>    c2 = c2[0]+cols1,c2[1]</pre>
+<p style="padding-left: 60px;"><span>The keypoints are stored as tuples in Python, with two entries for the </span><em>x</em><span> and </span><em>y</em><span> coordinates. Each match, </span><kbd>m</kbd><span>, stores the index in the key point lists, where </span><kbd>m.trainIdx</kbd><span> points to the index in the first key point list (</span><kbd>kp1</kbd><span>) and </span><kbd>m.queryIdx</kbd><span> points to the index in the second key point list (</span><kbd>kp2</kbd>).</p>
+<ol start="4">
+<li>In the same loop, draw circles with a four-pixel radius, the color blue, and a one-pixel thickness. Then, connect the circles with a line:</li>
+</ol>
+<pre style="padding-left: 60px;">radius = 4<br/>BLUE = (255, 0, 0)<br/>thickness = 1<br/># Draw a small circle at both co-ordinates<br/>cv2.circle(out, c1, radius, BLUE, thickness)<br/>cv2.circle(out, c2, radius, BLUE, thickness)<br/><br/># Draw a line in between the two points<br/>cv2.line(out, c1, c2, BLUE, thickness)</pre>
+<ol start="5">
+<li>Finally, <kbd>return</kbd> the resulting image:</li>
+</ol>
+<pre style="padding-left: 60px;">return out</pre>
+<p>So, now that we have a convenient function, we can illustrate the matches with the following code:</p>
+<pre>cv2.imshow('imgFlann', draw_good_matches(self.img_train, <br/>     self.key_train, img_query, key_query, good_matches))</pre>
+<p>The blue lines connect the features in the object (left) to the features in the scenery (right), as shown here:</p>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/e2f75f72-bfc2-4eb7-86ed-352171b6ded5.png" style="width:58.58em;height:24.75em;"/></p>
+<p>This works fine in a simple example such as this, but what happens when there are other objects in the scene? Since our object contains some lettering that seems highly salient, what happens when there are other words present?</p>
+<p>As it turns out, the algorithm works even under such conditions, as you can see in the following screenshot:</p>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/5df97ad3-c129-4c21-8c2a-af86d856cd7b.png" style="width:64.92em;height:29.17em;"/></p>
+<p>Interestingly, the algorithm did not confuse the name of the author as seen on the left with the black-on-white lettering next to the book in the scene, even though they spell out the same name. This is because the algorithm found a description of the object that does not rely purely on the grayscale representation. On the other hand, an algorithm doing a pixel-wise comparison could have easily gotten confused.</p>
+<p>Now that we have matched our features, let's move ahead and learn how we can use these results in order to highlight the object of the interest, which we will do with the help of homography estimation in the next section.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Mapping homography estimation</h1>
+                </header>
+            
+            <article>
+                
+<p>Since we are assuming that the object of our interest is planar (that is, an image) and rigid, we can find the homography transformation between the feature points of the two images.</p>
+<p>In the following steps, we will explore how homography can be used to calculate the perspective transformation required to bring matched feature points in the object image (<kbd>self.key_train</kbd>) into the same plane as corresponding feature points in the current image frame (<kbd>key_query</kbd>):</p>
+<ol>
+<li>First, we store the image coordinates of all the keypoints that are good matches in lists for convenience, as shown in the following code snippet:</li>
+</ol>
+<pre style="padding-left: 60px;">train_points = [self.key_train[good_match.queryIdx].pt<br/>                for good_match in good_matches]<br/>query_points = [key_query[good_match.trainIdx].pt<br/>                for good_match in good_matches]</pre>
+<ol start="2">
+<li>Now, let's encapsulate the logic for corner point detections in a separate function:</li>
+</ol>
+<pre style="padding-left: 60px;">def detect_corner_points(src_points: Sequence[Point],<br/>                         dst_points: Sequence[Point],<br/>                         sh_src: Tuple[int, int]) -&gt; np.ndarray:</pre>
+<p style="padding-left: 60px;">The previous code shows two sequences of points and the shape of the source image, the function will return the corners of the points, which is accomplished by the following steps:</p>
+<ul>
+<li style="list-style-type: none;">
+<ol>
+<li>Find the perspective transform<span>ation (a homography matrix,</span><span> </span><kbd>H</kbd><span>) for the given two sequences of coordinates: <br/></span></li>
+</ol>
+</li>
+</ul>
+<pre style="padding-left: 120px;">H, _ = cv2.findHomography(np.array(src_points), np.array(dst_points), cv2.RANSAC)</pre>
+<p style="padding-left: 120px;"><span>To find the transformation, </span><span>the </span><kbd>cv2.findHomography</kbd><span> </span><span>function will use the</span><span> </span><strong>random sample consensus</strong><span> </span><span>(</span><strong>RANSAC</strong><span>) method to probe different subsets of input points.</span></p>
+<ul>
+<li style="list-style-type: none;">
+<ol start="2">
+<li>If the method fails to find the homography matrix, we <kbd>raise</kbd> an exception, which we will catch later in our application:</li>
+</ol>
+</li>
+</ul>
+<pre style="color: black; padding-left: 120px;">if H is None:<br/>    raise Outlier("Homography not found")</pre>
+<ul>
+<li style="list-style-type: none;">
+<ol start="3">
+<li>Given the shape of the source image, we store the coordinates of its corners in an array:</li>
+</ol>
+</li>
+</ul>
+<pre style="color: black; padding-left: 120px;">height, width = sh_src<br/>src_corners = np.array([(0, 0), (width, 0),<br/>                        (width, height),<br/>                        (0, height)], dtype=np.float32)</pre>
+<ul>
+<li style="list-style-type: none;">
+<ol start="4">
+<li>A homography matrix can be used to transform any point in the pattern into the scenery, such as transforming a corner point in the training image to a corner point in the query image. In other words, this means that we can draw the outline of the book cover in the query image by transforming the corner points from the training image.</li>
+</ol>
+</li>
+</ul>
+<p style="color: black; padding-left: 120px;">In order to do this, the list of corner points of the training image (<kbd>src_corners</kbd>) is taken and projected in the query image by performing a perspective transform:</p>
+<pre style="color: black; padding-left: 120px;">return cv2.perspectiveTransform(src_corners[None, :, :], H)[0]</pre>
+<p style="padding-left: 120px;" class="mce-root"><span>Also, the </span><span>result is returned immediately, that is, an array of image points (two-dimensional <kbd>NumPY</kbd></span> ndarray<span>).</span></p>
+<ol start="3">
+<li>Now that we have defined our function, we can call it to detect the corner points:</li>
+</ol>
+<pre style="padding-left: 60px;">dst_corners = detect_corner_points(<br/>                train_points, query_points, self.sh_train)</pre>
+<ol start="4">
+<li class="mce-root">
+<p>All that we need to do is draw a line between each point in <kbd>dst_corners</kbd> and the very next one, and we will see an outline in the scenery:</p>
+</li>
+</ol>
+<pre style="padding-left: 60px;">dst_corners[:, 0] += self.sh_train[1]<br/>cv2.polylines(<br/>    img_flann,<br/>    [dst_corners.astype(np.int)],<br/>    isClosed=True,<br/>    color=(0,255,0),<br/>    thickness=3)</pre>
+<p style="padding-left: 60px;"><span>Note, in order to draw the image points, first offset the </span><em>x</em><span> coordinate of the points by the width of the pattern image (because we are showing the two images next to each other). Then, we treat the image points as a closed polyline and draw it with </span><kbd>cv2.polilines</kbd><span>. We also have to change the data type to an integer for drawing.</span></p>
+<ol start="5">
+<li class="mce-root">Finally, the outline of the book cover is drawn like this:</li>
+</ol>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/cd7c3b27-d8b2-4d0b-93e0-6acf5f930e3f.png" style="width:40.92em;height:26.50em;"/></p>
+<p style="padding-left: 60px;">This works even when the object is only partially visible, as follows:</p>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/93a5f96d-90f7-4efc-875f-10eb837a2741.png" style="width:40.75em;height:20.83em;"/></p>
+<p style="padding-left: 60px;">Although the book partially lies outside of the frame, the outline of the book is predicted with the boundaries of the outline lying beyond the frame. </p>
+<p>In the next section, let's learn how to warp the image in order to make it look closer to the original one.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Warping the image</h1>
+                </header>
+            
+            <article>
+                
+<p>We can also do the opposite of homography estimation/transformation by going from the probed scenery to the training pattern coordinates. This makes it possible for the book cover to be brought onto the frontal plane as if we were looking at it directly from above. To achieve this, we can simply take the inverse of the homography matrix to get the inverse transformation:</p>
+<pre>Hinv = cv2.linalg.inverse(H) </pre>
+<p>However, this would map the top-left corner of the book cover to the origin of our new image, which would cut off everything to the left of and above the book cover. Instead, we want to roughly center the book cover in the new image. Thus, we need to calculate a new homography matrix.</p>
+<p>The book cover should be roughly half of the size of the new image. Hence, instead of using the point coordinates of the train image, t<span>he following method demonstrates how</span> to transform the point coordinates such that they appear in the center of the new image:</p>
+<ol>
+<li>First, find the <span>scaling factor and bias</span><span> and then, apply the linear scaling and </span>transform the coordinates:</li>
+</ol>
+<pre style="padding-left: 60px;">@staticmethod<br/>def scale_and_offset(points: Sequence[Point],<br/>                     source_size: Tuple[int, int],<br/>                     dst_size: Tuple[int, int],<br/>                     factor: float = 0.5) -&gt; List[Point]:<br/>    dst_size = np.array(dst_size)<br/>    scale = 1 / np.array(source_size) * dst_size * factor<br/>    bias = dst_size * (1 - factor) / 2<br/>    return [tuple(np.array(pt) * scale + bias) for pt in points]</pre>
+<ol start="2">
+<li class="mce-root"><span>As an output, we want an image that has the same shape as the pattern image (<kbd>sh_query</kbd>)</span><span>:</span></li>
+</ol>
+<pre style="padding-left: 60px;">train_points_scaled = self.scale_and_offset(<br/>    train_points, self.sh_train, sh_query)</pre>
+<ol start="3">
+<li>Then, we can find the homography matrix between the points in the query image and the transformed points of the train image (make sure that the list is converted to a <kbd>NumPy</kbd> array):</li>
+</ol>
+<pre style="padding-left: 60px;">Hinv, _ = cv2.findHomography(<br/>    np.array(query_points), np.array(train_points_scaled), cv2.RANSAC)</pre>
+<ol start="4">
+<li>After that, we can use the homography matrix to transform every pixel in the image (this is also called warping the image):</li>
+</ol>
+<pre style="padding-left: 60px;">img_warp = cv2.warpPerspective(img_query, Hinv, (sh_query[1], sh_query[0]))</pre>
+<p>The result looks like this (with the matching on the left and the warped image on the right):</p>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/b3fd8f98-8217-4cb2-8f2f-f5bfa2bf9709.png" style="width:59.83em;height:26.92em;"/></p>
+<p>The image that results from the perspective transformation might not be perfectly aligned with the <kbd>frontoparallel</kbd> plane, because, after all, the homography matrix just gives an approximation. In most cases, however, our approach works just fine, such as in the example shown in the following screenshot:</p>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/f274e9d0-ec49-46f2-9550-c3f20fb3fa13.png" style="width:56.00em;height:23.67em;"/></p>
+<p>Now that we have a pretty good picture about how feature extraction and matching is accomplished with a couple of images, let's move on to the completion of our app and learn how we can track the features in the next section. </p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Learning feature tracking</h1>
+                </header>
+            
+            <article>
+                
+<p>Now that our algorithm works for single frames, we want to make sure that the image found in one frame will also be found in the very next frame.</p>
+<p>In <kbd>FeatureMatching.__init__</kbd>, we created some bookkeeping variables that we said we would use for feature tracking. The main idea is to enforce some coherence while going from one frame to the next. Since we are capturing roughly 10 frames per second, it is reasonable to assume that the changes from one frame to the next will not be too radical.</p>
+<p>Therefore, we can be sure that the result we get in any given frame has to be similar to the result we got in the previous frame. Otherwise, we discard the result and move on to the next frame.</p>
+<p>However, we have to be careful not to get stuck with a result that we think is reasonable but is actually an outlier. To solve this problem, we keep track of the number of frames we have spent without finding a suitable result. We use <kbd>self.num_frames_no_success</kbd> to hold the value of the number of frames. If this value is smaller than a certain threshold, let's say <kbd>self.max_frames_no_success</kbd>, we do the comparison between the frames.</p>
+<p>If it is greater than the threshold, we assume that too much time has passed since the last result was obtained, in which case it would be unreasonable to compare the results between the frames. Let's learn about early outlier detection and rejection in the next section.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Understanding early outlier detection and rejection</h1>
+                </header>
+            
+            <article>
+                
+<p>We can extend the idea of outlier rejection to every step in the computation. The goal then becomes minimizing the workload while maximizing the likelihood that the result we obtain is a good one.</p>
+<p>The resulting procedure for early outlier detection and rejection is embedded in the <kbd>FeatureMatching.match</kbd> method. This method first converts the image to grayscale and stores its shape:</p>
+<pre>def match(self, frame):<br/>    # create a working copy (grayscale) of the frame<br/>    # and store its shape for convenience<br/>    img_query = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)<br/>    sh_query = img_query.shape # rows,cols </pre>
+<p>Then, if the outlier is detected during any step of the computation, we raise an <kbd>Outlier</kbd> exception to terminate the computation. The following steps show us the matching procedure:</p>
+<ol>
+<li>First, we find good matches between the feature descriptors of the pattern and the query image, and then store the corresponding point coordinates from the train and query images: </li>
+</ol>
+<pre style="padding-left: 60px;">key_query, desc_query = self.f_extractor.detectAndCompute(<br/>    img_query, None)<br/>good_matches = self.match_features(desc_query)<br/>train_points = [self.key_train[good_match.queryIdx].pt<br/>                for good_match in good_matches]<br/>query_points = [key_query[good_match.trainIdx].pt<br/>                for good_match in good_matches]</pre>
+<p style="padding-left: 60px;">In order for RANSAC to work in the very next step, we need at least four matches. If fewer matches are found, we admit defeat and raise an <kbd>Outlier</kbd> exception with a custom message. We wrap the outlier detection in a <kbd>try</kbd> block: </p>
+<pre style="padding-left: 60px;">try:<br/>    # early outlier detection and rejection<br/>    if len(good_matches) &lt; 4:<br/>        raise Outlier("Too few matches")</pre>
+<ol start="2">
+<li>Then, we f<span>ind the corner points of the pattern in the query image (</span><kbd>dst_corners</kbd><span>):</span></li>
+</ol>
+<pre style="padding-left: 60px;">dst_corners = detect_corner_points(<br/>    train_points, query_points, self.sh_train)</pre>
+<p style="padding-left: 60px;">If any of these points lie significantly outside the image (by <kbd>20</kbd> pixels, in our case), it means that either we are not looking at our object of interest, or the object of interest is not entirely in the image. In both cases, we don't have to proceed, and raise or create an instance of <kbd>Outlier</kbd>:</p>
+<pre style="padding-left: 60px;">if np.any((dst_corners &lt; -20) | (dst_corners &gt; np.array(sh_query) + 20)):<br/>    raise Outlier("Out of image")</pre>
+<ol start="3">
+<li>If the four recovered corner points do not span a reasonable quadrilateral (a polygon with four sides), it means that we are probably not looking at our object of interest. The area of a quadrilateral can be calculated with the following code: </li>
+</ol>
+<pre style="padding-left: 60px;">for prev, nxt in zip(dst_corners, np.roll(<br/>        dst_corners, -1, axis=0)):<br/>    area += (prev[0] * nxt[1] - prev[1] * nxt[0]) / 2.</pre>
+<p style="padding-left: 60px;">If the area is either unreasonably small or unreasonably large, we discard the frame and raise an exception:</p>
+<pre style="padding-left: 60px;">if not np.prod(sh_query) / 16. &lt; area &lt; np.prod(sh_query) / 2.:<br/>    raise Outlier("Area is unreasonably small or large")</pre>
+<ol start="4">
+<li>Then, we scale the good points of the train image and find the homography matrix to bring the object to the frontal panel:</li>
+</ol>
+<pre style="padding-left: 60px;">train_points_scaled = self.scale_and_offset(<br/>    train_points, self.sh_train, sh_query)<br/>Hinv, _ = cv2.findHomography(<br/>    np.array(query_points), np.array(train_points_scaled), cv2.RANSAC)</pre>
+<ol start="5">
+<li><span>I</span>f the recovered ho<span>mography matrix is too different from the one that we last recovered (</span><kbd>self.last_hinv</kbd><span>), it means that we are probably looking at a different object. However, we only want to consider</span><span> </span><kbd>self.last_hinv</kbd><span> </span><span>if it is fairly recent, say, from within the last</span><span> </span><kbd>self.max_frames_no_success</kbd><span> frames:</span></li>
+</ol>
+<pre style="padding-left: 60px;">similar = np.linalg.norm(<br/>Hinv - self.last_hinv) &lt; self.max_error_hinv<br/>recent = self.num_frames_no_success &lt; self.max_frames_no_success<br/>if recent and not similar:<br/> raise Outlier("Not similar transformation")</pre>
+<p style="padding-left: 60px;">This will help us to keep track of the same object of interest over time. If, for any reason, we lose track of the pattern image for more than <kbd>self.max_frames_no_success</kbd> frames, we skip this condition and accept whatever homography matrix was recovered up to that point. This ensures that we do not get stuck with a <kbd>self.last_hinv</kbd> matrix, which is actually an outlier.</p>
+<p>If we detect an outlier during the outlier detection process, we increase<kbd>self.num_frame_no_success</kbd> and return <kbd>False</kbd>. We might also want to print a message of the outlier in order to see when exactly it appears: </p>
+<pre>except Outlier as e:<br/>    print(f"Outlier:{e}")<br/>    self.num_frames_no_success += 1<br/>    return False, None, None</pre>
+<p>Otherwise, if the outlier was not detected, we can be fairly certain that we have successfully located the object of interest in the current frame. In this case, we first store the homography matrix and reset the counter:</p>
+<pre>else:<br/>    # reset counters and update Hinv<br/>    self.num_frames_no_success = 0<br/>    self.last_h = Hinv</pre>
+<p>The following lines show the warping of the image for illustration:</p>
+<pre>img_warped = cv2.warpPerspective(<br/>    img_query, Hinv, (sh_query[1], sh_query[0]))</pre>
+<p>And finally, we draw good matches and corner points, as we did previously, and return the results:</p>
+<pre>img_flann = draw_good_matches(<br/>    self.img_obj,<br/>    self.key_train,<br/>    img_query,<br/>    key_query,<br/>    good_matches)<br/># adjust x-coordinate (col) of corner points so that they can be drawn<br/># next to the train image (add self.sh_train[1])<br/>dst_corners[:, 0] += self.sh_train[1]<br/>cv2.polylines(<br/>    img_flann,<br/>    [dst_corners.astype(np.int)],<br/>    isClosed=True,<br/>    color=(0,255,0),<br/>    thickness=3)<br/>return True, img_warped, img_flann</pre>
+<p>In the preceding code, as explained previously, we shifted the <em>x</em> coordinate of the corners by the width of the train image because the query image appears next to the train image, and we changed the data type of the corners to integers because the <kbd>polilines</kbd> method accepts integers as coordinates.</p>
+<p>In the next section, we'll explore how the algorithm works.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Seeing the algorithm in action</h1>
+                </header>
+            
+            <article>
+                
+<p>The result of the matching procedure in a live stream from a laptop's webcam looks like this:</p>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/45a68c97-f5c4-4006-8e18-c1e053676e9c.png" style="width:42.17em;height:18.67em;"/></p>
+<p>As you can see, most of the keypoints in the pattern image were matched correctly with their counterparts in the query image on the right. The printout of the pattern can now be slowly moved around, tilted, and turned. As long as all the corner points stay in the current frame, the homography matrix is updated accordingly and the outline of the pattern image is drawn correctly.</p>
+<p>This works even if the printout is upside down, as shown here:</p>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/78314d35-07a7-48d5-a6e5-d6148c2beb1f.png" style="width:42.92em;height:19.00em;"/></p>
+<p>In all cases, the warped image brings the pattern image to an upright, centered position on the <kbd>frontoparallel</kbd> plane. This creates a cool effect of having the pattern image frozen in place in the center of the screen, while the surroundings twist and turn around it, like this:</p>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/0c091a5e-985f-4864-9210-cb228a9c144a.png" style="width:40.25em;height:30.17em;"/></p>
+<p>In most cases, the warped image looks fairly accurate, as shown in the one earlier. If for any reason the algorithm accepts a wrong homography matrix that leads to an unreasonably warped image, then the algorithm will discard the outlier and recover within half a second (that is, within the <kbd>self.max_frames_no_success</kbd> frames), leading to accurate and efficient tracking throughout.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Summary</h1>
+                </header>
+            
+            <article>
+                
+<p>This chapter looked at a robust feature tracking method that is fast enough to run in real time when applied to the live stream of a webcam.</p>
+<p>First, the algorithm shows you how to extract and detect important features in an image, which was independent of perspective and size, be it in a template of our object of interest (train image) or a more complex scene in which we expect the object of interest to be embedded (query image).</p>
+<p>A match between feature points in the two images is then found by clustering the keypoints using a fast version of the nearest-neighbor algorithm. From there on, it is possible to calculate a perspective transformation that maps one set of feature points to the other. With this information, we can outline the train image as found in the query image and warp the query image so that the object of interest appears upright in the center of the screen.</p>
+<p>With this in hand, we now have a good starting point for designing a cutting-edge feature tracking, image stitching, or augmented-reality application.</p>
+<p>In the next chapter, we will continue studying the geometrical features of a scene, but, this time, we will be concentrating on the motion. Specifically, we will study how to reconstruct a scene in 3D by inferring its geometrical features from camera motion. For this, we will have to combine our knowledge of feature matching with the optic flow and structure-from-motion techniques.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Attributions</h1>
+                </header>
+            
+            <article>
+                
+<p><kbd>Lenna.png</kbd>—the i<span>mage of </span>Lenna<span> is available at <a href="http://www.flickr.com/photos/15489034@N00/3388463896">http://www.flickr.com/photos/15489034@N00/3388463896</a></span> by Conor Lawless under the CC 2.0 generic <span>attribution</span>.<a href="http://www.flickr.com/photos/15489034@N00/3388463896"/></p>
+
+
+            </article>
+
+            
+        </section>
+    </body></html>

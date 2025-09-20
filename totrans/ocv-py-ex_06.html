@@ -1,0 +1,152 @@
+<html><head></head><body>
+  <div id="sbo-rt-content"><div class="chapter" title="Chapter 6. Creating a Panoramic Image"><div class="titlepage"><div><div><h1 class="title"><a id="ch06"/>Chapter 6. Creating a Panoramic Image</h1></div></div></div><p>In this chapter, we are going to learn how to stitch multiple images of the same scene together to create a panoramic image.</p><p>By the end of this chapter, you will know:</p><div class="itemizedlist"><ul class="itemizedlist"><li class="listitem" style="list-style-type: disc">How to match keypoint descriptors between multiple images</li><li class="listitem" style="list-style-type: disc">How to find overlapping regions between images</li><li class="listitem" style="list-style-type: disc">How to warp images based on the matching keypoints</li><li class="listitem" style="list-style-type: disc">How to stitch multiple images to create a panoramic image</li></ul></div><div class="section" title="Matching keypoint descriptors"><div class="titlepage"><div><div><h1 class="title"><a id="ch06lvl1sec56"/>Matching keypoint descriptors</h1></div></div></div><p>In the last chapter, we<a id="id205" class="indexterm"/> learned how to extract keypoints using various methods. The reason that we extract keypoints is because we can use them for image matching. Let's consider the following image:</p><div class="mediaobject"><img src="images/B04554_06_01.jpg" alt="Matching keypoint descriptors"/></div><p>As you can see, it's the picture of a school bus. Now, let's take a look at the following image:</p><div class="mediaobject"><img src="images/B04554_06_02.jpg" alt="Matching keypoint descriptors"/></div><p>The preceding image<a id="id206" class="indexterm"/> is a part of the school bus image and it's been rotated anticlockwise by 90 degrees. We could easily recognize this because our brain is invariant to scaling and rotation. Our goal here is to find the matching points between these two images. If you do that, it would look something like this:</p><div class="mediaobject"><img src="images/B04554_06_03.jpg" alt="Matching keypoint descriptors"/></div><p>Following is the <a id="id207" class="indexterm"/>code to do this:</p><div class="informalexample"><pre class="programlisting">import sys
+
+import cv2
+import numpy as np
+
+def draw_matches(img1, keypoints1, img2, keypoints2, matches):
+    rows1, cols1 = img1.shape[:2]
+    rows2, cols2 = img2.shape[:2]
+
+    # Create a new output image that concatenates the two images together
+    output_img = np.zeros((max([rows1,rows2]), cols1+cols2, 3), dtype='uint8')
+    output_img[:rows1, :cols1, :] = np.dstack([img1, img1, img1])
+    output_img[:rows2, cols1:cols1+cols2, :] = np.dstack([img2, img2, img2])
+
+    # Draw connecting lines between matching keypoints
+    for match in matches:
+        # Get the matching keypoints for each of the images
+        img1_idx = match.queryIdx
+        img2_idx = match.trainIdx
+
+        (x1, y1) = keypoints1[img1_idx].pt
+        (x2, y2) = keypoints2[img2_idx].pt
+
+        # Draw a small circle at both co-ordinates and then draw a line
+        radius = 4
+        colour = (0,255,0)   # green
+        thickness = 1
+        cv2.circle(output_img, (int(x1),int(y1)), radius, colour, thickness)
+        cv2.circle(output_img, (int(x2)+cols1,int(y2)), radius, colour, thickness)
+        cv2.line(output_img, (int(x1),int(y1)), (int(x2)+cols1,int(y2)), colour, thickness)
+
+    return output_img
+
+if __name__=='__main__':
+    img1 = cv2.imread(sys.argv[1], 0)   # query image (rotated subregion)
+    img2 = cv2.imread(sys.argv[2], 0)   # train image (full image)
+
+    # Initialize ORB detector
+    orb = cv2.ORB()
+
+    # Extract keypoints and descriptors
+    keypoints1, descriptors1 = orb.detectAndCompute(img1, None)
+    keypoints2, descriptors2 = orb.detectAndCompute(img2, None)
+
+    # Create Brute Force matcher object
+    bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+
+    # Match descriptors
+    matches = bf.match(descriptors1, descriptors2)
+
+    # Sort them in the order of their distance
+    matches = sorted(matches, key = lambda x:x.distance)
+
+    # Draw first 'n' matches
+    img3 = draw_matches(img1, keypoints1, img2, keypoints2, matches[:30])
+
+    cv2.imshow('Matched keypoints', img3)
+    cv2.waitKey()</pre></div><div class="section" title="How did we match the keypoints?"><div class="titlepage"><div><div><h2 class="title"><a id="ch06lvl2sec37"/>How did we match the keypoints?</h2></div></div></div><p>In the preceding code, we used <a id="id208" class="indexterm"/>the ORB detector to extract the keypoints. Once we extracted the keypoints, we used the Brute Force matcher to match the descriptors. Brute Force matching is pretty straightforward! For every descriptor in the first image, we match it with every descriptor in the second image and take the closest one. To compute the closest descriptor, we use the Hamming distance as the metric, as shown in the following line:</p><div class="informalexample"><pre class="programlisting">bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)</pre></div><p>You can read more about the Hamming distance<a id="id209" class="indexterm"/> at <a class="ulink" href="https://en.wikipedia.org/wiki/Hamming_distance">https://en.wikipedia.org/wiki/Hamming_distance</a>. The second argument in the preceding line is a Boolean variable. If this is true, then the matcher returns only those keypoints that are closest to each other in both directions. This means that if we get (i, j) as a match, then we can be sure that the i-th descriptor in the first image has the j-th descriptor in the second image as its closest match and vice versa. This increases the consistency and robustness of descriptor matching.</p></div><div class="section" title="Understanding the matcher object"><div class="titlepage"><div><div><h2 class="title"><a id="ch06lvl2sec38"/>Understanding the matcher object</h2></div></div></div><p>Let's consider the<a id="id210" class="indexterm"/> following line again:</p><div class="informalexample"><pre class="programlisting">matches = bf.match(descriptors1, descriptors2)</pre></div><p>Here, the variable matches is a list of DMatch objects. You can read more about it in the OpenCV documentation. We just need to quickly understand what it means because it will become increasingly relevant in the upcoming chapters. If we are iterating over this list of DMatch objects, then each item will have the following attributes:</p><div class="itemizedlist"><ul class="itemizedlist"><li class="listitem" style="list-style-type: disc"><span class="strong"><strong>item.distance</strong></span>: This <a id="id211" class="indexterm"/>attribute gives us the distance between the descriptors. A lower distance indicates a better match.</li><li class="listitem" style="list-style-type: disc"><span class="strong"><strong>item.trainIdx</strong></span>: This <a id="id212" class="indexterm"/>attribute gives us the index of the descriptor in the list of train descriptors (in our case, it's the list of descriptors in the full image).</li><li class="listitem" style="list-style-type: disc"><span class="strong"><strong>item.queryIdx</strong></span>: This <a id="id213" class="indexterm"/>attribute gives us the index of the descriptor in the list of query descriptors (in our case, it's the list of descriptors in the rotated subimage).</li><li class="listitem" style="list-style-type: disc"><span class="strong"><strong>item.imgIdx</strong></span>: This attribute <a id="id214" class="indexterm"/>gives us the index of the train image.</li></ul></div></div><div class="section" title="Drawing the matching keypoints"><div class="titlepage"><div><div><h2 class="title"><a id="ch06lvl2sec39"/>Drawing the matching keypoints</h2></div></div></div><p>Now that we know how <a id="id215" class="indexterm"/>to access different attributes of the matcher object, let's see how we can use them to draw the matching keypoints. OpenCV 3.0 provides a direct function to draw the matching keypoints, but we will not be using that. It's better to take a peek inside to see what's happening underneath.</p><p>We need to create a big output image that can fit both the images side by side. So, we do that in the following line:</p><div class="informalexample"><pre class="programlisting">output_img = np.zeros((max([rows1,rows2]), cols1+cols2, 3), dtype='uint8')</pre></div><p>As we can see here, the number of rows is set to the bigger of the two values and the number of columns is simply the sum of both the values. For each item in the list of matches, we extract the locations of the matching keypoints, as we can see in the following lines:</p><div class="informalexample"><pre class="programlisting">(x1, y1) = keypoints1[img1_idx].pt
+(x2, y2) = keypoints2[img2_idx].pt</pre></div><p>Once we do that, we just <a id="id216" class="indexterm"/>draw circles on those points to indicate their locations and then draw a line connecting the two points.</p></div></div></div></div>
+
+
+  <div id="sbo-rt-content"><div class="section" title="Creating the panoramic image"><div class="titlepage"><div><div><h1 class="title"><a id="ch06lvl1sec57"/>Creating the panoramic image</h1></div></div></div><p>Now that we know how to <a id="id217" class="indexterm"/>match keypoints, let's go ahead and see how we can stitch multiple images together. Consider the following image:</p><div class="mediaobject"><img src="images/B04554_06_04.jpg" alt="Creating the panoramic image"/></div><p>Let's say we want to stitch the following image with the preceding image:</p><div class="mediaobject"><img src="images/B04554_06_05.jpg" alt="Creating the panoramic image"/></div><p>If we stitch these <a id="id218" class="indexterm"/>images, it will look something like the following one:</p><div class="mediaobject"><img src="images/B04554_06_06.jpg" alt="Creating the panoramic image"/></div><p>Now let's say we <a id="id219" class="indexterm"/>captured another part of this house, as seen in the following image:</p><div class="mediaobject"><img src="images/B04554_06_07.jpg" alt="Creating the panoramic image"/></div><p>If we stitch the preceding image with the stitched image we saw earlier, it will look something like this:</p><div class="mediaobject"><img src="images/B04554_06_08.jpg" alt="Creating the panoramic image"/></div><p>We can keep stitching <a id="id220" class="indexterm"/>images together to create a nice panoramic image. Let's take a look at the code:</p><div class="informalexample"><pre class="programlisting">import sys
+import argparse
+
+import cv2
+import numpy as np
+
+def argument_parser():
+    parser = argparse.ArgumentParser(description='Stitch two images together')
+    parser.add_argument("--query-image", dest="query_image", required=True,
+            help="First image that needs to be stitched")
+    parser.add_argument("--train-image", dest="train_image", required=True,
+            help="Second image that needs to be stitched")
+    parser.add_argument("--min-match-count", dest="min_match_count", type=int,
+            required=False, default=10, help="Minimum number of matches required")
+    return parser
+
+# Warp img2 to img1 using the homography matrix H
+def warpImages(img1, img2, H):
+    rows1, cols1 = img1.shape[:2]
+    rows2, cols2 = img2.shape[:2]
+
+    list_of_points_1 = np.float32([[0,0], [0,rows1], [cols1,rows1], [cols1,0]]).reshape(-1,1,2)
+    temp_points = np.float32([[0,0], [0,rows2], [cols2,rows2], [cols2,0]]).reshape(-1,1,2)
+    list_of_points_2 = cv2.perspectiveTransform(temp_points, H)
+    list_of_points = np.concatenate((list_of_points_1, list_of_points_2), axis=0)
+
+    [x_min, y_min] = np.int32(list_of_points.min(axis=0).ravel() - 0.5)
+    [x_max, y_max] = np.int32(list_of_points.max(axis=0).ravel() + 0.5)
+    translation_dist = [-x_min,-y_min]
+    H_translation = np.array([[1, 0, translation_dist[0]], [0, 1, translation_dist[1]], [0,0,1]])
+
+    output_img = cv2.warpPerspective(img2, H_translation.dot(H), (x_max-x_min, y_max-y_min))
+    output_img[translation_dist[1]:rows1+translation_dist[1], translation_dist[0]:cols1+translation_dist[0]] = img1
+    
+    return output_img
+
+if __name__=='__main__':
+    args = argument_parser().parse_args()
+    img1 = cv2.imread(args.query_image, 0)
+    img2 = cv2.imread(args.train_image, 0)
+    min_match_count = args.min_match_count
+
+    cv2.imshow('Query image', img1)
+    cv2.imshow('Train image', img2)
+
+    # Initialize the SIFT detector
+    sift = cv2.SIFT()
+
+    # Extract the keypoints and descriptors
+    keypoints1, descriptors1 = sift.detectAndCompute(img1, None)
+    keypoints2, descriptors2 = sift.detectAndCompute(img2, None)
+
+    # Initialize parameters for Flann based matcher
+    FLANN_INDEX_KDTREE = 0
+    index_params = dict(algorithm = FLANN_INDEX_KDTREE, trees = 5)
+    search_params = dict(checks = 50)
+
+    # Initialize the Flann based matcher object
+    flann = cv2.FlannBasedMatcher(index_params, search_params)
+
+    # Compute the matches
+    matches = flann.knnMatch(descriptors1, descriptors2, k=2)
+
+    # Store all the good matches as per Lowe's ratio test
+    good_matches = []
+    for m1,m2 in matches:
+        if m1.distance &lt; 0.7*m2.distance:
+            good_matches.append(m1)
+
+    if len(good_matches) &gt; min_match_count:
+        src_pts = np.float32([ keypoints1[good_match.queryIdx].pt for good_match in good_matches ]).reshape(-1,1,2)
+        dst_pts = np.float32([ keypoints2[good_match.trainIdx].pt for good_match in good_matches ]).reshape(-1,1,2)
+
+        M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+        result = warpImages(img2, img1, M)
+        cv2.imshow('Stitched output', result)
+
+        cv2.waitKey()
+
+    else:
+        print "We don't have enough number of matches between the two images."
+        print "Found only %d matches. We need at least %d matches." % (len(good_matches), min_match_count)</pre></div><div class="section" title="Finding the overlapping regions"><div class="titlepage"><div><div><h2 class="title"><a id="ch06lvl2sec40"/>Finding the overlapping regions</h2></div></div></div><p>The goal here is to find the<a id="id221" class="indexterm"/> matching keypoints so that we can stitch the images together. So, the first step is to get these matching keypoints. As discussed in the previous section, we use a keypoint detector to extract the keypoints, and then use a Flann based matcher to match the keypoints.</p><div class="note" title="Note" style=""><div class="inner"><h3 class="title"><a id="note04"/>Note</h3><p>You can learn more about <a id="id222" class="indexterm"/>Flann at <a class="ulink" href="http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.192.5378&amp;rep=rep1&amp;type=pdf">http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.192.5378&amp;rep=rep1&amp;type=pdf</a>.</p></div></div><p>The Flann based matcher is<a id="id223" class="indexterm"/> faster than Brute Force matching because it doesn't compare each point with every single point on the other list. It only considers the neighborhood of the current point to get the matching keypoint, thereby making it more efficient.</p><p>Once we get a list of matching keypoints, we use Lowe's ratio test to keep only the strong matches. David Lowe proposed this ratio test in order to increase the robustness of SIFT.</p><div class="note" title="Note" style=""><div class="inner"><h3 class="title"><a id="note05"/>Note</h3><p>You can read more about this at <a class="ulink" href="http://www.cs.ubc.ca/~lowe/papers/ijcv04.pdf">http://www.cs.ubc.ca/~lowe/papers/ijcv04.pdf</a>.</p></div></div><p>Basically, when we match the keypoints, we reject the matches in which the ratio of the distances to the nearest neighbor and the second nearest neighbor is greater than a certain threshold. This helps us in discarding the points that are not distinct enough. So, we use that concept here to keep only the good matches and discard the rest. If we don't have sufficient matches, we don't proceed further. In our case, the default value is 10. You can play around with this input parameter to see how it affects the output.</p><p>If we have a sufficient number of matches, then we extract the list of keypoints in both the images and extract the homography matrix. If you remember, we have already discussed homography in the first chapter. So if you have forgotten about it, you may want to take a quick look. We basically take a bunch of points from both the images and extract the transformation matrix.</p></div><div class="section" title="Stitching the images"><div class="titlepage"><div><div><h2 class="title"><a id="ch06lvl2sec41"/>Stitching the images</h2></div></div></div><p>Now that we have the <a id="id224" class="indexterm"/>transformation, we can go ahead and stitch the images. We will use the transformation matrix to transform the second list of points. We keep the first image as the frame of reference and create an output image that's big enough to hold both the images. We need to extract information about the transformation of the second image. We need to move it into this frame of reference to make sure it aligns with the first image. So, we have to extract the translation information and then warp it. We then add the first image into this and construct the final output. It is worth mentioning that this works for images with different aspect ratios as well. So, if you get a chance, try it out and see what the output looks like.</p></div></div></div>
+
+
+  <div id="sbo-rt-content"><div class="section" title="What if the images are at an angle to each other?"><div class="titlepage"><div><div><h1 class="title"><a id="ch06lvl1sec58"/>What if the images are at an angle to each other?</h1></div></div></div><p>Until now, we were looking at images that were on the same plane. Stitching those images was straightforward and we didn't have to deal with any artifacts. In real life, you cannot capture multiple images <a id="id225" class="indexterm"/>on exactly the same plane. When you are capturing multiple images of the same scene, you are bound to tilt your camera and change the plane. So the question is, will our algorithm work in that scenario? As it turns out, it can handle those cases as well.</p><p>Let's consider the following image:</p><div class="mediaobject"><img src="images/B04554_06_09.jpg" alt="What if the images are at an angle to each other?"/></div><p>Now, let's consider another image of the same scene. It's at an angle with respect to the first image, and it's partially overlapping as well:</p><div class="mediaobject"><img src="images/B04554_06_10.jpg" alt="What if the images are at an angle to each other?"/></div><p>Let's consider the first <a id="id226" class="indexterm"/>image as our reference. If we stitch these images using our algorithm, it will look something like this:</p><div class="mediaobject"><img src="images/B04554_06_11.jpg" alt="What if the images are at an angle to each other?"/></div><p>If we keep the second<a id="id227" class="indexterm"/> image as our reference, it will look something like this:</p><div class="mediaobject"><img src="images/B04554_06_12.jpg" alt="What if the images are at an angle to each other?"/></div><div class="section" title="Why does it look stretched?"><div class="titlepage"><div><div><h2 class="title"><a id="ch06lvl2sec42"/>Why does it look stretched?</h2></div></div></div><p>If you observe, a<a id="id228" class="indexterm"/> portion of the output image corresponding to the query image looks stretched. It's because the query image is transformed and adjusted to fit into our frame of reference. The reason it looks stretched is because of the following lines in our code:</p><div class="informalexample"><pre class="programlisting">M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+result = warpImages(img2, img1, M)</pre></div><p>Since the images are at an angle with respect to each other, the query image will have to undergo a perspective transformation in order to fit into the frame of reference. So, we transform the query image first, and then stitch it into our main image to form the panoramic image.</p></div></div></div>
+
+
+  <div id="sbo-rt-content"><div class="section" title="Summary"><div class="titlepage"><div><div><h1 class="title"><a id="ch06lvl1sec59"/>Summary</h1></div></div></div><p>In this chapter, we learned how to match keypoints among multiple images. We discussed how to stitch multiple images together to create a panoramic image. We learned how to deal with images that are not on the same plane.</p><p>In the next chapter, we are going to discuss how to do content-aware image resizing by detecting "interesting" regions in the image.</p></div></div>
+</body></html>

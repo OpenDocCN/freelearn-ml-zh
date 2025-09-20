@@ -1,0 +1,459 @@
+<html><head></head><body>
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Controlling a Phone App with Your Suave Gestures</h1>
+                </header>
+            
+            <article>
+                
+<div class="packt_quote"><span>"You've got all the moves."</span><br/>
+<span>                    - Lani Hall, Never Say Never Again (1983)</span></div>
+<p>He raises an eyebrow; he lowers his chin; he twists the corners of his mouth; he folds one arm into the crook of the other as he points his pistol at the ceiling. It all looks very impressive, but is he simply wasting time while trying to remember people's names?</p>
+<p>Agent 007 has a few old friends with normal names, such as Bill Tanner and Felix Leiter. Almost every other name is a number, a single letter, a mash-up of multiple languages, or a blindingly obvious double entendre. After a few vodka martinis and tranquilizer darts, any man would start to wonder whether his memory for names was playing tricks on him.</p>
+<p>To put such doubts to rest, we will develop an Android app that determines a person's name based on a series of yes/no questions. To allow a secret agent to use it discretely, the app will rely on gesture controls and audio output, which can go to a Bluetooth headset so that others cannot hear.</p>
+<p>The app's logic is like the game Twenty Questions. First, the app asks a question by playing an audio clip. Then, the user responds with a nod or a shake of the head. Each question is more specific than the last, until the app is ready to guess a name or give up. Recognizing the two possible head gestures—a nod or a shake—is our computer vision task for this chapter.</p>
+<p>Specifically, this chapter covers the following programming topics:</p>
+<ul>
+<li>Using Android Studio and the Android SDK to build an Android app in Java</li>
+<li>Using OpenCV's Android camera functions to capture, process, and display images from the Android device's camera</li>
+<li>Tracking head gestures using OpenCV's functions for face detection, feature detection, and optical flow </li>
+</ul>
+<p>The app's codename is <kbd>Goldgesture</kbd>.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Technical requirements</h1>
+                </header>
+            
+            <article>
+                
+<p>This chapter’s project has the following software dependencies:</p>
+<ul>
+<li>Android Studio</li>
+<li>OpenCV Android pack</li>
+</ul>
+<p>Setup instructions are covered in <a href="e3ac8266-975b-43ca-8221-482a15eb0e05.xhtml">Chapter 1</a>, <em>Preparing for the Mission</em>. Refer to the setup instructions for any version requirements. Instructions for building and running Android projects are covered in the current chapter.</p>
+<p class="mce-root"><span>The completed project for this chapter can be found in the book's GitHub repository, </span><a href="https://github.com/PacktPublishing/OpenCV-4-for-Secret-Agents-Second-Edition">https://github.com/PacktPublishing/OpenCV-4-for-Secret-Agents-Second-Edition</a><span>, in the </span><kbd>Chapter004</kbd><span> folder.</span> <span>If you want to open the completed project, just launch Android Studio, select <span class="packt_screen">Open an existing Android Studio project</span>, and then select the <kbd>Chapter004/Goldgesture</kbd> folder.</span></p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Planning the Goldgesture app</h1>
+                </header>
+            
+            <article>
+                
+<p><kbd>Goldgesture</kbd> is a GUI app built with the Android SDK and OpenCV's Java bindings for Android. It has just a single view, seen in the screenshot on the next page. The app has the following flow of execution:</p>
+<ol>
+<li>Constantly display a live video feed from the front-facing (self-portrait) camera.</li>
+<li>Perform human face detection using OpenCV's <kbd><span class="CodeInTextPACKT">CascadeClassifier</span></kbd> class.</li>
+</ol>
+<ol start="3">
+<li>When a human face is detected:
+<ol>
+<li class="NumberedBulletWithinBulletPACKT">Draw a blue rectangle around the face.</li>
+<li class="NumberedBulletWithinBulletPACKT">Detect features of the face (points that should be easy to track in subsequent frames despite movement) using OpenCV's <kbd><span class="CodeInTextPACKT">goodFeaturesToTrack</span></kbd> function. Draw green circles around these features.</li>
+</ol>
+</li>
+<li>As the face moves, track the features in every frame using OpenCV's <kbd><span class="CodeInTextPACKT">calcOpticalFlowPyrLK</span></kbd> function. This function can continuously track the features even though <kbd><span class="CodeInTextPACKT">CascadeClassifier</span></kbd> is unlikely to continuously detect a face.</li>
+<li>When the features' center point moves up and down by a certain amount and a certain number of times, deem that a nod has occurred.</li>
+<li>When the features' center point moves left and right by a certain amount and a certain number of times, deem that a shake of the head has occurred.</li>
+<li>Play a sequence of audio clips. At each juncture, choose the next clip depending (in part) on whether a nod or shake of the head has occurred.</li>
+<li>Reset the tracking if its reliability deteriorates to a certain extent or if the user's head appears to be nodding and shaking at the same time:</li>
+</ol>
+<p class="Normal1 CDPAlignCenter CDPAlign"><img src="assets/9eba51d6-30cc-4e7e-a933-3a732aacd28f.png" style="width:15.92em;height:28.25em;"/></p>
+<p><span>The face-detection functionality in <kbd>Goldgesture</kbd> should already be familiar from the Angora Blue project in <a href="49c9a5fb-89a3-4c0d-bbee-021d2618168c.xhtml">Chapter 3</a><em>, Training a Smart Alarm to Recognize the Villain and His Cat</em>. However, feature tracking, and specifically <span class="KeyWordPACKT">optical flow,</span> is a new topic for us. Let's talk about the concepts a little before proceeding to set up our project.</span></p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Understanding optical flow</h1>
+                </header>
+            
+            <article>
+                
+<p><strong>Optical flow</strong> is the pattern of apparent motion between two consecutive frames of video. We select feature points in the first frame and try to determine where those features have gone in the second frame. This search is subject to a few caveats:</p>
+<ul>
+<li>We make no attempt to distinguish between camera motion and subject motion.</li>
+<li>We assume that a feature's color or brightness remains similar between frames.</li>
+<li>We assume that neighboring pixels have similar motions.</li>
+</ul>
+<p>OpenCV's <kbd><span class="CodeInTextPACKT">calcOpticalFlowPyrLK</span></kbd> function implements the Lucas-Kanade method of computing optical flow. Lucas-Kanade relies on a <em>3 x 3</em> neighborhood (that is, 9 pixels) around each feature. Taking each feature's neighborhood from the first frame, we try to find the best matching neighborhood in the second frame, based on least squares error. OpenCV's implementation of Lucas-Kanade uses an image pyramid, meaning it performs the search at various scales. Thus, it supports both large and small motions (<kbd><span class="CodeInTextPACKT">PyrLK</span></kbd> <span>in the function name stands for <em><span class="KeyWordPACKT">pyramidal Lucas-Kanade</span></em>). The following diagram is a visualization of a pyramid—a progression from low-resolution (or low-magnification) images to high-resolution (or high-magnification) images:</span></p>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/e38cd409-3f9b-4e21-b0fd-28516c6f15be.png"/></p>
+<div class="packt_infobox">
+<p><span>For more details on optical flow and the Lucas-Kanade method, see the official OpenCV documentation at</span> <a href="http://docs.opencv.org/master/d7/d8b/tutorial_py_lucas_kanade.html">http://docs.opencv.org/master/d7/d8b/tutorial_py_lucas_kanade.html</a><span>.</span></p>
+<p><span>OpenCV offers implementations of other optical flow algorithms as well. For example, the</span> <kbd><span class="CodeInTextPACKT">calcOpticalFlowSF</span></kbd> <span>function implements the SimpleFlow algorithm, which makes optimizations for high-resolution video by assuming that smooth (uniform) image regions move in unison. The</span> <kbd><span class="CodeInTextPACKT">calcOpticalFlowFarneback</span></kbd> <span>function implements Gunnar Farneback's algorithm, which posits that a neighborhood remains identifiable, even during motion, by the coefficients of a polynomial relationship among its pixel values. Both of these algorithms are forms of</span> <em>dense</em> <span>optical flow, meaning that they analyze every pixel in the image instead of just selected (</span><em>sparse</em><span>) features. More of OpenCV's optical flow functions are documented at <a href="https://docs.opencv.org/master/dc/d6b/group__video__track.html">https://docs.opencv.org/master/dc/d6b/group__video__track.html</a> and <a href="https://docs.opencv.org/master/d2/d84/group__optflow.html">https://docs.opencv.org/master/d2/d84/group__optflow.html</a>.</span></p>
+<p><span>Of the several options, why choose</span> <kbd><span class="CodeInTextPACKT">calcOpticalFlowPyrLK</span></kbd><span>? <em>You see, it is a pyramid,</em> as Imhotep said to the Pharaoh Djoser, <em>and it has open spaces inside it.</em> A pyramidal, sparse technique is a good way for us to cheaply and robustly track a few features in a face, which may change scale as it moves nearer to or farther from the camera.</span></p>
+</div>
+<p>For our purposes, it is useful to select features inside a detected object, specifically a detected face. We choose an inner portion of the face (to avoid background regions) and then use an OpenCV function called <kbd><span class="CodeInTextPACKT">goodFeaturesToTrack</span></kbd>, which selects features based on the algorithm described in <span>Jianbo Shi and Carlo Tomasi's paper, "Good Features to Track", <em><span class="ItalicsPACKT">Proc. of IEEE Conf. on Computer Vision and Pattern Recognition</span></em>, pp. 593-600, June 1994.</span></p>
+<p>As the name suggests, the <strong>Good Features to Track</strong> (<strong>GFTT</strong>) algorithm (also known as the <strong>Shi-Tomasi algorithm</strong>) takes into account the requirements of tracking algorithms and tracking use cases, and attempts to select features that work well with these algorithms and use cases. As described in detail in the paper, good features to track must have a stable appearance with respect to small changes in the camera's perspective. Examples of poor features to track are reflections (such as sunlight on a car's hood) and lines that cross at different depths (such as a tree's branches), since these features move quickly as the viewer or camera moves. The effects of a change in perspective can be simulated (albeit imperfectly) by warping a given image and moving its contents linearly. Based on such a simulation, the most stable features can be selected.</p>
+<div class="packt_infobox">
+<p><span>OpenCV offers implementations of several feature-detection algorithms, besides Good Features to Track. For references to information about these other algorithms, please refer to</span> <a href="01685b22-2dcc-4d5b-ac19-0b8a15e0e3b1.xhtml">Appendix B</a>,<em> Learning More about Feature Detection in OpenCV</em><span>.</span></p>
+</div>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Setting up the project in Android Studio</h1>
+                </header>
+            
+            <article>
+                
+<p class="mce-root">For a refresher on setting up Android Studio and the OpenCV Android pack, refer to the <em>Setting up Android Studio and OpenCV</em> section in <a href="e3ac8266-975b-43ca-8221-482a15eb0e05.xhtml">Chapter 1</a>, <em>Preparing for the Mission</em>.</p>
+<p>We will organize all the source code and resources for our Android app in an Android Studio project, as follows:</p>
+<ol>
+<li>Open Android Studio and select <span class="packt_screen">File </span>| <span class="packt_screen">New </span>| <span class="packt_screen">New Project...</span> from the menu. The <span class="packt_screen">Create New Project</span> window should appear, and it should show the <strong>Choose your project</strong> form. Select <span class="packt_screen">Empty Activity</span>, as shown in the following screenshot, and click <span class="packt_screen">Next</span>:</li>
+</ol>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/efe6e451-a22b-40a6-9dcf-34c017da0e1d.png" style="width:35.83em;height:28.75em;"/></p>
+<ol start="2">
+<li>The <span class="packt_screen">Create New Project</span> window should show the <span class="packt_screen">Configure your project</span> form. <span>We want to specify that our app name is </span><kbd><span class="CodeInTextPACKT">Goldgesture</span></kbd><span>, its package name is </span><kbd><span class="CodeInTextPACKT">com.nummist.goldgesture</span></kbd><span>, it is a Java project, and its minimum Android SDK version is API level 21, which is Android 5.0. You may choose any new folder as the project's location.</span> Fill out the form as shown in the following screenshot, and click <span class="packt_screen">Finish</span>:</li>
+</ol>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/aabdd9d9-f12d-467e-bb92-15548b922d21.png"/></p>
+<ol start="3">
+<li>By default, Android Studio creates a main class, called <span class="packt_screen">MainActivity</span>. Let's rename this to give it a more descriptive name, <span class="packt_screen">CameraActivity</span>. Right-click on <kbd>app/src/main/java/com.nummist.goldgesture/MainActivity</kbd> (in the <span class="packt_screen">Project</span> pane) and select <span class="packt_screen">Refactor </span>| <span class="packt_screen">Rename...</span> from the context menu. The <span class="packt_screen">Rename</span> dialog should appear. Fill it out as shown in the following screenshot, and click <span class="packt_screen">Refactor</span>:</li>
+</ol>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/4288f5da-a3f8-4c83-8314-72ff2b958849.png" style="width:26.58em;height:11.58em;"/></p>
+<ol start="4">
+<li>Let's rename the XML file that defines the GUI layout associated with the <kbd>main</kbd> class. <span>Right-click on <kbd>app/src/main/res/layout/activity_main.xml</kbd> (in the <span class="packt_screen">Project</span> pane) and select <span class="packt_screen">Refactor </span>| <span class="packt_screen">Rename...</span> from the context menu. The <span class="packt_screen">Rename</span> dialog should appear again. Fill it out as shown in the following screenshot, and click <span class="packt_screen">Refactor</span>:</span></li>
+</ol>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/2ef64a54-3085-439e-a2fc-f6f7989c3cb0.png" style="width:22.67em;height:10.50em;"/></p>
+<ol start="5">
+<li><span>Since our app will depend on OpenCV, we need to import the OpenCV library module that we obtained as part of the OpenCV Android pack in <a href="e3ac8266-975b-43ca-8221-482a15eb0e05.xhtml">Chapter 1</a><em>, Preparing for the Mission</em>. From Android Studio's menu, select <span class="packt_screen">File </span>| <span class="packt_screen">New </span>| <span class="packt_screen">New Module...</span>. The <span class="packt_screen">Create New Module</span> dialog should appear, and it should show the <span class="packt_screen">New Module</span> form. Select <span class="packt_screen">Import Gradle Project</span>, as shown in the following screenshot, and click <span class="packt_screen">Next</span>:</span></li>
+</ol>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/700b1b37-8bae-46d9-b0d1-06ff77964796.png"/></p>
+<ol start="6">
+<li>A file picker dialog should appear. Select the <kbd>sdk</kbd> subfolder of the OpenCV Android pack, as shown in the following screenshot, and confirm the choice by clicking the <span class="packt_screen">Open</span> or<span> </span><span class="packt_screen">OK</span> button (whose name varies depending on the operating system):</li>
+</ol>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/bcf30f4e-c994-4972-b99b-67638aba9efc.png"/></p>
+<ol start="7">
+<li>The <span class="packt_screen">Create New Module</span> dialog should show the <span class="packt_screen">Import Module from Source</span> form. Enter <kbd>:OpenCV</kbd> in the <span class="packt_screen">Module name</span> field, as shown in the following screenshot, and click <span class="packt_screen">Finish</span>:</li>
+</ol>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/fb464e3a-333e-4357-9cf3-cba7092b9e15.png" style="width:31.00em;height:15.75em;"/></p>
+<p class="mce-root"/>
+<p style="padding-left: 60px">At this point, Android Studio might prompt you to perform updates and accept license agreements so that you have all of OpenCV's dependencies. If you are prompted, agree.</p>
+<ol start="8">
+<li>We need to specify that the <kbd>Goldgesture</kbd> app module depends on the OpenCV library module. From Android Studio's menus, select <span class="packt_screen">File </span>| <span class="packt_screen">Project Structure...</span>. The <span class="packt_screen">Project Structure</span> dialog should appear. Under <span class="packt_screen">Modules</span>, select <span class="packt_screen">app</span>. Then, select the <span class="packt_screen">Dependencies</span> tab, as shown in the following screenshot:</li>
+</ol>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/7a3f0eff-604e-496c-86ce-684cc3665d45.png" style="width:35.75em;height:14.83em;"/></p>
+<ol start="9">
+<li>Hit the <span class="packt_screen">+</span> button to add a dependency. A menu should appear. Select <span class="packt_screen">Module dependency</span>. The <span class="packt_screen">Choose Modules</span> dialog should appear. Select <span class="packt_screen">:OpenCV</span>, as shown in the following screenshot, and click <span class="packt_screen">OK</span>:</li>
+</ol>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/fd64d877-3ee5-491c-8201-5bee23d6207d.png" style="width:22.33em;height:9.25em;"/></p>
+<p class="Normal1"><span>The OpenCV library is now linked into <kbd>Goldgesture</kbd>.</span></p>
+<p class="mce-root"/>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Getting a cascade file and audio files</h1>
+                </header>
+            
+            <article>
+                
+<p class="mce-root"><span>Like parts of </span><a href="49c9a5fb-89a3-4c0d-bbee-021d2618168c.xhtml">Chapter 3</a>, <em>Training a Smart Alarm to Recognize the Villain and His Cat,</em><span> <em>Angora Blue project</em>, <kbd>Goldgesture</kbd> performs human face detection and requires one of the cascade files that comes with OpenCV. Also, <kbd>Goldgesture</kbd> uses audio clips. The cascade file and audio clips are located in the book's GitHub repository in the <kbd>Chapter004/Goldgesture/app/src/main/res/raw</kbd> subfolder. If you are recreating the project from scratch, you should copy these files to your own</span> <kbd>app/src/main/<span class="CodeInTextPACKT">res/raw</span></kbd> folder. This folder is a standard location for files that we want bundled with the Android app in raw (unmodified) form. By default, this folder does not exist in new Android Studio projects.</p>
+<p class="mce-root">To create it in Android Studio, right-click on the <kbd>app/src/main/res</kbd> folder (in the <span class="packt_screen">Project</span> pane) and select <span class="packt_screen">New </span>| <span class="packt_screen">Android Resource Directory</span> from the context menu. The <span class="packt_screen">New Resource Directory</span> window should appear. Fill it out as shown in the following screenshot, and click <span class="packt_screen">OK</span>:</p>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/0fe45012-dc95-4f81-b826-c525c91ae4f9.png"/></p>
+<p>After you create the <kbd>app/src/main/<span class="CodeInTextPACKT">res/raw</span></kbd><span> folder, you can drag and drop files into it in Android Studio.</span></p>
+<p>The audio clips are generated using the Vicki voice of the standard text-to-speech synthesizer on Mac. For example, one of the clips is created by running the following command in Terminal:</p>
+<pre><strong>$ say 'You are 007! I win!' -v Vicki -o win_007.mp4</strong> </pre>
+<p>Speech synthesis is hours of fun for the whole family.</p>
+<div class="packt_infobox">The Mac speech synthesizer pronounces <kbd>007</kbd> as double-O seven. This is an anomaly. For example, <em>008</em> is pronounced as <em>zero, zero, eight</em>.</div>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Specifying the app's requirements</h1>
+                </header>
+            
+            <article>
+                
+<p><kbd><span class="CodeInTextPACKT">AndroidManifest.xml</span></kbd> <span>(the <span class="KeyWordPACKT">Android Manifest</span>) is the place where an app announces information that the system, Google Play, and other apps might need to know. For example, <kbd>Goldgesture</kbd> requires a front-facing camera and permission to use it (a license to shoot, one might say). <kbd>Goldgesture</kbd> also expects to run in landscape mode, regardless of the physical orientation of the phone, because OpenCV's camera preview always uses the camera's landscape dimensions (OpenCV's Android documentation does not indicate whether this behavior is intended. Perhaps future versions will provide better support for portrait orientation). To specify these requirements, edit</span> <kbd><span class="CodeInTextPACKT">app/src/main/AndroidManifest.xml</span></kbd> to match the following sample:</p>
+<pre><span>&lt;?</span><span>xml version=</span><span>"1.0" </span><span>encoding=</span><span>"utf-8"</span><span>?&gt;<br/></span>&lt;<span>manifest </span><span>xmlns:</span><span>android</span><span>=</span><span>"http://schemas.android.com/apk/res/android"<br/></span><span>    </span><span>package=</span><span>"com.nummist.goldgesture"</span>&gt;<br/><br/><strong>    &lt;<span>uses-permission </span><span>android</span><span>:name=</span><span>"android.permission.CAMERA" </span>/&gt;</strong><br/><br/><strong>    &lt;<span>uses-feature </span><span>android</span><span>:name=</span><span>"android.hardware.camera.front" </span>/&gt;</strong><br/><br/>    &lt;<span>application<br/></span><span>        </span><span>android</span><span>:allowBackup=</span><span>"true"<br/></span><span>        </span><span>android</span><span>:icon=</span><span>"@mipmap/ic_launcher"<br/></span><span>        </span><span>android</span><span>:label=</span><span>"@string/app_name"<br/></span><span>        </span><span>android</span><span>:roundIcon=</span><span>"@mipmap/ic_launcher_round"<br/></span><span>        </span><span>android</span><span>:supportsRtl=</span><span>"true"<br/></span><span>        </span><span>android</span><span>:theme=</span><span>"@style/AppTheme"</span>&gt;<br/> &lt;<span>activity<br/></span><span> </span><span>android</span><span>:name=</span><span>"<strong>.CameraActivity</strong>"<br/></span><span> </span><strong><span>android</span><span>:screenOrientation=</span><span>"landscape"<br/></span><span> </span><span>android</span><span>:theme=</span><span>"@android:style/Theme.NoTitleBar.Fullscreen"</span></strong>&gt;<br/> &lt;<span>intent-filter</span>&gt;<br/> &lt;<span>action </span><span>android</span><span>:name=</span><span>"android.intent.action.MAIN" </span>/&gt;<br/><br/> &lt;<span>category </span><span>android</span><span>:name=</span><span>"android.intent.category.LAUNCHER" </span>/&gt;<br/> &lt;/<span>intent-filter</span>&gt;<br/> &lt;/<span>activity</span>&gt;<br/>    &lt;/<span>application</span>&gt;<br/><br/>&lt;/<span>manifest</span>&gt;</pre>
+<div class="packt_infobox">When you open<span> </span><kbd><span class="CodeInTextPACKT">AndroidManifest.xml</span></kbd><span> in Android Studio, you might see two tabs, one labeled </span><span class="packt_screen">Text</span><span> and another labeled </span><span class="packt_screen">Merged Manifest</span><span>. Select the </span><span class="packt_screen">Text</span><span> tab, which allows us to directly edit the source code of </span><kbd><span>AndroidManifest.xml</span></kbd><span> (by contrast, the </span><span class="packt_screen">Merged Manifest</span><span> tab is not directly editable, and it shows a combination of settings from </span><kbd><span>AndroidManifest.xml</span></kbd><span> and the project properties).</span></div>
+<p>Now, our app can use a camera and will remain in landscape mode. Also, if we publish it on Google Play, it will only be available to devices with a front-facing camera.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Laying out a camera preview as the main view</h1>
+                </header>
+            
+            <article>
+                
+<p>Android, like many systems, enables the programmer to specify GUI layouts in XML files. Our Java code can load an entire view, or pieces of it, from these XML files.</p>
+<p><kbd>Goldgesture</kbd> has a simple layout that contains only a camera preview, on which we draw some additional graphics using OpenCV. The camera preview is represented by an OpenCV class called <kbd><span class="CodeInTextPACKT">JavaCameraView</span></kbd>. Let's edit <kbd>app/src/main/<span class="CodeInTextPACKT">res/layout/activity_camera.xml</span></kbd> to fill the layout with a <kbd><span class="CodeInTextPACKT">JavaCameraView</span></kbd>, using the front-facing camera, as follows:</p>
+<pre><span>&lt;?</span><span>xml version=</span><span>"1.0" </span><span>encoding=</span><span>"utf-8"</span><span>?&gt;<br/></span>&lt;<span>android.support.constraint.ConstraintLayout<br/></span><span>    </span><span>xmlns:</span><span>android</span><span>=</span><span>"http://schemas.android.com/apk/res/android"<br/></span><span>    </span><span>xmlns:</span><span>app</span><span>=</span><span>"http://schemas.android.com/apk/res-auto"<br/></span><strong><span>    </span><span>xmlns:</span><span>opencv</span><span>=</span></strong><span><strong>"http://schemas.android.com/apk/res-auto"</strong><br/></span><span>    </span><span>xmlns:</span><span>tools</span><span>=</span><span>"http://schemas.android.com/tools"<br/></span><span>    </span><span>android</span><span>:layout_width=</span><span>"match_parent"<br/></span><span>    </span><span>android</span><span>:layout_height=</span><span>"match_parent"<br/></span><span>    </span><span>tools</span><span>:context=</span><span>"<strong>.CameraActivity</strong>"</span>&gt;<br/><br/><strong>    &lt;<span>org.opencv.android.JavaCameraView<br/></span><span>        </span><span>android</span><span>:layout_width=</span><span>"fill_parent"<br/></span><span>        </span><span>android</span><span>:layout_height=</span><span>"fill_parent"<br/></span><span>        </span><span>android</span><span>:id=</span><span>"@+id/camera_view"<br/></span><span>        </span><span>app</span><span>:layout_constraintBottom_toBottomOf=</span><span>"parent"<br/></span><span>        </span><span>app</span><span>:layout_constraintLeft_toLeftOf=</span><span>"parent"<br/></span><span>        </span><span>app</span><span>:layout_constraintRight_toRightOf=</span><span>"parent"<br/></span><span>        </span><span>app</span><span>:layout_constraintTop_toTopOf=</span><span>"parent"<br/></span><span>        </span><span>opencv</span><span>:camera_id=</span><span>"front" </span>/&gt;</strong><br/><br/>&lt;/<span>android.support.constraint.ConstraintLayout</span>&gt;</pre>
+<p>Alternatively, OpenCV also provides a class called <kbd>JavaCamera2View</kbd>. Both <kbd><span class="CodeInTextPACKT">JavaCameraView</span></kbd> and <kbd>Java<span class="CodeInTextPACKT">Camera2View</span></kbd> are implementations of an interface called <kbd><span class="CodeInTextPACKT">CameraBridgeViewBase</span></kbd>. The difference is that <kbd><span class="CodeInTextPACKT">JavaCamera2View</span></kbd> builds atop a more recent version of Android's camera APIs, but currently it yields a lower frame rate on many devices. The performance of <kbd>JavaCamera2View</kbd> could improve in future versions of OpenCV or on future Android devices, so you might want to run your own performance tests on the particular Android devices you are targeting.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Tracking back-and-forth gestures</h1>
+                </header>
+            
+            <article>
+                
+<p>Several common gestures consist of a repetitive, back-and-forth movement. Consider the following examples of this type of gesture:</p>
+<ul>
+<li>Nodding (yes or I'm listening)</li>
+<li>Shaking one's head (no or dismay)</li>
+<li>Waving (a greeting)</li>
+<li>Shaking hands (a greeting)</li>
+<li>Shaking one's fist (a threat or a protest)</li>
+<li>Wagging a finger (scolding)</li>
+<li>Wiggling a finger or fingers (beckoning)</li>
+<li>Tapping one's foot against the ground (impatience)</li>
+<li>Tapping four fingers against a table (impatience)</li>
+<li>Tapping two fingers against a table (Thanks for the green tea)</li>
+<li>Pacing (anxiety)</li>
+<li>Jumping up and down (excitement, joy)</li>
+</ul>
+<p>To help us recognize such gestures, let's write a class, <kbd><span class="CodeInTextPACKT">BackAndForthGesture</span></kbd>, which keeps track of the number of times that a value (such as an <em>x</em> coordinate or <em>y</em> coordinate) has oscillated between a low threshold and a high threshold. A certain number of oscillations can be considered a complete gesture.</p>
+<p>Create a file, <kbd>app/<span class="CodeInTextPACKT">src/main/java/com/nummist/goldgesture/BackAndForthGesture.java</span></kbd>. To do this in Android Studio, right-click on the <kbd>app/src/main/java/com.nummist.goldgesture</kbd> folder (in the <span class="packt_screen">Project</span> pane) and select <span class="packt_screen">New </span>| <span class="packt_screen">Java Class</span> from the context menu. The <span class="packt_screen">Create New Class</span> window should appear. Fill it out as shown in the following screenshot, and click <span class="packt_screen">OK</span>:</p>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/82d88afa-76ae-48f5-9b0d-2df8a34a379e.png" style="width:23.42em;height:18.92em;"/></p>
+<p>As member variables, <kbd><span class="CodeInTextPACKT">BackAndForthGesture</span></kbd> will store the minimum distance or threshold that defines a back or forth motion, an initial position, the latest delta from this position, and the number of back movements and forth movements. Here is the first part of the class's code:</p>
+<pre><span>package </span>com.nummist.goldgesture;<br/><br/><span>public final class </span>BackAndForthGesture {<br/><br/>    <span>private double </span><span>mMinDistance</span>;<br/><br/>    <span>private double </span><span>mStartPosition</span>;<br/>    <span>private double </span><span>mDelta</span>;<br/><br/>    <span>private int </span><span>mBackCount</span>;<br/>    <span>private int </span><span>mForthCount</span>;</pre>
+<p>The back-and-forth count (or number of oscillations) is the lesser of the back count and the forth count. Let's implement this rule in the following getter method:</p>
+<pre><span>    public int </span>getBackAndForthCount() {<br/>        <span>return </span>Math.<span>min</span>(<span>mBackCount</span>, <span>mForthCount</span>);<br/>    }</pre>
+<p>The constructor takes one argument, the minimum distance or threshold of movement:</p>
+<pre><span>    public </span>BackAndForthGesture(<span>final double </span>minDistance) {<br/>        <span>mMinDistance </span>= minDistance;<br/>    }</pre>
+<p>To begin tracking movement, we call a <kbd><span class="CodeInTextPACKT">start</span></kbd> method with an initial position as an argument. This method records the initial position and resets the delta and counts:</p>
+<pre><span>    public void </span>start(<span>final double </span>position) {<br/>        <span>mStartPosition </span>= position;<br/>        <span>mDelta </span>= <span>0.0</span>;<br/>        <span>mBackCount </span>= <span>0</span>;<br/>        <span>mForthCount </span>= <span>0</span>;<br/>    }</pre>
+<div class="packt_infobox">We are considering position as a one-dimensional value because a head nodding (up and down) or shaking (left and right) is a linear gesture. For an upright head, only one of the image's two dimensions is relevant to a nod or shake gesture.</div>
+<p>To continue tracking movement, we call an <kbd><span class="CodeInTextPACKT">update</span></kbd> method with the new position as an argument. This method recalculates the delta and if a threshold has just been passed, the back count or forth count is incremented:</p>
+<pre><span>    public void </span>update(<span>final double </span>position) {<br/>        <span>double </span>lastDelta = <span>mDelta</span>;<br/>        <span>mDelta </span>= position - <span>mStartPosition</span>;<br/>        <span>if </span>(lastDelta &lt; <span>mMinDistance </span>&amp;&amp;<br/>                <span>mDelta </span>&gt;= <span>mMinDistance</span>) {<br/>            <span>mForthCount</span>++;<br/>        } <span>else if </span>(lastDelta &gt; -<span>mMinDistance </span>&amp;&amp;<br/>                <span>mDelta </span>&lt; -<span>mMinDistance</span>) {<br/>            <span>mBackCount</span>++;<br/>        }<br/>    }</pre>
+<p>If we consider the gesture complete, or for some other reason we believe the counts to be invalid, we call a <kbd><span class="CodeInTextPACKT">resetCounts</span></kbd> method:</p>
+<pre>    <span>public void </span>resetCounts() {<br/>        <span>mBackCount </span>= <span>0</span>;<br/>        <span>mForthCount </span>= <span>0</span>;<br/>    }<br/>}</pre>
+<p>Note that <kbd><span class="CodeInTextPACKT">BackAndForthGesture</span></kbd> contains no computer vision functionality of its own, but the position values we pass to it will be derived from computer vision.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Playing audio clips as questions and answers</h1>
+                </header>
+            
+            <article>
+                
+<p>The logic of the question-and-answer sequence is another component that has no computer vision functionality. We encapsulate it in a class called <kbd><span class="CodeInTextPACKT">YesNoAudioTree</span></kbd>, which is responsible for playing the next audio clip whenever the app's computer vision component notifies it of a yes or no answer.</p>
+<div class="packt_infobox"><span>Remember that the audio clips are part of the book's GitHub repository, and they belong in the project's</span> <kbd><span>app/</span><span class="CodeInTextPACKT">src/main/</span><span class="CodeInTextPACKT">res/raw</span></kbd> folder. However, note that the audio clips in the repository are by no means an exhaustive set of questions and guesses about characters in the Bond franchise. Feel free to add your own clips and your own logic to play them.</div>
+<p>Create a file, <kbd><span>app/</span><span class="CodeInTextPACKT">src/main/java/com/nummist/goldgesture</span><span class="CodeInTextPACKT">/YesNoAudioTree.java</span></kbd>. Our <kbd><span class="CodeInTextPACKT">YesNoAudioTree</span></kbd> class needs member variables to store a media player and a related context, an ID for the most-recently-played audio clip, and information gathered from the answers to previous questions. Specifically, the next question depends on whether the unknown person is already identified as a member of MI6, the CIA, the KGB, or a criminal organization. This information, along with the answer to the most recent question, will be enough for us to build a simple tree of questions to identify several characters from the Bond franchise. The class's implementation begins as follows:</p>
+<pre><span>package </span>com.nummist.goldgesture;<br/><br/><span>import </span>android.content.Context;<br/><span>import </span>android.media.MediaPlayer;<br/><span>import </span>android.media.MediaPlayer.OnCompletionListener;<br/><br/><span>public final class </span>YesNoAudioTree {<br/><br/>    <span>private enum </span>Affiliation { <span>UNKNOWN</span>, <span>MI6</span>, <span>CIA</span>, <span>KGB</span>, <span>CRIMINAL </span>}<br/><br/>    <span>private int </span><span>mLastAudioResource</span>;<br/>    <span>private </span>Affiliation <span>mAffiliation</span>;<br/><br/>    <span>private </span>Context <span>mContext</span>;<br/>    <span>private </span>MediaPlayer <span>mMediaPlayer</span>;</pre>
+<p>The class is instantiated with a <kbd>Context</kbd> object, which is a standard abstraction of the app's Android environment:</p>
+<pre><span>    public </span>YesNoAudioTree(<span>final </span>Context context) {<br/>        <span>mContext </span>= context;<br/>    }</pre>
+<p>The <kbd>Context</kbd> object is needed to create a media player, as we will see later in this section of the chapter.</p>
+<div class="packt_infobox">For more information about the Android SDK's <kbd><span class="CodeInTextPACKT">MediaPlayer</span></kbd> <span>class, see the official documentation at <a href="http://developer.android.com/reference/android/media/MediaPlayer.html"><span class="URLPACKT">http://developer.android.com/reference/android/media/MediaPlayer.html</span></a>.</span></div>
+<p>To (re)start from the first question, we call a <kbd><span class="CodeInTextPACKT">start</span></kbd> method. It resets the data about the person and plays the first audio clip using a private helper method, <kbd><span class="CodeInTextPACKT">play</span></kbd>:</p>
+<pre><span>    public void </span>start() {<br/>        <span>mAffiliation </span>= Affiliation.<span>UNKNOWN</span>;<br/>        play(R.raw.<span>intro</span>);<br/>    }</pre>
+<p>To stop any current clip and clean up the audio player (for example, when the app pauses or finishes), we call a <kbd><span class="CodeInTextPACKT">stop</span></kbd> method:</p>
+<pre><span>    public void </span>stop() {<br/>        <span>if </span>(<span>mMediaPlayer </span>!= <span>null</span>) {<br/>            <span>mMediaPlayer</span>.release();<br/>        }<br/>    }</pre>
+<p>When the user has answered Yes to a question, we call the <kbd><span class="CodeInTextPACKT">takeYesBranch</span></kbd> method. It uses nested <kbd><span class="CodeInTextPACKT">switch</span></kbd> statements to pick the next audio clip based on previous answers and the most recent question:</p>
+<pre><span>    public void </span>takeYesBranch() {<br/><br/>        <span>if </span>(<span>mMediaPlayer </span>!= <span>null </span>&amp;&amp; <span>mMediaPlayer</span>.isPlaying()) {<br/>            <span>// Do not interrupt the audio that is already playing.<br/></span><span>            </span><span>return</span>;<br/>        }<br/><br/>        <span>switch </span>(<span>mAffiliation</span>) {<br/>            <span>case </span><span>UNKNOWN</span>:<br/>                <span>switch </span>(<span>mLastAudioResource</span>) {<br/>                    <span>case </span>R.raw.<span>q_mi6</span>:<br/>                        <span>mAffiliation </span>= Affiliation.<span>MI6</span>;<br/>                        play(R.raw.<span>q_martinis</span>);<br/>                        <span>break</span>;<br/>                    <span>case </span>R.raw.<span>q_cia</span>:<br/>                        <span>mAffiliation </span>= Affiliation.<span>CIA</span>;<br/>                        play(R.raw.<span>q_bond_friend</span>);<br/>                        <span>break</span>;<br/>                    <span>case </span>R.raw.<span>q_kgb</span>:<br/>                        <span>mAffiliation </span>= Affiliation.<span>KGB</span>;<br/>                        play(R.raw.<span>q_chief</span>);<br/>                        <span>break</span>;<br/>                    <span>case </span>R.raw.<span>q_criminal</span>:<br/>                        <span>mAffiliation </span>= Affiliation.<span>CRIMINAL</span>;<br/>                        play(R.raw.<span>q_chief</span>);<br/>                        <span>break</span>;<br/>                }<br/>                <span>break</span>;<br/>            <span>case </span><span>MI6</span>:<br/>                <span>// The person works for MI6.<br/></span><span>                </span><span>switch </span>(<span>mLastAudioResource</span>) {<br/>                    <span>case </span>R.raw.<span>q_martinis</span>:<br/>                        <span>// The person drinks shaken martinis (007).<br/></span><span>                        </span>play(R.raw.<span>win_007</span>);<br/>                        <span>break</span>;<br/>                    // ...<br/><span>                    // See the GitHub repository for more cases.<br/>                    // ...<br/></span><span>                    default</span>:<br/>                        <span>// The person remains unknown.<br/></span><span>                        </span>play(R.raw.<span>lose</span>);<br/>                        <span>break</span>;<br/>                }<br/>                <span>break</span>;<br/>            // ...<br/><span>            // See the GitHub repository for more cases.<br/>            // ...<br/>         }            <br/>       }       </span></pre>
+<p>Similarly, when the user has answered No to a question, we call the <kbd><span class="CodeInTextPACKT">takeNoBranch</span></kbd> method, which also contains big, nested <kbd>switch</kbd> statements:</p>
+<pre><span>    public void </span>takeNoBranch() {<br/><br/>        <span>if </span>(<span>mMediaPlayer </span>!= <span>null </span>&amp;&amp; <span>mMediaPlayer</span>.isPlaying()) {<br/>            <span>// Do not interrupt the audio that is already playing.<br/></span><span>            </span><span>return</span>;<br/>        }<br/><br/>        <span>switch </span>(<span>mAffiliation</span>) {<br/>            <span>case </span><span>UNKNOWN</span>:<br/>                <span>switch </span>(<span>mLastAudioResource</span>) {<br/>                    <span>case </span>R.raw.<span>q_mi6</span>:<br/>                        <span>// The person does not work for MI6.<br/></span><span>                        // Ask whether the person works for a criminal<br/></span><span>                        // organization.<br/></span><span>                        </span>play(R.raw.<span>q_criminal</span>);<br/>                        <span>break</span>;<br/>                    // ...<br/>                    // See the GitHub repository for more cases.<br/>                    // ...<br/>                    <span>default</span>:<br/>                        <span>// The person remains unknown.<br/></span><span>                        </span>play(R.raw.<span>lose</span>);<br/>                        <span>break</span>;<br/>            // ...<br/>            // See the GitHub repository for more cases.<br/>            // ...<br/>    }<br/>   }<br/> }</pre>
+<p>When certain clips finish, we want to automatically advance to another clip without requiring a Yes or No from the user. A private helper method, <kbd><span class="CodeInTextPACKT">takeAutoBranch</span></kbd>, implements the relevant logic in a <kbd><span class="CodeInTextPACKT">switch</span></kbd> statement:</p>
+<pre><span>    private void </span>takeAutoBranch() {<br/>        <span>switch </span>(<span>mLastAudioResource</span>) {<br/>            <span>case </span>R.raw.<span>intro</span>:<br/>                play(R.raw.<span>q_mi6</span>);<br/>                <span>break</span>;<br/>            <span>case </span>R.raw.<span>win_007</span>:<br/>            <span>case </span>R.raw.<span>win_blofeld</span>:<br/>            <span>case </span>R.raw.<span>win_gogol</span>:<br/>            <span>case </span>R.raw.<span>win_jaws</span>:<br/>            <span>case </span>R.raw.<span>win_leiter</span>:<br/>            <span>case </span>R.raw.<span>win_m</span>:<br/>            <span>case </span>R.raw.<span>win_moneypenny</span>:<br/>            <span>case </span>R.raw.<span>win_q</span>:<br/>            <span>case </span>R.raw.<span>win_rublevitch</span>:<br/>            <span>case </span>R.raw.<span>win_tanner</span>:<br/>            <span>case </span>R.raw.<span>lose</span>:<br/>                start();<br/>                <span>break</span>;<br/>        }<br/>    }</pre>
+<p>Whenever we need to play an audio clip, we call the <kbd><span class="CodeInTextPACKT">play</span></kbd> private helper method. It creates an instance of <kbd><span class="CodeInTextPACKT">MediaPlayer</span></kbd> using the context and an audio clip's ID, which is given to <kbd><span class="CodeInTextPACKT">play</span></kbd> as an argument. The audio is played and a callback is set so that the media player will be cleaned up and <kbd><span class="CodeInTextPACKT">takeAutoBranch</span></kbd> will be called when the clip is done:</p>
+<pre>    <span>private void </span>play(<span>final int </span>audioResource) {<br/>        <span>mLastAudioResource </span>= audioResource;<br/>        <span>mMediaPlayer </span>= MediaPlayer.<span>create</span>(<span>mContext</span>, audioResource);<br/>        <span>mMediaPlayer</span>.setOnCompletionListener(<br/>                <span>new </span>OnCompletionListener() {<br/>                    <span>@Override<br/></span><span>                    </span><span>public void </span>onCompletion(<br/><span>                            final </span>MediaPlayer mediaPlayer) {<br/>                        mediaPlayer.release();<br/>                        <span>if </span>(<span>mMediaPlayer </span>== mediaPlayer) {<br/>                            <span>mMediaPlayer </span>= <span>null</span>;<br/>                        }<br/>                        takeAutoBranch();<br/>                    }<br/>                });<br/>        <span>mMediaPlayer</span>.start();<br/>    }<br/>}</pre>
+<p>Now that we have written our supporting classes, we are ready to tackle the app's main class, including the computer vision functionality.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Capturing images and tracking faces in an activity</h1>
+                </header>
+            
+            <article>
+                
+<p><span>An Android app is a state machine in which each state is called an <strong><span class="KeyWordPACKT">activity</span></strong>. An activity has a life cycle. For example, it can be created, paused, resumed, and finished. During a transition between activities, the paused or finished activity can send data to the created or resumed activity. An app can define many activities and transition between them in any order. It can even transition between activities defined by the Android SDK or by other apps.</span></p>
+<div class="packt_infobox"><span>For more information about Android activities and their life cycles, see the official documentation at <a href="http://developer.android.com/guide/components/activities.html"><span class="URLPACKT">http://developer.android.com/guide/components/activities.html</span></a>. </span>For more information about OpenCV's Android and Java APIs (used throughout our activity class), see the official Javadocs at <a href="https://docs.opencv.org/master/javadoc/index.html">https://docs.opencv.org/master/javadoc/index.html</a>.</div>
+<p>OpenCV provides classes and interfaces that can be considered add-ons to an activity's life cycle. Specifically, we can use OpenCV callback methods to handle the following events:</p>
+<ul>
+<li>The camera preview starts</li>
+<li>The camera preview stops</li>
+<li>The camera preview captures a new frame</li>
+</ul>
+<p><kbd>Goldgesture</kbd> uses just one activity, called <kbd><span class="CodeInTextPACKT">CameraActivity</span></kbd>. <kbd><span class="CodeInTextPACKT">CameraActivity</span></kbd> uses a <kbd><span class="CodeInTextPACKT">CameraBridgeViewBase</span></kbd> object (more specifically, a <kbd><span class="CodeInTextPACKT">JavaCameraView</span></kbd> object) as its camera preview. (Recall that we saw this<span> </span>earlier, in the<span> </span><em>Laying out a camera preview as the main view</em><span> </span>section of this chapter<span>, when we implemented <kbd>CameraActivity</kbd>'s layout in XML.)</span> <kbd><span class="CodeInTextPACKT">CameraActivity</span></kbd> implements an interface called <kbd><span class="CodeInTextPACKT">CvCameraViewListener2</span></kbd>, which provides callbacks for this camera preview. (Alternatively, an interface called <kbd><span class="CodeInTextPACKT">CvCameraViewListener</span></kbd> can serve this purpose. The difference between the two interfaces is that <kbd><span class="CodeInTextPACKT">CvCameraViewListener2</span></kbd> allows us to specify a format for the captured image, whereas <kbd><span class="CodeInTextPACKT">CvCameraViewListener</span></kbd> does not.) The implementation of our class begins as follows:</p>
+<pre><span>package </span>com.nummist.goldgesture;<br/><br/>// ...<br/>// See the GitHub repository for imports<br/>// ...<br/><br/><span>public final class </span>CameraActivity <span>extends </span>Activity<br/>        <span>implements </span>CvCameraViewListener2 {<br/><br/>    <span>// A tag for log output.<br/></span><span>    </span><span>private static final </span>String <span>TAG </span>= <span>"CameraActivity"</span>;</pre>
+<p>For readability and easy editing, we use static final variables to store many parameters in our computer vision functions. You might wish to adjust these values based on experimentation. First, we have face-detection parameters that should be familiar to you from the Angora Blue project in <a href="49c9a5fb-89a3-4c0d-bbee-021d2618168c.xhtml">Chapter 3</a><em>,</em> <em>Training a Smart Alarm to R</em><em>ecognize the Villain and His Cat</em>:</p>
+<pre>    // Parameters for face detection.<br/>    private static final double SCALE_FACTOR = 1.2;<br/>    private static final int MIN_NEIGHBORS = 3;<br/>    private static final int FLAGS = Objdetect.CASCADE_SCALE_IMAGE;<br/>    private static final double MIN_SIZE_PROPORTIONAL = 0.25;<br/>    private static final double MAX_SIZE_PROPORTIONAL = 1.0;</pre>
+<p>For the purpose of selecting features, we do not use the entire detected face. Rather, we use an inner portion that is less likely to contain any non-face background. Thus, we define a proportion of the face that should be excluded from feature selection on each side:</p>
+<pre>    // The portion of the face that is excluded from feature<br/>    // selection on each side.<br/>    // (We want to exclude boundary regions containing background.)<br/>    private static final double MASK_PADDING_PROPORTIONAL = 0.15;</pre>
+<p>For face tracking using optical flow, we define a minimum and maximum number of features. If we fail to track at least the minimum number of features, we deem that the face has been lost. We also define a minimum feature quality (relative to the quality of the best feature found), a minimum pixel distance between features, and a maximum acceptable error value when trying to match a new feature to an old feature. As we will see later in this section of the chapter, these parameters pertain to OpenCV's <kbd><span class="CodeInTextPACKT">calcOpticalFlowPyrLK</span></kbd> function and its return values. Here are the declarations:</p>
+<pre>    // Parameters for face tracking.<br/>    private static final int MIN_FEATURES = 10;<br/>    private static final int MAX_FEATURES = 80;<br/>    private static final double MIN_FEATURE_QUALITY = 0.05;<br/>    private static final double MIN_FEATURE_DISTANCE = 4.0;<br/>    private static final float MAX_FEATURE_ERROR = 200f;</pre>
+<p>We also define how much movement (as a proportion of the image size) and how many back-and-forth cycles are required before we deem that a nod or shake has occurred:</p>
+<pre>    // Parameters for gesture detection<br/>    private static final double MIN_SHAKE_DIST_PROPORTIONAL = 0.01;<br/>    private static final double MIN_NOD_DIST_PROPORTIONAL = 0.0025;<br/>    private static final double MIN_BACK_AND_FORTH_COUNT = 2;</pre>
+<p>Our member variables include the camera view, the dimensions of captured images, and the images at various stages of processing. The images are stored in OpenCV <kbd><span class="CodeInTextPACKT">Mat</span></kbd> objects, which are analogous to the NumPy arrays that we saw in the Python bindings. OpenCV always captures the images in landscape format, but we reorient them to portrait format, which is a more common orientation for a picture of one's own face on a smartphone. Here are the relevant variable declarations:</p>
+<pre>    // The camera view.<br/>    private CameraBridgeViewBase mCameraView;<br/><br/>    // The dimensions of the image before orientation.<br/>    private double mImageWidth;<br/>    private double mImageHeight;<br/><br/>    // The current gray image before orientation.<br/>    private Mat mGrayUnoriented;<br/><br/>    // The current and previous equalized gray images.<br/>    private Mat mEqualizedGray;<br/>    private Mat mLastEqualizedGray;</pre>
+<p>As seen in the following code and comments, we also declare several member variables related to face detection and tracking:</p>
+<pre>    // The mask, in which the face region is white and the<br/>    // background is black.<br/>    private Mat mMask;<br/>    private Scalar mMaskForegroundColor;<br/>    private Scalar mMaskBackgroundColor;<br/><br/>    // The face detector, more detection parameters, and<br/>    // detected faces.<br/>    private CascadeClassifier mFaceDetector;<br/>    private Size mMinSize;<br/>    private Size mMaxSize;<br/>    private MatOfRect mFaces;<br/><br/>    // The initial features before tracking.<br/>    private MatOfPoint mInitialFeatures;<br/><br/>    // The current and previous features being tracked.<br/>    private MatOfPoint2f mFeatures;<br/>    private MatOfPoint2f mLastFeatures;<br/><br/>    // The status codes and errors for the tracking.<br/>    private MatOfByte mFeatureStatuses;<br/>    private MatOfFloat mFeatureErrors;<br/><br/>    // Whether a face was being tracked last frame.<br/>    private boolean mWasTrackingFace;<br/><br/>    // Colors for drawing.<br/>    private Scalar mFaceRectColor;<br/>    private Scalar mFeatureColor;</pre>
+<p>Finally, we store instances of the classes that we defined earlier, namely <kbd><span class="CodeInTextPACKT">BackAndForthGesture</span></kbd> (in the <em>Tracking back-and-forth gestures</em> section of this chapter) and <kbd><span class="CodeInTextPACKT">YesNoAudioTree</span></kbd> (in the <em>Playing audio clips as questions and answers</em> section of this chapter):</p>
+<pre>    // Gesture detectors.<br/>    private BackAndForthGesture mNodHeadGesture;<br/>    private BackAndForthGesture mShakeHeadGesture;<br/><br/>    // The audio tree for the 20 questions game.<br/>    private YesNoAudioTree mAudioTree;</pre>
+<p>Now, let's implement the standard life cycle callbacks of an Android activity. First, when the activity is created, we try to load the OpenCV library (if for some reason this fails, we log an error message and exit). If OpenCV loads successfully, we specify that we want to keep the screen on even when there is no touch interaction (since all interaction is through the camera). Moreover, we need to load the layout from the XML file, get a reference to the camera preview, and set this activity as the handler for the camera preview's events. Here is the implementation:</p>
+<pre>    @Override<br/>    protected void onCreate(final Bundle savedInstanceState) {<br/>        super.onCreate(savedInstanceState);<br/><br/>        if (OpenCVLoader.initDebug()) {<br/>            Log.i(TAG, "Initialized OpenCV");<br/>        } else {<br/>            Log.e(TAG, "Failed to initialize OpenCV");<br/>            finish();<br/>        }<br/><br/>        final Window window = getWindow();<br/>        window.addFlags(<br/>                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);<br/><br/>        setContentView(R.layout.activity_camera);<br/>        mCameraView = (CameraBridgeViewBase)<br/>                findViewById(R.id.camera_view);<br/>        //mCameraView.enableFpsMeter();<br/>        mCameraView.setCvCameraViewListener(this);<br/>    }</pre>
+<p>Note that we have not yet initialized most of our member variables. Instead, we do so once the camera preview has started. When the activity is paused, we disable the camera preview, stop the audio, and reset the gesture recognition data, as seen in the following code:</p>
+<pre>    @Override<br/>    public void onPause() {<br/>        if (mCameraView != null) {<br/>            mCameraView.disableView();<br/>        }<br/>        if (mAudioTree != null) {<br/>            mAudioTree.stop();<br/>        }<br/>        resetGestures();<br/>        super.onPause();<br/>    }</pre>
+<p>When the activity resumes (including the first time it comes to the foreground, after being created), we check whether the user has granted permission for the app to use the camera. If permission has not yet been granted, we request it. (In some circumstances, Android requires us to display a rationale for the permission request. We do this through a private helper method called <kbd>showRequest<span>Permission</span>Rationale</kbd>.) If permission has already been granted, we enable the camera view. Here is the relevant code:</p>
+<pre>    @Override<br/>    public void onResume() {<br/>        super.onResume();<br/>        if (ContextCompat.checkSelfPermission(this,<br/>                Manifest.permission.CAMERA)<br/>                != PackageManager.PERMISSION_GRANTED) {<br/>            if (ActivityCompat.shouldShowRequestPermissionRationale(this,<br/>                    Manifest.permission.CAMERA)) {<br/>                showRequestPermissionRationale();<br/>            } else {<br/>                ActivityCompat.requestPermissions(this,<br/>                        new String[] { Manifest.permission.CAMERA },<br/>                        PERMISSIONS_REQUEST_CAMERA);<br/>            }<br/>        } else {<br/>            Log.i(TAG, "Camera permissions were already granted");<br/><br/>            // Start the camera.<br/>            mCameraView.enableView();<br/>        }<br/>    }</pre>
+<p>When the activity is destroyed, we clean things up in the same way as when the activity is paused:</p>
+<pre>    @Override<br/>    public void onDestroy() {<br/>        super.onDestroy();<br/>        if (mCameraView != null) {<br/>            // Stop the camera.<br/>            mCameraView.disableView();<br/>        }<br/>        if (mAudioTree != null) {<br/>            mAudioTree.stop();<br/>        }<br/>        resetGestures();<br/>    }</pre>
+<p>Our <kbd>showRequestPermissionRationale</kbd> helper method shows a dialog that explains why <kbd>Goldgesture</kbd> needs to use the camera. When the user clicks this dialog's <kbd>OK</kbd> button, we request permission to use the camera:</p>
+<pre>    void showRequestPermissionRationale() {<br/>        AlertDialog dialog = new AlertDialog.Builder(this).create();<br/>        dialog.setTitle("Camera, please");<br/>        dialog.setMessage(<br/>                "Goldgesture uses the camera to see you nod or shake " +<br/>                "your head. You will be asked for camera access.");<br/>        dialog.setButton(AlertDialog.BUTTON_NEUTRAL, "OK",<br/>                new DialogInterface.OnClickListener() {<br/>                    public void onClick(DialogInterface dialog,<br/>                                        int which) {<br/>                        dialog.dismiss();<br/>                        ActivityCompat.requestPermissions(<br/>                                CameraActivity.this,<br/>                                new String[] {<br/>                                        Manifest.permission.CAMERA },<br/>                                PERMISSIONS_REQUEST_CAMERA);<br/>                    }<br/>                });<br/>        dialog.show();<br/>    }</pre>
+<p>We implement a callback to handle the result of the permission request. If the user granted permission to use the camera, we enable the camera view. Otherwise, we log an error and exit:</p>
+<pre><span>@Override<br/></span><span>public void </span>onRequestPermissionsResult(final <span>int </span>requestCode,<br/>        final String permissions[], final <span>int</span>[] grantResults) {<br/>    <span>switch </span>(requestCode) {<br/>        <span>case </span><span>PERMISSIONS_REQUEST_CAMERA</span>: {<br/>            <span>if </span>(grantResults.<span>length </span>&gt; <span>0 &amp;&amp;<br/></span><span>                    </span>grantResults[<span>0</span>] == PackageManager.<span>PERMISSION_GRANTED</span>) {<br/>                Log.<span>i</span>(<span>TAG</span>, <span>"Camera permissions were granted just now"</span>);<br/><br/>                <span>// Start the camera.<br/></span><span>                </span><span>mCameraView</span>.enableView();<br/>            } <span>else </span>{<br/>                Log.<span>e</span>(<span>TAG</span>, <span>"Camera permissions were denied"</span>);<br/>                finish();<br/>            }<br/>            <span>break</span>;<br/>        }<br/>    }<br/>}</pre>
+<p>Now, let's turn our attention to the camera callbacks. When the camera preview starts (after the OpenCV library is loaded and permission to use the camera is obtained), we initialize our remaining member variables. To begin, we store the pixel dimensions that the camera is using:</p>
+<pre>    @Override<br/>    public void onCameraViewStarted(final int width,<br/>                                    final int height) {<br/><br/>        mImageWidth = width;<br/>        mImageHeight = height;</pre>
+<p>Next, we initialize our face-detection variables, mostly through a private helper method called <kbd><span class="CodeInTextPACKT">initFaceDetector</span></kbd>. The role of <kbd><span class="CodeInTextPACKT">initFaceDetector</span></kbd> includes loading the detector's cascade file, <kbd>app/main/<span class="CodeInTextPACKT">res/raw/lbpcascade_frontalface.xml</span></kbd>. A lot of boilerplate code for file handling and error handling is involved in this task, so separating it into another function improves readability. We will examine the helper function's implementation later in this section of the chapter, but here is the call:</p>
+<pre>        initFaceDetector();<br/>        mFaces = new MatOfRect();</pre>
+<p>As we did in <a href="49c9a5fb-89a3-4c0d-bbee-021d2618168c.xhtml">Chapter 3</a><em>, Training a Smart Alarm to Recognize the Villain and His Cat</em>, we determine the smaller of the two image dimensions and use it in proportional size calculations:</p>
+<pre>        final int smallerSide;<br/>        if (height &lt; width) {<br/>            smallerSide = height;<br/>        } else {<br/>            smallerSide = width;<br/>        }<br/><br/>        final double minSizeSide =<br/>                MIN_SIZE_PROPORTIONAL * smallerSide;<br/>        mMinSize = new Size(minSizeSide, minSizeSide);<br/><br/>        final double maxSizeSide =<br/>                MAX_SIZE_PROPORTIONAL * smallerSide;<br/>        mMaxSize = new Size(maxSizeSide, maxSizeSide);</pre>
+<p>We initialize matrices relating to the features:</p>
+<pre>        mInitialFeatures = new MatOfPoint();<br/>        mFeatures = new MatOfPoint2f(new Point());<br/>        mLastFeatures = new MatOfPoint2f(new Point());<br/>        mFeatureStatuses = new MatOfByte();<br/>        mFeatureErrors = new MatOfFloat();</pre>
+<p>We specify colors (in <strong>RGB</strong> (<strong>red, green, and blue</strong>) format, not <strong>BGR</strong> (<strong>blue, green, and red</strong>)) for drawing a rectangle around the face and circles around the features:</p>
+<pre>        mFaceRectColor = new Scalar(0.0, 0.0, 255.0);<br/>        mFeatureColor = new Scalar(0.0, 255.0, 0.0);</pre>
+<p>We initialize variables relating to nod and shake recognition:</p>
+<pre>        final double minShakeDist =<br/>                smallerSide * MIN_SHAKE_DIST_PROPORTIONAL;<br/>        mShakeHeadGesture = new BackAndForthGesture(minShakeDist);<br/><br/>        final double minNodDist =<br/>                smallerSide * MIN_NOD_DIST_PROPORTIONAL;<br/>        mNodHeadGesture = new BackAndForthGesture(minNodDist);</pre>
+<p>We initialize and start the audio sequence:</p>
+<pre>        mAudioTree = new YesNoAudioTree(this);<br/>        mAudioTree.start();</pre>
+<p>Finally, we initialize the image matrices, most of which are transposed to be in portrait format:</p>
+<pre>        mGrayUnoriented = new Mat(height, width, CvType.CV_8UC1);<br/><br/>        // The rest of the matrices are transposed.<br/><br/>        mEqualizedGray = new Mat(width, height, CvType.CV_8UC1);<br/>        mLastEqualizedGray = new Mat(width, height, CvType.CV_8UC1);<br/><br/>        mMask = new Mat(width, height, CvType.CV_8UC1);<br/>        mMaskForegroundColor = new Scalar(255.0);<br/>        mMaskBackgroundColor = new Scalar(0.0);<br/>    }</pre>
+<p>When the camera view stops, we do not do anything. Here is the empty callback method:</p>
+<pre>    @Override<br/>    public void onCameraViewStopped() {<br/>    }</pre>
+<p>When the camera captures a frame, we do all the real work, the computer vision. We start by getting the color image (in <strong>red, green, blue, and alpha</strong> (<strong>RGBA</strong>) format, not BGR), convert it to grayscale, and reorient it to portrait format. The reorientation from landscape to portrait format is equivalent to rotating the image's <em>content</em> 90 degrees <em>counterclockwise</em>, or rotating the image's <em>X and Y </em><em>coordinate axes</em> 90 degrees <em>clockwise.</em> To accomplish this, we apply a transpose operation followed by a vertical flip. After reorienting the grayscale image to portrait format, we equalize it. Thus, the callback's implementation begins as follows:</p>
+<pre>    @Override<br/>    public Mat onCameraFrame(final CvCameraViewFrame inputFrame) {<br/>        final Mat rgba = inputFrame.rgba();<br/><br/>        // For processing, orient the image to portrait and equalize<br/>        // it.<br/>        Imgproc.cvtColor(rgba, mGrayUnoriented,<br/>                Imgproc.COLOR_RGBA2GRAY);<br/>        Core.transpose(mGrayUnoriented, mEqualizedGray);<br/>        Core.flip(mEqualizedGray, mEqualizedGray, 0);<br/>        Imgproc.equalizeHist(mEqualizedGray, mEqualizedGray);</pre>
+<div class="packt_infobox">We get the RGBA image by calling <kbd><span class="CodeInTextPACKT">inputFrame.rgba()</span></kbd> and then we convert it to grayscale. Alternatively, we could get the grayscale image directly by calling <kbd><span class="CodeInTextPACKT">inputFrame.gray()</span></kbd>. In our case, we want both the RGBA and grayscale images because we use the RGBA image for display and the grayscale image for detection and tracking.</div>
+<p>Next, we declare a list of features. A standard Java <kbd>List</kbd> allows for fast insertion and removal of elements, whereas an OpenCV <kbd><span class="CodeInTextPACKT">Mat</span></kbd> does not, so we are going to need a <kbd>List</kbd> when we filter out features that did not track well. Here is the declaration:</p>
+<pre>        final List&lt;Point&gt; featuresList;</pre>
+<p>We detect faces—a familiar task from the Angora Blue project in <a href="49c9a5fb-89a3-4c0d-bbee-021d2618168c.xhtml">Chapter 3</a><em>, Training a Smart Alarm to Recognize the Villain and His Cat</em>. Unlike in OpenCV's Python bindings, the structure to store the face rectangles is provided as an argument:</p>
+<pre>        mFaceDetector.detectMultiScale(<br/>                mEqualizedGray, mFaces, SCALE_FACTOR, MIN_NEIGHBORS,<br/>                FLAGS, mMinSize, mMaxSize);</pre>
+<p>If at least one face is detected, we take the first detected face and draw a rectangle around it. We are performing face detection on an image in portrait orientation, but we are drawing the original image in landscape orientation, so some conversion of coordinates is necessary. Note that the origin (the upper-left corner) of the portrait image corresponds to the upper-right corner of the landscape image.  Here is the code:</p>
+<pre>        if (mFaces.rows() &gt; 0) { // Detected at least one face<br/><br/>            // Get the first detected face.<br/>            final double[] face = mFaces.get(0, 0);<br/><br/>            double minX = face[0];<br/>            double minY = face[1];<br/>            double width = face[2];<br/>            double height = face[3];<br/>            double maxX = minX + width;<br/>            double maxY = minY + height;<br/><br/>            // Draw the face.<br/>            Imgproc.rectangle(<br/>                    rgba, new Point(mImageWidth - maxY, minX),<br/>                    new Point(mImageWidth - minY, maxX),<br/>                    mFaceRectColor);</pre>
+<p>Next, we select features within the inner part of the detected face. We specify the region of interest by passing a mask to OpenCV's <kbd><span class="CodeInTextPACKT">goodFeaturesToTrack</span></kbd> function. A mask is an image that is white in the foreground (the inner part of the face) and black in the background. The following code finds the region of interest, creates the mask, and calls <kbd><span class="CodeInTextPACKT">goodFeaturesToTrack</span></kbd> with all relevant parameters:</p>
+<pre>            // Create a mask for the face region.<br/>            double smallerSide;<br/>            if (height &lt; width) {<br/>                smallerSide = height;<br/>            } else {<br/>                smallerSide = width;<br/>            }<br/>            double maskPadding =<br/>                    smallerSide * MASK_PADDING_PROPORTIONAL;<br/>            mMask.setTo(mMaskBackgroundColor);<br/>            Imgproc.rectangle(<br/>                    mMask,<br/>                    new Point(minX + maskPadding,<br/>                            minY + maskPadding),<br/>                    new Point(maxX - maskPadding,<br/>                            maxY - maskPadding),<br/>                    mMaskForegroundColor, -1);<br/><br/>            // Find features in the face region.<br/>            Imgproc.goodFeaturesToTrack(<br/>                    mEqualizedGray, mInitialFeatures, MAX_FEATURES,<br/>                    MIN_FEATURE_QUALITY, MIN_FEATURE_DISTANCE,<br/>                    mMask, 3, false, 0.04);<br/>            mFeatures.fromArray(mInitialFeatures.toArray());<br/>            featuresList = mFeatures.toList();</pre>
+<p class="mce-root"/>
+<p>Note that we copy the features into several variables: a matrix of initial features, a matrix of current features, and a mutable list of features that we will filter later.</p>
+<p>Depending on whether we were already tracking a face, we call a helper function to either initialize our data on gestures or update our data on gestures. We also record that we are now tracking a face:</p>
+<pre>            if (mWasTrackingFace) {<br/>                updateGestureDetection();<br/>            } else {<br/>                startGestureDetection();<br/>            }<br/>            mWasTrackingFace = true;</pre>
+<p>Alternatively, we might not have detected any face in this frame. Then, we update any previously-selected features using OpenCV's <kbd><span class="CodeInTextPACKT">calcOpticalFlowPyrLK</span></kbd> function to give us a matrix of new features, a matrix of error values, and a matrix of status values (<kbd><span class="CodeInTextPACKT">0</span></kbd> for an invalid feature, <kbd><span class="CodeInTextPACKT">1</span></kbd> for a valid feature). Being invalid typically means that the new feature is estimated to be outside the frame and thus it can no longer be tracked by optical flow. We convert the new features to a list and filter out the ones that are invalid or have a high error, as seen in the following code:</p>
+<pre>        // if (mFaces.rows &gt; 0) { ... See above ... }<br/>        } else { // Did not detect any face<br/>            Video.calcOpticalFlowPyrLK(<br/>                    mLastEqualizedGray, mEqualizedGray, mLastFeatures,<br/>                    mFeatures, mFeatureStatuses, mFeatureErrors);<br/><br/>            // Filter out features that are not found or have high<br/>            // error.<br/>            featuresList = new LinkedList&lt;Point&gt;(mFeatures.toList());<br/>            final LinkedList&lt;Byte&gt; featureStatusesList =<br/>                    new LinkedList&lt;Byte&gt;(mFeatureStatuses.toList());<br/>            final LinkedList&lt;Float&gt; featureErrorsList =<br/>                    new LinkedList&lt;Float&gt;(mFeatureErrors.toList());<br/>            for (int i = 0; i &lt; featuresList.size();) {<br/>                if (featureStatusesList.get(i) == 0 ||<br/>                        featureErrorsList.get(i) &gt; MAX_FEATURE_ERROR) {<br/>                    featuresList.remove(i);<br/>                    featureStatusesList.remove(i);<br/>                    featureErrorsList.remove(i);<br/>                } else {<br/>                    i++;<br/>                }<br/>            }</pre>
+<p>If too few features remain after filtering, we deem that the face is no longer tracked and we discard all features. Otherwise, we put the accepted features back in the matrix of current features and we update our data on gestures:</p>
+<pre>            if (featuresList.size() &lt; MIN_FEATURES) {<br/>                // The number of remaining features is too low; we have<br/>                // probably lost the target completely.<br/><br/>                // Discard the remaining features.<br/>                featuresList.clear();<br/>                mFeatures.fromList(featuresList);<br/><br/>                mWasTrackingFace = false;<br/>            } else {<br/>                mFeatures.fromList(featuresList);<br/>                updateGestureDetection();<br/>            }<br/>        }</pre>
+<p>We draw green circles around the current features. Again, we must convert coordinates from portrait format back to landscape format in order to draw on the original image:</p>
+<pre>        // Draw the current features.<br/>        for (int i = 0; i&lt; featuresList.size(); i++) {<br/>            final Point p = featuresList.get(i);<br/>            final Point pTrans = new Point(<br/>                    mImageWidth - p.y,<br/>                    p.x);<br/>            Imgproc.circle(rgba, pTrans, 8, mFeatureColor);<br/>        }</pre>
+<p>At the end of the frame, the current equalized gray image and current features become the previous equalized gray image and previous features. Rather than copying these matrices, we swap references:</p>
+<pre>        // Swap the references to the current and previous images.<br/>        final Mat swapEqualizedGray = mLastEqualizedGray;<br/>        mLastEqualizedGray = mEqualizedGray;<br/>        mEqualizedGray = swapEqualizedGray;<br/><br/>        // Swap the references to the current and previous features.<br/>        final MatOfPoint2f swapFeatures = mLastFeatures;<br/>        mLastFeatures = mFeatures;<br/>        mFeatures = swapFeatures;</pre>
+<p>We horizontally flip the preview image to make it look like a mirror. Then, we return it so that OpenCV can display it:</p>
+<pre>        // Mirror (horizontally flip) the preview.<br/>        Core.flip(rgba, rgba, 1);<br/><br/>        return rgba;<br/>    }</pre>
+<p>We have mentioned several helper functions, which we will examine now. When we start analyzing face motion, we find the geometric mean of the features and use the mean's <em>x</em> and <em>y</em> coordinates, respectively, as the starting coordinates for shake and nod gestures:</p>
+<pre>    private void startGestureDetection() {<br/><br/>        double[] featuresCenter = Core.mean(mFeatures).val;<br/><br/>        // Motion in x may indicate a shake of the head.<br/>        mShakeHeadGesture.start(featuresCenter[0]);<br/><br/>        // Motion in y may indicate a nod of the head.<br/>        mNodHeadGesture.start(featuresCenter[1]);<br/>    }</pre>
+<div class="packt_infobox">Recall that our <kbd><span class="CodeInTextPACKT">BackAndForthGesture</span></kbd> class uses one-dimensional positions. For an upright head, only the <em>x</em> coordinate is relevant to a shake gesture and only the <em>y</em> coordinate is relevant to a nod gesture.</div>
+<p>Similarly, as we continue to analyze face motion, we find the features' new geometric mean and use the mean's coordinates to update the shake and nod data. Based on the number of back-and-forth shaking or nodding motions, we may take a yes branch or a no branch in the question-and-answer tree. Alternatively, we may decide that the user's current gesture is ambiguous (both a yes and a no), in which case we reset the data:</p>
+<pre>    private void updateGestureDetection() {<br/><br/>        final double[] featuresCenter = Core.mean(mFeatures).val;<br/><br/>        // Motion in x may indicate a shake of the head.<br/>        mShakeHeadGesture.update(featuresCenter[0]);<br/>        final int shakeBackAndForthCount =<br/>                mShakeHeadGesture.getBackAndForthCount();<br/>        //Log.i(TAG, "shakeBackAndForthCount=" +<br/>        // shakeBackAndForthCount);<br/>        final boolean shakingHead =<br/>                (shakeBackAndForthCount &gt;=<br/>                        MIN_BACK_AND_FORTH_COUNT);<br/><br/>        // Motion in y may indicate a nod of the head.<br/>        mNodHeadGesture.update(featuresCenter[1]);<br/>        final int nodBackAndForthCount =<br/>                mNodHeadGesture.getBackAndForthCount();<br/>        //Log.i(TAG, "nodBackAndForthCount=" +<br/>        // nodBackAndForthCount);<br/>        final boolean noddingHead =<br/>                (nodBackAndForthCount &gt;=<br/>                        MIN_BACK_AND_FORTH_COUNT);<br/><br/>        if (shakingHead &amp;&amp; noddingHead) {<br/>            // The gesture is ambiguous. Ignore it.<br/>            resetGestures();<br/>        } else if (shakingHead) {<br/>            mAudioTree.takeNoBranch();<br/>            resetGestures();<br/>        } else if (noddingHead) {<br/>            mAudioTree.takeYesBranch();<br/>            resetGestures();<br/>        }<br/>    }</pre>
+<p>We always reset the nod gesture data and the shake gesture data at the same time:</p>
+<pre>    private void resetGestures() {<br/>        if (mNodHeadGesture != null) {<br/>            mNodHeadGesture.resetCounts();<br/>        }<br/>        if (mShakeHeadGesture != null) {<br/>            mShakeHeadGesture.resetCounts();<br/>        }<br/>    }</pre>
+<p>Our helper method for initializing the face detector is very similar to the method found in an official OpenCV sample project that performs face detection on Android. We copy the cascade's raw data from the app bundle to a new file that is more accessible. Then, we initialize a <kbd><span class="CodeInTextPACKT">CascadeClassifier</span></kbd> object using this file's path. If an error is encountered at any point, we log it and close the app. Here is the method's implementation:</p>
+<pre>    private void initFaceDetector() {<br/>        try {<br/>            // Load cascade file from application resources.<br/><br/>            InputStream is = getResources().openRawResource(<br/>                    R.raw.lbpcascade_frontalface);<br/>            File cascadeDir = getDir(<br/>                    "cascade", Context.MODE_PRIVATE);<br/>            File cascadeFile = new File(<br/>                    cascadeDir, "lbpcascade_frontalface.xml");<br/>            FileOutputStream os = new FileOutputStream(cascadeFile);<br/><br/>            byte[] buffer = new byte[4096];<br/>            int bytesRead;<br/>            while ((bytesRead = is.read(buffer)) != -1) {<br/>                os.write(buffer, 0, bytesRead);<br/>            }<br/>            is.close();<br/>            os.close();<br/><br/>            mFaceDetector = new CascadeClassifier(<br/>                    cascadeFile.getAbsolutePath());<br/>            if (mFaceDetector.empty()) {<br/>                Log.e(TAG, "Failed to load cascade");<br/>                finish();<br/>            } else {<br/>                Log.i(TAG, "Loaded cascade from " +<br/>                        cascadeFile.getAbsolutePath());<br/>            }<br/><br/>            cascadeDir.delete();<br/><br/>        } catch (IOException e) {<br/>            e.printStackTrace();<br/>            Log.e(TAG, "Failed to load cascade. Exception caught: "<br/>                    + e);<br/>            finish();<br/>        }<br/>    }<br/>}</pre>
+<p><span>That's all the code! We are ready to test. Make sure your Android device has its sound turned on. Plug the device into a USB port and press the</span> run <span>button (the play icon in green). The first time you run the project, you might see the <span class="ScreenTextPACKT"><span class="packt_screen">Select Deployment Target</span></span> window:</span></p>
+<p class="Normal1 CDPAlignCenter CDPAlign"><img src="assets/9dfbc1fd-fc7d-49bd-a22c-2b229ea9e69b.png" style="width:28.75em;height:15.33em;"/></p>
+<p><span>If you see this window, select</span> <span>your Android device and hit the <span class="ScreenTextPACKT"><span class="packt_screen">OK</span></span> button.</span></p>
+<p>Soon, you should see the app's camera preview appear on your device. Nod or shake your head knowingly as the questions are asked:</p>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/0bc6829a-8706-47d7-b9c3-efce3bd336ad.png" style="width:21.92em;height:39.08em;"/></p>
+<p>You should see a blue rectangle around your face, and green dots that remain (more or less) anchored to some features of your face as you move. Refer to the previous screenshot as an example.</p>
+<div class="packt_tip">To improve the gesture detection results for your particular camera and environment, you may want to experiment with adjusting the parameters that we defined as constants in the code. Moreover, try to keep the camera still. Camera motion will interfere with our gesture detection algorithm because we rely on optical flow, which does not differentiate between camera motion and subject motion.</div>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Summary</h1>
+                </header>
+            
+            <article>
+                
+<p>Silence is golden—or perhaps gestures are. At least, gestures can fill an awkward silence and control an app that whispers reminders in your earphones.</p>
+<p>In this chapter, we built our first Android app with OpenCV's Java bindings. We also learned to use optical flow to track the movement of an object after detection. Thus, we are able to recognize a gesture, such as a head moving up and down in a nod.</p>
+<p>In the next chapter, our project deals with motion in three dimensions. We will build a system that estimates changes in distance in order to alert a driver when the car is being followed.</p>
+
+
+            </article>
+
+            
+        </section>
+    </body></html>

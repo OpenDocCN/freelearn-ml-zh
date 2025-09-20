@@ -1,0 +1,457 @@
+<html><head></head><body><div class="chapter" title="Chapter&#xA0;9.&#xA0;Learning Object Tracking"><div class="titlepage"><div><div><h1 class="title"><a id="ch09"/>Chapter 9. Learning Object Tracking</h1></div></div></div><p>In the previous chapter, we learned about video surveillance, background modeling, and morphological image processing. We discussed how we can use different morphological operators to apply cool visual effects to input images. In this chapter, we will learn how to track an object in a live video. We will discuss the different characteristics of an object that can be used to track it. We will also learn about different methods and techniques used for object tracking. Object tracking <a id="id360" class="indexterm"/>is used extensively in robotics, self-driving cars, vehicle tracking, player tracking in sports, video compression, and so on.</p><p>By the end of this chapter, you will learn:</p><div class="itemizedlist"><ul class="itemizedlist"><li class="listitem" style="list-style-type: disc">How to track colored objects</li><li class="listitem" style="list-style-type: disc">How to build an interactive object tracker</li><li class="listitem" style="list-style-type: disc">What is a corner detector</li><li class="listitem" style="list-style-type: disc">How to detect good features to track</li><li class="listitem" style="list-style-type: disc">How to build an optical flow-based feature tracker</li></ul></div><div class="section" title="Tracking objects of a specific color"><div class="titlepage"><div><div><h1 class="title"><a id="ch09lvl1sec63"/>Tracking objects of a specific color</h1></div></div></div><p>In order<a id="id361" class="indexterm"/> to build a good object tracker, we need to understand what characteristics can be used to make our tracking robust and accurate. So, let's take a baby step in this direction, and see how we can use colorspaces to come up with a good visual tracker. One thing to keep in mind is that the color information is sensitive to lighting conditions. In real-world applications, you need to do some preprocessing to take care of this. But for now, let's assume that somebody else is doing this and we are getting clean color images.</p><p>There are many different colorspaces and picking up a good one will depend on what people use for different applications. While RGB is the native representation on the computer screen, it's not necessarily ideal for humans. When it comes to humans, we give names to colors that are based on their hue. This is why <a id="id362" class="indexterm"/>
+<span class="strong"><strong>HSV</strong></span> (<span class="strong"><strong>Hue Saturation Value</strong></span>) is probably one of the most informative colorspaces. It closely aligns with how we perceive colors. Hue refers to the color spectrum, saturation refers to the intensity of a particular color, and value refers <a id="id363" class="indexterm"/>to the brightness of that pixel. This is actually represented in a cylindrical format. You can refer to a simple explanation about this at <a class="ulink" href="http://infohost.nmt.edu/tcc/help/pubs/colortheory/web/hsv.html">http://infohost.nmt.edu/tcc/help/pubs/colortheory/web/hsv.html</a>. We can take the pixels of an image to the HSV space and then use colorspace distances and threshold in this space thresholding to track a given object.</p><p>Consider the following frame in the video:</p><div class="mediaobject"><img src="graphics/B04283_09_01.jpg" alt="Tracking objects of a specific color"/></div><p>If you run it through the colorspace filter and track the object, you will see something like this:</p><div class="mediaobject"><img src="graphics/B04283_09_02.jpg" alt="Tracking objects of a specific color"/></div><p>As you can see here, our tracker recognizes a particular object in the video based on its color characteristics. In <a id="id364" class="indexterm"/>order to use this tracker, we need to know the color distribution of our target object. The following code is used to track a colored object that selects only pixels that have a certain given hue. The code is well commented, so read the explanation mentioned previously for each line to see what's happening:</p><div class="informalexample"><pre class="programlisting">int main(int argc, char* argv[])
+{
+    // Variable declarations and initializations
+    
+    // Iterate until the user presses the Esc key
+    while(true)
+    {
+        // Initialize the output image before each iteration
+        outputImage = Scalar(0,0,0);
+        
+        // Capture the current frame
+        cap &gt;&gt; frame;
+    
+        // Check if 'frame' is empty
+        if(frame.empty())
+            break;
+        
+        // Resize the frame
+        resize(frame, frame, Size(), scalingFactor, scalingFactor, INTER_AREA);
+        // Convert to HSV colorspace
+        cvtColor(frame, hsvImage, COLOR_BGR2HSV);
+        
+        // Define the range of "blue" color in HSV colorspace
+        Scalar lowerLimit = Scalar(60,100,100);
+        Scalar upperLimit = Scalar(180,255,255);
+        
+        // Threshold the HSV image to get only blue color
+        inRange(hsvImage, lowerLimit, upperLimit, mask);
+        
+        // Compute bitwise-AND of input image and mask
+        bitwise_and(frame, frame, outputImage, mask=mask);
+        
+        // Run median filter on the output to smoothen it
+        medianBlur(outputImage, outputImage, 5);
+        
+        // Display the input and output image
+        imshow("Input", frame);
+        imshow("Output", outputImage);
+        
+        // Get the keyboard input and check if it's 'Esc'
+        // 30 -&gt; wait for 30 ms
+        // 27 -&gt; ASCII value of 'ESC' key
+        ch = waitKey(30);
+        if (ch == 27) {
+            break;
+        }
+    }
+    
+    return 1;
+}</pre></div></div></div>
+<div class="section" title="Building an interactive object tracker"><div class="titlepage"><div><div><h1 class="title"><a id="ch09lvl1sec64"/>Building an interactive object tracker</h1></div></div></div><p>A <a id="id365" class="indexterm"/>colorspace-based tracker gives us the freedom to track a colored object, but we are also constrained to a predefined color. What if we just want to randomly pick an object? How do we build an object tracker that can learn the characteristics of the selected object and track it automatically? This is where the CAMShift algorithm, which stands for <a id="id366" class="indexterm"/>
+<span class="strong"><strong>Continuously Adaptive Meanshift</strong></span>, comes into the picture. It's basically an improved version of the Meanshift algorithm.</p><p>The concept of Meanshift is actually nice and simple. Let's say we select a region of interest, and we want our object tracker to track that object. In this region, we select a bunch of points based on the color histogram and compute the centroid of spatial points. If the centroid lies at <a id="id367" class="indexterm"/>the center of this region, we know that the object hasn't moved. But if the centroid is not at the center of this region, then we know that the object is moving in some direction. The movement of the centroid controls the direction in which the object is moving. So, we move the bounding box of the object to a new location so that the new centroid becomes the center of this bounding box. Hence, this algorithm is called Meanshift because the mean (that is, the centroid) is shifting. This way, we keep ourselves updated with the current location of the object.</p><p>However, the problem with Meanshift is that the size of the bounding box is not allowed to change. When you move the object away from the camera, the object will appear smaller to the human eye, but Meanshift will not take this into account. The size of the bounding box will remain the same throughout the tracking session. Hence, we need to use CAMShift. The advantage of CAMShift is that it can adapt the size of the bounding box to the size of the object. Along with this, it can also keep track of the orientation of the object.</p><p>Let's consider the following figure in which the object is highlighted:</p><div class="mediaobject"><img src="graphics/B04283_09_03.jpg" alt="Building an interactive object tracker"/></div><p>Now that we have selected the object, the algorithm computes the histogram backprojection and extracts<a id="id368" class="indexterm"/> all the information. What is histogram backprojection? It's just a way of identifying how well the image fits into our histogram model. We compute the histogram model of a particular thing, and then use this model to find that thing in an image. Let's move the object and see how it gets tracked:</p><div class="mediaobject"><img src="graphics/B04283_09_04.jpg" alt="Building an interactive object tracker"/></div><p>Looks like the object is getting tracked fairly well. Let's change the orientation, and check whether the tracking is maintained:</p><div class="mediaobject"><img src="graphics/B04283_09_05.jpg" alt="Building an interactive object tracker"/></div><p>As you can see, the bounding<a id="id369" class="indexterm"/> ellipse has changed its location as well as its orientation. Let's change the perspective of the object, and see whether it's still able to track it:</p><div class="mediaobject"><img src="graphics/B04283_09_06.jpg" alt="Building an interactive object tracker"/></div><p>We are still good! The <a id="id370" class="indexterm"/>bounding ellipse has changed the aspect ratio to reflect the fact that the object looks skewed now (because of the perspective transformation). Let's take a look at the user interface functionality in the following code:</p><div class="informalexample"><pre class="programlisting">Mat image;
+Point originPoint;
+Rect selectedRect;
+bool selectRegion = false;
+int trackingFlag = 0;
+
+// Function to track the mouse events
+void onMouse(int event, int x, int y, int, void*)
+{
+    if(selectRegion)
+    {
+        selectedRect.x = MIN(x, originPoint.x);
+        selectedRect.y = MIN(y, originPoint.y);
+        selectedRect.width = std::abs(x - originPoint.x);
+        selectedRect.height = std::abs(y - originPoint.y);
+        
+        selectedRect &amp;= Rect(0, 0, image.cols, image.rows);
+    }
+    
+    switch(event)
+    {
+        case CV_EVENT_LBUTTONDOWN:
+            originPoint = Point(x,y);
+            selectedRect = Rect(x,y,0,0);
+            selectRegion = true;
+            break;
+            
+        case CV_EVENT_LBUTTONUP:
+            selectRegion = false;
+            if( selectedRect.width &gt; 0 &amp;&amp; selectedRect.height &gt; 0 )
+            {
+                trackingFlag = -1;
+            }
+            break;
+    }
+}</pre></div><p>This function basically<a id="id371" class="indexterm"/> captures the coordinates of the rectangle that were selected in the window. The user just needs to click on them and drag them with the mouse. There are a set of inbuilt functions in OpenCV that help us detect these different mouse events.</p><p>Here is the code used to perform object tracking based on CAMShift:</p><div class="informalexample"><pre class="programlisting">int main(int argc, char* argv[])
+{
+    // Variable declaration and initialization
+    
+    // Iterate until the user presses the Esc key
+    while(true)
+    {
+<code class="literal">        </code>// Capture the current frame
+        cap &gt;&gt; frame;
+    
+        // Check if 'frame' is empty
+        if(frame.empty())
+            break;
+        
+        // Resize the frame
+        resize(frame, frame, Size(), scalingFactor, scalingFactor, INTER_AREA);
+    
+        // Clone the input frame
+        frame.copyTo(image);
+    
+        // Convert to HSV colorspace
+        cvtColor(image, hsvImage, COLOR_BGR2HSV);</pre></div><p>We now have the <a id="id372" class="indexterm"/>HSV image waiting to be processed at this point. Let's go ahead and see how we can use our thresholds to process this image:</p><div class="informalexample"><pre class="programlisting">        if(trackingFlag)
+        {
+            // Check for all the values in 'hsvimage' that are within the specified range
+            // and put the result in 'mask'
+            inRange(hsvImage, Scalar(0, minSaturation, minValue), Scalar(180, 256, maxValue), mask);
+            
+            // Mix the specified channels
+            int channels[] = {0, 0};
+<code class="literal">            </code>hueImage.create(hsvImage.size(), hsvImage.depth());
+            mixChannels(&amp;hsvImage, 1, &amp;hueImage, 1, channels, 1);
+            
+            if(trackingFlag &lt; 0)
+            {
+            // Create images based on selected regions of interest
+                Mat roi(hueImage, selectedRect), maskroi(mask, selectedRect);
+                
+                // Compute the histogram and normalize it
+<code class="literal">                </code>calcHist(&amp;roi, 1, 0, maskroi, hist, 1, &amp;histSize, &amp;histRanges);
+                normalize(hist, hist, 0, 255, CV_MINMAX);
+                
+                trackingRect = selectedRect;
+                trackingFlag = 1;
+            }</pre></div><p>As you can see here, we use the HSV image to compute the histogram of the region. We use our thresholds to locate the required color in the HSV spectrum and then filter out the image based on that. Let's go ahead and see how we can compute the histogram backprojection:</p><div class="informalexample"><pre class="programlisting">            // Compute the histogram backprojection
+            calcBackProject(&amp;hueImage, 1, 0, hist, backproj, &amp;histRanges);
+            backproj &amp;= mask;
+            RotatedRect rotatedTrackingRect = CamShift(backproj, trackingRect, TermCriteria(CV_TERMCRIT_EPS | CV_TERMCRIT_ITER, 10, 1));
+            
+            // Check if the area of trackingRect is too small
+            if(trackingRect.area() &lt;= 1)
+            {
+                // Use an offset value to make sure the trackingRect has a minimum size
+                int cols = backproj.cols, rows = backproj.rows;
+                int offset = MIN(rows, cols) + 1;
+                trackingRect = Rect(trackingRect.x - offset, trackingRect.y - offset, trackingRect.x + offset, trackingRect.y + offset) &amp; Rect(0, 0, cols, rows);
+            }</pre></div><p>We are now<a id="id373" class="indexterm"/> ready to display the results. Using the rotated rectangle, let's draw an ellipse around our region of interest:</p><div class="informalexample"><pre class="programlisting">            // Draw the ellipse on top of the image
+            ellipse(image, rotatedTrackingRect, Scalar(0,255,0), 3, CV_AA);
+        }
+        
+<code class="literal">        </code>// Apply the 'negative' effect on the selected region of interest
+        if(selectRegion &amp;&amp; selectedRect.width &gt; 0 &amp;&amp; selectedRect.height &gt; 0)
+        {
+            Mat roi(image, selectedRect);
+            bitwise_not(roi, roi);
+        }
+        
+        // Display the output image
+        imshow(windowName, image);
+        
+        // Get the keyboard input and check if it's 'Esc'
+        // 27 -&gt; ASCII value of 'Esc' key
+        ch = waitKey(30);
+        if (ch == 27) {
+            break;
+        }
+<code class="literal">    </code>}
+    
+    return 1;
+}</pre></div></div>
+<div class="section" title="Detecting points using the Harris corner detector"><div class="titlepage"><div><div><h1 class="title"><a id="ch09lvl1sec65"/>Detecting points using the Harris corner detector</h1></div></div></div><p>Corner detection<a id="id374" class="indexterm"/> is a technique used to detect <span class="emphasis"><em>interest points</em></span>
+<a id="id375" class="indexterm"/> in the image. These interest points are also called <span class="emphasis"><em>feature points</em></span>
+<a id="id376" class="indexterm"/> or simply <span class="emphasis"><em>features</em></span> in Computer Vision terminology. A corner is basically an intersection of two edges. An <span class="emphasis"><em>interest point</em></span>
+<a id="id377" class="indexterm"/> is basically something that can be uniquely detected in an image. A corner is a particular case of an interest point. These interest <a id="id378" class="indexterm"/>points help us characterize an image. These points are used extensively in applications, such as object tracking, image classification, visual search, and so on. Since we know that the corners are <span class="emphasis"><em>interesting</em></span>, let's see how we can detect them.</p><p>In Computer Vision, there is a popular corner detection technique called the Harris corner detector. We construct a 2 x 2 matrix based on partial derivatives of the grayscale image, and then analyze the eigenvalues. Now what does this mean? Well, let's dissect it so that we can understand it better. Let's consider a small patch in the image. Our goal is to check whether this patch has a corner in it. So, we consider all the neighboring patches and compute the intensity difference between our patch and all those neighboring patches. If the difference is high in all directions, then we know that our patch has a corner in it. This is actually an oversimplification of the actual algorithm, but it covers the gist. If you want to understand the underlying mathematical details, you can take a look at the original paper by Harris and Stephens at <a class="ulink" href="http://www.bmva.org/bmvc/1988/avc-88-023.pdf">http://www.bmva.org/bmvc/1988/avc-88-023.pdf</a>. A corner point<a id="id379" class="indexterm"/> is a point where both the eigenvalues would have large values.</p><p>If we run the Harris corner detector, it will look like this:</p><div class="mediaobject"><img src="graphics/B04283_09_07.jpg" alt="Detecting points using the Harris corner detector"/></div><p>As you can see, the green circles on the TV remote are the detected corners. This will change based on the <a id="id380" class="indexterm"/>parameters you choose for the detector. If you modify the parameters, you can see that more points might get detected. If you make it strict, then you might not be able to detect soft corners. Let's take a look at the following code to detect Harris corners:</p><div class="informalexample"><pre class="programlisting">int main(int argc, char* argv[])
+{
+    // Variable declaration and initialization
+    
+    // Iterate until the user presses the Esc key
+    while(true)
+    {
+        // Capture the current frame
+        cap &gt;&gt; frame;
+        
+        // Resize the frame
+        resize(frame, frame, Size(), scalingFactor, scalingFactor, INTER_AREA);
+        
+        dst = Mat::zeros(frame.size(), CV_32FC1);
+        
+        // Convert to grayscale
+        cvtColor(frame, frameGray, COLOR_BGR2GRAY );
+        
+        // Detecting corners
+        cornerHarris(frameGray, dst, blockSize, apertureSize, k, BORDER_DEFAULT);
+        
+        // Normalizing
+        normalize(dst, dst_norm, 0, 255, NORM_MINMAX, CV_32FC1, Mat());
+        convertScaleAbs(dst_norm, dst_norm_scaled);</pre></div><p>We converted<a id="id381" class="indexterm"/> the image to grayscale and detected corners using our parameters. You can find the complete code in the <code class="literal">.cpp</code> files. These parameters play an important role in the number of points that will be detected. You can check out the OpenCV documentation of the Harris corner detector at <a class="ulink" href="http://docs.opencv.org/2.4/modules/imgproc/doc/feature_detection.html?highlight=cornerharris#voidcornerHarris%28InputArraysrc,OutputArraydst,intblockSize,intksize,doublek,intborderType%29">http://docs.opencv.org/2.4/modules/imgproc/doc/feature_detection.html?highlight=cornerharris#void cornerHarris(InputArray src, OutputArray dst, int blockSize, int ksize, double k, int borderType</a>).</p><p>We now have all the information that we need. Let's go ahead and draw circles around our corners to display the results:</p><div class="informalexample"><pre class="programlisting">        // Drawing a circle around each corner
+        for(int j = 0; j &lt; dst_norm.rows ; j++)
+        {
+            for(int i = 0; i &lt; dst_norm.cols; i++)
+            {
+                if((int)dst_norm.at&lt;float&gt;(j,i) &gt; thresh)
+                {
+                    circle(frame, Point(i, j), 8,  Scalar(0,255,0), 2, 8, 0);
+                }
+            }
+        }
+        
+        // Showing the result
+        imshow(windowName, frame);
+        
+        // Get the keyboard input and check if it's 'Esc'
+        // 27 -&gt; ASCII value of 'Esc' key
+        ch = waitKey(10);
+        if (ch == 27) {
+            break;
+        }
+    }
+    
+    // Release the video capture object
+    cap.release();
+    
+    // Close all windows
+    destroyAllWindows();
+    
+    return 1;
+}</pre></div><p>As you can see, this<a id="id382" class="indexterm"/> code takes a <code class="literal">blockSize</code> input argument. Depending on the size you choose, the performance will vary. Start with a value of <code class="literal">4</code> and play around with it to see what happens.</p></div>
+<div class="section" title="Shi-Tomasi Corner Detector"><div class="titlepage"><div><div><h1 class="title"><a id="ch09lvl1sec66"/>Shi-Tomasi Corner Detector</h1></div></div></div><p>The Harris corner detector <a id="id383" class="indexterm"/>performs well in many cases, but it can still be improved. Around six years after the original paper by Harris and Stephens, Shi-Tomasi came up with something better and they called it <span class="emphasis"><em>Good Features To Track</em></span>. You can read the original paper at: <a class="ulink" href="http://www.ai.mit.edu/courses/6.891/handouts/shi94good.pdf">http://www.ai.mit.edu/courses/6.891/handouts/shi94good.pdf</a>. They used a different scoring function to improve the overall quality. Using this method, we can find the <span class="emphasis"><em>N</em></span> strongest corners in the given image. This is very useful when we don't want to use every single corner to extract information from the image. As discussed earlier, a good interest point detector is very useful in applications, such as object tracking, object recognition, image search, and so on.</p><p>If you apply the Shi-Tomasi corner detector to an image, you will see something like this:</p><div class="mediaobject"><img src="graphics/B04283_09_08.jpg" alt="Shi-Tomasi Corner Detector"/></div><p>As you can see here, all<a id="id384" class="indexterm"/> the important points in the frame are captured. Let's take a look at the following code to track these features:</p><div class="informalexample"><pre class="programlisting">int main(int argc, char* argv[])
+{
+    // Variable declaration and initialization
+    
+    // Iterate until the user presses the Esc key
+    while(true)
+    {
+        // Capture the current frame
+        cap &gt;&gt; frame;
+        
+        // Resize the frame
+        resize(frame, frame, Size(), scalingFactor, scalingFactor, INTER_AREA);
+        
+        // Convert to grayscale
+        cvtColor(frame, frameGray, COLOR_BGR2GRAY );
+        
+        // Initialize the parameters for Shi-Tomasi algorithm
+        vector&lt;Point2f&gt; corners;
+        double qualityThreshold = 0.02;
+        double minDist = 15;
+        int blockSize = 5;
+        bool useHarrisDetector = false;
+        double k = 0.07;
+        
+        // Clone the input frame
+        Mat frameCopy;
+        frameCopy = frame.clone();
+        
+        // Apply corner detection
+        goodFeaturesToTrack(frameGray, corners, numCorners, qualityThreshold, minDist, Mat(), blockSize, useHarrisDetector, k);</pre></div><p>We extracted the <a id="id385" class="indexterm"/>frame and used <code class="literal">goodFeaturesToTrack</code> to detect the corners. It's important to understand that the number of corners detected will depend on our choice of parameters. You can find a detailed explanation at <a class="ulink" href="http://docs.opencv.org/2.4/modules/imgproc/doc/feature_detection.html?highlight=goodfeaturestotrack#goodfeaturestotrack">http://docs.opencv.org/2.4/modules/imgproc/doc/feature_detection.html?highlight=goodfeaturestotrack#goodfeaturestotrack</a>. Let's go ahead and draw circles on these points to display the output image:</p><div class="informalexample"><pre class="programlisting">        // Parameters for the circles to display the corners
+        int radius = 8;      // radius of the cirles
+        int thickness = 2;   // thickness of the circles
+        int lineType = 8;
+        
+        // Draw the detected corners using circles
+        for(size_t i = 0; i &lt; corners.size(); i++)
+        {
+            Scalar color = Scalar(rng.uniform(0,255), rng.uniform(0,255), rng.uniform(0,255));
+            circle(frameCopy, corners[i], radius, color, thickness, lineType, 0);
+        }
+        
+        /// Show what you got
+        imshow(windowName, frameCopy);
+        
+        // Get the keyboard input and check if it's 'Esc'
+        // 27 -&gt; ASCII value of 'Esc' key
+        ch = waitKey(30);
+        if (ch == 27) {
+            break;
+        }
+    }
+    
+    // Release the video capture object
+    cap.release();
+    
+    // Close all windows
+    destroyAllWindows();
+    
+    return 1;
+}</pre></div><p>This program <a id="id386" class="indexterm"/>takes a <code class="literal">numCorners</code> input argument. This value indicates the maximum number of corners you want to track. Start with a value of <code class="literal">100</code> and play around with it to see what happens. If you increase this value, you will see more feature points getting detected.</p></div>
+<div class="section" title="Feature-based tracking"><div class="titlepage"><div><div><h1 class="title"><a id="ch09lvl1sec67"/>Feature-based tracking</h1></div></div></div><p>Feature-based tracking<a id="id387" class="indexterm"/> refers to tracking individual feature points across successive frames in the video. The advantage here is that we don't have to detect feature points in every single frame. We can just detect them once and keep tracking them after that. This is more efficient as compared to running the detector on every frame. We use a technique called optical flow to track these features. Optical flow is one of the most popular techniques in Computer Vision. We choose a bunch of feature points, and track them through the video stream. When we detect the feature points, we compute the displacement vectors and show the motion of those keypoints between consecutive frames. These vectors are called motion vectors. </p><p>A motion vector for a particular point is just a directional line that indicates where that point has moved as compared to the previous frame. Different methods are used to detect these motion vectors. The two most popular algorithms are the Lucas-Kanade method and Farneback algorithm.</p><div class="section" title="The Lucas-Kanade method"><div class="titlepage"><div><div><h2 class="title"><a id="ch09lvl2sec51"/>The Lucas-Kanade method</h2></div></div></div><p>The <a id="id388" class="indexterm"/>Lucas-Kanade method is used for sparse optical flow tracking. By sparse, we mean that the number of feature points is relatively low. You can refer to their original paper at <a class="ulink" href="http://cseweb.ucsd.edu/classes/sp02/cse252/lucaskanade81.pdf">http://cseweb.ucsd.edu/classes/sp02/cse252/lucaskanade81.pdf</a>. We start the process by extracting the feature points. For each feature point, we create 3 x 3 patches with the feature point at the center. We assume that all the points within each patch will have a similar motion. We can adjust the size of this window, depending on the problem at hand.</p><p>For each feature point in the current frame, we take the surrounding 3 x 3 patch as our reference point. For this patch, we take a look at its neighborhood in the previous frame to get the best match. This neighborhood is usually bigger than 3 x 3 because we want to get the patch that's closest to the patch under consideration. Now, the path from the center pixel of the matched patch in the previous frame to the center pixel of the patch under consideration in the <a id="id389" class="indexterm"/>current frame will become the motion vector. We do this for all the feature points, and extract all the motion vectors.</p><p>Let's consider the following frame:</p><div class="mediaobject"><img src="graphics/B04283_09_09.jpg" alt="The Lucas-Kanade method"/></div><p>We need to add some points that we want to track. Just go ahead and click on a bunch of points on this window with your mouse:</p><div class="mediaobject"><img src="graphics/B04283_09_10.jpg" alt="The Lucas-Kanade method"/></div><p>If I move to a <a id="id390" class="indexterm"/>different position, you will see that the points are still being tracked correctly within a small margin of error:</p><div class="mediaobject"><img src="graphics/B04283_09_11.jpg" alt="The Lucas-Kanade method"/></div><p>Let's add a lot of points and see what happens:</p><div class="mediaobject"><img src="graphics/B04283_09_12.jpg" alt="The Lucas-Kanade method"/></div><p>As you can see, it <a id="id391" class="indexterm"/>will keep tracking those points. However, you will notice that some of the points will be dropped in between because of factors, such as prominence, speed of the movement, and so on. If you want to play around with it, you can just keep adding more points to it. You can also allow the user to select a region of interest in the input video. You can then extract feature points from this region of interest and track the object by drawing the bounding box. It will be a fun exercise!</p><p>Here is the code used to perform Lucas-Kanade-based tracking:</p><div class="informalexample"><pre class="programlisting">int main(int argc, char* argv[])
+{
+    // Variable declaration and initialization
+    
+    // Iterate until the user hits the Esc key
+    while(true)
+    {
+        // Capture the current frame
+        cap &gt;&gt; frame;
+        
+        // Check if the frame is empty
+        if(frame.empty())
+            break;
+        
+        // Resize the frame
+        resize(frame, frame, Size(), scalingFactor, scalingFactor, INTER_AREA);
+        
+        // Copy the input frame
+        frame.copyTo(image);
+        
+        // Convert the image to grayscale
+        cvtColor(image, curGrayImage, COLOR_BGR2GRAY);
+        
+        // Check if there are points to track
+        if(!trackingPoints[0].empty())
+        {
+            // Status vector to indicate whether the flow for the corresponding features has been found
+            vector&lt;uchar&gt; statusVector;
+            
+            // Error vector to indicate the error for the corresponding feature
+            vector&lt;float&gt; errorVector;
+            
+            // Check if previous image is empty
+            if(prevGrayImage.empty())
+            {
+                curGrayImage.copyTo(prevGrayImage);
+            }
+            
+            // Calculate the optical flow using Lucas-Kanade algorithm
+            calcOpticalFlowPyrLK(prevGrayImage, curGrayImage, trackingPoints[0], trackingPoints[1], statusVector, errorVector, windowSize, 3, terminationCriteria, 0, 0.001);</pre></div><p>We use the current image <a id="id392" class="indexterm"/>and the previous image to compute the optical flow information. Needless to say that the quality of the output will depend on the parameters you have chosen. You can find more details about the parameters at <a class="ulink" href="http://docs.opencv.org/2.4/modules/video/doc/motion_analysis_and_object_tracking.html#calcopticalflowpyrlk">http://docs.opencv.org/2.4/modules/video/doc/motion_analysis_and_object_tracking.html#calcopticalflowpyrlk</a>. To increase the quality and robustness, we need to filter out the points that are very close to each other because they do not add the new information. Let's go ahead and do that:</p><div class="informalexample"><pre class="programlisting">            int count = 0;
+            
+            // Minimum distance between any two tracking points
+            int minDist = 7;
+            
+            for(int i=0; i &lt; trackingPoints[1].size(); i++)
+            {
+                if(pointTrackingFlag)
+                {
+                    /* If the new point is within 'minDist' distance from an existing point, it will not be tracked */
+                    if(norm(currentPoint - trackingPoints[1][i]) &lt;= minDist)
+                    {
+                        pointTrackingFlag = false;
+                        continue;
+                    }
+                }
+                
+                // Check if the status vector is good
+                if(!statusVector[i])
+                    continue;
+                
+                trackingPoints[1][count++] = trackingPoints[1][i];
+
+      // Draw a filled circle for each of the tracking points
+                int radius = 8;
+                int thickness = 2;
+                int lineType = 8;
+                circle(image, trackingPoints[1][i], radius, Scalar(0,255,0), thickness, lineType);
+            }
+            
+            trackingPoints[1].resize(count);
+        }</pre></div><p>We now have the<a id="id393" class="indexterm"/> tracking points. The next step is to refine the location of these points. What exactly does "refine" mean in this context? To increase the speed of computation, there is some level of quantization involved. In layman's terms, you can think of it as "rounding off". Now that we have the approximate region, we can refine the location of the point within that region to get a more accurate outcome. Let's go ahead and do this:</p><div class="informalexample"><pre class="programlisting">        // Refining the location of the feature points
+        if(pointTrackingFlag &amp;&amp; trackingPoints[1].size() &lt; maxNumPoints)
+        {
+            vector&lt;Point2f&gt; tempPoints;
+            tempPoints.push_back(currentPoint);
+            
+            // Function to refine the location of the corners to subpixel accuracy.
+            // Here, 'pixel' refers to the image patch of size 'windowSize' and not the actual image pixel
+            cornerSubPix(curGrayImage, tempPoints, windowSize, cvSize(-1,-1), terminationCriteria);
+            
+            trackingPoints[1].push_back(tempPoints[0]);
+            pointTrackingFlag = false;
+        }
+        
+        // Display the image with the tracking points
+        imshow(windowName, image);
+        
+        // Check if the user pressed the Esc key
+        char ch = waitKey(10);
+        if(ch == 27)
+            break;
+        
+        // Swap the 'points' vectors to update 'previous' to 'current'
+        std::swap(trackingPoints[1], trackingPoints[0]);
+        
+        // Swap the images to update previous image to current image
+        cv::swap(prevGrayImage, curGrayImage);
+    }
+    
+    return 1;
+}</pre></div></div><div class="section" title="The Farneback algorithm"><div class="titlepage"><div><div><h2 class="title"><a id="ch09lvl2sec52"/>The Farneback algorithm</h2></div></div></div><p>Gunnar Farneback <a id="id394" class="indexterm"/>proposed this optical flow algorithm and it's used for dense tracking. Dense tracking is used extensively in robotics, augmented reality, 3D mapping, and so on. You can check out the original paper at <a class="ulink" href="http://www.diva-portal.org/smash/get/diva2:273847/FULLTEXT01.pdf">http://www.diva-portal.org/smash/get/diva2:273847/FULLTEXT01.pdf</a>. The Lucas-Kanade method is a sparse technique, which means that we only need to process some pixels in the entire image. The Farneback algorithm, on the other hand, is a dense technique that requires us to process all the pixels in the given image. So, obviously, there is a trade-off here. Dense techniques are more accurate, but they are slower. Sparse techniques are less accurate, but they are faster. For real-time applications, people tend to prefer sparse techniques. For applications where time and complexity is not a factor, people prefer dense techniques to extract finer details.</p><p>In his paper, Farneback <a id="id395" class="indexterm"/>describes a method for dense optical flow estimation based on polynomial expansion for two frames. Our goal is to estimate the motion between these two frames, and it's basically a three-step process. In the first step, each neighborhood in both the frames is approximated by polynomials. In this case, we are only interested in quadratic polynomials. The next step is to construct a new signal by global displacement. Now that each neighborhood is approximated by a polynomial, we need to see what happens if this polynomial undergoes an ideal translation. The last step is to compute the global displacement by equating the coefficients in the yields of these quadratic polynomials.</p><p>Now, how is this feasible? If you think about it, we are assuming that an entire signal is a single polynomial and there is a global translation relating the two signals. This is not a realistic scenario. So, what are we looking for? Well, our goal is to find out whether these errors are small enough so that we can build a useful algorithm that can track the features.</p><p>Let's take a look at the following static image:</p><div class="mediaobject"><img src="graphics/B04283_09_13.jpg" alt="The Farneback algorithm"/></div><p>If I move sideways, you can see that the motion vectors point in the horizontal direction. They simply track the movement of my head:</p><div class="mediaobject"><img src="graphics/B04283_09_14.jpg" alt="The Farneback algorithm"/></div><p>If I move away from<a id="id396" class="indexterm"/> the webcam, you can see that the motion vectors point in a direction that is perpendicular to the image plane:</p><div class="mediaobject"><img src="graphics/B04283_09_15.jpg" alt="The Farneback algorithm"/></div><p>Here is the code used<a id="id397" class="indexterm"/> to perform optical flow-based tracking using the Farneback algorithm:</p><div class="informalexample"><pre class="programlisting">int main(int, char** argv)
+{
+    // Variable declaration and initialization
+    
+    // Iterate until the user presses the Esc key
+    while(true)
+    {
+        // Capture the current frame
+        cap &gt;&gt; frame;
+        
+        if(frame.empty())
+            break;
+        
+        // Resize the frame
+        resize(frame, frame, Size(), scalingFactor, scalingFactor, INTER_AREA);
+        
+        // Convert to grayscale
+        cvtColor(frame, curGray, COLOR_BGR2GRAY);
+        
+        // Check if the image is valid
+        if(prevGray.data)
+        {
+            // Initialize parameters for the optical flow algorithm
+            float pyrScale = 0.5;
+            int numLevels = 3;
+            int windowSize = 15;
+            int numIterations = 3;
+            int neighborhoodSize = 5;
+            float stdDeviation = 1.2;
+            
+            // Calculate optical flow map using Farneback algorithm
+            calcOpticalFlowFarneback(prevGray, curGray, flowImage, pyrScale, numLevels, windowSize, numIterations, neighborhoodSize, stdDeviation, OPTFLOW_USE_INITIAL_FLOW);</pre></div><p>As you can see, we <a id="id398" class="indexterm"/>use the Farneback algorithm to compute the optical flow vectors. The <code class="literal">calcOpticalFlowFarneback</code> input parameters are important when it comes to the quality of tracking. You can find the details about these parameters at <a class="ulink" href="http://docs.opencv.org/3.0-beta/modules/video/doc/motion_analysis_and_object_tracking.html">http://docs.opencv.org/3.0-beta/modules/video/doc/motion_analysis_and_object_tracking.html</a>. Let's go ahead and draw those vectors on the output image:</p><div class="informalexample"><pre class="programlisting">            // Convert to 3-channel RGB
+            cvtColor(prevGray, flowImageGray, COLOR_GRAY2BGR);
+            
+            // Draw the optical flow map
+            drawOpticalFlow(flowImage, flowImageGray);
+            
+            // Display the output image
+            imshow(windowName, flowImageGray);
+        }
+        
+        // Break out of the loop if the user presses the Esc key
+        ch = waitKey(10);
+        if(ch == 27)
+            break;
+        
+        // Swap previous image with the current image
+        std::swap(prevGray, curGray);
+    }
+    
+    return 1;
+}</pre></div><p>We used a function called <code class="literal">drawOpticalFlow</code> to draw these optical flow vectors. These vectors indicate the<a id="id399" class="indexterm"/> direction of the motion. Let's take a look at the function to see how we can draw these vectors:</p><div class="informalexample"><pre class="programlisting">// Function to compute the optical flow map
+void drawOpticalFlow(const Mat&amp; flowImage, Mat&amp; flowImageGray)
+{
+    int stepSize = 16;
+    Scalar color = Scalar(0, 255, 0);
+    
+    // Draw the uniform grid of points on the input image along with the motion vectors
+    for(int y = 0; y &lt; flowImageGray.rows; y += stepSize)
+    {
+        for(int x = 0; x &lt; flowImageGray.cols; x += stepSize)
+        {
+            // Circles to indicate the uniform grid of points
+            int radius = 2;
+            int thickness = -1;
+            circle(flowImageGray, Point(x,y), radius, color, thickness);
+            
+            // Lines to indicate the motion vectors
+            Point2f pt = flowImage.at&lt;Point2f&gt;(y, x);
+            line(flowImageGray, Point(x,y), Point(cvRound(x+pt.x), cvRound(y+pt.y)), color);
+        }
+    }
+}</pre></div></div></div>
+<div class="section" title="Summary"><div class="titlepage"><div><div><h1 class="title"><a id="ch09lvl1sec68"/>Summary</h1></div></div></div><p>In this chapter, we learned about object tracking. We learned how to use the HSV colorspace to track colored objects. We discussed clustering techniques used for object tracking and how we can build an interactive object tracker using the CAMShift algorithm. We learned about corner detectors and how to track corners in a live video. We discussed how to track features in a video using optical flow. We also learned the concepts behind Lucas-Kanade and Farneback algorithms and implemented them as well.</p><p>In the next chapter, we will discuss segmentation algorithms and see how we can use them for text recognition.</p></div></body></html>

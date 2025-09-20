@@ -1,0 +1,140 @@
+<html><head></head><body>
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Profiling and Accelerating Your Apps</h1>
+                </header>
+            
+            <article>
+                
+<p class="mce-root"><span>When you have a problem with a slow app, first of all, you need to find which exact parts of your code are taking quite a lot of processing time. A good way of finding such parts of the code, which are also called</span> <strong>bottlenecks</strong><span>, is to profile the app. One of the</span><span> </span><span>good profilers available that allow an app to be profiled without modifications being introduced to the app is called </span><kbd>pyinstrument</kbd><span> (</span><a href="https://github.com/joerick/pyinstrument">https://github.com/joerick/pyinstrument</a><span>). Here, we profile the app of</span> <a href="7eaac815-5888-4352-aa83-7a3b50d0d275.xhtml">Chapter 10</a><span>, </span><em>Learning to Detect and Track Objects</em><span>, </span><span>using </span><kbd>pyinstrument</kbd><span>, </span><span>as follows:</span></p>
+<pre><strong>$ pyinstrument -o profile.html -r html  main.py</strong></pre>
+<p>We have passed an output <kbd>.html</kbd> file where we want the profiling report information to be saved with a <kbd>-o</kbd> option. </p>
+<p>We have also specified how the report should be rendered with a <kbd>-r</kbd> option, to state that we want an HTML output. Once the app is terminated, the profiling report will be generated, and it can be viewed in a browser.</p>
+<div class="packt_infobox">You can omit both options.</div>
+<p>In the latter case, the report will be shown in the console. Once we terminate the app, we can open the generated <kbd>.html</kbd> file in the browser, which will show a report similar to the following:</p>
+<p class="CDPAlignCenter CDPAlign"><img src="assets/ae15457c-82a9-4805-a06c-09b66ee7469c.png" style="width:35.08em;height:15.75em;"/></p>
+<p>First of all, we can note that quite a lot of time is spent on the script itself. This should be expected, as an object detection model is making an inference on each frame, and that it is quite a heavy operation. We can also note that tracking also takes quite a lot of time, especially in the <kbd>iou</kbd> function.</p>
+<p>Generally, depending on a particular application of the app, in order to accelerate tracking, it can be enough to replace the <kbd>iou</kbd> function with a different one that is more efficient. In this app, the <kbd>iou</kbd> function was used to compute <kbd>iou_matrix</kbd>, which stores the <strong>Intersection Over Union</strong> (<strong>IOU</strong>) metric for each possible pair of detection and tracking boxes. When you work on accelerating your code, in order to save time, it might be a good idea to change the code with an accelerated version in place and profile it again, in order to check whether it meets your needs.</p>
+<p>But let's take the appropriate relevant code out of the app and analyze the possibilities of accelerating it using <strong>Numba</strong>, which we will cover in the next section.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Accelerating with Numba</h1>
+                </header>
+            
+            <article>
+                
+<p>Numba is a compiler that <span>optimizes code written in pure Python using the <strong>Low-Level Virtual Machine</strong></span><span> (<strong>LLVM</strong></span>) <span>compiler infrastructure.</span> It efficiently compiles math-heavy Python code to reach performance similar to <span><strong>C</strong>, <strong>C++</strong>, and <strong>Fortran</strong>. It understands a range of <kbd>numpy</kbd> functions, Python <kbd>construct</kbd> libraries, and operators, as well as a range of math functions from the standard library, and generates corresponding native code for <strong>Graphical Processing Units</strong> (<strong>GPUs</strong>) and <strong>Central Processing Units</strong></span> (<span><strong>CPUs</strong>), with simple annotations.</span></p>
+<p>In this section, we will use the <strong>IPython</strong> interactive interpreter to work with the code. It is an enhanced interactive Python shell that particularly supports so-called <strong><span>magic commands</span></strong><span>,</span> <span>which—in our case—we will use for timing functions. One of the options is to use the interpreter directly in the console. A couple of other options are to use <strong>Jupyter Notebook</strong> or <strong>JupyterLab</strong>. If you are using the <strong>Atom </strong></span>editor, you might want to consider the <strong>Hydrogen</strong> plugin, which implements an interactive coding environment right in the editor.</p>
+<p>To import NumPy and Numba, run the following code:</p>
+<pre>import numpy as np<br/>import numba</pre>
+<p>We are using <strong>Numba version 0.49</strong>, which is the most recent version at the time of writing. Throughout this section, you will note that we will have to change the code in such a way that it could be compiled using this version of Numba.</p>
+<p>Supposedly, in future versions, Numba will support more functions, and some—or all—modifications might be not required. When you work on the code of your app, please refer to the <strong>Numba</strong> documentation for the supported features, available at <a href="https://numba.pydata.org/numba-doc/latest/index.html">https://numba.pydata.org/numba-doc/latest/index.html</a> at the time of writing.</p>
+<p>Here, we cover some important possibilities of Numba and illustrate results on a certain example, so that you will have your vision on how Numba can help you with accelerating the code of your own apps.</p>
+<p>Let's now isolate the code that we want to accelerate, as follows:</p>
+<ol>
+<li>First of all, this is the function that computes the <kbd>iou</kbd> of two boxes:</li>
+</ol>
+<pre style="padding-left: 60px">def iou(a: np.ndarray, b: np.ndarray) -&gt; float:<br/>    a_tl, a_br = a[:4].reshape((2, 2))<br/>    b_tl, b_br = b[:4].reshape((2, 2))<br/>    int_tl = np.maximum(a_tl, b_tl)<br/>    int_br = np.minimum(a_br, b_br)<br/>    int_area = np.product(np.maximum(0., int_br - int_tl))<br/>    a_area = np.product(a_br - a_tl)<br/>    b_area = np.product(b_br - b_tl)<br/>    return int_area / (a_area + b_area - int_area)</pre>
+<p style="padding-left: 60px">For now, we have left it as it is from <a href="7eaac815-5888-4352-aa83-7a3b50d0d275.xhtml">Chapter 10</a>, <em>Learning to Detect and Track Objects</em>.</p>
+<ol start="2">
+<li>Next is the part of the code that calculates <kbd>iou_matrix</kbd> using the previous function, as follows:</li>
+</ol>
+<pre style="padding-left: 60px">def calc_iou_matrix(detections,trackers):<br/>    iou_matrix = np.zeros((len(detections), len(trackers)), dtype=np.float32)<br/><br/>    for d, det in enumerate(detections):<br/>        for t, trk in enumerate(trackers):<br/>            iou_matrix[d, t] = iou(det, trk)<br/>    return iou_matrix</pre>
+<p style="padding-left: 60px">We have wrapped up the corresponding loops and matrix definition in a single new function.</p>
+<ol start="3">
+<li>In order to test performance, let's define two sets of <kbd>random</kbd> bounding boxes, like this:</li>
+</ol>
+<pre style="padding-left: 60px">A = np.random.rand(100,4)<br/>B = np.random.rand(100,4)</pre>
+<p style="padding-left: 60px">We have defined two sets of <kbd>100</kbd> bounding boxes.</p>
+<ol start="4">
+<li>Now, we can estimate how much time it takes to compose <kbd>iou_matrix</kbd> of these bounding boxes by running the following code:</li>
+</ol>
+<pre style="padding-left: 60px">%timeit calc_iou_matrix(A,B)</pre>
+<p style="padding-left: 60px">The <kbd>%timeit</kbd> magic command executes the function multiple times, computes the average execution time, as well as the deviation from the average, and outputs the result, which looks as follows:</p>
+<pre style="padding-left: 60px"><strong>307 ms ± 3.15 ms per loop (mean ± std. dev. of 7 runs, 1 loop each)</strong></pre>
+<p>We can note that it takes about one-third of 1 second to compute the matrix. Hence, if we have 100 objects in the scene and we want to process multiple frames in 1 second, there will be a huge bottleneck in the app. Let's now accelerate this code on a CPU.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Accelerating with the CPU</h1>
+                </header>
+            
+            <article>
+                
+<p><span>Numba has several code-generation utilities that generate machine code out of Python code. One of its central features is the</span><span> <kbd>@numba.jit</kbd> decorator. This decorator allows you to mark a function for optimization by Numba's compiler. For example, the following function calculates the product of all the elements in an array:</span></p>
+<pre>@numba.jit(nopython=True)<br/>def product(a):<br/>    result = 1<br/>    for i in range(len(a)):<br/>        result*=a[i]<br/>    return result</pre>
+<p>It can be viewed as a <kbd>np.product</kbd>. custom implementation. The decorator tells Numba to compile the function into machine code, which results in much faster execution time compared to the Python version. Numba always tries to compile the specified function. In the case of operations in the function that cannot be fully compiled, Numba falls back to the so-called <strong>object mode</strong>, <span>which uses the <strong>Python/C API</strong> and handles all values as Python objects, to perform operations on them. </span></p>
+<p><span>The latter is much slower than the former. When we pass <kbd>nopython=True</kbd>, we explicitly tell it to raise an exception when the function cannot be compiled to full machine code.</span></p>
+<p class="mce-root">We can use the same decorator with the <kbd>iou</kbd> function, as follows:</p>
+<pre>@numba.jit(nopython=True)<br/>def iou(a: np.ndarray, b: np.ndarray) -&gt; float:<br/>    a_tl, a_br = a[0:2],a[2:4]<br/>    b_tl, b_br = b[0:2],b[2:4]<br/>    int_tl = np.maximum(a_tl, b_tl)<br/>    int_br = np.minimum(a_br, b_br)<br/>    int_area = product(np.maximum(0., int_br - int_tl))<br/>    a_area = product(a_br - a_tl)<br/>    b_area = product(b_br - b_tl)<br/>    return int_area / (a_area + b_area - int_area)</pre>
+<p>We can note that this function differs slightly from the Python function. First of all, we have used our custom implementation of <kbd>np.product</kbd>. If we try to use the native implementation w<span>ith the current version of Numba,</span> we will end up with an exception, as the native <kbd>np.product</kbd> is not currently supported by the Numba compiler. It's a similar story with the first two lines of the function, where Numba fails to interpret the automatic unpacking of the array into a tuple.</p>
+<p>Now, we are ready to time our function, as we did previously, as follows:</p>
+<pre>%timeit calc_iou_matrix(A,B)</pre>
+<p>The latter produces the following output:</p>
+<pre><strong>14.5 ms ± 24.5 µs per loop (mean ± std. dev. of 7 runs, 1 loop each)</strong></pre>
+<p>We can note that we already have a huge acceleration (about 20 times), but let's proceed further. We can note that <kbd>calc_iou_matrix</kbd> is still in pure Python and it has nested loops, which might take quite a lot of time. Let's create a compiled version of it, like this:</p>
+<pre>@numba.jit(nopython=True)<br/>def calc_iou_matrix(detections,trackers):<br/>    iou_matrix = np.zeros((len(detections), len(trackers)), dtype=np.float32)<br/>    for d in range(len(detections)):<br/>        det = detections[d]<br/>        for t in range(len(trackers)):<br/>            trk = trackers[t]<br/>            iou_matrix[d, t] = iou(det, trk)</pre>
+<p>Again, this function differs from the original one, as Numba could not interpret <kbd>enumerate</kbd>. Timing this implementation will produce an output similar to the following:</p>
+<pre><strong>7.08 ms ± 31 µs per loop (mean ± std. dev. of 7 runs, 1 loop each)</strong></pre>
+<p>We again have an acceleration. This version is twice as fast compared with the previous one. Let's continue with the acceleration and get it as fast as possible, but before doing that, let's first familiarize ourselves with the <kbd>vectorize</kbd> decorator.</p>
+<p><span>The <kbd>vectorize</kbd> decorator allows functions to be created that can be used as NumPy <kbd>ufuncs</kbd> class out of functions that work on scalar arguments, as in the following function:</span></p>
+<pre>@numba.vectorize<br/>def custom_operation(a,b):<br/>    if b == 0:<br/>        return 0<br/>    return a*b if a&gt;b else a/b</pre>
+<p>The function performs some specific operation when given a pair of scalars, and the <kbd>vectorize</kbd> decorator makes it possible to do the same operation on NumPy arrays, for example, as follows:</p>
+<pre>custom_operation(A,B)</pre>
+<p>NumPy casting rules also work—for example, you can replace one of the arrays with a scalar or an array with shape <kbd>(1,4)</kbd>, as follows:</p>
+<pre>custom_operation(A,np.ones((1,4)))</pre>
+<p>Another decorator that we will use to accelerate our <kbd>iou_matrix</kbd> computation is <kbd>guvectorize</kbd>. This decorator takes the concept of <kbd>vectorize</kbd> one step further. It allows <kbd>ufuncs</kbd> to be written that return arrays with different dimensionality. We can note that, when calculating the IOU matrix, the output array has a shape composed of the numbers of bounding boxes in each passed array. We use the decorator as follows to compute the matrix:</p>
+<pre>@numba.guvectorize(['(f8[:, :], f8[:, :], f8[:, :])'], '(m,k),(n,k1)-&gt;(m, n)')<br/>def calc_iou_matrix(x, y, z):<br/>    for i in range(x.shape[0]):<br/>        for j in range(y.shape[1]):<br/>            z[i, j] = iou(x[i],y[i])</pre>
+<p>The first parameter tells Numba to compile a function that works on 8-byte floats (<kbd>float64</kbd>). It also specifies the dimensionalities of the input and output arrays with semicolons. The second parameter is the signature, which specifies how the dimensions of the input and output arrays are matched with each other. Once we execute the function with the input, the <kbd>z</kbd> output is waiting there with the correct shape and just needs to be filled in the function.</p>
+<p>If we time this implementation as we did previously, we obtain an output similar to the following:</p>
+<pre><strong>196 µs ± 2.46 µs per loop (mean ± std. dev. of 7 runs, 10000 loops each)</strong></pre>
+<p>Again, we are about 30 times faster compared to the previous case. In comparison with the initial pure Python implementation, we are about 1,000 times faster, which is quite impressive.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Understanding Numba, CUDA, and GPU acceleration</h1>
+                </header>
+            
+            <article>
+                
+<p>You have seen how simple it is to create CPU-accelerated code using Numba. Numba also provides a similar interface to make a computation on a GPU using <strong>Compute Unified Device Architecture</strong> (<strong>CUDA</strong>). Let's port our IOU matrix calculation function to be computed on a GPU using Numba.</p>
+<p>We can instruct Numba to make the computation on a GPU by slightly modifying the decorator parameters, as follows:</p>
+<pre>@numba.guvectorize(['(f8[:, :], f8[:, :], f8)'], '(m,k),(n,k1)-&gt;()',target="cuda")<br/>def mat_mul(x, y, z):<br/>    for i in range(x.shape[0]):<br/>        for j in range(y.shape[1]):<br/>            z=iou(x[i],y[j])</pre>
+<p>Here, we have instructed Numba to make the computation on a GPU by passing <kbd>target="cuda"</kbd>. We also have work to do on the <kbd>iou</kbd> function. The new function looks as follows:</p>
+<pre>@numba.cuda.jit(device=True)<br/>def iou(a: np.ndarray, b: np.ndarray) -&gt; float:<br/>    xx1 = max(a[0], b[0])<br/>    yy1 = max(a[1], b[1])<br/>    xx2 = min(a[2], b[2])<br/>    yy2 = min(a[3], b[3])<br/>    w = max(0., xx2 - xx1)<br/>    h = max(0., yy2 - yy1)<br/>    wh = w * h<br/>    result = wh / ((a[2]-a[0])*(a[3]-a[1])<br/>        + (b[2]-b[0])*(b[3]-b[1]) - wh)<br/>    return result</pre>
+<p>First of all, we have changed the decorator, which now uses <kbd>numba.cuda.jit</kbd> instead of <kbd>numba.jit</kbd>. The latter instructs Numba to create a function that is executed on a GPU. This function itself is called from a function that is running on a GPU device. For that purpose, we have passed <kbd>device=True</kbd>, which explicitly states that this function is intended to be used from functions that are calculated on a GPU.</p>
+<p>You can also note that we made quite a few modifications so that we have eliminated all the NumPy function calls. As with CPU acceleration, this is due to the fact that <kbd>numba.cuda</kbd> cannot currently perform all operations that were available in the function, and we replaced them with the ones that <kbd>numba.cuda</kbd> supports.</p>
+<p>Usually, in computer vision, your app will require GPU acceleration only when you are working with <strong>deep neural network</strong>s (<strong>DNNs</strong>). Most of the modern deep learning frameworks, such as <strong>TensorFlow</strong>, <strong>PyTorch</strong>, and <strong>MXNet</strong>, support GPU acceleration out of the box, allowing you to be away from low-level GPU programming and to concentrate on your models instead. After analyzing the frameworks, if you find yourself with a specific algorithm that you think should be necessarily implemented with CUDA directly, you might want to analyze the <kbd>numba.cuda</kbd> API, which supports most of the CUDA features.</p>
+
+
+            </article>
+
+            
+        </section>
+    </body></html>
