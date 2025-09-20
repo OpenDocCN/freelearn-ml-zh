@@ -1,0 +1,286 @@
+<html><head></head><body><div class="chapter" title="Chapter&#xA0;2.&#xA0;Detecting Basic Features in Images"><div class="titlepage"><div><div><h1 class="title"><a id="ch02"/>Chapter 2. Detecting Basic Features in Images</h1></div></div></div><p>After reading about the basics of image processing and manipulation in the previous chapter, we will take a look at some of the most widely used algorithms used to extract meaningful information from the images in the form of edges, lines, circles, ellipses, blobs or contours, user defined shapes, and corners. In context of <span class="emphasis"><em>computer vision</em></span> and <span class="emphasis"><em>image processing</em></span>, such information is often termed as <span class="emphasis"><em>features</em></span>. In this chapter, we will take a look at the various feature detection algorithms, such as Edge and Corner detection algorithms, Hough transformations, and Contour detection algorithms and their implementations on an Android platform using OpenCV.</p><p>To make our lives simpler, and have a clear understanding of this chapter, we will first create a basic Android application to which we will keep adding implementations of different feature detection algorithms. This will reduce the amount of extra code that we would otherwise have to write for each algorithm in this chapter.</p><div class="section" title="Creating our application"><div class="titlepage"><div><div><h1 class="title"><a id="ch02lvl1sec13"/>Creating our application</h1></div></div></div><p>Let's <a id="id64" class="indexterm"/>create a very basic Android application that will read images from your phone's gallery and display them on the screen using the <span class="emphasis"><em>ImageView</em></span> control. The application will also have a menu option to open the gallery to choose an image.</p><p>We will start off by creating a new Eclipse (or an Android Studio) project with a blank activity, and let's call our application <span class="strong"><strong>Features App</strong></span>.</p><div class="note" title="Note" style=""><div class="inner"><h3 class="title"><a id="note05"/>Note</h3><p>Before doing anything to the application, initialize OpenCV in your application (refer to <a class="link" href="ch01.html" title="Chapter 1. Applying Effects to Images">Chapter 1</a>, <span class="emphasis"><em>Applying Effects to Images</em></span>, on how to initialize OpenCV in an Android project).</p></div></div><p>To the blank activity, add an <code class="literal">ImageView</code> control (used to display the image), as shown in the following code snippet:</p><div class="informalexample"><pre class="programlisting">&lt;ImageView
+        android:layout_width="fill_parent"
+        android:layout_height="fill_parent"
+        android:id="@+id/image_view"
+        android:visibility="visible"/&gt;</pre></div><p>In the <a id="id65" class="indexterm"/>application menu, add an <code class="literal">OpenGallery</code> menu option to open the phone's gallery and help us pick an image. For this, add a new menu item in the project's menu resource XML file (default location of the file is <code class="literal">/res/menu/filename.xml</code>), as follows:</p><div class="informalexample"><pre class="programlisting">&lt;item android:id="@+id/OpenGallery" android:title="@string/OpenGallery"
+        android:orderInCategory="100" android:showAsAction="never" /&gt;</pre></div><div class="note" title="Note" style=""><div class="inner"><h3 class="title"><a id="tip03"/>Tip</h3><p>For more detailed<a id="id66" class="indexterm"/> information on menus in Android, refer to <a class="ulink" href="http://developer.android.com/guide/topics/ui/menus.html">http://developer.android.com/guide/topics/ui/menus.html</a>.</p></div></div><p>Let's now make the <code class="literal">OpenGallery</code> menu option functional. Android API exposes a <code class="literal">public boolean onOptionsItemSelected(MenuItem item)</code> function that allows the developer to program the option selection event. In this function, we will add a piece of code that will open the gallery of your phone to choose an image. Android API provides a predefined intent <code class="literal">Intent.ACTION_PICK</code> just for this task; that is, to open the gallery and pick an image. We will use this intent for our application, as follows:</p><div class="informalexample"><pre class="programlisting">Intent intent = new Intent(Intent.ACTION_PICK, Uri.parse("content://media/internal/images/media"));</pre></div><p>Let's modify the <code class="literal">public boolean onOptionsItemSelected(MenuItem item)</code> function and make it function as per our need.</p><p>The final implementation of the function should look like this:</p><div class="informalexample"><pre class="programlisting">public boolean onOptionsItemSelected(MenuItem item) {
+        // Handle action bar item clicks here. The action bar will
+        // automatically handle clicks on the Home/Up button, so long
+        // as you specify a parent activity in AndroidManifest.xml.
+        int id = item.getItemId();
+
+        //noinspection SimplifiableIfStatement
+        if (id == R.id.action_settings) {
+            return true;
+        }
+        else if (id == R.id.open_gallery) {
+            Intent intent = new Intent(Intent.ACTION_PICK, Uri.parse("content://media/internal/images/media"));
+            startActivityForResult(intent, 0);
+        }
+    }</pre></div><p>This code has <a id="id67" class="indexterm"/>nothing but a bunch of easy-to-understand if else statements. The thing you need to understand here is the <code class="literal">startActivityForResult()</code> function. As you might have realized, we want to bring the image data from <code class="literal">ACTION_PICK Intent</code> in to our application so that we can use it later as an input for our feature detection algorithms. For this reason, instead of using the <code class="literal">startActivity()</code> function, we use <code class="literal">startActivityForResult()</code>. After the user is done with the subsequent activity, the system calls the <code class="literal">onActivityResult()</code> function along with the result from the called intent, which is the gallery picker in our case. Our work now is to implement the <code class="literal">onActivityResult()</code> function in accordance with our application. Let's first enumerate what we want to do with the returned image. Not much actually; correct the orientation of the image and display it on the screen using <code class="literal">ImageView</code> that we added to our activity in the beginning of this section.</p><div class="note" title="Note" style=""><div class="inner"><h3 class="title"><a id="note06"/>Note</h3><p>You must be wondering what is meant by correcting the orientation of an image. In any Android phone, there can be multiple sources of images, such as the native camera application, the Java camera app, or any other third-party app. Each of them might have different ways of capturing and storing images. Now, in your application, when you load these images, it may so happen that they are rotated by some angle. Before these images can be used in our application, we should correct their orientation so that they appear meaningful to your application users. We will take a look at the code to do this now.</p></div></div><p>The following is the <code class="literal">onActivityResult()</code> function for our application:</p><div class="informalexample"><pre class="programlisting">protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+
+        if (requestCode == 0 &amp;&amp; resultCode == RESULT_OK &amp;&amp; null != data) {
+            Uri selectedImage = data.getData();
+            String[] filePathColumn = {MediaStore.Images.Media.DATA};
+
+            Cursor cursor = getContentResolver().query(selectedImage,
+                    filePathColumn, null, null, null);
+            cursor.moveToFirst();
+
+            int columnIndex = cursor.getColumnIndex(filePathColumn[0]);
+            String picturePath = cursor.getString(columnIndex);
+            cursor.close();
+
+            // String picturePath contains the path of selected Image
+
+            //To speed up loading of image
+            BitmapFactory.Options options = new BitmapFactory.Options();
+            options.inSampleSize = 2;
+
+            Bitmap temp = BitmapFactory.decodeFile(picturePath, options);
+
+            //Get orientation information
+            int orientation = 0;
+            try {
+                ExifInterface imgParams = new ExifInterface(picturePath);
+                orientation = imgParams.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_UNDEFINED);
+
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+
+            //Rotating the image to get the correct orientation
+            Matrix rotate90 = new Matrix();
+            rotate90.postRotate(orientation);
+            originalBitmap = rotateBitmap(temp,orientation);
+
+            //Convert Bitmap to Mat
+            Bitmap tempBitmap = originalBitmap.copy(Bitmap.Config.ARGB_8888,true);
+            originalMat = new Mat(tempBitmap.getHeight(), tempBitmap.getWidth(), CvType.CV_8U);
+            Utils.bitmapToMat(tempBitmap, originalMat);
+
+            currentBitmap = originalBitmap.copy(Bitmap.Config.ARGB_8888,false);
+            loadImageToImageView();
+        }
+    }</pre></div><p>Let's see what<a id="id68" class="indexterm"/> this long piece of code does. First, we do a sanity check and see whether the result is coming from the appropriate intent (that is, the gallery picker) by checking <code class="literal">requestCode</code> and <code class="literal">resultCode</code>. After this is done, we try to retrieve the path of the image in your phone's filesystem. From the <code class="literal">ACTION.PICK</code> intent, we get the <code class="literal">Uri</code> of the selected image, which we will store in <code class="literal">Uri selectedImage</code>. To get the exact path of the image, we make use of the <code class="literal">Cursor</code> class. We initialize a new <code class="literal">Cursor</code> class object with it pointing toward our <code class="literal">selectedImage</code>. Using <code class="literal">MediaStore.Images.Media.DATA</code>, we fetch the column index of the selected image, and then eventually, the path of the image using the cursor class declared earlier, and store it in a string, <code class="literal">picturePath</code>. After we have the path of the image, we create a new Bitmap object temp to store the image. So far, we have been able to read the image and store it in a bitmap object. Next we need to correct the orientation. For this, we first extract the orientation information from the image using the <code class="literal">ExifInterface</code> class. As you can see in the code, the <code class="literal">ExifInterface</code> class gives us the orientation information through <code class="literal">ExifInterface.TAG_ORIENTATION</code>. Using this orientation information, we rotate our bitmap accordingly using the <code class="literal">rotateBitmap()</code> function.</p><div class="note" title="Note" style=""><div class="inner"><h3 class="title"><a id="note07"/>Note</h3><p>For implementation of the <code class="literal">rotateBitmap()</code> function, refer to the code bundle that accompanies this book.</p></div></div><p>After correcting the orientation, we make two copies of the bitmap: one to store the original image (<code class="literal">originalBitmap</code>) and the other one to store the processed bitmaps (<code class="literal">currentBitmap</code>), that is, to store the outputs of different algorithms applied to the original bitmap. The only part left is to display the image on the screen. Create a new function <code class="literal">loadImageToView()</code> and add the following lines to it:</p><div class="informalexample"><pre class="programlisting">private void loadImageToImageView()
+    {
+        ImageView imgView = (ImageView) findViewById(R.id.image_view);
+        imgView.setImageBitmap(currentBitmap);
+    }</pre></div><p>The first line creates an instance of <code class="literal">ImageView</code> and the second line sets that image onto the view. Simple!</p><p>One last thing <a id="id69" class="indexterm"/>and our application is ready! Since our application is going to read data from permanent storage (read images from external storage), we need permission. To the <code class="literal">AndroidManifest.xml</code> file, add the following lines that will allow the application to access external storage for reading data:</p><div class="informalexample"><pre class="programlisting">&lt;uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/&gt;</pre></div><p>Now that we have our basic application in place, let's take a look at the different feature detection algorithms, starting with Edge and Corner detection, Hough transformation, and Contours.</p></div></div>
+<div class="section" title="Edge and Corner detection"><div class="titlepage"><div><div><h1 class="title"><a id="ch02lvl1sec14"/>Edge and Corner detection</h1></div></div></div><p>Edge detection and<a id="id70" class="indexterm"/> Corner detection are two of the most basic feature detection algorithms, and are very useful ones too. Having information about the edges in an image can be of great help in applications, where you want to find boundaries of different objects in an image, or you need to find corners in an image when you want to analyze how an object rotates or moves in a given sequence of images (or videos). In this section, we will take a look at the techniques and implementations of various Edge and Corner detection algorithms, such as Difference of Gaussian, Canny Edge detector, Sobel Operator, and Harris Corners.</p><div class="section" title="The Difference of Gaussian technique"><div class="titlepage"><div><div><h2 class="title"><a id="ch02lvl2sec15"/>The Difference of Gaussian technique</h2></div></div></div><p>Let's start <a id="id71" class="indexterm"/>with the easiest and the <a id="id72" class="indexterm"/>most rudimentary technique. Before we understand how <span class="strong"><strong>Difference of Gaussian</strong></span> (<span class="strong"><strong>DoG</strong></span>) works, let's take a look at what exactly edges are. To put it simply, edges are points in an image where the pixel intensity changes appreciably. We will exploit this property of edges and by applying Gaussian blur on the image, we will compute the edge points (Edges).</p><p>Here is a three-step explanation of the algorithm:</p><div class="orderedlist"><ol class="orderedlist arabic"><li class="listitem">Convert the given image to a grayscale image.</li><li class="listitem">On the grayscale image, perform Gaussian blur using two different blurring radiuses (you should have two Gaussian blurred images after this step).</li><li class="listitem">Subtract (arithmetic subtraction) the two images generated in the previous step to get the resultant image with only edge points (Edges) in it.</li></ol></div><p>Why does<a id="id73" class="indexterm"/> this technique work? How can subtracting two Gaussian blurred images give us edge points? A <a id="id74" class="indexterm"/>Gaussian filter is used to smooth out an image and the extent of smoothening depends on the blurring radius. Consider an image of a chess board. When you apply a Gaussian filter to the chess board image, you will observe that there is almost no change near the center of the white and black squares, whereas the common side of the black and white squares (which is an edge point) gets smudged, implying loss of edge information. Gaussian blur makes the edge less prominent.</p><p>According to our technique, we have two Gaussian blurred images with different blurring radius. When you subtract these two images, you will lose all the points where no smoothening or smudging happened, that is, the center of the black and white squares in the case of a chess board image. However, pixel values near the edges would have changed because smudging pixel values and subtracting such points will give us a non-zero value, indicating an edge point. Hence, you get edge points after subtracting two Gaussian blurred images.</p><p>Since we are only performing Gaussian blurs on images, it is one of the fastest ways of calculating edges. Having said that, it is also true that this technique does not return very promising results. This technique might work very well for some images and can completely fail in some scenarios. However, it doesn't hurt to know one extra algorithm!</p><p>Let's modify our Features App that we created in the last section and apply DoG to it. In the applications menu, we add a new menu option, <span class="emphasis"><em>Difference of Gaussian</em></span>, to the menu resource XML file using these lines:</p><div class="informalexample"><pre class="programlisting">&lt;item android:id="@+id/DoG" android:title="@string/DoG"
+        android:orderInCategory="100" android:showAsAction="never" /&gt;</pre></div><p>Make a new function <code class="literal">public void DifferenceOfGaussian()</code>, which will compute edges in any given image, as follows:</p><div class="informalexample"><pre class="programlisting">public void DifferenceOfGaussian()
+    {
+        Mat grayMat = new Mat();
+        Mat blur1 = new Mat();
+        Mat blur2 = new Mat();
+
+        //Converting the image to grayscale
+        Imgproc.cvtColor(originalMat,grayMat,Imgproc.COLOR_BGR2GRAY);
+
+        //Bluring the images using two different blurring radius
+        Imgproc.GaussianBlur(grayMat,blur1,new Size(15,15),5);
+        Imgproc.GaussianBlur(grayMat,blur2,new Size(21,21),5);
+
+        //Subtracting the two blurred images
+        Mat DoG = new Mat();
+        Core.absdiff(blur1, blur2,DoG);
+
+        //Inverse Binary Thresholding
+        Core.multiply(DoG,new Scalar(100), DoG);
+        Imgproc.threshold(DoG,DoG,50,255,Imgproc.THRESH_BINARY_INV);
+
+        //Converting Mat back to Bitmap
+        Utils.matToBitmap(DoG, currentBitmap);
+        loadImageToImageView();
+    }</pre></div><p>In the <a id="id75" class="indexterm"/>preceding piece of code, we first convert the image to a grayscale image. Then, we apply the <a id="id76" class="indexterm"/>Gaussian filter to the image twice, with two different blurring radiuses, using the <code class="literal">Imgproc.GaussianBlur()</code> function. The first and second parameters in this function are input and output images, respectively. The third parameter specifies the size of the kernel to be used while applying the filter, and the last parameter specifies the value of sigma used in the Gaussian function. Then we determine the absolute difference of the images using <code class="literal">Core.absdiff()</code>. Once this is done, we post-process our image to make it comprehensible by applying the <span class="emphasis"><em>Inverse Binary Threshold</em></span> operation to set the edge point values to white (255). Finally, we convert the bitmap to Mat and display it on the screen using <code class="literal">loadImageToView()</code>.</p><p>Here is the resulting image after applying DoG on Lenna:</p><div class="mediaobject"><img src="graphics/B02052_02_01.jpg" alt="The Difference of Gaussian technique"/></div><p>Difference of Gaussian <a id="id77" class="indexterm"/>is not <a id="id78" class="indexterm"/>often used because it has been superseded by other more sophisticated techniques that we are going to discuss later in this chapter.</p></div><div class="section" title="The Canny Edge detector"><div class="titlepage"><div><div><h2 class="title"><a id="ch02lvl2sec16"/>The Canny Edge detector</h2></div></div></div><p>Canny Edge detection<a id="id79" class="indexterm"/> is<a id="id80" class="indexterm"/> a widely used algorithm in computer vision and is often considered as an<a id="id81" class="indexterm"/> optimal technique for edge detection. The algorithm uses more sophisticated techniques than Difference of Gaussian, such as intensity gradient in multiple directions, and thresholding with hysteresis.</p><p>The algorithm is broadly divided into four stages:</p><div class="orderedlist"><ol class="orderedlist arabic"><li class="listitem"><span class="strong"><strong>Smoothing the image</strong></span>: This<a id="id82" class="indexterm"/> is the first step of the algorithm, where we reduce the amount of noise present in the image by performing a Gaussian blur with an appropriate blurring radius.</li><li class="listitem"><span class="strong"><strong>Calculating the gradient of the image</strong></span>: Here we<a id="id83" class="indexterm"/> calculate the intensity gradient of the image and classify the gradients as vertical, horizontal, or diagonal. The output of this step is used to calculate actual edges in the next stage.</li><li class="listitem"><span class="strong"><strong>Non-maximal supression</strong></span>: Using<a id="id84" class="indexterm"/> the direction of gradient calculated in the previous step, we check whether or not a pixel is the local maxima in the positive and negative direction of the gradient if not then, we suppress the pixel (which means that a pixel is not a part of any edge). This is an edge thinning technique. Select edge points with the sharpest change.</li><li class="listitem"><span class="strong"><strong>Edge selection through hysteresis thresholding</strong></span>: This<a id="id85" class="indexterm"/> is the final step of the algorithm. Here we check whether an edge is strong enough to be included in the final output, essentially removing all the less prominent edges.</li></ol></div><div class="note" title="Note" style=""><div class="inner"><h3 class="title"><a id="tip04"/>Tip</h3><p>Refer to <a class="ulink" href="http://en.wikipedia.org/wiki/Canny_edge_detector">http://en.wikipedia.org/wiki/Canny_edge_detector</a> for a more<a id="id86" class="indexterm"/> detailed explanation.</p></div></div><p>The following is <a id="id87" class="indexterm"/>an implementation<a id="id88" class="indexterm"/> of the algorithm using OpenCV for Android.</p><p>For Difference of Gaussian, first add the <span class="emphasis"><em>Canny Edges</em></span> option to the application menu by adding a new item in the menu resource XML file, as follows:</p><div class="informalexample"><pre class="programlisting">&lt;item android:id="@+id/CannyEdges" android:title="@string/CannyEdges"
+        android:orderInCategory="100" android:showAsAction="never" /&gt;</pre></div><p>Create a new function, <code class="literal">public void Canny()</code>, and add the following lines of code to it:</p><div class="informalexample"><pre class="programlisting">//Canny Edge Detection
+    public void Canny()
+    {
+        Mat grayMat = new Mat();
+        Mat cannyEdges = new Mat();
+        //Converting the image to grayscale
+            Imgproc.cvtColor(originalMat,grayMat,Imgproc.COLOR_BGR2GRAY);
+
+        Imgproc.Canny(grayMat, cannyEdges,10, 100);
+
+        //Converting Mat back to Bitmap
+        Utils.matToBitmap(cannyEdges, currentBitmap);
+        loadImageToImageView();
+    }</pre></div><p>In the preceding code, we first convert our image to a grayscale image, and then simply call the <code class="literal">Imgproc.Canny()</code> function implemented in the OpenCV API for Android. The important thing to notice here are the last two parameters in <code class="literal">Imgproc.Canny()</code>. They are for low and high thresholds respectively. In Canny Edge detection algorithm, we classify each point in the <a id="id89" class="indexterm"/>image into one of three classes, <code class="literal">suppressed points</code>, <code class="literal">weak edge points</code>, and <code class="literal">strong edge points</code>. All the points that have the intensity gradient value less than the low threshold values are classified as suppressed points, points with the intensity gradient value between low and high threshold values are classified as weak edge points, and points with the intensity gradient value above the high threshold values are classified as strong edge points.</p><p>According to the <a id="id90" class="indexterm"/>algorithm, we ignore all the suppressed points. They will not be a part of any edge in the image. Strong edge points definitely form a part of an edge. For weak edge points, we check whether they are connected to any strong edge points in the image by checking the eight pixels around that weak point. If there are any strong edge points in those eight pixels, we count that weak point as a part of the edge. That's Canny Edge detection!</p></div><div class="section" title="The Sobel operator"><div class="titlepage"><div><div><h2 class="title"><a id="ch02lvl2sec17"/>The Sobel operator</h2></div></div></div><p>Another <a id="id91" class="indexterm"/>technique for computing edges in an image is using the Sobel operator (or Sobel filter). As in Canny Edge detection, we <a id="id92" class="indexterm"/>calculate the intensity gradient of the pixel, but in a different way. Here we calculate the approximate intensity gradient by convoluting the image with two 3x3 kernels for horizontal and vertical directions each:</p><div class="mediaobject"><img src="graphics/B02052_02_02.jpg" alt="The Sobel operator"/><div class="caption"><p>Convolution matrices used in Sobel filter</p></div></div><p>Using the <a id="id93" class="indexterm"/>horizontal and vertical gradient <a id="id94" class="indexterm"/>values, we calculate the absolute gradient at each pixel using this formula:</p><div class="mediaobject"><img src="graphics/B02052_02_03.jpg" alt="The Sobel operator"/></div><p>For an approximate gradient, the following formula is usually used:</p><div class="mediaobject"><img src="graphics/B02052_02_04.jpg" alt="The Sobel operator"/></div><p>The steps involved in computing edges using a Sobel operator are as follows:</p><div class="orderedlist"><ol class="orderedlist arabic"><li class="listitem">Convert the image to a grayscale image.</li><li class="listitem">Calculate the absolute value of the intensity gradient in the horizontal direction.</li><li class="listitem">Calculate the absolute value of the intensity gradient in the vertical direction.</li><li class="listitem">Compute the resultant gradient using the preceding formula. The resultant gradient values are essentially the edges.</li></ol></div><p>Let's now add a Sobel filter to our Features App. Start by adding a <span class="emphasis"><em>Sobel filter</em></span> menu option in the menu's XML file:</p><div class="informalexample"><pre class="programlisting">&lt;item android:id="@+id/SobelFilter" android:title="@string/SobelFilter"
+        android:orderInCategory="100" android:showAsAction="never" /&gt;</pre></div><p>The following is a Sobel filter using OpenCV for Android:</p><div class="informalexample"><pre class="programlisting">//Sobel Operator
+    void Sobel()
+    {
+        Mat grayMat = new Mat();
+        Mat sobel = new Mat(); //Mat to store the result
+
+        //Mat to store gradient and absolute gradient respectively
+        Mat grad_x = new Mat();
+        Mat abs_grad_x = new Mat();
+
+        Mat grad_y = new Mat();
+        Mat abs_grad_y = new Mat();
+
+        //Converting the image to grayscale
+        Imgproc.cvtColor(originalMat,grayMat,Imgproc.COLOR_BGR2GRAY);
+
+        //Calculating gradient in horizontal direction
+        Imgproc.Sobel(grayMat, grad_x,CvType.CV_16S, 1,0,3,1,0);
+
+        //Calculating gradient in vertical direction
+        Imgproc.Sobel(grayMat, grad_y,CvType.CV_16S, 0,1,3,1,0);
+
+        //Calculating absolute value of gradients in both the direction
+        Core.convertScaleAbs(grad_x, abs_grad_x);
+        Core.convertScaleAbs(grad_y, abs_grad_y);
+
+        //Calculating the resultant gradient
+        Core.addWeighted(abs_grad_x, 0.5, abs_grad_y, 0.5, 1, sobel);
+
+        //Converting Mat back to Bitmap
+        Utils.matToBitmap(sobel, currentBitmap);
+        loadImageToImageView();
+    }</pre></div><p>In this <a id="id95" class="indexterm"/>code, we<a id="id96" class="indexterm"/> first convert the image to a grayscale image. After this, using the grayscale image, we calculate the intensity gradient in the horizontal and vertical directions using the <code class="literal">Imgproc.Sobel()</code> function, and store the output in <code class="literal">grad_x</code> and <code class="literal">grad_y</code>. As per the formula mentioned in the algorithm, we calculate the absolute value of the gradients and add them together to get<a id="id97" class="indexterm"/> the resultant <a id="id98" class="indexterm"/>gradient value (basically the edges). The following code snippet performs the described step:</p><div class="informalexample"><pre class="programlisting">//Calculating absolute value of gradients in both the direction
+        Core.convertScaleAbs(grad_x, abs_grad_x);
+        Core.convertScaleAbs(grad_y, abs_grad_y);
+
+        //Calculating the resultant gradient
+        Core.addWeighted(abs_grad_x, 0.5, abs_grad_y, 0.5, 1, sobel);</pre></div><p>Finally, we convert the Mat into a bitmap and display it on the screen.</p><div class="note" title="Note" style=""><div class="inner"><h3 class="title"><a id="tip05"/>Tip</h3><p>You may also be interested to take a look at the <a id="id99" class="indexterm"/>Prewitt operator (<a class="ulink" href="http://en.wikipedia.org/wiki/Prewitt_operator">http://en.wikipedia.org/wiki/Prewitt_operator</a>). It is similar to a Sobel operator, but uses a different matrix for convolution.</p></div></div></div><div class="section" title="Harris Corner detection"><div class="titlepage"><div><div><h2 class="title"><a id="ch02lvl2sec18"/>Harris Corner detection</h2></div></div></div><p>In the <a id="id100" class="indexterm"/>literal sense of the term, corners are points of intersection of two edges or a point which has multiple prominent edge <a id="id101" class="indexterm"/>directions in its local neighborhood. Corners are often considered as points of interest in an image and are used in many applications, ranging from image correlation, video stabilization, 3D modelling, and the likes. Harris Corner detection is one of the most used techniques in corner detection; and in this section, we will take a look at how to implement it on an Android platform.</p><p>Harris corner detector<a id="id102" class="indexterm"/> uses a sliding window over the image to calculate the variation in intensity. Since corners will have large variations in the intensity values around them, we are looking for positions in the image where the sliding windows show large variations in intensity. We try to maximize the following term:</p><div class="mediaobject"><img src="graphics/B02052_02_07.jpg" alt="Harris Corner detection"/></div><p>Here, <span class="strong"><strong>I</strong></span> is the image, <span class="strong"><strong>u</strong></span> is the shift in the sliding window in the horizontal direction, and <span class="strong"><strong>v</strong></span> is the shift in the vertical direction.</p><p>The following is an <a id="id103" class="indexterm"/>implementation of Harris Corner using OpenCV:</p><div class="informalexample"><pre class="programlisting">void HarrisCorner() {
+        Mat grayMat = new Mat();
+        Mat corners = new Mat();
+
+        //Converting the image to grayscale
+        Imgproc.cvtColor(originalMat, grayMat, Imgproc.COLOR_BGR2GRAY);
+
+        Mat tempDst = new Mat();
+        //finding corners        Imgproc.cornerHarris(grayMat, tempDst, 2, 3, 0.04);
+
+        //Normalizing harris corner's output
+        Mat tempDstNorm = new Mat();
+        Core.normalize(tempDst, tempDstNorm, 0, 255, Core.NORM_MINMAX);
+        Core.convertScaleAbs(tempDstNorm, corners);
+
+        //Drawing corners on a new image
+        Random r = new Random();
+        for (int i = 0; i &lt; tempDstNorm.cols(); i++) {
+            for (int j = 0; j &lt; tempDstNorm.rows(); j++) {
+                double[] value = tempDstNorm.get(j, i);
+                if (value[0] &gt; 150)
+                    Core.circle(corners, new Point(i, j), 5, new Scalar(r.nextInt(255)), 2);
+            }
+        }
+
+        //Converting Mat back to Bitmap
+        Utils.matToBitmap(corners, currentBitmap);
+        loadImageToImageView();
+    }</pre></div><p>In the <a id="id104" class="indexterm"/>preceding code, we start off by converting the image to a grayscale image and then use it as an input to the <code class="literal">Imgproc.cornerHarris()</code> function. The other inputs to the function are the block size, kernel size, and <a id="id105" class="indexterm"/>a parameter, <code class="literal">k</code>, that is used to solve one of the equations in the algorithm (for details on mathematics, refer to OpenCV's documentation on Harris Corner at <a class="ulink" href="http://docs.opencv.org/doc/tutorials/features2d/trackingmotion/harris_detector/harris_detector.html">http://docs.opencv.org/doc/tutorials/features2d/trackingmotion/harris_detector/harris_detector.html</a>). The output of Harris Corner is a 16-bit scalar image, which <a id="id106" class="indexterm"/>is normalized to get the pixel values in the range 0 to 255. After this, we run a <code class="literal">for</code> loop and draw<a id="id107" class="indexterm"/> all the circles on the image with the centers being points whose intensity value is greater than a certain user set threshold.</p></div></div>
+<div class="section" title="Hough transformations"><div class="titlepage"><div><div><h1 class="title"><a id="ch02lvl1sec15"/>Hough transformations</h1></div></div></div><p>So far, we <a id="id108" class="indexterm"/>looked at how to detect edges and corners in an image. Sometimes, for image analysis apart from edges and corners, you want to detect shapes, such as lines, circles, ellipses, or any other shape for that matter. Say for example, you want to detect coins in an image, or you want to detect a box or a grid in an image. A technique that comes handy in such scenarios is Hough transformations. It is a widely used technique that detects shapes in an image using their mathematical equations in their parameterized forms.</p><p>The generalized Hough transformation is capable of detecting any shape for which we can provide an equation in the parameterized form. As the shapes start getting complex (with an increase in the number of dimensions), such as spheres or ellipsoids, it gets computationally expensive; hence, we generally look at standard Hough transformations for simple 2D shapes, such as lines and circles.</p><p>In this section, we will take a look at Hough transformations to detect lines and circles, but as mentioned earlier, it can be further extended to detect shapes, such as ellipses, and even simple 3D shapes, such as spheres.</p><div class="section" title="Hough lines"><div class="titlepage"><div><div><h2 class="title"><a id="ch02lvl2sec19"/>Hough lines</h2></div></div></div><p>Detecting<a id="id109" class="indexterm"/> lines is one of the simplest use cases of Hough transformations. In <a id="id110" class="indexterm"/>Hough lines, we select a pair of points from our image <span class="emphasis"><em>(x1, y1)</em></span> and <span class="emphasis"><em>(x2, y2)</em></span>, and solve the following pair of equations for <span class="emphasis"><em>(a, m)</em></span>:</p><p>
+<span class="emphasis"><em>y1 = m(x1) + a</em></span>
+</p><p>
+<span class="emphasis"><em>y2 = m(x2) + a</em></span>
+</p><p>We maintain a table with two columns <span class="emphasis"><em>(a, m)</em></span> and a count value. The count value keeps a record of how many times we get the <span class="emphasis"><em>(a, m)</em></span> value after solving the preceding pair of equations. This is <a id="id111" class="indexterm"/>nothing but a voting procedure. After calculating the <span class="emphasis"><em>(a, m)</em></span> values for all possible pairs of points, we take the <span class="emphasis"><em>(a, m)</em></span> values that have count values greater than a certain threshold and these values are the desired lines in the image.</p><div class="note" title="Note" style=""><div class="inner"><h3 class="title"><a id="note08"/>Note</h3><p>For Hough transformations, we never run the algorithm directly on the image. First, we compute the edges in the image, and then apply the Hough transformation on the edges. The reason being, any prominent line in the image has to be an edge (the reverse is not true, every edge in the image will not be a line), and using only edges, we are reducing the number of points on which the algorithm runs.</p><p>OpenCV provides two implementations of Hough lines: standard Hough lines and probabilistic Hough lines. The major difference between the two is that, in probabilistic Hough lines, instead of using all edge points, we select a subset of the edge points by random sampling. This makes the algorithm run faster since there are fewer points to deal with, without compromising on its performance.</p></div></div><p>Time to write some code! First things first, add a new <span class="emphasis"><em>Hough lines</em></span> menu option to our application menu. However, try to figure out the code to do this yourself this time.</p><p>Hopefully, the menu option is now in place! Let's now take a look at a code snippet that uses the probabilistic Hough transformation to detect lines in an image using OpenCV for Android:</p><div class="informalexample"><pre class="programlisting">void HoughLines()
+    {
+
+        Mat grayMat = new Mat();
+        Mat cannyEdges = new Mat();
+        Mat lines = new Mat();
+
+        //Converting the image to grayscale
+        Imgproc.cvtColor(originalMat,grayMat,Imgproc.COLOR_BGR2GRAY);
+
+        Imgproc.Canny(grayMat, cannyEdges,10, 100);
+
+        Imgproc.HoughLinesP(cannyEdges, lines, 1, Math.PI/180, 50, 20, 20);
+
+        Mat houghLines = new Mat();
+        houghLines.create(cannyEdges.rows(),cannyEdges.cols(),CvType.CV_8UC1);
+
+        //Drawing lines on the image
+        for(int i = 0 ; i &lt; lines.cols() ; i++)
+        {
+            double[] points = lines.get(0,i);
+            double x1, y1, x2, y2;
+
+            x1 = points[0];
+            y1 = points[1];
+            x2 = points[2];
+            y2 = points[3];
+
+            Point pt1 = new Point(x1, y1);
+            Point pt2 = new Point(x2, y2);
+
+            //Drawing lines on an image
+            Core.line(houghLines, pt1, pt2, new Scalar(255, 0, 0), 1);
+        }
+
+        //Converting Mat back to Bitmap
+        Utils.matToBitmap(houghLines, currentBitmap);
+        loadImageToImageView();
+
+    }</pre></div><p>As explained earlier, we<a id="id112" class="indexterm"/> first compute edges in the image using any edge detection technique (the preceding code uses Canny). The output of the Canny Edge detector is used as an input to the <code class="literal">Imgproc.HoughLinesP()</code> function. The first and second parameters are input and output respectively. The third and fourth parameters specify the resolution of <code class="literal">r</code> and theta in pixels. The next two parameters are the threshold and minimum number of points that a line should have. Lines with fewer points than this are discarded.</p><p>The <code class="literal">For</code> loop in the code is used to draw all the lines on the image. This is only done to visualize the lines detected by the algorithm.</p></div><div class="section" title="Hough circles"><div class="titlepage"><div><div><h2 class="title"><a id="ch02lvl2sec20"/>Hough circles</h2></div></div></div><p>Analogous to <a id="id113" class="indexterm"/>Hough lines, Hough circles also <a id="id114" class="indexterm"/>follow the same procedure to detect circles, only the equations change (the parameterized form of a circle is used instead).</p><p>Here is an implementation<a id="id115" class="indexterm"/> of Hough circles using OpenCV for Android:</p><div class="informalexample"><pre class="programlisting">void HoughCircles()
+    {
+        Mat grayMat = new Mat();
+        Mat cannyEdges = new Mat();
+        Mat circles = new Mat();
+
+        //Converting the image to grayscale
+        Imgproc.cvtColor(originalMat,grayMat,Imgproc.COLOR_BGR2GRAY);
+
+        Imgproc.Canny(grayMat, cannyEdges,10, 100);
+
+        Imgproc.HoughCircles(cannyEdges, circles, Imgproc.CV_HOUGH_GRADIENT,1, cannyEdges.rows() / 15);//, grayMat.rows() / 8);
+
+        Mat houghCircles = new Mat();
+        houghCircles.create(cannyEdges.rows(),cannyEdges.cols(),CvType.CV_8UC1);
+
+        //Drawing lines on the image
+        for(int i = 0 ; i &lt; circles.cols() ; i++)
+        {
+            double[] parameters = circles.get(0,i);
+            double x, y;
+            int r;
+
+            x = parameters[0];
+            y = parameters[1];
+            r = (int)parameters[2];
+
+            Point center = new Point(x, y);
+
+            //Drawing circles on an image
+            Core.circle(houghCircles,center,r, new Scalar(255,0,0),1);
+        }
+
+        //Converting Mat back to Bitmap
+        Utils.matToBitmap(houghCircles, currentBitmap);
+        loadImageToImageView();
+    }</pre></div><p>The code is <a id="id116" class="indexterm"/>pretty much the same as Hough lines with a few changes. The output of <code class="literal">Imgproc.HoughCircles()</code> is a tuple of center coordinates and the radius of the circle (x, y, radius). To draw circles on the image, we use <code class="literal">Core.circle()</code>.</p><div class="note" title="Note" style=""><div class="inner"><h3 class="title"><a id="tip06"/>Tip</h3><p>A nice coding exercise would be to implement Hough lines/circles without using the predefined OpenCV functions.</p></div></div></div></div>
+<div class="section" title="Contours"><div class="titlepage"><div><div><h1 class="title"><a id="ch02lvl1sec16"/>Contours</h1></div></div></div><p>We are often<a id="id117" class="indexterm"/> required to break down the image into smaller segments to have a more focused view of the object of interest. Say for instance, you have an image with balls from different sports, such as a golf ball, cricket ball, tennis ball, and football. However, you are only interested in analyzing the football. One way of doing this could be by using Hough circles that we looked at in the last section. Another way of doing this is using contour detection to segment the image into smaller parts, with each segment representing a particular ball.</p><p>The next step is to choose the segment having the largest area, that is, your football (it is safe to assume that the football would be the largest of all!).</p><p>Contours are nothing but connected curves in an image or boundaries of connected components in an image. Contours are often computed using edges in an image, but a subtle difference between edges and contours is that contours are closed, whereas edges can be anything. The concept of edges is very local to the point and its neighboring pixels; however, contours take care of the object as a whole (they return boundaries of objects).</p><p>Let's take a look at the<a id="id118" class="indexterm"/> implementation of Contour detection using OpenCV for Android. Let's take a look at the following code:</p><div class="informalexample"><pre class="programlisting">void Contours()
+    {
+        Mat grayMat = new Mat();
+        Mat cannyEdges = new Mat();
+        Mat hierarchy = new Mat();
+
+        List&lt;MatOfPoint&gt; contourList = new ArrayList&lt;MatOfPoint&gt;(); //A list to store all the contours
+
+        //Converting the image to grayscale
+        Imgproc.cvtColor(originalMat,grayMat,Imgproc.COLOR_BGR2GRAY);
+
+        Imgproc.Canny(grayMat, cannyEdges,10, 100);
+
+        //finding contours
+        Imgproc.findContours(cannyEdges,contourList,hierarchy,Imgproc.RETR_LIST, Imgproc.CHAIN_APPROX_SIMPLE);
+
+        //Drawing contours on a new image
+        Mat contours = new Mat();
+        contours.create(cannyEdges.rows(),cannyEdges.cols(),CvType.CV_8UC3);
+        Random r = new Random();
+        for(int i = 0; i &lt; contourList.size(); i++)
+        {
+            Imgproc.drawContours(contours,contourList,i,new Scalar(r.nextInt(255),r.nextInt(255),r.nextInt(255)), -1);
+        }
+        //Converting Mat back to Bitmap
+        Utils.matToBitmap(contours, currentBitmap);
+        loadImageToImageView();
+    }</pre></div><p>OpenCV does make <a id="id119" class="indexterm"/>our life simple! In this code, we first convert our image to a grayscale image (it is not necessary to use the grayscale version of the image, you can directly work with colored images as well), and then find edges in it using Canny Edge detection. After we have the edges with us, we pass this image to a predefined function <code class="literal">Imgproc.findContours()</code>. The output of this function is <code class="literal">List&lt;MatOfPoint&gt;</code> which stores all the contours computed in that image. The parameters passed in to the <code class="literal">Imgproc.findContours()</code> function are interesting. The first and the second parameters are the input images and list of contours respectively. The third and the fourth parameters are interesting; they give the hierarchy of contours in the image. The third <a id="id120" class="indexterm"/>parameter stores the hierarchy, while the fourth parameter specifies the nature of hierarchy the users want. The hierarchy essentially tells us the overall arrangement of contours in the image.</p><div class="note" title="Note" style=""><div class="inner"><h3 class="title"><a id="tip07"/>Tip</h3><p>Refer<a id="id121" class="indexterm"/> to <a class="ulink" href="http://docs.opencv.org/master/d9/d8b/tutorial_py_contours_hierarchy.html">http://docs.opencv.org/master/d9/d8b/tutorial_py_contours_hierarchy.html</a> for a detailed explanation of hierarchies in Contours.</p></div></div><p>The <code class="literal">for</code> loop in the code is used to draw contours on a new image. The <code class="literal">Imgproc.drawContours()</code> function draws the contours on the image. In this function, the first parameter is a Mat, for where you want to draw the contours. The second parameter is the list of contours returned by <code class="literal">Imgproc.findContours()</code>. The third parameter is the index of the contour that we want to draw, and the fourth parameter is the color to be used to draw the contour. While drawing contours, you have two options: either you draw the boundary of the contour or you fill the entire contour. The fifth parameter in the function helps you to specify your choice. A negative value means you need to fill the entire contour, whereas any positive value specifies the thickness of the boundary.</p><p>Finally, convert <code class="literal">Mat</code> to <code class="literal">Bitmap</code> and display it on the screen.</p><p>With contour detection, we successfully completed our Features App.</p></div>
+<div class="section" title="Project &#x2013; detecting a Sudoku puzzle in an image"><div class="titlepage"><div><div><h1 class="title"><a id="ch02lvl1sec17"/>Project – detecting a Sudoku puzzle in an image</h1></div></div></div><p>Let's try to apply <a id="id122" class="indexterm"/>our learning from this chapter and create a simple application for detecting a Sudoku grid in an image. You see Sudoku puzzles every day in newspapers or magazines; sometimes they provide a solution and sometimes they don't. Why not build an application for your mobile phone that can click a picture of the Sudoku, analyze the numbers, run some intelligent algorithms to solve the puzzle, and within seconds, you have the solution on your mobile screen.</p><p>After reading this chapter, we can easily work on the first part of the application; that is, localizing (detecting) the Sudoku grid from an image. As you read through this book, you will come across algorithms and techniques that will help you build the other parts of this application.</p><p>Let's break down our problem statement into subproblems and work each one out to have a fully functioning <a id="id123" class="indexterm"/>Sudoku localizing application:</p><div class="itemizedlist"><ul class="itemizedlist"><li class="listitem" style="list-style-type: disc">Capture the image using a camera or load it from your gallery.</li><li class="listitem" style="list-style-type: disc">Preprocess the image by running your favorite edge detection algorithm.</li><li class="listitem" style="list-style-type: disc">Find a rectangular grid in the image. The possible options are to use Hough lines to detect lines and then look for four lines that form a rectangle (a little tedious), or find contours in the image and assume the largest contours in your image to be the Sudoku grid that you were looking for (the assumption made here is safe providing you click or load a picture that focuses on the grid more than anything else).</li><li class="listitem" style="list-style-type: disc">After you have narrowed down on the grid, create a new image and copy only the contour region to the new image.</li><li class="listitem" style="list-style-type: disc">You have successfully detected the Sudoku grid!</li></ul></div><p>Here is a sample image with a Sudoku grid in it:</p><div class="mediaobject"><img src="graphics/B02052_02_05.jpg" alt="Project – detecting a Sudoku puzzle in an image"/></div><p>Here is the  narrowed down grid:</p><div class="mediaobject"><img src="graphics/B02052_02_06.jpg" alt="Project – detecting a Sudoku puzzle in an image"/></div><div class="note" title="Note" style=""><div class="inner"><h3 class="title"><a id="tip08"/>Tip</h3><p>This chapter<a id="id124" class="indexterm"/> covers everything that one should know about in order to create this application. Once you have tried doing it by yourself, you can download the code from the Packt Publishing website.</p></div></div></div>
+<div class="section" title="Summary"><div class="titlepage"><div><div><h1 class="title"><a id="ch02lvl1sec18"/>Summary</h1></div></div></div><p>In this chapter, we have learnt about some basic features in images, such as edges, corners, lines, and circles. We have looked at different algorithms, such as Canny Edge detection and Harris corners, that can be implemented on an Android device. These are the basic set of algorithms that will come handy in many applications that we are going to build in the coming chapters.</p></div></body></html>

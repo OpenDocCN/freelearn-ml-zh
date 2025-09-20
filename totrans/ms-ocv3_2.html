@@ -1,0 +1,791 @@
+<html><head></head><body>
+        <section>
+
+            <header>
+                <h1 class="header-title">Exploring Structure from Motion Using OpenCV</h1>
+            </header>
+
+            <article>
+                
+<p>In this chapter, we will discuss the notion of <strong>Structure from Motion</strong> (<strong>SfM</strong>),or better put, extracting geometric structures from images taken with a camera under motion, using OpenCV's API to help us. First, let's constrain the otherwise very b road approach to SfM using a single camera, usually called a <strong>monocular</strong> approach, and a discrete and sparse set of frames rather than a continuous video stream. These two constrains will greatly simplify the system we will sketch out in the coming pages, and help us understand the fundamentals of any SfM method. To implement our method, we will follow in the footsteps of Hartley and Zisserman (hereafter referred to as H&amp;Z, for brevity), as documented in Chapters 9 through 12 of their seminal book <em>Multiple View Geometry in Computer Vision</em>.</p>
+<p>In this chapter, we will cover the following:</p>
+<ul>
+<li>Structure from Motion concepts</li>
+<li>Estimating the camera motion from a pair of images</li>
+<li>Reconstructing the scene</li>
+<li>Reconstructing from many views</li>
+<li>Refining the reconstruction</li>
+</ul>
+<p>Throughout the chapter, we assume the use of a calibrated camera, one that was calibrated beforehand. <em>Calibration</em> is a ubiquitous operation in Computer Vision, fully supported in OpenCV using command-line tools, and was discussed in previous chapters. We, therefore, assume the existence of the camera's <strong>intrinsic parameters</strong> embodied in the K matrix and distortionn coefficients vector - the outputs from the calibration process.</p>
+<p>To make things clear in terms of language, from this point on, we will refer to a camera as a single view of the scene rather than to the optics and hardware taking the image. A camera has a 3D position in space (translation) and a 3D direction of view (orientation). In general, we describe this as the 6 <strong>Degree of Freedom</strong> (<strong>DOF</strong>) camera pose, sometimes referred to as <strong>extrinsic parameters</strong>. Between two cameras, therefore, there is a 3D translation element (movement through space) and a 3D rotation of the direction of view.</p>
+<p>We will also unify the terms for the point in the scene, world, real, or 3D to be the same thing, a point that exists in our real world. The same goes for points in an image or 2D, which are points in the image coordinates of some real 3D point that was projected on the camera sensor at that location and time.</p>
+<p>In the chapter's code sections, you will notice references to <em>Multiple View Geometry in Computer Vision</em>, for example <kbd>// HZ 9.12</kbd>. This refers to equation number 12 of Chapter 9 of the book. Also, the text will include excerpts of code only; while the complete runnable code is included in the material accompanied with the book.</p>
+<p>The following flow diagram describes the process in the SfM pipeline we will implement. We begin by triangulating an initial reconstructed point cloud of the scene, using 2D features matched across the image set and a calculation of two camera poses. We then add more views to the reconstruction by matching more points into the forming point cloud, calculating camera poses and triangulating their matching points. In between, we will also perform bundle adjustment to minimize the error in the reconstruction. All the steps are detailed in the next sections of this chapter, with relevant code excerpts, pointers to useful OpenCV functions, and mathematical reasoning:</p>
+<div class="packt_figure CDPAlignCenter CDPAlign"><img height="113" width="578" src="assets/B05389_03_01.png"/></div>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    
+
+        <section>
+
+            <header>
+                <h1 class="header-title">Structure from Motion concepts</h1>
+            </header>
+
+            <article>
+                
+<p>The first discrimination we should make is the difference between stereo (or indeed any multiview) and 3D reconstruction using calibrated rigs and SfM. A rig of two or more cameras assumes that we already know the <em>motion</em> between the cameras, while in SfM, we don't know what this motion is and we wish to find it. Calibrated rigs, from a simplistic point of view, allow a much more accurate reconstruction of 3D geometry because there is no error in estimating the distance and rotation between the cameras, it is already known. The first step in implementing an SfM system is finding the motion between the cameras. OpenCV may help us in a number of ways to obtain this motion, specifically using the <kbd>findFundamentalMat</kbd> and <kbd>findEssentialMat</kbd> functions.</p>
+<p>Let's think for one moment of the goal behind choosing an SfM algorithm. In most cases, we wish to obtain the geometry of the scene, for example, where objects are in relation to the camera and what their form is. Having found the motion between the cameras picturing the same scene, from a reasonably similar point of view, we would now like to reconstruct the geometry. In Computer Vision jargon, this is known as <strong>triangulation</strong>, and there are plenty of ways to go about it. It may be done by way of ray intersection, where we construct two rays-one from each camera's center of projection and a point on each of the image planes. The intersection of these rays in space will, ideally, intersect at one 3D point in the real world that is imaged in each camera, as shown in the following diagram:</p>
+<div class="packt_figure CDPAlignCenter CDPAlign"><img height="313" width="580" class="aligncenter size-full wp-image-764 image-border" src="assets/B05389_04_30-1.jpg"/><br/></div>
+<p>In reality, ray intersection is highly unreliable; H&amp;Z recommend against it. This is because the rays usually do not intersect, making us fall back to using the middle point on the shortest segment connecting the two rays. OpenCV contains a simple API for a more accurate form of triangulation--the <kbd>triangulatePoints</kbd> function--so we do not need to code this part on our own.</p>
+<p>After you learn how to recover 3D geometry from two views, we will see how we can incorporate more views of the same scene to get an even richer reconstruction. At that point, most SfM methods try to optimize the bundle of estimated positions of our cameras and 3D points by means of <strong>Bundle Adjustment</strong>, in the <em>Refinement of the reconstruction</em> section. OpenCV contains the means for Bundle Adjustment in its new Image Stitching Toolbox. However, the beauty of working with OpenCV and C++ is the abundance of external tools that can be easily integrated into the pipeline. We will, therefore, see how to integrate an external bundle adjuster, the Ceres nonlinear optimization package.</p>
+<p>Now that we have sketched an outline of our approach to SfM using OpenCV, we will see how each element can be implemented.</p>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    
+
+        <section>
+
+            <header>
+                <h1 class="header-title">Estimating the camera motion from a pair of images</h1>
+            </header>
+
+            <article>
+                
+<p>Before we set out to actually find the motion between two cameras, let's examine the inputs and the tools we have at hand to perform this operation. First, we have two images of the same scene from (hopefully not extremely) different positions in space. This is a powerful asset, and we will make sure that we use it. As for tools, we should take a look at mathematical objects that impose constraints over our images, cameras, and the scene.</p>
+<p>Two very useful mathematical objects are the fundamental matrix (denoted by <kbd>F</kbd>) and the essential matrix (denoted by <kbd>E</kbd>), which impose a constraint over corresponding 2D points in two images of the scene. They are mostly similar, except that the essential matrix is assuming usage of calibrated cameras; this is the case for us, so we will choose it. OpenCV allows us to find the fundamental matrix via the <kbd>findFundamentalMat</kbd> function and the essential matrix via the <kbd>findEssentialMatrix</kbd> function. Finding the essential matrix can be done as follows:</p>
+<pre>
+    Mat E = findEssentialMat(leftPoints, rightPoints, focal, pp);
+</pre>
+<p>This function makes use of matching points in the left-hand side image, <kbd>leftPoints</kbd>, and right-hand side image, <kbd>rightPoints</kbd>, which we will discuss shortly, as well as two additional pieces of information from the camera's calibration: the focal length, <kbd>focal</kbd>, and principal point, <kbd>pp</kbd>.</p>
+<p>The essential matrix E is a 3x3 sized matrix, which imposes the following constraint on a point <em>x </em>in one image and a point and a point <em>x' </em>corresponding image:</p>
+<p class="CDPAlignCenter CDPAlign"><em>x'K<sup>T</sup>EKx = 0<br/></em></p>
+<p>Here, <em>K</em> is the calibration matrix.<br/>
+This is extremely useful, as we are about to see. Another important fact we use is that the essential matrix is all we need in order to recover the two cameras' positions from our images, although only up to an arbitrary unit of scale. So, if we obtain the essential matrix, we know where each camera is positioned in space, and where it is looking. We can easily calculate the matrix if we have enough of those constraint equations, simply because each equation can be used to solve for a small part of the matrix. In fact, OpenCV internally calculates it using just five point-pairs, but through the <strong>Random Sample Consensus algorithm (RANSAC)</strong>, many more pairs can be used and they make for a more robust solution.</p>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    
+
+        <section>
+
+            <header>
+                <h1 class="header-title">Point matching using rich feature descriptors</h1>
+            </header>
+
+            <article>
+                
+<p>Now, we will make use of our constraint equations to calculate the essential matrix. To get our constraints, remember that for each point in image A, we must find a corresponding point in image B. We can achieve such a matching using OpenCV's extensive 2D feature-matching framework, which has greatly matured in the past few years.</p>
+<p>Feature extraction and descriptor matching is an essential process in Computer Vision, and is used in many methods to perform all sorts of operations, for example, detecting the position and orientation of an object in an image or searching a big database of images for similar images through a given query. In essence, <em>feature extraction</em> means selecting points in the image that would make for good features and computing a descriptor for them. A <em>descriptor</em> is a vector of numbers that describes the surrounding environment around a feature point in an image. Different methods have different length and data types for their descriptor vectors. <strong>Descriptor Matching</strong> is the process of finding a corresponding feature of one set in another using its descriptor. OpenCV provides very easy and powerful methods to support feature extraction and matching.</p>
+<p>Let's examine a very simple feature extraction and matching scheme:</p>
+<pre>
+    vector&lt;KeyPoint&gt; keypts1, keypts2; 
+    Mat desc1, desc2; 
+
+    // detect keypoints and extractORBdescriptors 
+    Ptr&lt;Feature2D&gt;orb = ORB::create(2000); 
+    orb-&gt;detectAndCompute(img1, noArray(), keypts1, desc1); 
+    orb-&gt;detectAndCompute(img2, noArray(), keypts2, desc2); 
+
+    // matching descriptors 
+    Ptr&lt;DescriptorMatcher&gt;matcher 
+    =DescriptorMatcher::create("BruteForce-Hamming"); 
+    vector&lt;DMatch&gt; matches; 
+    matcher-&gt;match(desc1, desc2, matches);
+</pre>
+<p>You may have already seen similar OpenCV code, but let's review it quickly. Our goal is to obtain three elements: feature points for two images, descriptors for them, and a matching between the two sets of features. OpenCV provides a range of feature detectors, descriptor extractors, and matchers. In this simple example, we use the ORB class to get both the 2D location of <strong>Oriented BRIEF (ORB)</strong>(where, <strong>BRIEF</strong> stands for <strong>Binary Robust Independent Elementary Features</strong>) feature points and their respective descriptors. ORB may be preferred over traditional 2D features such as the <strong>Speeded-Up Robust Features (SURF)</strong> or <strong>Scale Invariant Feature Transform (SIFT)</strong> because it is unencumbered with intellectual property and shown to be faster to detect, compute, and match.</p>
+<p>We use a <em>bruteforce</em> binary matcher to get the matching, which simply matches two feature sets by comparing each feature in the first set to each feature in the second set (hence the phrasing <em>bruteforce</em>).</p>
+<p>In the following image, we will see a matching of feature points on two images from the Fountain P11 sequence can be found at <span class="URLPACKT"><a href="http://cvlab.epfl.ch/~strecha/multiview/denseMVS.html" target="_blank">h t t p ://c v l a b . e p f l . c h /~s t r e c h a /m u l t i v i e w /d e n s e M V S . h t m l</a>:</span></p>
+<div class="packt_figure CDPAlignCenter CDPAlign"><img height="136" width="407" class="image-border" src="assets/B05389_04_01.jpg"/></div>
+<p>Practically, raw matching like we just performed is good only up to a certain level, and many matches are probably erroneous. For that reason, most SfM methods perform some form of filtering on the matches to ensure correctness and reduce errors. One form of filtering, which is built into OpenCV's brute-force matcher, is <strong>cross-check filtering</strong>. That is, a match is considered true if a feature of the first image matches a feature of the second image, and the reverse check also matches the feature of the second image with the feature of the first image. Another common filtering mechanism, used in the provided code, is to filter based on the fact that the two images are of the same scene and have a certain stereo-view relationship between them. In practice, the filter tries to robustly calculate the fundamental or essential matrix which we will learn about in the <em>Finding camera matrices</em> section and retain those feature pairs that correspond with this calculation with small errors.</p>
+<p>An alternative to using rich features, such as ORB, is to use <strong>optical flow</strong>. The following information box provides a short overview of optical flow. It is possible to use optical flow instead of descriptor matching to find the required point matching between two images, while the rest of the SfM pipeline remains the same. OpenCV recently extended its API to get the flow field from two images and now it is faster and more powerful.</p>
+<div class="packt_infobox"><strong>Optical flow</strong> is the process of matching selected points from one image to another, assuming both images are part of a sequence and relatively close to one another. Most optical flow methods compare a small region, known as the <strong>search window</strong> or patch, around each point from <em>image A</em> to the same area in <em>image B</em>. Following a very common rule in Computer Vision, called the <strong>brightness constancy constraint</strong> (and other names), the small patches of the image will not change drastically from one image to the other, and therefore the magnitude of their subtraction should be close to zero. In addition to matching patches, newer methods of optical flow use a number of additional methods to get better results. One is using image pyramids, which are smaller and smaller resized versions of the image, which allow for working <em>from-coarse-to-fine</em>, a very well-used trick in Computer Vision. Another method is to define global constraints on the flow field, assuming that the points close to each other move together in the same direction. A more in-depth review of optical flow methods in OpenCV can be found in a chapter named<span class="ChapterrefPACKT"> </span><em>Developing Fluid Wall Using the Microsoft Kinect</em> which is available on the Packt website.</div>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    
+
+        <section>
+
+            <header>
+                <h1 class="header-title">Finding camera matrices</h1>
+            </header>
+
+            <article>
+                
+<p>Now that we have obtained matches between keypoints, we can calculate the essential matrix. However, we must first align our matching points into two arrays, where an index in one array corresponds to the same index in the other. This is required by the <kbd>findEssentialMat</kbd> function as we've seen in the <em>Estimating Camera Motion </em>section. We would also need to convert the <kbd>KeyPoint</kbd> structure to a <kbd>Point2f</kbd> structure. We must pay special attention to the <kbd>queryIdx</kbd> and <kbd>trainIdx</kbd> member variables of <kbd>DMatch</kbd>, the OpenCV struct that holds a match between two keypoints, as they must align with the way we used the <kbd>DescriptorMatcher::match()</kbd> function. The following code section shows how to align a matching into two corresponding sets of 2D points, and how these can be used to find the essential matrix:</p>
+<pre>
+    vector&lt;KeyPoint&gt; leftKpts, rightKpts; 
+    // ... obtain keypoints using a feature extractor 
+
+    vector&lt;DMatch&gt; matches; 
+    // ... obtain matches using a descriptor matcher 
+
+    //align left and right point sets 
+    vector&lt;Point2f&gt;leftPts, rightPts; 
+    for(size_ti = 0; i &lt; matches.size(); i++){ 
+      // queryIdx is the "left" image 
+      leftPts.push_back(leftKpts[matches[i].queryIdx].pt); 
+
+      // trainIdx is the "right" image 
+      rightPts.push_back(rightKpts[matches[i].trainIdx].pt); 
+    } 
+
+    //robustly find the Essential Matrix 
+    Mat status; 
+    Mat E = findEssentialMat( 
+      leftPts,      // points from left image 
+      rightPts,     // points from right image 
+      focal,        // camera focal length factor 
+      pp,           // camera principal point 
+      cv::RANSAC,   // use RANSAC for a robust solution 
+      0.999,        // desired solution confidence level 
+      1.0,          // point-to-epipolar-line threshold 
+      status);        // binary vector for inliers
+</pre>
+<p>We may, later, use the <kbd>status</kbd> binary vector to prune those points that align with the recovered essential matrix. Look at the following image for an illustration of point matching after pruning. The red arrows mark feature matches that were removed in the process of finding the matrix, and the green arrows are feature matches that were retained:</p>
+<div class="packt_figure CDPAlignCenter CDPAlign"><img class="image-border" src="assets/B05389_04_21.jpg"/></div>
+<p>Now we are ready to find the camera matrices. This process is described at length in a chapter of H&amp;Z's book; however, the new OpenCV 3 API makes things very easy for us by introducing the <kbd>recoverPose</kbd> function. First, we will briefly examine the structure of the camera matrix we are going to use:</p>
+<div class="packt_figure CDPAlignCenter CDPAlign"><img height="80" width="269" src="assets/B05389_04_18.png"/></div>
+<p>This is the model for our camera pose, which consists of two elements: rotation (denoted by <strong>R</strong>) and translation (denoted by <strong>t</strong>). The interesting thing is that it holds a very essential equation: <em>x = PX</em>, where <em>x</em> is a 2D point on the image and <em>X</em> is a 3D point in space. There is more to it, but this matrix gives us a very important relationship between the image points and the scene points. So, now that we have a motivation for finding the camera matrices, we will see how it can be done. The following code section shows how to decompose the essential matrix into the rotation and translation elements:</p>
+<pre>
+    Mat E; 
+    // ... find the essential matrix 
+
+    Mat R, t; //placeholders for rotation and translation 
+
+    //Find Pright camera matrix from the essential matrix 
+    //Cheirality check is performed internally. 
+    recoverPose(E, leftPts, rightPts, R, t, focal, pp, mask);
+</pre>
+<p>Very simple. Without going too deeply into the mathematical interpretation, this conversion of the essential matrix to rotation and translation is possible because the essential matrix was originally composed by these two elements. Strictly for satisfying our curiosity, we can look at the following equation for the essential matrix, which appears in the literature: <em>E=[t]<sub>x</sub>R</em>. We see it is composed of (some form of) a translation element <em>t</em> and a rotational element <em>R</em>.</p>
+<p>Note that a <em>cheirality check</em> is internally performed in the <kbd>recoverPose</kbd> function. The cheirality check makes sure that all triangulated 3D points are <em>in front</em> of the reconstructed camera. H&amp;Z show that camera matrix recovery from the essential matrix has in fact four possible solutions, but the only correct solution is the one that will produce triangulated points in front of the camera, hence the need for a cheirality check. We will learn about triangulation and 3D reconstruction in the next section.</p>
+<p>Note what we just did only gives us one camera matrix, and for triangulation, we require two camera matrices. This operation assumes that one camera matrix is fixed and canonical (no rotation and no translation, placed at the <em>world origin</em>):</p>
+<div class="packt_figure CDPAlignCenter CDPAlign"><img height="66" width="151" src="assets/B05389_04_19.png"/></div>
+<p>The other camera that we recovered from the essential matrix has moved and rotated in relation to the fixed one. This also means that any of the 3D points that we recover from these two camera matrices will have the first camera at the world origin point (0, 0, 0). The assumption of a canonical camera is just how <kbd>cv::recoverPose</kbd> works; however in other situations, the <em>origin</em> camera pose matrix may be different than the canonical and still be valid for 3D points' triangulation, as we will see later when we will not use <kbd>cv::recoverPose</kbd> to get a new camera pose matrix.</p>
+<p>One more thing we can think of adding to our method is error checking. Many times, the calculation of an essential matrix from point matching is erroneous, and this affects the resulting camera matrices. Continuing to triangulate with faulty camera matrices is pointless. We can install a check to see if the rotation element is a valid rotation matrix. Keeping in mind that rotation matrices must have a determinant of 1 (or -1), we can simply do the following:</p>
+<pre>
+    bool CheckCoherentRotation(const cv::Mat_&lt;double&gt;&amp; R) { 
+      if(fabsf(determinant(R))-1.0 &gt;EPS) { 
+        cerr &lt;&lt;"rotation matrix is invalid" &lt;&lt;endl; 
+        return false;  
+      } 
+      return true; 
+    }
+</pre>
+<p>Think of <kbd>EPS</kbd> (from Epsilon) as a very small number that helps us cope with numerical calculation limits of our CPU. In reality, we may define the following in code:</p>
+<pre>
+    #define EPS 1E-07
+</pre>
+<p>We can now see how all these elements combine into a function that recovers the <kbd>P</kbd> matrices. First, we will introduce some convenience data structures and type shorthand:</p>
+<pre>
+    typedef std::vector&lt;cv::KeyPoint&gt; Keypoints; 
+    typedef std::vector&lt;cv::Point2f&gt;  Points2f; 
+    typedef std::vector&lt;cv::Point3f&gt;  Points3f; 
+    typedef std::vector&lt;cv::DMatch&gt;   Matching; 
+
+    struct Features { //2D features  
+      Keypoints keyPoints; 
+      Points2f  points; 
+      cv::Mat   descriptors; 
+    }; 
+
+    struct Intrinsics { //camera intrinsic parameters 
+      cv::Mat K; 
+      cv::Mat Kinv; 
+      cv::Mat distortion; 
+    };
+</pre>
+<p>Now we can write the camera matrix finding function:</p>
+<pre>
+    void findCameraMatricesFromMatch( 
+      const Intrinsics&amp;   intrin, 
+      const Matching&amp;     matches, 
+      const Features&amp;     featuresLeft, 
+      const Features&amp;     featuresRight, 
+      cv::Matx34f&amp;        Pleft, 
+      cv::Matx34f&amp;        Pright) { 
+      { 
+        //Note: assuming fx = fy 
+        const double focal = intrin.K.at&lt;float&gt;(0, 0);  
+        const cv::Point2d pp(intrin.K.at&lt;float&gt;(0, 2),     
+                             intrin.K.at&lt;float&gt;(1, 2)); 
+
+        //align left and right point sets using the matching 
+        Features left; 
+        Features right; 
+        GetAlignedPointsFromMatch( 
+          featuresLeft,  
+          featuresRight,  
+          matches,  
+          left,  
+          right); 
+
+        //find essential matrix 
+        Mat E, mask; 
+        E = findEssentialMat( 
+          left.points,  
+          right.points,  
+          focal,  
+          pp,  
+          RANSAC,  
+          0.999,  
+          1.0,  
+          mask); 
+
+        Mat_&lt;double&gt; R, t; 
+
+        //Find Pright camera matrix from the essential matrix 
+        recoverPose(E, left.points, right.points, R, t, focal, pp, mask); 
+
+        Pleft = Matx34f::eye(); 
+        Pright = Matx34f(R(0,0), R(0,1), R(0,2), t(0), 
+                         R(1,0), R(1,1), R(1,2), t(1), 
+                         R(2,0), R(2,1), R(2,2), t(2)); 
+      }
+</pre>
+<p>At this point, we have the two cameras that we need in order to reconstruct the scene. The canonical first camera in the <kbd>Pleft</kbd> variable, and the second camera we calculated form the essential matrix in the <kbd>Pright</kbd> variable.</p>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    
+
+        <section>
+
+            <header>
+                <h1 class="header-title">Choosing the image pair to use first</h1>
+            </header>
+
+            <article>
+                
+<p>Given we have more than just two image views of the scene, we must choose which two views we will start the reconstruction from. In their paper, <em>Snavely et al.</em> suggest to picking the two views that have the least number of <strong>homography</strong> inliers. A homography is a relationship between two images or sets of points that lie on a plane; the <strong>homography matrix</strong> defines the transformation from one plane to another. In case of an image or a set of 2D points, the homography matrix is of size 3x3.</p>
+<p>When <em>Snavely et al.</em> look for the lowest inlier ratio, they essentially suggest that you calculate the homography matrix between all pairs of images and pick the pair whose points mostly do not correspond with the homography matrix. This means that the geometry of the scene in these two views is not planar, or at least, not the same plane in both views, which helps when doing 3D reconstruction. For reconstruction, it is best to look at a complex scene with non-planar geometry, with things closer and farther away from the camera.</p>
+<p>The following code snippet shows how to use OpenCV's <kbd>findHomography</kbd> function to count the number of inliers between two views whose features were already extracted and matched:</p>
+<pre>
+    int findHomographyInliers( 
+    const Features&amp; left, 
+    const Features&amp; right, 
+    const Matching&amp; matches) { 
+      //Get aligned feature vectors 
+      Features alignedLeft; 
+      Features alignedRight; 
+      GetAlignedPointsFromMatch(left, right, matches, alignedLeft, 
+      alignedRight); 
+
+      //Calculate homography with at least 4 points 
+      Mat inlierMask; 
+      Mat homography; 
+      if(matches.size() &gt;= 4) { 
+        homography = findHomography(alignedLeft.points,  
+                                    alignedRight.points, 
+                                    cv::RANSAC, RANSAC_THRESHOLD, 
+                                    inlierMask); 
+      } 
+
+      if(matches.size() &lt; 4 or homography.empty()) { 
+        return 0; 
+      } 
+
+      return countNonZero(inlierMask); 
+    }
+</pre>
+<p>The next step is to perform this operation on all pairs of image views in our bundle and sort them based on the ratio of homography inliers to outliers:</p>
+<pre>
+    //sort pairwise matches to find the lowest Homography inliers 
+    map&lt;float, ImagePair&gt;pairInliersCt; 
+    const size_t numImages = mImages.size(); 
+
+    //scan all possible image pairs (symmetric) 
+    for (size_t i = 0; i &lt; numImages - 1; i++) { 
+      for (size_t j = i + 1; j &lt; numImages; j++) { 
+
+        if (mFeatureMatchMatrix[i][j].size() &lt; MIN_POINT_CT) { 
+          //Not enough points in matching 
+          pairInliersCt[1.0] = {i, j}; 
+          continue; 
+       } 
+
+        //Find number of homography inliers 
+        const int numInliers = findHomographyInliers( 
+          mImageFeatures[i], 
+          mImageFeatures[j], 
+          mFeatureMatchMatrix[i][j]); 
+
+        const float inliersRatio =  
+                    (float)numInliers /  
+                    (float)(mFeatureMatchMatrix[i][j].size()); 
+
+        pairInliersCt[inliersRatio] = {i, j}; 
+      } 
+    }
+</pre>
+<p>Note that <kbd>std::map&lt;float, ImagePair&gt;</kbd> will internally sort the pairs based on the map's key: the inliers ratio. We then simply need to traverse this map from the beginning to find the image pair with least inlier ratio, and if that pair cannot be used, we can easily skip ahead to the next pair. The next section will reveal how we use these cameras pair to obtain a 3D structure of the scene.</p>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    
+
+        <section>
+
+            <header>
+                <h1 class="header-title">Reconstructing the scene</h1>
+            </header>
+
+            <article>
+                
+<p>Next, we look into the matter of recovering the 3D structure of the scene from the information we have acquired so far. As we had done before, we should look at the tools and information we have at hand to achieve this. In the preceding section, we obtained two camera matrices from the essential matrix; we already discussed how these tools would be useful for obtaining the 3D position of a point in space. Then, we can go back to our matched point pairs to fill in our equations with numerical data. The point pairs will also be useful in calculating the error we get from all our approximate calculations.</p>
+<p>This is the time to see how we can perform triangulation using OpenCV. Luckily, OpenCV supplies us with a number of functions that make this process easy to implement: <kbd>triangulatePoints</kbd>, <kbd>undistortPoints</kbd>, and <kbd>convertPointsFromHomogeneous</kbd>.</p>
+<p>Remember we had two key equations arising from the 2D point matching and <em>P</em> matrices: <em>x=PX</em> and <em>x'= P'X</em>, where <em>x</em> and <em>x'</em> are matching 2D points and X is a real-world 3D point imaged by the two cameras. If we examine these equations, we will see that the x vector that represents a 2D point should be of size (<em>3x1</em>) and X that represents a 3D point should be (<em>4x1</em>). Both points received an extra entry in the vector; this is called <strong>Homogeneous Coordinates</strong>. We use these coordinates to streamline the triangulation process.</p>
+<p>The equation <em>x = PX</em> (where <em>x</em> is a 2D image point, <em>X</em> is a world 3D point, and <em>P</em> is a camera matrix) is missing a crucial element: the camera calibration parameters matrix, <em>K</em>. The matrix K is used to transform 2D image points from pixel coordinates to <strong>normalized coordinates</strong> (in the [-1, 1] range) removing the dependency on the size of the image in pixels, which is absolutely necessary. For example, a 2D point <em>x<sub>1</sub> = (160, 120)</em> in a 320x240 image, may transform to <em>x<sub>1</sub>' = (0, 0)</em> under certain circumstances. To that end, we use the <kbd>undistortPoints</kbd> function:</p>
+<pre>
+    Vector&lt;Point2f&gt; points2d; //in 2D coordinates (x, y) 
+    Mat normalizedPts;        //in homogeneous coordinates (x', y', 1) 
+
+    undistortPoints(points2d, normalizedPts, K, Mat());
+</pre>
+<p>We are now ready to triangulate the normalized 2D image points into 3D world points:</p>
+<pre>
+    Matx34f Pleft, Pright; 
+    //... findCameraMatricesFromMatch 
+
+    Mat normLPts; 
+    Mat normRPts; 
+    //... undistortPoints 
+
+    //the result is a set of 3D points in homogeneous coordinates (4D) 
+    Mat pts3dHomog; 
+    triangulatePoints(Pleft, Pright, normLPts, normRPts, pts3dHomog); 
+
+    //convert from homogeneous to 3D world coordinates 
+    Mat points3d; 
+    convertPointsFromHomogeneous(pts3dHomog.t(), points3d);
+</pre>
+<p>In the following image, we can see a triangulation result of two images out of the Fountain P-11 sequence at <a href="http://cvlabwww.epfl.ch/data/multiview/denseMVS.html" target="_blank"><span class="URLPACKT">http://cvlabwww.epfl.ch/data/multiview/denseMVS.html</span></a>. The two images at the top are the original two views of the scene, and the bottom pair is the view of the reconstructed point cloud from the two views, including the estimated cameras looking at the fountain. We can see how the right-hand side section of the red brick wall was reconstructed, and also the fountain that protrudes from the wall:</p>
+<div class="packt_figure CDPAlignCenter CDPAlign"><img class="image-border" src="assets/B05389_04_26.png"/></div>
+<p>However, as we discussed earlier, we have an issue with the reconstruction being only up to scale. We should take a moment to understand what up to scale means. The motion we obtained between our two cameras is going to have an arbitrary unit of measurement that is, it is not in centimeters or inches, but simply a given unit of scale. Our reconstructed cameras we will be one unit of scale distance apart. This has big implications, should we decide to recover more cameras later, as each pair of cameras will have their own units of scale, rather than a common one.</p>
+<p>We will now discuss how the error measure that we set up may help us in finding a more robust reconstruction. First, we should note that reprojection means we simply take the triangulated 3D point and reimage it on a camera to get a reprojected 2D point, we then compare the distance between the original 2D point and the reprojected 2D point. If this distance is large, this means we may have an error in triangulation, so we may not want to include this point in the final result. Our global measure is the average reprojection distance and may give us a hint to how our triangulation performed overall. High average reprojection rates may point to a problem with the <em>P</em> matrices, and therefore a possible problem with the calculation of the essential matrix or the matched feature points. To reproject points, OpenCV offers the <kbd>projectPoints</kbd> function:</p>
+<pre>
+    Mat x34f P; //camera pose matrix 
+    Mat points3d;     //triangulated points 
+    Points2d imgPts; //2D image points that correspond to 3D points 
+    Mat K;             //camera intrinsics matrix 
+
+    // ... triangulate points 
+
+    //get rotation and translation elements 
+    Mat R; 
+    Rodrigues(P.get_minor&lt;3, 3&gt;(0, 0), rvec); 
+    Mat t = P.get_minor&lt;3, 1&gt;(0, 3); 
+
+    //reproject 3D points back into image coordinates 
+    Mat projPts; 
+    projectPoints(points3d, R, t, K, Mat(),projPts); 
+
+    //check individual reprojection error 
+    for (size_t i = 0; i &lt; points3d.rows; i++) { 
+      const double err = norm(projPts.at&lt;Point2f&gt;(i) - imgPts[i]); 
+
+      //check if point reprojection error is too big 
+      if (err &gt; MIN_REPROJECTION_ERROR){ 
+        // Point reprojection error is too big. 
+      } 
+    }
+</pre>
+<p>Next, we will take a look at recovering more cameras looking at the same scene, and combining the 3D reconstruction results.</p>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    
+
+        <section>
+
+            <header>
+                <h1 class="header-title">Reconstruction from many views</h1>
+            </header>
+
+            <article>
+                
+<p>Now that we know how to recover the motion and scene geometry from two cameras, it would seem simple to get the parameters of additional cameras and more scene points simply by applying the same process. This matter is in fact not so simple, as we can only get a reconstruction that is upto scale, and each pair of pictures has a different scale.</p>
+<p>There are a number of ways to correctly reconstruct the 3D scene data from multiple views. One way to achieve <strong>camera pose estimation </strong>or <strong>camera resectioning</strong>, is the <strong>Perspective N-Point</strong>(<strong>PnP</strong>) algorithm, where we try to solve for the position of a new camera using <em>N</em> 3D scene points, which we have already found and their respective 2D image points. Another way is to triangulate more points and see how they fit into our existing scene geometry; this will tell us the position of the new camera by means of <strong>point cloud registration</strong>. In this section, we will discuss using OpenCV's <kbd>solvePnP</kbd> functions that implements the first method.</p>
+<p>The first step we choose in this kind of reconstruction, incremental 3D reconstruction with camera resection, is to get a baseline scene structure. As we will look for the position of any new camera based on a known structure of the scene, we need to find an initial structure to work with. We can use the method we previously discussed-for example, between the first and second frames, to get a baseline by finding the camera matrices (using the <kbd>findCameraMatricesFromMatch</kbd> function) and triangulate the geometry (using <kbd>triangulatePoints</kbd>).</p>
+<p>Having found an initial structure, we may continue; however, our method requires quite a bit of bookkeeping. First we should note that the <kbd>solvePnP</kbd> function needs aligned vectors of 3D and 2D points. Aligned vectors mean that the i<span>th</span> position in one vector aligns with the i<sup>th</sup> position in the other. To obtain these vectors we need to find those points among the 3D points that we recovered earlier, which align with the 2D points in our new frame. A simple way to do this is to attach, for each 3D point in the cloud, a vector denoting the 2D points it came from. We can then use feature matching to get a matching pair.</p>
+<p>Let's introduce a new structure for a 3D point as follows:</p>
+<pre>
+    struct Point3DInMap { 
+      // 3D point. 
+      cv::Point3f p; 
+
+      // Mapping from image index to a 2D point in that image's  
+      // list of features that correspond to this 3D point. 
+      std::map&lt;int, int&gt; originatingViews; 
+    };
+</pre>
+<p>It holds, on top of the 3D point, an index to the 2D point inside the vector of 2D points that each frame has, which had contributed to this 3D point. The information for <kbd>Point3DInMap::originatingViews</kbd> must be initialized when triangulating a new 3D point, recording which cameras were involved in the triangulation. We can then use it to trace back from our 3D point cloud to the 2D point in each frame.</p>
+<p>Let's add some convenience definitions:</p>
+<pre>
+    struct Image2D3DMatch { //Aligned vectors of 2D and 3D points 
+      Points2f points2D; 
+      Points3f points3D; 
+    }; 
+
+    //A mapping between an image and its set of 2D-3D aligned points 
+    typedef std::map&lt;int, Image2D3DMatch&gt; Images2D3DMatches;
+</pre>
+<p>Now, let's see how to get aligned 2D-3D point vectors to use with <kbd>solvePnP</kbd>. The following code segment illustrates the process of finding 2D points in a new image from the existing 3D point cloud augmented with the originating 2D views. Simply put, the algorithm scans the existing 3D points in the cloud, looks at their originating 2D points, and tries to find a match (via the feature descriptors) to 2D points in the new image. If such a match is found, it may indicate that this 3D point also appears in the new image at a specific 2D point:</p>
+<pre>
+    Images2D3DMatches matches; 
+
+    //scan all pending new views 
+    for (size_tnewView = 0; newView&lt;images.size(); newView++) { 
+      if (doneViews.find(newView) != doneViews.end()) { 
+        continue; //skip done views 
+      } 
+
+    Image2D3DMatch match2D3D; 
+
+    //scan all current cloud's 3D points 
+    for (const Point3DInMap&amp;p : currentCloud) { 
+
+      //scan all originating views for that 3D cloud point 
+      for (const auto&amp; origViewAndPoint : p.originatingViews) { 
+
+        //check for 2D-2D matching via the match matrix 
+        int origViewIndex        = origViewAndPoint.first; 
+        int origViewFeatureIndex = origViewAndPoint.second; 
+
+        //match matrix is upper-triangular (not symmetric)  
+        //so the left index must be the smaller one 
+        bool isLeft = (origViewIndex &lt;newView); 
+        int leftVIdx = (isLeft) ? origViewIndex: newView; 
+        int rightVIdx = (isLeft) ? newView : origViewIndex; 
+
+        //scan all 2D-2D matches between originating and new views 
+        for (const DMatch&amp; m : matchMatrix[leftVIdx][rightVIdx]) { 
+           int matched2DPointInNewView = -1; 
+
+            //find a match for this new view with originating view 
+            if (isLeft) { 
+              //originating view is 'left' 
+              if (m.queryIdx == origViewFeatureIndex) { 
+                matched2DPointInNewView = m.trainIdx; 
+              } 
+            } else {
+              //originating view is 'right' 
+              if (m.trainIdx == origViewFeatureIndex) { 
+                matched2DPointInNewView = m.queryIdx; 
+              } 
+            } 
+
+            if (matched2DPointInNewView &gt;= 0) { 
+              //This point is matched in the new view 
+              const Features&amp; newFeat = imageFeatures[newView]; 
+
+              //Add the 2D point form the new view 
+              match2D3D.points2D.push_back( 
+                newFeat.points[matched2DPointInNewView] 
+              ); 
+
+              //Add the 3D point 
+              match2D3D.points3D.push_back(cloudPoint.p); 
+
+              break; //look no further 
+            } 
+          } 
+        } 
+      } 
+      matches[viewIdx] = match2D3D;  
+    }
+</pre>
+<p>Now we have aligned the pairing of 3D points in the scene to the 2D points in a new frame, and we can use them to recover the camera position as follows:</p>
+<pre>
+    Image2D3DMatch match; 
+    //... find 2D-3D match 
+
+    //Recover camera pose using 2D-3D correspondence 
+    Mat rvec, tvec; 
+    Mat inliers; 
+    solvePnPRansac( 
+      match.points3D,    //3D points 
+      match.points2D,    //2D points 
+      K,                   //Calibration intrinsics matrix 
+      distortion,        //Calibration distortion coefficients 
+      rvec,//Output extrinsics: Rotation vector 
+      tvec,                //Output extrinsics: Translation vector 
+      false,               //Don't use initial guess 
+      100,                 //Iterations 
+      RANSAC_THRESHOLD, //Reprojection error threshold 
+      0.99,                //Confidence 
+      inliers              //Output: inliers indicator vector 
+    ); 
+
+    //check if inliers-to-points ratio is too small 
+    const float numInliers   = (float)countNonZero(inliers); 
+    const float numPoints    = (float)match.points2D.size(); 
+    const float inlierRatio = numInliers / numPoints; 
+
+    if (inlierRatio &lt; POSE_INLIERS_MINIMAL_RATIO) { 
+      cerr &lt;&lt; "Inliers ratio is too small: "  
+           &lt;&lt; numInliers&lt;&lt; " / " &lt;&lt;numPoints&lt;&lt; endl; 
+      //perhaps a 'return;' statement 
+    } 
+
+    Mat_&lt;double&gt;R; 
+    Rodrigues(rvec, R); //convert to a 3x3 rotation matrix 
+
+    P(0, 0) = R(0, 0); P(0, 1) = R(0, 1); P(0, 2) = R(0, 2); 
+    P(1, 0) = R(1, 0); P(1, 1) = R(1, 1); P(1, 2) = R(1, 2); 
+    P(2, 0) = R(2, 0); P(2, 1) = R(2, 1); P(2, 2) = R(2, 2); 
+    P(0, 3) = tvec.at&lt;double&gt;(0, 3); 
+    P(1, 3) = tvec.at&lt;double&gt;(1, 3); 
+    P(2, 3) = tvec.at&lt;double&gt;(2, 3);
+</pre>
+<p>Note that we are using the <kbd>solvePnPRansac</kbd> function rather than the <kbd>solvePnP</kbd> function as it is more robust to outliers. Now that we have a new <kbd>P</kbd> matrix, we can simply use the <kbd>triangulatePoints</kbd> function as we did earlier and populate our point cloud with more 3D points.</p>
+<p>In the following image, we see an incremental reconstruction of the Fountain-P11 scene at <a href="http://cvlabwww.epfl.ch/data/multiview/denseMVS.html" target="_blank"><span class="URLPACKT">http://cvlabwww.epfl.ch/data/multiview/denseMVS.html</span></a>, starting from the fourth image. The top-left image is the reconstruction after four images were used; the participating cameras are shown as red pyramids with a white line showing the direction. The other images show how more cameras add more points to the cloud:</p>
+<div class="packt_figure CDPAlignCenter CDPAlign"><img src="assets/B05389_04_27.png"/></div>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    
+
+        <section>
+
+            <header>
+                <h1 class="header-title">Refinement of the reconstruction</h1>
+            </header>
+
+            <article>
+                
+<p>One of the most important parts of an SfM method is refining and optimizing the reconstructed scene, also known as the process of <strong>Bundle Adjustment</strong> (<strong>BA</strong>). This is an optimization step where all the data we gathered is fitted to a monolithic model. Both the position of the recovered 3D points and the positions of the cameras are optimized, so re-projection errors are minimized. In other words, recovered 3D points that are re-projected on the image are expected to lie close to the position of originating 2D feature points that generated them. The BA process we use will try to minimize this error for all 3D points together, making for a very big system of simultaneous linear equations with on the order of thousands of parameters.</p>
+<p>We will implement a BA algorithm using the <strong>Ceres</strong> library, a well-known optimization package from Google. Ceres has built-in tools to help with BA, such as automatic differentiation and many flavors of linear and nonlinear optimization schemes, which result in less code and more flexibility.</p>
+<p>To make things simple and easy to implement, we will make a few assumptions, whereas in a real SfM system, these things cannot be neglected. Firstly, we will assume a simple intrinsic model for our cameras, specifically that the focal length in <em>x</em> and <em>y</em> is the same and the center of projection is exactly the middle of the image. We further assume that all cameras share the same intrinsic parameters, meaning that the same camera takes all the images in the bundle with the exact configuration (for example, zoom). These assumptions greatly reduce the number of parameters to optimize, which in turn makes the optimization not only easier to code but also faster to converge.</p>
+<p>To start, we will model the <em>error function</em>, sometimes also called the <strong>cost function</strong>, which is, simply put, the way the optimization knows how good the new parameters are and also which way to go to get even better parameters. We can write the following functor that makes use of Ceres' Auto Differentiation mechanism:</p>
+<pre>
+    // The pinhole camera is parameterized using 7 parameters: 
+    // 3 for rotation, 3 for translation, 1 for focal length. 
+    // The principal point is not modeled (assumed be located at the 
+    // image center, and already subtracted from 'observed'),  
+    // and focal_x = focal_y. 
+    struct SimpleReprojectionError { 
+      using namespace ceres; 
+
+      SimpleReprojectionError(double observed_x, double observed_y) : 
+      observed_x(observed_x), observed_y(observed_y) {} 
+
+      template&lt;typenameT&gt; 
+      bool operator()(const T* const camera,  
+                      const T* const point, 
+                      const T* const focal, 
+                      T* residuals) const { 
+        T p[3]; 
+        // Rotate: camera[0,1,2] are the angle-axis rotation. 
+        AngleAxisRotatePoint(camera, point, p); 
+
+        // Translate: camera[3,4,5] are the translation. 
+        p[0] += camera[3]; 
+        p[1] += camera[4]; 
+        p[2] += camera[5]; 
+
+        // Perspective divide 
+        const T xp = p[0] / p[2]; 
+        const T yp = p[1] / p[2]; 
+
+        // Compute projected point position (sans center of 
+        // projection) 
+        const T predicted_x = *focal * xp; 
+        const T predicted_y = *focal * yp; 
+
+        // The error is the difference between the predicted  
+        // and observed position. 
+        residuals[0] = predicted_x - T(observed_x); 
+        residuals[1] = predicted_y - T(observed_y); 
+        return true; 
+      } 
+
+      // A helper construction function 
+      static CostFunction* Create(const double observed_x,  
+      const double observed_y) { 
+        return (newAutoDiffCostFunction&lt;SimpleReprojectionError,  
+        2, 6, 3, 1&gt;( 
+        newSimpleReprojectionError(observed_x,  
+        observed_y))); 
+      } 
+      double observed_x; 
+      double observed_y; 
+    };
+</pre>
+<p>This functor calculates the deviation a 3D point has from its originating 2D point by re-projecting it using simplified extrinsic and intrinsic camera parameters. The error in <em>x</em> and <em>y</em> is saved as the residual, which guides the optimization.</p>
+<p>There is quite a bit of additional code that goes into the BA implementation, but it primarily handles bookkeeping of cloud 3D points, originating 2D points, and their respective cameras. The readers may wish to review how this is done in the code attached to the book.</p>
+<p>The following image shows the effects of BA. The two images on the left are the points of the point cloud before adjustment from two perspectives, and the images on the right show the optimized cloud. The change is quite dramatic, and many misalignments between points triangulated from different views are now mostly consolidated. We can also notice how the adjustment created a far better reconstruction of flat surfaces:</p>
+<div class="packt_figure CDPAlignCenter CDPAlign"><img class="image-border" src="assets/B05389_04_28.png"/></div>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    
+
+        <section>
+
+            <header>
+                <h1 class="header-title">Using the example code</h1>
+            </header>
+
+            <article>
+                
+<p>We can find the example code for SfM with the supporting material of this book. We will now see how we can build, run, and make use of it. The code makes use of <strong>CMake</strong>, a cross-platform build environment similar to Maven or SCons. We should also make sure that we have all the following prerequisites to build the application:</p>
+<ul>
+<li>OpenCV v3.0 or higher</li>
+<li>Ceres v1.11 or higher</li>
+<li>Boost v1.54 or higher</li>
+</ul>
+<p>First, we must set up the build environment. To that end, we may create a folder named <kbd>build</kbd> in which all build-related files will go; we will now assume that all command-line operations are within the <kbd>build/</kbd> folder, although the process is similar (up to the locations of the files) even if not using the <kbd>build</kbd> folder. We should also make sure that CMake can find boost and Ceres.</p>
+<p>If we are using Windows as the operating system, we can use Microsoft Visual Studio to build; therefore, we should run the following command:</p>
+<pre>
+<strong>cmake -G "Visual Studio 10" </strong>
+</pre>
+<p>If we are using Linux, Mac OS, or another Unix-like operating system, we execute the following command:</p>
+<pre>
+<strong>cmake -G "Unix Makefiles" </strong>
+</pre>
+<p>If we prefer to use XCode on Mac OS, execute the following command:</p>
+<pre>
+<strong>cmake -G Xcode</strong>
+</pre>
+<p>CMake also has the ability to build macros for Eclipse, Codeblocks, and more.</p>
+<p>After CMake is done creating the environment, we are ready to build. If we are using a Unix-like system, we can simply execute the <kbd>make</kbd> utility, else we should use our development environment's building process.</p>
+<p>After the build has finished, we should be left with an executable named <kbd>ExploringSfM</kbd>, which runs the SfM process. Running it with no arguments<br/>
+will result in the following:</p>
+<pre>
+<strong>USAGE ./build/ExploringSfM [options] &lt;input-directory&gt;</strong>
+<strong>-h [ --help ]                   Produce help message</strong>
+<strong>-d [ --console-debug ] arg (=2) Debug output to console log level </strong>
+<strong>(0 = Trace, 4 = Error).</strong>
+<strong>-v [ --visual-debug ] arg (=3)  Visual debug output to screen log    
+    level</strong>
+<strong>(0 = All, 4 = None).</strong>
+<strong>-s [ --downscale ] arg (=1)     Downscale factor for input images.</strong>
+<strong>-p [ --input-directory ] arg    Directory to find input images.</strong>
+<strong>-o [ --output-prefix ] arg (=output) Prefix for output files.</strong>
+</pre>
+<p>To execute the process over a set of images, we should supply a location on the drive to find image files. If a valid location is supplied, the process should start and we should see the progress and debug information on the screen. If no errors arise, the process will end with a message stating that the point cloud that arises from the images was saved to PLY files, which can be opened in most 3D editing software.</p>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    
+
+        <section>
+
+            <header>
+                <h1 class="header-title">Summary</h1>
+            </header>
+
+            <article>
+                
+<p>In this chapter, we saw how OpenCV v3 can help us approach Structure from Motion in a manner that is both simple to code and simple to understand. OpenCV v3's new API contains a number of useful functions and data structures that make our lives easier and also assist in a cleaner implementation.</p>
+<p>However, the state-of-the-art SfM methods are far more complex. There are many issues we choose to disregard in favor of simplicity, and plenty more error examinations that are usually in place. Our chosen methods for the different elements of SfM can also be revisited. For one, H&amp;Z propose a highly accurate triangulation method that minimizes the reprojection error in the image domain. Some methods even use the N-view triangulation once they understand the relationship between the features in multiple images.</p>
+<p>If we would like to extend and deepen our familiarity with SfM, we will certainly benefit from looking at other open source SfM libraries. One particularly interesting project is libMV, which implements a vast array of SfM elements that may be interchanged to get the best results. There is a great body of work from University of Washington that provides tools for many flavors of SfM (Bundler and VisualSfM). This work inspired an online product from Microsoft called <strong>PhotoSynth</strong> and <strong>123D Catch</strong> from Adobe. There are many more implementations of SfM readily available online, and one must only search to find quite a lot of them.</p>
+<p>Another important relationship we have not discussed in depth is that of SfM and Visual Localization and Mapping, better known as <strong>Simultaneous Localization and Mapping (SLAM)</strong> methods. In this chapter, we dealt with a given dataset of images and a video sequence, and using SfM is practical in those cases; however, some applications have no prerecorded dataset and must bootstrap the reconstruction on the fly. This process is better known as <strong>Mapping</strong>, and it is done while we are creating a 3D map of the world, using feature matching and tracking in 2D, and after triangulation.</p>
+<p>In the next chapter, we will see how OpenCV can be used for extracting license plate numbers from images, using various techniques in machine learning.</p>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    
+
+        <section>
+
+            <header>
+                <h1 class="header-title">References</h1>
+            </header>
+
+            <article>
+                
+<ul>
+<li><em>Hartley, Richard, and Andrew Zisserman, Multiple View Geometry in Computer Vision, Cambridge University Press, 2003</em></li>
+<li><em>Hartley, Richard I., and Peter Sturm; Triangulation, Computer Vision and image understanding 68.2 (1997): 146-157</em></li>
+<li><em>Snavely, Noah, Steven M. Seitz, and Richard Szeliski; Photo Tourism: Exploring Photo Collections in 3D, ACM Transactions on Graphics (TOG). Vol. 25. No. 3. ACM, 2006</em></li>
+<li><em>Strecha, Christoph, et al, On Benchmarking Camera Calibration and Multi-view Stereo for High Resolution Imagery, IEEE Conference on Computer Vision and Pattern Recognition (CVPR) 2008</em></li>
+<li><a href="http://cvlabwww.epfl.ch/data/multiview/denseMVS.htmlhttps://developer.blender.org/tag/libmv/" target="_blank">h t t p ://c v l a b w w w . e p f l . c h /d a t a /m u l t i v i e w /d e n s e M V S . h t m l h t t p s ://d e v e l o p e r . b l e n d e r . o r g /t a g /l i b m v /</a></li>
+<li><a href="http://ccwu.me/vsfm/" target="_blank">h t t p ://c c w u . m e /v s f m /</a></li>
+<li><a href="http://www.cs.cornell.edu/~snavely/bundler/" target="_blank">h t t p ://w w w . c s . c o r n e l l . e d u /~s n a v e l y /b u n d l e r /</a></li>
+<li><a href="http://photosynth.net" target="_blank">h t t p ://p h o t o s y n t h . n e t </a></li>
+<li><a href="http://en.wikipedia.org/wiki/Simultaneous_localization_and_mapping" target="_blank">h t t p ://e n . w i k i p e d i a . o r g /w i k i /S i m u l t a n e o u s _ l o c a l i z a t i o n _ a n d _ m a p p i n g </a></li>
+<li><a href="http://www.cmake.org" target="_blank">h t t p ://w w w . c m a k e . o r g </a></li>
+<li><a href="http://ceres-solver.org" target="_blank">h t t p ://c e r e s - s o l v e r . o r g </a></li>
+<li><a href="http://www.123dapp.com/catch" target="_blank">h t t p ://w w w . 123d a p p . c o m /c a t c h </a></li>
+</ul>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    </body></html>

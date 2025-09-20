@@ -1,0 +1,453 @@
+<html><head></head><body><div id="sbo-rt-content"><div id="_idContainer204">
+			<h1 id="_idParaDest-193"><a id="_idTextAnchor198"/><em class="italic">Chapter 9</em>: Semantic Segmentation</h1>
+			<p>This is probably the most advanced chapter concerning deep learning, as we will go as far as classifying an image at a pixel level with a technique called semantic segmentation. We will use plenty of what we have learned so far, including data augmentation with generators.</p>
+			<p>We will study a very flexible and efficient neural network architecture called DenseNet in great detail, as well as its extension for semantic segmentation, FC-DenseNet, and then we will write it from scratch and train it with a dataset built with Carla. </p>
+			<p>I hope you will find this chapter inspiring and challenging. And be prepared for a long training session because our task can be quite demanding!</p>
+			<p>In this chapter, we will cover the following topics:</p>
+			<ul>
+				<li>Introducing semantic segmentation</li>
+				<li>Understanding DenseNet for classification</li>
+				<li>Semantic segmentation with CNN</li>
+				<li>Adapting DenseNet for semantic segmentation</li>
+				<li>Coding the blocks of FC-DenseNet</li>
+				<li>Improving bad semantic segmentation </li>
+			</ul>
+			<h1 id="_idParaDest-194"><a id="_idTextAnchor199"/>Technical requirements</h1>
+			<p>To be able to use the code explained in this chapter, you will need to have the following tools and modules installed:</p>
+			<ul>
+				<li>The Carla simulator </li>
+				<li>Python 3.7</li>
+				<li>The NumPy module</li>
+				<li>The TensorFlow module</li>
+				<li>The Keras module</li>
+				<li>The OpenCV-Python module</li>
+				<li>A GPU (recommended)</li>
+			</ul>
+			<p>The code for this chapter can be found at <a href="https://github.com/PacktPublishing/Hands-On-Computer-Vision-for-Self-Driving-Cars">https://github.com/PacktPublishing/Hands-On-Computer-Vision-for-Self-Driving-Cars</a>.</p>
+			<p>The Code in Action videos for this chapter can be found here:</p>
+			<p><a href="https://bit.ly/3jquo3v">https://bit.ly/3jquo3v</a></p>
+			<h1 id="_idParaDest-195"><a id="_idTextAnchor200"/>Introducing semantic segmentation</h1>
+			<p>In the previous <a id="_idIndexMarker593"/>chapters, we implemented several classifiers, where we provided an image as input and the network said what it was. This can be excellent in many situations, but to be very useful, it usually needs to be combined with a method that can identify the region of interest. We did this in <a href="B16322_07_Final_NM_ePUB.xhtml#_idTextAnchor158"><em class="italic">Chapter 7</em></a>, <em class="italic">Detecting Pedestrians and Traffic Lights</em>, where we used SSD to identify a region of interest with a traffic light and then our neural network was able to tell the color. But even this would not be very useful to us, because the regions of interest produced by SSD are rectangles, and therefore a network telling us that there is a road basically as big as the image would not provide much information: is the road straight? Is there a turn? We cannot know. We need more precision.</p>
+			<p>If object <a id="_idIndexMarker594"/>detectors such as SSD brought classification to the next level, now we need to reach the level after that, and maybe more. In fact, we want to classify every pixel of the image, which is called <strong class="bold">semantic</strong> <strong class="bold">segmentation</strong>, and is quite a demanding task.</p>
+			<p>To understand this better, let's look at an example taken from Carla. The following is the original image:</p>
+			<div>
+				<div id="_idContainer189" class="IMG---Figure">
+					<img src="Images/Figure_9.1_B16322.jpg" alt="Figure 9.1 – A frame from Carla" width="800" height="600"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 9.1 – A frame from Carla</p>
+			<p>Now let's look at the same frame produced by the semantic segmentation camera:</p>
+			<div>
+				<div id="_idContainer190" class="IMG---Figure">
+					<img src="Images/Figure_9.2_B16322.jpg" alt="Figure 9.2 – Semantic segmentation" width="800" height="600"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 9.2 – Semantic segmentation</p>
+			<p>This is simply great! Not only is the image very simplified, but every color has a specific meaning—the road is purple, the sidewalk is magenta, the trees are dark green, the lane lines are bright green, and so on. Just to set your expectations, we will not be able to achieve such a perfect result, and we will also work at a much lower resolution, but we will still achieve interesting results.</p>
+			<p>To be precise, this image is not the real output of the network, but it has been converted to show colors; <strong class="bold">the raw semantic segmentation</strong> output <a id="_idIndexMarker595"/>is a very dark image with some pixels set to low values, such as <strong class="source-inline">rgb(7,0,0)</strong>, where the <strong class="source-inline">7</strong> will then be converted to purple.</p>
+			<p>Carla's ability <a id="_idIndexMarker596"/>to create images with semantic segmentation is extremely helpful, and can allow you to experiment at will, without relying on premade and limited datasets.</p>
+			<p>Before we start to collect the dataset, let's discuss what the plan is in a bit more detail.</p>
+			<h2 id="_idParaDest-196"><a id="_idTextAnchor201"/>Defining our goal</h2>
+			<p>Our goal <a id="_idIndexMarker597"/>is to use a dataset collected by us to train a neural network from scratch to perform semantic segmentation so that it can detect roads, sidewalks, pedestrians, traffic signs, and more at a pixel level.</p>
+			<p>The steps required for this are as follows:</p>
+			<ol>
+				<li><strong class="bold">Creating the dataset</strong>: We will use Carla to save the original image, the raw segmented image (black image with dark colors), and the converted image to use better colors for our convenience.</li>
+				<li><strong class="bold">Building the neural network</strong>: We <a id="_idIndexMarker598"/>will study an architecture called <strong class="bold">DenseNet</strong> in great depth, and then we will see how networks performing semantic segmentations <a id="_idIndexMarker599"/>are usually structured. After this, we will look at an adaptation of DenseNet for semantic segmentation called <strong class="bold">FC-DenseNet</strong>, and we will implement it.</li>
+				<li><strong class="bold">Training the neural network</strong>: Here, we will train the network and evaluate the result; the training could easily take several hours.</li>
+			</ol>
+			<p>We will <a id="_idIndexMarker600"/>now see the changes required to collect the dataset.</p>
+			<h2 id="_idParaDest-197"><a id="_idTextAnchor202"/>Collecting the dataset</h2>
+			<p>We have <a id="_idIndexMarker601"/>already seen how to record images from Carla and modify <strong class="source-inline">manual_control.py</strong> in <a href="B16322_08_Final_NM_ePUB.xhtml#_idTextAnchor182"><em class="italic">Chapter 8</em></a>,<em class="italic"> Behavioral Cloning</em>, and you could do that, but we have an issue: we really want the RGB and raw cameras to be the exact same frame to avoid movements that would make our dataset less effective. This problem can be solved using synchronous mode, where Carla waits for all the sensors to be ready before sending them to the client, which ensures perfect correspondence between the three cameras that we are going to save: RGB, raw segmentation, and colored segmentation.</p>
+			<p>This time, we will modify another file, <strong class="source-inline">synchronous_mode.py</strong>, as it is more suitable for this task.</p>
+			<p>I will be specifying where each block of code is located in the file, but it is recommended that you go to GitHub and check out the full code there.</p>
+			<p>This file is much simpler than <strong class="source-inline">manual_control.py,</strong> and there are basically two interesting parts:</p>
+			<ul>
+				<li><strong class="source-inline">CarlaSyncMode</strong>, a class that enables the synchronized mode</li>
+				<li><strong class="source-inline">main()</strong>, which initializes the world (the objects representing the track, the weather, and the vehicles) and the cameras, and then moves the car, drawing it on the screen</li>
+			</ul>
+			<p>If you run it, you will see that this file self-drives the car, possibly at a very high speed, merging the RGB camera and semantic segmentation:</p>
+			<div>
+				<div id="_idContainer191" class="IMG---Figure">
+					<img src="Images/Figure_9.3_B16322.jpg" alt="Figure 9.3 – Output of synchronous_mode.py" width="802" height="641"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 9.3 – Output of synchronous_mode.py</p>
+			<p>Don't be <a id="_idIndexMarker602"/>too impressed by the self-driving algorithm because, while very handy for us, it's also very limited.</p>
+			<p>Carla has a high number of <strong class="bold">waypoints</strong>, which are 3D-directed points. These points, which number in the thousands per track, follow the road and are taken from the OpenDRIVE map; OpenDRIVE is an open file format that Carla uses to describe the road. These points are oriented with the road, so if you move the car toward the points while also applying the orientations of these points, the car effectively moves as if it was self-driving. Brilliant! Until you add cars and walkers; then you start to get frames like these ones, because the car will move into other vehicles:</p>
+			<div>
+				<div id="_idContainer192" class="IMG---Figure">
+					<img src="Images/Figure_9.4_B16322.jpg" alt="Figure 9.4 – Frames with a collision" width="845" height="329"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 9.4 – Frames with a collision</p>
+			<p>This might <a id="_idIndexMarker603"/>be a bit surprising when you see it, but it is still fine for our task, so it is not a big problem.</p>
+			<p>Let's now see how we need to modify <strong class="source-inline">synchronous_mode.py</strong>.</p>
+			<h2 id="_idParaDest-198"><a id="_idTextAnchor203"/>Modifying synchronous_mode.py</h2>
+			<p>All the <a id="_idIndexMarker604"/>following changes need to be made in the <strong class="source-inline">main()</strong> function:</p>
+			<ul>
+				<li>We will change the camera position to be the same one that we used with the behavioral cloning, although this is not required. This involves changing the two calls to <strong class="source-inline">carla.Transform()</strong> with this line (it's the same line for both the locations):<p class="source-code">carla.Transform(carla.Location(x=1.6, z=1.7), 	  carla.Rotation(pitch=-15))</p></li>
+				<li>Just after moving the car, we can save the RGB camera and the raw semantic segmentation image:<p class="source-code">save_img(image_rgb, '_out/rgb/rgb_%08d.png' % 	  image_rgb.frame)</p><p class="source-code">save_img(image_semseg, '_out/seg_raw/seg_raw_%08d.png' % 	  image_rgb.frame)</p></li>
+				<li>In the code, the line immediately after calls <strong class="source-inline">image_semseg.convert()</strong> to convert the raw image to the colored version, according to the CityScapes palette; now we can save the image with semantic segmentation so that it is properly colored:<p class="source-code">save_img(image_semseg, '_out/seg/seg_%08d.png' % 	  image_rgb.frame)</p></li>
+				<li>We are almost done. We just need to write the <strong class="source-inline">save_img()</strong> function:<p class="source-code">def save_img(image, path):</p><p class="source-code">    array = np.frombuffer(image.raw_data, dtype=np.dtype("uint8"))</p><p class="source-code">    array = np.reshape(array, (image.height, image.width, 4))</p><p class="source-code">    array = array[:, :, :3]</p><p class="source-code">    img = cv2.resize(array, (160, 160), 	 interpolation=cv2.INTER_NEAREST)</p><p class="source-code">    cv2.imwrite(path, img)</p></li>
+			</ul>
+			<p>The first <a id="_idIndexMarker605"/>lines of the preceding steps of code convert the image of Carla from a buffer to a NumPy array and select the first three channels, dropping the fourth one (the transparency channel). Then we resize the image to 160 X 160 using the <strong class="source-inline">INTER_NEAREST</strong> algorithm to avoid smoothing the image while resizing.</p>
+			<p>The last line saves the image.</p>
+			<p class="callout-heading">Tip: Resize segmentation masks using the nearest-neighbor algorithm</p>
+			<p class="callout">Are you wondering why we resize using <strong class="source-inline">INTER_NEAREST</strong>, the nearest-neighbor algorithm, which is the most basic interpolation? The reason is that it does not interpolate the color but chooses the color of the pixel closer to the interpolated position, and this is important for the raw semantic segmentation. For example, let's say we are scaling four pixels down to one. Two of the pixels have a value of 7 (roads) and the other two pixels have a value of 9 (vegetation). We might be happy with the output being either 7 or 9, but we surely don't want it to be 8 (sidewalks)!</p>
+			<p class="callout">But for RGB and colored segmentation, you can use more advanced interpolations. </p>
+			<p>This is everything that is required to collect images. The 160 X 160 resolution is the one I chose for my network, and we will discuss this choice later. If you use another resolution, please adjust the settings accordingly.</p>
+			<p>You can also save at full resolution, but then you have to either write a program to change it later or do this when you train the neural network, and since we will be using a generator, this means that we need to use this convention for every image and for every epoch—so more than 50,000 times in our case—plus it will make loading the JPEG slower, which also needs to be performed 50,000 times in our case.</p>
+			<p>Now that we have the dataset, we can build the neural network. Let's start with the architecture of DenseNet, which is the foundation of our model.</p>
+			<h1 id="_idParaDest-199"><a id="_idTextAnchor204"/>Understanding DenseNet for classification</h1>
+			<p><strong class="bold">DenseNet</strong> is a <a id="_idIndexMarker606"/>fascinating architecture of neural networks that is designed <a id="_idIndexMarker607"/>to be flexible, memory efficient, effective, and also relatively simple. There are really a lot of things to like about DenseNet.</p>
+			<p>The DenseNet architecture is designed to build very deep networks, solving the problem of the <em class="italic">vanishing gradient</em> with techniques derived from ResNet. Our implementation will reach 50 layers, but you can easily build a deeper network. In fact, Keras has three types of DenseNet trained on ImageNet, with 121, 169, and 201 layers, respectively. DenseNet also solves the problem of <em class="italic">dead neurons</em>, when you have neurons that are basically not active.The next section will show a high-level overview of DenseNet.</p>
+			<h2 id="_idParaDest-200"><a id="_idTextAnchor205"/>DenseNet from a bird's-eye view</h2>
+			<p>For the <a id="_idIndexMarker608"/>moment, we will focus on DenseNet as a classifier, which is not what we are going to implement, but it is useful as a concept to start to understand it. The high-level architecture of DenseNet is illustrated in the following diagram:</p>
+			<div>
+				<div id="_idContainer193" class="IMG---Figure">
+					<img src="Images/Figure_9.5_B16322.jpg" alt="Figure 9.5 – High-level view of DenseNet as a classifier, with three dense blocks" width="480" height="59"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 9.5 – High-level view of DenseNet as a classifier, with three dense blocks</p>
+			<p>The figure only shows three dense blocks, but there are usually a few more.</p>
+			<p>As you can see from the diagram, it is quite simple to understand the following:</p>
+			<ul>
+				<li>The input is an RGB image.</li>
+				<li>There is an initial 7 X 7 co<a id="_idTextAnchor206"/>nvolution.</li>
+				<li>There is a <strong class="bold">dense block</strong>, which contains some convolutions. We will describe this in depth soon.</li>
+				<li>Every <strong class="bold">dense block</strong> is followed by a 1 X 1 convolution and an average pooling, which reduces the image size.</li>
+				<li>The last <strong class="bold">dense bloc</strong>k is followed directly by the average pooling.</li>
+				<li>At the end, there is a dense (fully connected) layer with a <strong class="bold">softmax</strong>.</li>
+			</ul>
+			<p>The 1 X 1 convolution can be used to reduce the number of channels to speed up the computations. The 1 X 1 convolution <a id="_idIndexMarker609"/>followed by the average pooling is called a <strong class="bold">transition layer</strong> by the DenseNet paper, and when the number of channels is reduced, they call the resulting network <strong class="bold">DenseNet-C</strong>, where the <em class="italic">C</em> means <em class="italic">compression</em> and the convolution <a id="_idIndexMarker610"/>layer is called the <strong class="bold">compression layer</strong>.</p>
+			<p>As a classifier, this <a id="_idIndexMarker611"/>high-level architecture is not particularly remarkable, but as you might have guessed, the innovation is in the dense blocks, which are the focus of the next section. </p>
+			<h2 id="_idParaDest-201"><a id="_idTextAnchor207"/>Understanding the dense blocks</h2>
+			<p>The dense <a id="_idIndexMarker612"/>blocks give the name to the architecture and are the main part of DenseNet; they contain the convolutions, and you usually have several of them, depending on the resolution, the precision that you want to achieve, and the performance and training time. Please note that they are unrelated to the dense layers that we have already met.</p>
+			<p>The dense blocks are blocks that we can repeat to increase the depth of the network, and they achieve the following goals:</p>
+			<ul>
+				<li>They solve the <em class="italic">vanishing gradient</em> problem, allowing us to make very deep networks.</li>
+				<li>They are very efficient, using a relatively small number of parameters.</li>
+				<li>They solve the <em class="italic">dead neurons</em> problem, meaning that all the convolutions contribute to the final result, and we don't waste CPU and memory on neurons that are basically useless.</li>
+			</ul>
+			<p>These are big goals, goals that many architectures struggle to achieve. So let's see how DenseNet can do what many other architectures cannot. The following is a dense block:</p>
+			<div>
+				<div id="_idContainer194" class="IMG---Figure">
+					<img src="Images/Figure_9.6_B16322.jpg" alt="Figure 9.6 – Dense block with five convolutions, plus the input" width="480" height="170"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 9.6 – Dense block with five convolutions, plus the input</p>
+			<p>This is indeed remarkable, and requires some explanation. Perhaps you remember <strong class="bold">ResNet</strong> from <a href="B16322_07_Final_NM_ePUB.xhtml#_idTextAnchor158"><em class="italic">Chapter 7</em></a>, <em class="italic">Detecting Pedestrians and Traffic Lights</em>, a neural network built by Microsoft that had a feature called <em class="italic">skip connections</em>, shortcuts that could allow a layer to skip other layers, helping to solve the vanishing gradient problem and therefore achieve deeper networks. In fact, some versions of ResNet can have more than 1,000 layers!</p>
+			<p>DenseNet brings this concept to the extreme, as inside every dense block, each convolutional layer is connected and concatenated to the other convolutional layers of the same block! This has two very important implications:</p>
+			<ul>
+				<li>The presence of the skip connections clearly achieves the same effect of the skip connections in ResNet, making deeper networks much easier to train.</li>
+				<li>Thanks to the skip connections, the features of each layer can be reused by the following layers, making the network very efficient and greatly reducing the number of parameters compared to other architectures.</li>
+			</ul>
+			<p>The feature's reuse <a id="_idIndexMarker613"/>can be better appreciated with the following diagram, which explains the effect of the dense block, focusing on the channels instead of the skip connections:</p>
+			<div>
+				<div id="_idContainer195" class="IMG---Figure">
+					<img src="Images/Figure_9.7_B16322.jpg" alt="Figure 9.7 – Effects of the skip connections on a dense block with five layers and a growth rate of three" width="654" height="503"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 9.7 – Effects of the skip connections on a dense block with five layers and a growth rate of three</p>
+			<p>The first horizontal line shows the new features that are added by each convolution, while all the other horizontal lines are convolutions provided by the previous layers, and they are reused thanks to the skip connections.</p>
+			<p>Analyzing the diagram, where the content of each layer is a column, we can see the following:</p>
+			<ul>
+				<li>The input layer has 5 channels.</li>
+				<li>Layer 1 adds 3 new channels and reuses the input, so it effectively has 8 channels.</li>
+				<li>Layer 2 adds 3 new channels and reuses the input and layer 1, so it effectively has 11 channels.</li>
+				<li>This continues until layer 5, which adds 3 new channels and reuses the input and layers 1, 2, 3, and 4, so it effectively has 20 channels.</li>
+			</ul>
+			<p>This is very powerful, because the convolutions can reuse the previous layers, adding only some new channels, with the result that the network is compact and efficient. In addition, these new channels are <a id="_idIndexMarker614"/>going to provide new information because they have direct access to the previous layers, which means that they won't somehow replicate the same information or lose contact with what was already computed a few layers before. The number of new channels <a id="_idIndexMarker615"/>added on each layer is called the <strong class="bold">growth rate</strong>; it was <strong class="bold">3</strong> in our example, while in real life it will probably be 12, 16, or more.</p>
+			<p>For the dense blocks to work, all the convolution need to use padding with the value <strong class="bold">same</strong>, which, as we know, keeps the resolution unchanged.</p>
+			<p>Every dense block is followed by a transition layer with average pooling, which reduces the resolution; as skip connections require the resolution of the convolutions to be the same, this means that we can only have skip connections inside the same dense block.</p>
+			<p>Each layer of a dense block is composed of the following three components:</p>
+			<ul>
+				<li>A batch normalization layer</li>
+				<li>A ReLU activation</li>
+				<li>The convolution</li>
+			</ul>
+			<p>The convolution block can therefore be written like this:</p>
+			<p class="source-code">layer = BatchNormalization()(layer)</p>
+			<p class="source-code">layer = ReLU()(layer)</p>
+			<p class="source-code">layer = Conv2D(num_filters, kernel_size, padding="same",   kernel_initializer='he_uniform')(layer)</p>
+			<p>This is a different style to writing Keras code, where instead of using the model object to describe the architecture, you build a chain of layers; this is the style to use with skip connections, as you need the flexibility to be able to use the same layer more than once.</p>
+			<p>In DenseNet, at the beginning of each dense block, you can add an optional 1 X 1 convolution, with the goal of <a id="_idIndexMarker616"/>reducing the number of channels of input and therefore improving performance; when this 1 X 1 convolution is present, we call it a <strong class="bold">bottleneck layer</strong> (because the number of channels is reduced), and <a id="_idIndexMarker617"/>the network is called <strong class="bold">DenseNet-B</strong>. When the network has both the bottleneck and the compression layer, it is called <strong class="bold">DenseNet-BC</strong>. As we <a id="_idIndexMarker618"/>already know, the ReLU activation will add nonlinearity, so having many layers can result in a network that can learn very complex functions, which we will definitely need for semantic segmentation.</p>
+			<p>If you are <a id="_idIndexMarker619"/>wondering about dropout, DenseNet can function well without it; one reason for this is the presence of normalization layers, which already provide a regularization effect, and so their combination with dropout is not particularly effective. In addition, the presence of dropout usually requires us to increase the size of the network, which is against the goals of DenseNet. That said, the original paper mentions using dropouts after the convolutional layers, when there is no data augmentation, and I think that, by extension, if there are not many samples, dropout can help.</p>
+			<p>Now that we have an understanding of how DenseNet works, let's learn how to make a neural network for semantic segmentation, which will pave the way to a later section about how to adapt DenseNet to perform semantic segmentation tasks.</p>
+			<h1 id="_idParaDest-202"><a id="_idTextAnchor208"/>Segmenting images with CNN</h1>
+			<p>A typical <a id="_idIndexMarker620"/>semantic segmentation task receives as input an RGB image and needs to output an image with the raw segmentation, but this solution could be problematic. We <a id="_idIndexMarker621"/>already know that classifiers generate their results using <em class="italic">one-hot encoded </em>labels, and we can do the same for semantic segmentation: instead of generating a single image with the raw segmentation, the network can create a series of <em class="italic">one-hot encoded</em> images. In our case, as we need 13 classes, the network will output 13 RGB images, one per label, with the following features:</p>
+			<ul>
+				<li>One image describes only one label.</li>
+				<li>The pixels belonging to the label have a value of 1 in the red channel, while all the other pixels are marked as 0.</li>
+			</ul>
+			<p>Each given pixel can be <strong class="source-inline">1</strong> only in one image; it will be <strong class="source-inline">0</strong> in all the remaining images. This is a difficult task, but it does not necessarily require particular architectures: a series of convolutional layers with <em class="italic">same</em> padding can do it; however, their cost quickly becomes computationally expensive, and you might also have problems fitting the model in memory. As a consequence, there has been a push to improve this architecture.</p>
+			<p>As we already know, a typical way to solve this problem is to use a form of pooling to reduce the resolution while adding layers and channels. This works for classification, but as we need to generate an <a id="_idIndexMarker622"/>image with the same resolution as the input, we need a way to <em class="italic">go back</em> to that resolution. One way to do this is by using a <strong class="bold">transposed convolution</strong>, also called <strong class="bold">deconvolution</strong>, which is a transformation going in the opposite direction of a <a id="_idIndexMarker623"/>convolution that is able to increase the resolution of the output. </p>
+			<p>If you add <a id="_idIndexMarker624"/>a series of convolutions and a series of deconvolutions, the resulting network is U-shaped, with the left side starting from the input, adding <a id="_idIndexMarker625"/>convolutions and channels while reducing the resolution, and the right side having a series of deconvolutions that bring the resolution back to the original one. This can be more efficient than using only convolutions of the same size, but the resulting segmentation will effectively have a much lower resolution than the original input. To solve this problem, it's possible to introduce skip connections from the left side to the right to give the network enough information to restore the correct resolution not only formally, with the number of pixels, but also practically, at the mask level.</p>
+			<p>Now we can look at how to apply these ideas to DenseNet.</p>
+			<h1 id="_idParaDest-203"><a id="_idTextAnchor209"/>Adapting DenseNet for semantic segmentation</h1>
+			<p>DenseNet is <a id="_idIndexMarker626"/>very suitable for semantic segmentation because of its efficiency, accuracy, and abundance of skip layers. In fact, using DenseNet for <a id="_idIndexMarker627"/>semantic segmentation proves to be effective even when the dataset is limited and when a label is underrepresented.</p>
+			<p>To use DenseNet for semantic segmentation, we need to be able to build the right side of the <em class="italic">U</em> network, which means that we need the following:</p>
+			<ul>
+				<li>A way to increase the resolution; if we call the transition layers of DenseNet <em class="italic">transition down</em>, then we need <em class="italic">transition-up</em> layers.</li>
+				<li>We need to build the skip layers to join the left and right side of the <em class="italic">U</em> network.</li>
+			</ul>
+			<p>Our reference network is FC-DenseNet, also known as one hundred layers tiramisu, but we are not trying to reach 100 layers.</p>
+			<p>In practice, we want to achieve an architecture similar to the following:</p>
+			<div>
+				<div id="_idContainer196" class="IMG---Figure">
+					<img src="Images/Figure_9.8_B16322.jpg" alt="Figure 9.8 – Example of FC-DenseNet architecture" width="638" height="1031"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 9.8 – Example of FC-DenseNet architecture</p>
+			<p>The horizontal <a id="_idIndexMarker628"/>red arrows connecting the concatenation layers in <em class="italic">Figure 9.8</em> are the skip connections used to improve the resolution of the output, and <a id="_idIndexMarker629"/>they can only work if the output of the corresponding dense block on the left is the same resolution as the input of the corresponding dense block on the right; this is achieved using the transition-up layers.</p>
+			<p>Let's now see how to implement FC-DenseNet.</p>
+			<h1 id="_idParaDest-204"><a id="_idTextAnchor210"/>Coding the blocks of FC-DenseNet</h1>
+			<p>DenseNet is very flexible, so you can easily configure it in many ways. However, depending on the hardware <a id="_idIndexMarker630"/>of your computer, you might hit the limits of your GPU. The following are the values that I used on my computer, but feel free to change them to achieve better accuracy or to reduce the memory consumption or the time required to train the network:</p>
+			<ul>
+				<li><strong class="bold">Input and output resolution</strong>: 160 X 160</li>
+				<li><strong class="bold">Growth rate (number of channels added by each convolutional layer in a dense block)</strong>: 12</li>
+				<li><strong class="bold">Number of dense blocks</strong>: 11: 5 down, 1 to transition between down and up, and 5 up</li>
+				<li><strong class="bold">Number of convolutional blocks in each dense block</strong>: 4</li>
+				<li><strong class="bold">Batch size</strong>: 4</li>
+				<li><strong class="bold">Bottleneck layer in the dense blocks</strong>: No</li>
+				<li><strong class="bold">Compression factor</strong>: 0.6</li>
+				<li><strong class="bold">Dropout</strong>: Yes, 0.2<p>We will define some functions that you can use to build FC-DenseNet and, as usual, you are invited to check out the full code on GitHub.</p><p>The first function just defines a convolution with batch normalization:</p><p class="source-code">def dn_conv(layer, num_filters, kernel_size, dropout=0.0):</p><p class="source-code">    layer = BatchNormalization()(layer)</p><p class="source-code">    layer = ReLU()(layer)</p><p class="source-code">    layer = Conv2D(num_filters, kernel_size, padding="same", kernel_initializer='he_uniform')(layer)</p><p class="source-code">     if dropout &gt; 0.0:</p><p class="source-code">        layer = Dropout(dropout)(layer)</p><p class="source-code">     return layer</p><p>Nothing special—we had a batch normalization before the ReLU activation, followed by a convolutional layer and the optional dropout.</p><p>The next function defines a dense block using the previous method:</p><p class="source-code">def dn_dense(layer, growth_rate, num_layers, add_bottleneck_layer, dropout=0.0):</p><p class="source-code">  block_layers = []</p><p class="source-code">  for i in range(num_layers):</p><p class="source-code">    new_layer = dn_conv(layer, 4 * growth_rate, (1, 1),       dropout) if add_bottleneck_layer else layer</p><p class="source-code">    new_layer = dn_conv(new_layer, growth_rate, (3, 3), dropout)</p><p class="source-code">    block_layers.append(new_layer)</p><p class="source-code">    layer = Concatenate()([layer, new_layer])</p><p class="source-code">  return layer, Concatenate()(block_layers)</p><p>There is a lot going on:</p></li>
+			</ul>
+			<p><strong class="bold">Convolutions</strong> method creates <strong class="source-inline">num_layers</strong> 3 X 3 convolutional layers, adding <strong class="source-inline">growth_rate</strong> channels every time. In addition, if <strong class="source-inline">add_bottleneck_layer</strong> is set, before each 3 X 3 convolutions it adds a 1 X 1 convolution to convert the number of channels in input to <strong class="source-inline">4* growth_rate</strong>; I did not use the bottleneck layer in my configuration, but you can.</p>
+			<p>It returns <a id="_idIndexMarker631"/>two outputs, where the first output, layer, is the concatenation of all the outputs of each convolution, including the input, and the second output, derived from <strong class="source-inline">block_layers</strong>, is the concatenation of all the outputs of each convolution, excluding the input.</p>
+			<p>The reason why we need two outputs is because the down-sampling and the up-sampling path are a bit different. During down sampling, we include the input of the block, while during up sampling we don't; this is just to keep the size of the network and the computation time reasonable, as, in my case, without this change, the network would jump from 724 K parameters to 12 M!</p>
+			<p>The next function defines the transition layer that is used to reduce the resolution in the down-sampling path:</p>
+			<p class="source-code">def dn_transition_down(layer, compression_factor=1.0, dropout=0.0):</p>
+			<p class="source-code">  num_filters_compressed = int(layer.shape[-1] *     compression_factor)</p>
+			<p class="source-code">  layer = dn_conv(layer, num_filters_compressed, (1, 1), dropout)</p>
+			<p class="source-code"> </p>
+			<p class="source-code">  return AveragePooling2D(2, 2, padding='same')(layer)</p>
+			<p>It just creates a 1 X 1 convolution followed by an average pooling; if you choose to add a compression factor, then the number of channels will be reduced; I chose a compression factor of <strong class="source-inline">0.6</strong> because the network was too big without any compression and did not fit in the RAM of my GPU.</p>
+			<p>The next method is the transition layer used to increase the resolution in the up-sampling path:</p>
+			<p class="source-code">def dn_transition_up(skip_connection, layer):  num_filters = int(layer.shape[-1])  layer = Conv2DTranspose(num_filters, kernel_size=3, strides=2,    padding='same',                            kernel_initializer='he_uniform')(layer)  return Concatenate()([layer, skip_connection])</p>
+			<p>It creates a <a id="_idIndexMarker632"/>deconvolution to increase the resolution, and it adds the skip connection, which is, of course, important in enabling us to also increase the effective resolution of the segmentation mask.</p>
+			<p>Now that we have all the building blocks, it is just a matter of assembling the full network.</p>
+			<h2 id="_idParaDest-205"><a id="_idTextAnchor211"/>Putting all the pieces together</h2>
+			<p>First, a note on the resolution: I chose 160 X 160, as that was basically the maximum that my laptop could do, in combination with the other settings. You can try a different resolution, but you will see that <a id="_idIndexMarker633"/>not all the resolutions are possible. In fact, depending on the number of dense blocks, you might need to use multiples of 16, 32, or 64. Why is this? Simple. Let's take an example, assuming that we will use 160 X 160. If, during down sampling, you reduce the resolution 16 times (for example, you have 4 dense blocks, each one followed by a <em class="italic">transition-down</em> layer), then your intermediate resolution will be an integer number—in this case, 10 X 10. </p>
+			<p>When you up sample 4 times, your resolution will grow 16 fold, so your final resolution will still be 160 X 160. But if you start with 170 X 170, you will still end up with an intermediate resolution of 10 X 10, and up sampling it will produce a final resolution of 160 X 160! This is a problem, because you need to concatenate these outputs with the skip layers taken during down sampling, and if the two resolutions are different, then we cannot concatenate the layers and Keras will generate an error. As regards the ratio, it does not need to be a square and it does not need to match the ratio of your images.</p>
+			<p>The next thing that we need to do is create the input for the neural network and the first convolutional layer, as the dense blocks assume that there is a convolution before them:</p>
+			<p class="source-code">input = Input(input_shape)layer = Conv2D(36, 7, padding='same')(input)</p>
+			<p>I used a 7 X 7 convolution without max pooling, but feel free to experiment. You could use a bigger image and introduce a max pooling or an average pooling, or just create a bigger network, if you can train it at all.</p>
+			<p>Now we can generate the down-sampling path:</p>
+			<p class="source-code">skip_connections = []for idx in range(groups):  (layer, _) = dn_dense(layer, growth_rate, 4,     add_bottleneck_layer, dropout)  skip_connections.append(layer)  layer = dn_transition_down(layer, transition_compression_factor,      dropout)</p>
+			<p>We simply create all the groups that we want, five in my configuration, and for each group we add a dense layer and a transition-down layer, and we also record the skip connections.</p>
+			<p>The following step builds the up-sampling path:</p>
+			<p class="source-code">skip_connections.reverse()</p>
+			<p class="source-code">(layer, block_layers) = dn_dense(layer, growth_rate, 4,   add_bottleneck_layer, dropout)</p>
+			<p class="source-code"> </p>
+			<p class="source-code">for idx in range(groups):</p>
+			<p class="source-code">  layer = dn_transition_up(skip_connections[idx], block_layers)</p>
+			<p class="source-code">  (layer, block_layers) = dn_dense(layer, growth_rate, 4,     add_bottleneck_layer, dropout)</p>
+			<p>We reverse <a id="_idIndexMarker634"/>the skip connections because when going up, we encounter the skip connections in the opposite order, and we add a dense layer that is not followed by a transition down. This is called a <em class="italic">bottleneck layer</em>, as it has a low amount of information. Then we simply create the transition-up and dense layer corresponding to the down-sampling path.</p>
+			<p>Now that we have the last part, let's generate the output:</p>
+			<p class="source-code">layer = Conv2D(num_classes, kernel_size=1, padding='same',   kernel_initializer='he_uniform')(layer)output = Activation('softmax')(layer)model = Model(input, output)</p>
+			<p>We simply add a 1 X 1 convolution and a softmax activation.</p>
+			<p>The difficult part is done, but we need to learn how to feed the input to the network.</p>
+			<h2 id="_idParaDest-206"><a id="_idTextAnchor212"/>Feeding the network</h2>
+			<p>Feeding the <a id="_idIndexMarker635"/>neural network is not too difficult, but there are some practical complications because the network is quite demanding, and loading all the images in RAM might not be feasible, so we are going to use a generator. However, this time, we will also add a simple data augmentation—we will mirror half of the images.</p>
+			<p>But first, we will define a hierarchy where we have all the images in subdirectories of the <strong class="source-inline">dataset</strong> folder:</p>
+			<ul>
+				<li><strong class="source-inline">rgb</strong> contains the images.</li>
+				<li><strong class="source-inline">seg</strong> contains the segmented and colored images.</li>
+				<li><strong class="source-inline">seg_raw</strong> contains the images in raw format (numeric labels in the red channel).</li>
+			</ul>
+			<p>This means that when given an image in the <strong class="source-inline">rgb</strong> folder, we can get the corresponding raw segmentation by just changing the path to <strong class="source-inline">seg_raw</strong>. This is useful.</p>
+			<p>We will define a generic generator that is usable for data augmentation; our approach will be the following:</p>
+			<ul>
+				<li>The generator will receive a list of IDs—in our case, the paths of the <strong class="source-inline">rgb</strong> images.</li>
+				<li>The generator will also receive two functions—one that, given an ID, can generate an image and another that, given an ID, can generate the corresponding label (changing the path to <strong class="source-inline">seg_raw</strong>).</li>
+				<li>We will provide the index in the epoch to help with data augmentation.</li>
+			</ul>
+			<p>This is <a id="_idIndexMarker636"/>the generic generator:</p>
+			<p class="source-code">def generator(ids, fn_image, fn_label, augment, batch_size):</p>
+			<p class="source-code">    num_samples = len(ids)</p>
+			<p class="source-code">    while 1:  # Loop forever so the generator never terminates</p>
+			<p class="source-code">        samples_ids = shuffle(ids)  # New epoch</p>
+			<p class="source-code"> </p>
+			<p class="source-code">        for offset in range(0, num_samples, batch_size):</p>
+			<p class="source-code">            batch_samples_ids = samples_ids[offset:offset + batch_size]</p>
+			<p class="source-code">            batch_samples = np.array([fn_image(x, augment, offset + idx) for idx, x in enumerate(batch_samples_ids)])</p>
+			<p class="source-code">            batch_labels = np.array([fn_label(x, augment, offset + idx) for idx, x in enumerate(batch_samples_ids)])</p>
+			<p class="source-code"> </p>
+			<p class="source-code">            yield batch_samples, batch_labels</p>
+			<p>It is similar to what we have already seen in <a href="B16322_08_Final_NM_ePUB.xhtml#_idTextAnchor182"><em class="italic">Chapter 8</em></a>, <em class="italic">Behavioral Cloning</em>. It goes through all the IDs and obtains the images and labels for the batch; the main difference is that we pass two additional parameters to the functions, in addition to the current ID:</p>
+			<ul>
+				<li>A flag specifying whether we want to enable data augmentation</li>
+				<li>The current index in the epoch to tell the function where we are</li>
+			</ul>
+			<p>Now it will be relatively easy to write a function that returns the images:</p>
+			<p class="source-code">def extract_image(file_name, augment, idx):</p>
+			<p class="source-code">  img = cv2.resize(cv2.imread(file_name), size_cv,     interpolation=cv2.INTER_NEAREST)</p>
+			<p class="source-code"> </p>
+			<p class="source-code">  if augment and (idx % 2 == 0):</p>
+			<p class="source-code">    img = cv2.flip(img, 1)</p>
+			<p class="source-code"> </p>
+			<p class="source-code">  return img</p>
+			<p>We load the image and resize it using the nearest-neighbor algorithm, as already discussed. This way, half of the time the image will be flipped.</p>
+			<p>This is the function to extract the labels:</p>
+			<p class="source-code">def extract_label(file_name, augment, idx):</p>
+			<p class="source-code">  img = cv2.resize(cv2.imread(file_name.replace("rgb", "seg_raw",        2)), size_cv, interpolation=cv2.INTER_NEAREST)</p>
+			<p class="source-code"> </p>
+			<p class="source-code">  if augment and (idx % 2 == 0):</p>
+			<p class="source-code">    img = cv2.flip(img, 1)</p>
+			<p class="source-code"> </p>
+			<p class="source-code">  return convert_to_segmentation_label(img, num_classes)</p>
+			<p>As expected, to get the label, we need to change the path from <strong class="source-inline">rgb</strong> to <strong class="source-inline">seg_raw</strong>, whereas when you augment the data in classifiers, the label does not change. In this case, the mask needs to be augmented in the same way, so we still need to mirror it when we also mirror the <strong class="source-inline">rgb</strong> image.</p>
+			<p>The trickier <a id="_idIndexMarker637"/>part is to generate the correct label because the raw format is not suitable. Normally, in a classifier, you provide a one-hot encoded label, meaning that if you have ten possible label values, every label will be converted to a vector of ten elements, where only one element is <strong class="source-inline">1</strong> and all the others are <strong class="source-inline">0</strong>. Here, we need to do the same, but for the whole image and at pixel level:</p>
+			<ul>
+				<li>Our label is not a single image but 13 images (as we have 13 possible label values).</li>
+				<li>Each image is dedicated to a single label.</li>
+				<li>The pixels of an image are <strong class="source-inline">1</strong> only where that label is present in the segmentation mask and <strong class="source-inline">0</strong> elsewhere.</li>
+				<li>In practice, we apply one-hot encoding at pixel level.</li>
+			</ul>
+			<p>This is the resulting code:</p>
+			<p class="source-code">def convert_to_segmentation_label(image, num_classes):</p>
+			<p class="source-code">  img_label = np.ndarray((image.shape[0], image.shape[1],     num_classes), dtype=np.uint8)</p>
+			<p class="source-code"> </p>
+			<p class="source-code">  one_hot_encoding = []</p>
+			<p class="source-code"> </p>
+			<p class="source-code">  for i in range(num_classes):</p>
+			<p class="source-code">    one_hot_encoding.append(to_categorical(i, num_classes))</p>
+			<p class="source-code"> </p>
+			<p class="source-code">  for i in range(image.shape[0]):</p>
+			<p class="source-code">    for j in range(image.shape[1]):</p>
+			<p class="source-code">      img_label[i, j] = one_hot_encoding[image[i, j, 2]]</p>
+			<p class="source-code"> </p>
+			<p class="source-code">  return img_label</p>
+			<p>At the beginning of the method, we create an image with 13 channels, and then we precompute the one-hot encoding (which contains 13 values) to speed up the computation. Then we simply apply the one-hot encoding to each pixel, based on the value of the red channel, which is where Carla stores the raw segmentation value.</p>
+			<p>Now you can start the training. You might consider running it overnight, as it might take a while, especially if you use dropout or if you decide to record additional images.</p>
+			<p>This is the graph with the training:</p>
+			<div>
+				<div id="_idContainer197" class="IMG---Figure">
+					<img src="Images/Figure_9.9_B16322.jpg" alt="Figure 9.9 – Training FC-DenseNet" width="642" height="559"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 9.9 – Training FC-DenseNet</p>
+			<p>It's not great, because <a id="_idIndexMarker638"/>the validation loss has many spikes, which indicates that the training is unstable, and sometimes the loss increases quite a lot. Ideally, we would like a smooth, decreasing curve as this means that the loss decreases at every iteration. It would probably benefit from a bigger batch size.</p>
+			<p>But the overall performance is not bad:</p>
+			<p class="source-code">Min Loss: 0.19355240797595402</p>
+			<p class="source-code">Min Validation Loss: 0.14731630682945251</p>
+			<p class="source-code">Max Accuracy: 0.9389197</p>
+			<p class="source-code">Max Validation Accuracy: 0.9090136885643005</p>
+			<p>The validation accuracy is above 90%, which is promising.</p>
+			<p>Let's now see how it behaves with the test dataset.</p>
+			<h2 id="_idParaDest-207"><a id="_idTextAnchor213"/>Running the neural network</h2>
+			<p>Running <a id="_idIndexMarker639"/>inference on the network is no different than the usual process, but we need to convert the output to a colored image that we can actually understand and use.</p>
+			<p>To do this, we need to define a palette of 13 colors that we are going to use to show the labels:</p>
+			<p class="source-code">palette = [] # in rgb</p>
+			<p class="source-code"> </p>
+			<p class="source-code">palette.append([0, 0, 0])  # 0: None</p>
+			<p class="source-code">palette.append([70, 70, 70])  # 1: Buildings</p>
+			<p class="source-code">palette.append([190, 153, 153])  # 2: Fences</p>
+			<p class="source-code">palette.append([192, 192, 192])  # 3: Other  (?)</p>
+			<p class="source-code">palette.append([220, 20, 60])  # 4: Pedestrians</p>
+			<p class="source-code">palette.append([153,153, 153])  # 5: Poles</p>
+			<p class="source-code">palette.append([0, 255, 0])  # 6: RoadLines  ?</p>
+			<p class="source-code">palette.append([128, 64, 128])  # 7: Roads</p>
+			<p class="source-code">palette.append([244, 35,232])  # 8: Sidewalks</p>
+			<p class="source-code">palette.append([107, 142, 35])  # 9: Vegetation</p>
+			<p class="source-code">palette.append([0, 0, 142])  # 10: Vehicles</p>
+			<p class="source-code">palette.append([102,102,156])  # 11: Walls</p>
+			<p class="source-code">palette.append([220, 220, 0])  # 11: Traffic signs</p>
+			<p>And now we just need to derive two images using these colors—the raw segmentation and the colored segmentation. The following function does both:</p>
+			<p class="source-code">def convert_from_segmentation_label(label):</p>
+			<p class="source-code">    raw = np.zeros((label.shape[0], label.shape[1], 3), dtype=np.uint8)</p>
+			<p class="source-code">    color = np.zeros((label.shape[0], label.shape[1], 3), dtype=np.uint8)</p>
+			<p class="source-code"> </p>
+			<p class="source-code">    for i in range(label.shape[0]):</p>
+			<p class="source-code">        for j in range(label.shape[1]):</p>
+			<p class="source-code">            color_label = int(np.argmax(label[i,j]))</p>
+			<p class="source-code">            raw[i, j][2] = color_label</p>
+			<p class="source-code">            # palette from rgb to bgr</p>
+			<p class="source-code">            color[i, j][0] = palette[color_label][2]</p>
+			<p class="source-code">            color[i, j][1] = palette[color_label][1]</p>
+			<p class="source-code">            color[i, j][2] = palette[color_label][0]</p>
+			<p class="source-code"> </p>
+			<p class="source-code">    return (raw, color)</p>
+			<p>You might remember that our output is an image with 13 channels, one per label. So you can see that we get the label from these channels using <strong class="source-inline">argmax</strong>; this label is used directly for the raw image, where it is stored in the red channel, whereas for the colored segmentation image, we store the color from the palette, using <strong class="source-inline">label</strong> as index, exchanging the blue and the red channel because OpenCV is in BGR.</p>
+			<p>Let's see how it performs, bearing in mind that these images are very similar to the ones that the network saw during training.</p>
+			<p>The following is the result for one image, with other versions of the segmented picture:</p>
+			<div>
+				<div id="_idContainer198" class="IMG---Figure">
+					<img src="Images/Figure_9.10_B16322.jpg" alt="Figure 9.10 – From the left: RGB image, ground truth from Carla, colored segmentation mask, and segmentation in overlay" width="800" height="160"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 9.10 – From the left: RGB image, ground truth from Carla, colored segmentation mask, and segmentation in overlay</p>
+			<p>As you <a id="_idIndexMarker640"/>can see from the image, it is not perfect, but it does a good job: the road is detected properly and the guard rail and trees are kind of fine, and the pedestrian is detected, but not very well. Surely we can improve this.</p>
+			<p>Let' s look at another problematic image:</p>
+			<div>
+				<div id="_idContainer199" class="IMG---Figure">
+					<img src="Images/Figure_9.11_B16322.jpg" alt="Figure 9.11 – From the left: RGB image, ground truth from Carla, colored segmentation mask, and segmentation in overlay" width="800" height="160"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 9.11 – From the left: RGB image, ground truth from Carla, colored segmentation mask, and segmentation in overlay</p>
+			<p>The previous image is quite challenging, as the road is dark and the cars are also dark, but the network does a decent job of detecting the road and the car (though the shape is not great). It does not detect the lane line, but it is actually not visible in the road, so here the ground truth is too optimistic.</p>
+			<p>Let's see another example:</p>
+			<div>
+				<div id="_idContainer200" class="IMG---Figure">
+					<img src="Images/Figure_9.12_B16322.jpg" alt="Figure 9.12 – From the left: RGB image, ground truth from Carla, colored segmentation mask, and segmentation in overlay" width="800" height="160"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 9.12 – From the left: RGB image, ground truth from Carla, colored segmentation mask, and segmentation in overlay</p>
+			<p>Here too, the result is not bad: the road and the trees are very well detected, and the traffic sign is decently detected, but it does not see the lane line, which is challenging but visible. </p>
+			<p>Just to be sure that it can indeed detect the lane line, let's look at a less challenging image:</p>
+			<div>
+				<div id="_idContainer201" class="IMG---Figure">
+					<img src="Images/Figure_9.13_B16322.jpg" alt="Figure 9.13 – From the left: RGB image, colored segmentation mask, and segmentation in overlay" width="600" height="160"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 9.13 – From the left: RGB image, colored segmentation mask, and segmentation in overlay</p>
+			<p>I don't have the ground truth for this image, which also means that although it is taken from the same batch as the training dataset, it might be a bit more different. Here, the network behaves very well: the road, lane line, sidewalk, and vegetation are all very well detected.</p>
+			<p>We have <a id="_idIndexMarker641"/>seen that the network performs decently, but surely we should add many more samples, both from the same track and also from other tracks, and with different kinds of weather. Unfortunately, this means that the training would be much more demanding.</p>
+			<p>Nevertheless, this kind of result with around a thousand images is, in my opinion, a good result. But what if you cannot get enough samples in the dataset? Let's learn a small trick.</p>
+			<h2 id="_idParaDest-208"><a id="_idTextAnchor214"/>Improving bad semantic segmentation</h2>
+			<p>Sometimes things <a id="_idIndexMarker642"/>don't go as you hope. Maybe getting a lot of samples for the dataset is too expensive, or it takes too much time. Or perhaps there is no time because you need to try to impress some investors, or there is a technical issue or another type of problem, and you are stuck with a bad network and a few minutes to fix it. What can you do?</p>
+			<p>Well, there is a small trick that can help you; it will not transform a bad network into a good one, but it can nevertheless be better than nothing.</p>
+			<p>Let's look at an example from a bad network:</p>
+			<div>
+				<div id="_idContainer202" class="IMG---Figure">
+					<img src="Images/Figure_9.14_B16322.jpg" alt="Figure 9.14 – Badly trained network" width="400" height="156"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 9.14 – Badly trained network </p>
+			<p>It has a validation accuracy of around 80%, and it has been trained with around 500 images. It's quite bad, but it looks even worse than what it really is because of the areas that are full of dots, where the network seems to not be able to decide what it is looking at. Can we fix this with some postprocessing? Yes, we can. You might remember from <a href="B16322_01_Final_NM_ePUB.xhtml#_idTextAnchor017"><em class="italic">Chapter 1</em></a>, <em class="italic">OpenCV Basics and Camera Calibration</em>, that OpenCV has several algorithms for blurring, and one in particular, the median blur, has a very interesting characteristic: it selects the median of the colors encountered, so it emits only colors that are already present in the few pixels that it analyzes, and it is very effective at reducing <em class="italic">salt and pepper</em> noise, which is what we are experiencing. So, let's see the result of ap<a id="_idTextAnchor215"/>plying this to the previous image:</p>
+			<div>
+				<div id="_idContainer203" class="IMG---Figure">
+					<img src="Images/Figure_9.15_B16322.jpg" alt="Figure 9.15 – Badly trained network, from the left: RGB image, colored segmentation, segmentation corrected with media blur (three pixels), and segmentation in overlay" width="480" height="96"/>
+				</div>
+			</div>
+			<p class="figure-caption">Figure 9.15 – Badly trained network, from the left: RGB image, colored segmentation, segmentation corrected with media blur (three pixels), <a id="_idTextAnchor216"/>and segmentation in overlay</p>
+			<p>As you <a id="_idIndexMarker643"/>can see, while far from perfect, it makes the image more usable. And it is only one line of code:</p>
+			<p class="source-code">median = cv2.medianBlur(color, 3)</p>
+			<p>I used three pixels, but you can use more, if required. I hope you don't find yourself in a position where your network underperforms, but if you do, then this will surely be worth a try.</p>
+			<h1 id="_idParaDest-209"><a id="_idTextAnchor217"/>Summary</h1>
+			<p>Congratulations! You completed the final chapter on deep learning. </p>
+			<p>We started this chapter by discussing what semantic segmentation means, then we talked extensively about DenseNet and why it is such a great architecture. We quickly talked about using a stack of convolutional layers to implement semantic segmentation, but we focused on a more efficient way, which is using DenseNet after adapting it to this task. In particular, we developed an architecture similar to FC-DenseNet. We collected a dataset with the ground truth for semantic segmentation, using Carla, and then we trained our neural network on it and saw how it performed and when detecting roads and other objects, such as pedestrians and sidewalks. We even discussed a trick to improve the output of a bad semantic segmentation. </p>
+			<p>This chapter was quite advanced, and it required a good understanding of all the previous chapters about deep learning. It has been quite a ride, and I think it is fair to say that this has been a <em class="italic">dense </em>chapter. Now that you have a good knowledge of how to train a network to recognize what is present in front of a car, it is time to take control of the car and make it steer.</p>
+			<h1 id="_idParaDest-210"><a id="_idTextAnchor218"/>Questions</h1>
+			<p>After reading this chapter, you will be able to answer the following questions:</p>
+			<ol>
+				<li value="1">What is a distinguished characteristic of DenseNet?</li>
+				<li>What is the name of the family architecture such as inspired the authors of DenseNet?</li>
+				<li>What is FC-DenseNet?</li>
+				<li>Why do we say that FC-DenseNet is U-shaped?</li>
+				<li>Do you need a fancy architecture like DenseNet to perform semantic segmentation?</li>
+				<li>If you have a neural network that performs poorly at semantic segmentation, is there a quick fix that you can use sometimes, if you have no other options?</li>
+				<li>What are skip connections used for in FC-DenseNet and other U-shaped architectures?</li>
+			</ol>
+			<h1 id="_idParaDest-211"><a id="_idTextAnchor219"/>Further reading</h1>
+			<ul>
+				<li>DenseNet paper (<a href="https://arxiv.org/abs/1608.06993">https://arxiv.org/abs/1608.06993</a>)</li>
+				<li>FC-DenseNet paper (<a href="https://arxiv.org/abs/1611.09326">https://arxiv.org/abs/1611.09326</a>)</li>
+			</ul>
+		</div>
+	</div>
+
+
+
+  </body></html>

@@ -1,0 +1,346 @@
+<html><head></head><body>
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Detecting Face Parts and Overlaying Masks</h1>
+                </header>
+            
+            <article>
+                
+<p>In <a href="83822325-00be-4874-813c-b90097030d85.xhtml">Chapter 6</a>, <em>Learning Object Classification</em>, we learned about object classification and how machine learning can be used to achieve it. In this chapter, we are going to learn how to detect and track different face parts. We will start the discussion by understanding the face detection pipeline and how it's built. We will then use this framework to detect face parts, such as the eyes, ears, mouth, and nose. Finally, we will learn how to overlay funny masks on these face parts in a live video.</p>
+<p>By the end of this chapter, we should be familiar with the following topics:</p>
+<ul>
+<li>Understanding Haar cascades</li>
+<li>Integral images and why we need them</li>
+<li>Building a generic face detection pipeline</li>
+<li>Detecting and tracking faces, eyes, ears, noses, and mouths in a live video stream from the webcam</li>
+<li>Automatically overlaying a face mask, sunglasses, and a funny nose on a person's face in a video</li>
+</ul>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Technical requirements</h1>
+                </header>
+            
+            <article>
+                
+<p>This chapter requires <span>basic </span>familiarity with the C++ programming language. All the code used in this chapter can be downloaded from the following GitHub link: <a href="https://github.com/PacktPublishing/Learn-OpenCV-4-By-Building-Projects-Second-Edition/tree/master/Chapter_07">https://github.com/PacktPublishing/Learn-OpenCV-4-By-Building-Projects-Second-Edition/tree/master/Chapter_07</a>. The code can be executed on any operating system, though it is only tested on Ubuntu.</p>
+<p> </p>
+<p>Check out the following video to see the Code in Action:<br/>
+<a href="http://bit.ly/2SlpTK6">http://bit.ly/2SlpTK6</a></p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Understanding Haar cascades</h1>
+                </header>
+            
+            <article>
+                
+<p>Haar cascades are cascade classifiers that are based on Haar features. What is a cascade classifier? It is simply a concatenation of a set of weak classifiers that can be used to create a strong classifier. What do we mean by <strong>weak</strong> and <strong>strong</strong> classifiers? Weak classifiers are classifiers whose performance is limited. They don't have the ability to classify everything correctly. If you keep the problem really simple, they might perform at an acceptable level. Strong classifiers, on the other hand, are really good at classifying our data correctly. We will see how it all comes together in the next couple of paragraphs. Another important part of Haar cascades is <strong>Haar features</strong>. These features are simple summations of rectangles and differences of those areas across the image. Let's consider the following diagram:</p>
+<p class="CDPAlignCenter CDPAlign"><img class="alignnone size-full wp-image-519 image-border" src="assets/50bdb239-0bd8-49d2-af12-631b7735f346.png" style="width:25.17em;height:24.92em;"/></p>
+<p>If we want to compute the Haar features for region ABCD, we just need to compute the difference between the white pixels and the blue pixels in that region. As we can see from the four diagrams, we use different patterns to build Haar features. There are a lot of other patterns that are used as well. We do this at multiple scales to make the system scale-invariant. When we say multiple scales, we just scale the image down to compute the same features again. This way, we can make it robust against size variations of a given object.</p>
+<div class="packt_infobox">As it turns out, this concatenation system is a very good method for detecting objects in an image. In 2001, Paul Viola and Michael Jones published a seminal paper where they described a fast and effective method for object detection. If you are interested in learning more about it, you can check out their paper at <a href="http://www.cs.ubc.ca/~lowe/425/slides/13-ViolaJones.pdf"><span class="URLPACKT">http://www.cs.ubc.ca/~lowe/425/slides/13-ViolaJones.pdf</span></a>.</div>
+<p>Let's dive deeper into it to understand what they actually did. They basically described an algorithm that uses a boosted cascade of simple classifiers. This system is used to build a strong classifier that can perform really well. Why did they use these simple classifiers instead of complex classifiers, which can be more accurate? Well, using this technique they were able to avoid the problem of having to build a single classifier that can perform with high precision. These single-step classifiers tend to be complex and computationally intensive. The reason their technique works so well is because the simple classifiers can be weak learners, which means they don't need to be complex. Consider the problem of building a table detector. We want to build a system that will automatically learn what a table looks like. Based on that knowledge, it should be able to identify whether there is a table in any given image. To build this system, the first step is to collect images that can be used to train our system. There are a lot of techniques available in the machine learning world that can be used to train a system such as this. Bear in mind that we need to collect a lot of table and non-table images if we want our system to perform well. In machine learning lingo, table images are called <strong>positive</strong> samples and the non-table images are called <strong>negative</strong> samples. Our system will ingest this data and then learn to differentiate between these two classes. In order to build a real-time system, we need to keep our classifier nice and simple. The only concern is that simple classifiers are not very accurate. If we try to make them more accurate, then the process will end up being computationally intensive, and hence slow. This trade-off between accuracy and speed is very common in machine learning. So, we overcome this problem by concatenating a bunch of weak classifiers to create a strong and unified classifier. We don't need the weak classifiers to be very accurate. To ensure the quality of the overall classifier, Viola and Jones have described a nifty technique in the cascading step. You can go through the paper to understand the full system.</p>
+<p>Now that we understand the general pipeline, let's see how to build a system that can detect faces in a live video. The first step is to extract features from all the images. In this case, the algorithms need these features to learn and understand what faces look like. They used Haar features in their paper to build the feature vectors. Once we extract these features, we pass them through a cascade of classifiers. We just check all the different rectangular sub-regions and keep discarding the ones that don't have faces in them. This way, we arrive at the final answer quickly to see whether a given rectangle contains a face or not.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">What are integral images?</h1>
+                </header>
+            
+            <article>
+                
+<p>In order to extract these Haar features, we will have to calculate the sum of the pixel values enclosed in many rectangular regions of the image. To make it scale-invariant, we are required to compute these areas at multiple scales (for various rectangle sizes). Implemented naively, this would be a very computationally-intensive process; we would have to iterate over all the pixels of each rectangle, including reading the same pixels multiple times if they are contained in different overlapping rectangles. If you want to build a system that can run in real-time, you cannot spend so much time in computation. We need to find a way to avoid this huge redundancy during the area computation because we iterate over the same pixels multiple times. To avoid it, we can use something called integral images. These images can be initialized at a linear time (by iterating only twice over the image) and then provide the sum of the pixels inside any rectangle of any size by reading only four values. To understand it better, let's look at the following diagram:</p>
+<p class="CDPAlignCenter CDPAlign"><img class="alignnone size-full wp-image-517 image-border" src="assets/17189123-7d03-4a17-a954-222e9ca17c79.png" style="width:14.50em;height:14.42em;"/></p>
+<p><span>If we want to calculate the area of any rectangle in our diagram, we don't have to iterate through all the pixels in that region. Let's consider a rectangle formed by the top-left point in the image and any point, P, as the opposite corner. Let A<sub>P</sub> denote the area of this rectangle. For example, in the previous image, A<sub>B</sub> denotes the area of the 5 x 2 rectangle formed by taking the top-left point and <strong>B</strong> as opposite corners. Let's look at the following diagram for clarity:</span></p>
+<p class="CDPAlignCenter CDPAlign"><img class="alignnone size-full wp-image-519 image-border" src="assets/fb75616a-63ba-49d5-8c05-d2cdfae54485.png" style="width:25.75em;height:25.42em;"/></p>
+<p class="mce-root"/>
+<p class="mce-root"/>
+<p><span>Let's consider the top-left square in the previous image. The blue pixels indicate the the area between the top-left pixel and point <strong>A</strong>. This is denoted by A<sub>A</sub>. The remaining diagrams are denoted by their respective names: A<sub>B</sub>, A<sub>C</sub>, and A<sub>D</sub>. Now, if we want to calculate the area of the ABCD rectangle, as shown in the preceding diagram, we would use the following formula:</span></p>
+<p><span><strong>Area of the rectangle</strong>: <em>ABCD</em> = <em>A<sub>C</sub></em> - (<em>A<sub>B</sub></em> + <em>A<sub>D</sub></em> - <em>A<sub>A</sub></em>)</span></p>
+<p>What's so special about this particular formula? As we know, extracting Haar features from the image includes computing these summations and we would have to do it for a lot of rectangles at multiple scales in the image. A lot of those calculations are repetitive because we would be iterating over the same pixels over and over again. It is so slow that building a real-time system wouldn't be feasible. Hence, we need this formula. As you can see, we don't have to iterate over the same pixels multiple times. If we want to compute the area of any rectangle, all the values on the right-hand side of the preceding equation are readily available in our integral image. We just pick up the right values, substitute them in the preceding equation, and extract the features.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Overlaying a face mask in a live video</h1>
+                </header>
+            
+            <article>
+                
+<p>OpenCV provides a nice face detection framework. We just need to load the cascade file and use it to detect the faces in an image. When we capture a video stream from the webcam, we can overlay funny masks on our faces. It will look something like this:</p>
+<div class="packt_figure CDPAlignCenter CDPAlign"><img class="alignnone size-full wp-image-520 image-border" src="assets/4b3881f9-9bf6-4642-864b-b47979fcd9dc.png" style="width:50.67em;height:30.33em;"/></div>
+<p>Let's look at the main parts of the code to see how to overlay this mask on the face in the input video stream. The full code is available in the downloadable code bundle provided along with this book:</p>
+<pre>#include "opencv2/core/utility.hpp"<br/>#include "opencv2/objdetect/objdetect.hpp"<br/>#include "opencv2/imgproc.hpp"<br/>#include "opencv2/highgui.hpp"<br/><br/>using namespace cv;<br/>using namespace std;<br/><br/>...<br/><br/>int main(int argc, char* argv[]) 
+{ 
+    string faceCascadeName = argv[1]; 
+     
+    // Variable declaration and initialization 
+    ...<br/>    // Iterate until the user presses the Esc key 
+    while(true) 
+    { 
+        // Capture the current frame 
+        cap &gt;&gt; frame; 
+         
+        // Resize the frame 
+        resize(frame, frame, Size(), scalingFactor, scalingFactor, INTER_AREA); 
+         
+        // Convert to grayscale 
+        cvtColor(frame, frameGray, COLOR_BGR2GRAY); 
+         
+        // Equalize the histogram 
+        equalizeHist(frameGray, frameGray); 
+         
+        // Detect faces 
+        faceCascade.detectMultiScale(frameGray, faces, 1.1, 2, 0|HAAR_SCALE_IMAGE, Size(30, 30) ); </pre>
+<p>Let's take a quick stop to see what happened here. We start reading input frames from the webcam and resize it to our size of choice. The captured frame is a color image and face detection works on grayscale images. So, we convert it to grayscale and equalize the histogram. Why do we need to equalize the histogram? We need to do this to compensate for any issues, such as lighting or saturation. If the image is too bright or too dark, the detection will be poor. So, we need to equalize the histogram to ensure that our image has a healthy range of pixel values:</p>
+<pre>        // Draw green rectangle around the face 
+        for(auto&amp; face:faces) 
+        { 
+            Rect faceRect(face.x, face.y, face.width, face.height); 
+             
+            // Custom parameters to make the mask fit your face. You may have to play around with them to make sure it works. 
+            int x = face.x - int(0.1*face.width); 
+            int y = face.y - int(0.0*face.height); 
+            int w = int(1.1 * face.width); 
+            int h = int(1.3 * face.height); 
+             
+            // Extract region of interest (ROI) covering your face 
+            frameROI = frame(Rect(x,y,w,h));</pre>
+<p>At this point, we know where the face is. So we extract the region of interest to overlay the mask in the right position:</p>
+<pre>            // Resize the face mask image based on the dimensions of the above ROI 
+            resize(faceMask, faceMaskSmall, Size(w,h)); 
+             
+            // Convert the previous image to grayscale 
+            cvtColor(faceMaskSmall, grayMaskSmall, COLOR_BGR2GRAY); 
+             
+            // Threshold the previous image to isolate the pixels associated only with the face mask 
+            threshold(grayMaskSmall, grayMaskSmallThresh, 230, 255, THRESH_BINARY_INV); </pre>
+<p>We isolate the pixels associated with the face mask. We want to overlay the mask in such a way that it doesn't look like a rectangle. We want the exact boundaries of the overlaid object so that it looks natural. Let's go ahead and overlay the mask now:</p>
+<pre>            // Create mask by inverting the previous image (because we don't want the background to affect the overlay) 
+            bitwise_not(grayMaskSmallThresh, grayMaskSmallThreshInv); 
+             
+            // Use bitwise "AND" operator to extract precise boundary of face mask 
+            bitwise_and(faceMaskSmall, faceMaskSmall, maskedFace, grayMaskSmallThresh); 
+             
+            // Use bitwise "AND" operator to overlay face mask 
+            bitwise_and(frameROI, frameROI, maskedFrame, grayMaskSmallThreshInv); 
+             
+            // Add the previously masked images and place it in the original frame ROI to create the final image 
+            add(maskedFace, maskedFrame, frame(Rect(x,y,w,h))); 
+        } 
+      
+    // code dealing with memory release and GUI 
+ 
+    return 1; 
+} </pre>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">What happened in the code?</h1>
+                </header>
+            
+            <article>
+                
+<p>The first thing to note is that this code takes two input arguments—the <strong>face cascade XML</strong> file and the <strong>mask image</strong>. You can use the <kbd><span class="URLPACKT">haarcascade_frontalface_alt.xml</span></kbd> and <kbd><span class="URLPACKT">facemask.jpg</span></kbd> files that are provided under the <kbd>resources</kbd> folder. We need a classifier model that can be used to detect faces in an image and OpenCV provides a prebuilt XML file that can be used for this purpose. We use the <kbd><span class="CodeInTextPACKT">faceCascade.load()</span></kbd> function to load the XML file and also check whether the file is loaded correctly. We initiate the video-capture object to capture the input frames from the webcam. We then convert it to grayscale to run the detector. The <kbd><span class="CodeInTextPACKT">detectMultiScale</span></kbd> function is used to extract the boundaries of all the faces in the input image. We may have to scale down the image according to our needs, so the second argument in this function takes care of this. This scaling factor is the jump we take at each scale; since we need to look for faces at multiple scales, the next size will be 1.1 times bigger than the current size. The last parameter is a threshold that specifies the number of adjacent rectangles needed to keep the current rectangle. It can be used to increase the robustness of the face detector. We start the <kbd><span class="CodeInTextPACKT">while</span></kbd> loop and keep detecting the face in every frame until the user presses the <em>Esc</em> key. Once we detect a face, we need to overlay a mask on it. We may have to modify the dimensions slightly to ensure that the mask fits nicely. This customization is slightly subjective and it depends on the mask that's being used. Now that we have extracted the region of interest, we need to place our mask on top of this region. If we overlay the mask with its white background, it will look weird. We have to extract the exact curvy boundaries of the mask and then overlay it. We want the skull mask pixels to be visible and the remaining area should be transparent.</p>
+<p>As we can see, the input mask has a white background. So, we create a mask by applying a threshold to the mask image. Using trial and error, we can see that a threshold of <kbd>240</kbd> works well. In the image, all the pixels with an intensity value greater than <kbd>240</kbd> will become <kbd>0</kbd>, and all others will become <kbd>255</kbd>. As far as the region of interest is concerned, we have to black out all the pixels in this region. To do that, we simply use the inverse of the mask that was just created. In the last step, we just add the masked versions to produce the final output image.</p>
+<p class="mce-root"/>
+<p class="mce-root"/>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Get your sunglasses on</h1>
+                </header>
+            
+            <article>
+                
+<p>Now that we understand how to detect faces, we can generalize that concept to detect different parts of the face. We will be using an eye detector to overlay sunglasses in a live video. It's important to understand that the Viola-Jones framework can be applied to any object. The accuracy and robustness will depend on the uniqueness of the object. For example, the human face has very unique characteristics, so it's easy to train our system to be robust. On the other hand, an object such as a towel is too generic, and it has no distinguishing characteristics as such, so it's more difficult to build a robust towel detector. Once you build the eye detector and overlay the glasses, it will look something like this:</p>
+<div class="packt_figure CDPAlignCenter CDPAlign"><img class="alignnone size-full wp-image-521 image-border" src="assets/27045d2d-9d41-4a3f-8b1a-1906be8ea46a.png" style="width:56.17em;height:32.75em;"/></div>
+<p>Let's look at the main parts of the code:</p>
+<pre>...<br/>int main(int argc, char* argv[]) 
+{ 
+    string faceCascadeName = argv[1]; 
+    string eyeCascadeName = argv[2]; 
+ 
+    // Variable declaration and initialization
+    ....<br/>    // Face detection code 
+    ....
+    vector&lt;Point&gt; centers; 
+    ....     
+    // Draw green circles around the eyes 
+    for( auto&amp; face:faces ) 
+    { 
+        Mat faceROI = frameGray(face<span>[i]</span>); 
+        vector&lt;Rect&gt; eyes; 
+             
+        // In each face, detect eyes eyeCascade.detectMultiScale(faceROI, eyes, 1.1, 2, 0 |CV_HAAR_SCALE_IMAGE, Size(30, 30)); </pre>
+<p>As we can see here, we run the eye detector only in the face region. We don't need to search the entire image for eyes because we know eyes will always be on a face:</p>
+<pre>            // For each eye detected, compute the center 
+            for(auto&amp; eyes:eyes) 
+            { 
+                Point center( face.x + eye.x + int(eye.width*0.5), face.y + eye.y + int(eye.height*0.5) ); 
+                centers.push_back(center); 
+            } 
+        } 
+         
+        // Overlay sunglasses only if both eyes are detected 
+        if(centers.size() == 2) 
+        { 
+            Point leftPoint, rightPoint; 
+             
+            // Identify the left and right eyes 
+            if(centers[0].x &lt; centers[1].x) 
+            { 
+                leftPoint = centers[0]; 
+                rightPoint = centers[1]; 
+            } 
+            else 
+            { 
+                leftPoint = centers[1]; 
+                rightPoint = centers[0]; 
+            } </pre>
+<p>We detect the eyes and store them only when we find both of them. We then use their coordinates to determine which one is the left eye and which one is the right eye:</p>
+<pre>            // Custom parameters to make the sunglasses fit your face. You may have to play around with them to make sure it works. 
+            int w = 2.3 * (rightPoint.x - leftPoint.x); 
+            int h = int(0.4 * w); 
+            int x = leftPoint.x - 0.25*w; 
+            int y = leftPoint.y - 0.5*h; 
+             
+            // Extract region of interest (ROI) covering both the eyes 
+            frameROI = frame(Rect(x,y,w,h)); 
+             
+            // Resize the sunglasses image based on the dimensions of the above ROI 
+            resize(eyeMask, eyeMaskSmall, Size(w,h)); </pre>
+<p>In the preceding code, we adjusted the size of the sunglasses to fit the scale of our faces in the webcam. Let's check the remaining code:</p>
+<pre>            // Convert the previous image to grayscale 
+            cvtColor(eyeMaskSmall, grayMaskSmall, COLOR_BGR2GRAY); 
+             
+            // Threshold the previous image to isolate the foreground object 
+            threshold(grayMaskSmall, grayMaskSmallThresh, 245, 255, THRESH_BINARY_INV); 
+             
+            // Create mask by inverting the previous image (because we don't want the background to affect the overlay) 
+            bitwise_not(grayMaskSmallThresh, grayMaskSmallThreshInv); 
+             
+            // Use bitwise "AND" operator to extract precise boundary of sunglasses 
+            bitwise_and(eyeMaskSmall, eyeMaskSmall, maskedEye, grayMaskSmallThresh); 
+             
+            // Use bitwise "AND" operator to overlay sunglasses 
+            bitwise_and(frameROI, frameROI, maskedFrame, grayMaskSmallThreshInv); 
+             
+            // Add the previously masked images and place it in the original frame ROI to create the final image 
+            add(maskedEye, maskedFrame, frame(Rect(x,y,w,h))); 
+        } 
+ 
+        // code for memory release and GUI 
+ 
+    return 1; 
+} </pre>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Looking inside the code</h1>
+                </header>
+            
+            <article>
+                
+<p>You may have noticed that the flow of the code looks similar to the face detection code that we discussed in the <em>Overlaying a face mask in a live video</em> section. We load a face detection cascade classifier as well as the eye detection cascade classifier. Now, why do we need to load the face cascade classifier when we are detecting eyes? Well, we don't really need to use the face detector, but it helps us in limiting our search for the eyes' location. We know that the eyes are always located on somebody's face, so we can limit eye detection to the face region. The first step would be to detect the face and then run our eye detector code on this region. Since we would be operating on a smaller region, it would be faster and way more efficient.</p>
+<p>For each frame, we start by detecting the face. We then go ahead and detect the location of the eyes by operating on this region. After this step, we need to overlay the sunglasses. To do that, we need to resize the sunglasses image to make sure it fits our face. To get the proper scale, we can consider the distance between the two eyes that are being detected. We overlay the sunglasses only when we detect both eyes. That's why we run the eye detector first, collect all the centers, and then overlay the sunglasses. Once we have this, we just need to overlay the sunglasses mask. The principle used for masking is very similar to the principle we used to overlay the face mask. You may have to customize the sizing and position of the sunglasses, depending on what you want. You can play around with different types of sunglasses to see what they look like.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Tracking the nose, mouth, and ears</h1>
+                </header>
+            
+            <article>
+                
+<p>Now that you know how to track different things using the framework, you can try tracking your nose, mouth, and ears too. Let's use a nose detector to overlay a funny nose:</p>
+<div class="packt_figure CDPAlignCenter CDPAlign"><img class="alignnone size-full wp-image-522 image-border" src="assets/b51f1ac4-21ab-427a-bed0-ad67d269f491.png" style="width:48.58em;height:28.50em;"/></div>
+<p>You can refer to the code files for a full implementation of this detector. The <span class="URLPACKT"><kbd>haarcascade_mcs_nose.xml</kbd>, <kbd>haarcascade_mcs_mouth.xml</kbd></span>, <kbd><span class="URLPACKT">haarcascade_mcs_leftear.xml</span></kbd>, and <kbd><span class="URLPACKT">haarcascade_mcs_rightear.xml</span></kbd> cascade files can be used to track the different face parts. Play around with them and try to overlay a mustache or Dracula ears on yourself.</p>
+
+
+            </article>
+
+            
+        </section>
+    
+
+        <section>
+
+                            <header>
+                    <h1 class="header-title">Summary</h1>
+                </header>
+            
+            <article>
+                
+<p>In this chapter, we discussed Haar cascades and integral images. We looked at how the face detection pipeline is built. We learned how to detect and track faces in a live video stream. We discussed using the face detection framework to detect various face parts, such as eyes, ears, nose, and mouth. Finally, we learned how to overlay masks on the input image using the results of face part detection.</p>
+<p>In the next chapter, we are going to learn about video surveillance, background removal, and morphological image processing.</p>
+
+
+            </article>
+
+            
+        </section>
+    </body></html>
