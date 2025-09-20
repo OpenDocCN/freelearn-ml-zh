@@ -1,4 +1,4 @@
-# 使 WxUtils.py 与 Raspberry Pi 兼容
+# 第九章：使 WxUtils.py 与 Raspberry Pi 兼容
 
 在 第二章*全球寻找豪华住宿* 中，我们编写了一个文件，`WxUtils.py`，其中包含一个实用函数 `wxBitmapFromCvImage`，用于将 OpenCV 图像转换为 wxPython 位图。我们在本书的 Python 项目中使用了这个实用函数。
 

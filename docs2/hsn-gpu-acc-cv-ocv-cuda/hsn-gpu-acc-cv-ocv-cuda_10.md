@@ -1,4 +1,4 @@
-# PyCUDA 入门
+# 第十章：PyCUDA 入门
 
 我们已经看到如何使用 OpenCV 和 CUDA 加速各种应用。我们使用了 C 或 C++ 作为编程语言。如今，Python 在许多领域都非常流行，因此如果我们能够使用 CUDA 加速 Python 应用程序，将会非常有用。Python 提供了一个 PyCUDA 模块，它正是为此而设计的。
 

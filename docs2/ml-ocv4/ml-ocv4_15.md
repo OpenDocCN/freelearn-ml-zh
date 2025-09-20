@@ -1,4 +1,4 @@
-# 使用 OpenVINO 与 OpenCV
+# 第十二章：使用 OpenVINO 与 OpenCV
 
 在第一章中，我们讨论了 OpenCV 4.0 版本中的各种新功能。值得注意的是，OpenVINO 工具包。值得注意的是，OpenVINO 工具包被嵌入式视觉联盟选为 2019 年开发者工具年度大奖。
 

@@ -1,4 +1,4 @@
-# 使用 Python 蛇（或，Python 的第一步）
+# 第十一章：使用 Python 蛇（或，Python 的第一步）
 
 本附录假设你已经根据 第一章，“准备任务”中的说明，设置了 Python 环境和 OpenCV 的 Python 绑定。现在，如果你是 Python 新手，你可能想知道如何测试这个环境和运行 Python 代码。
 

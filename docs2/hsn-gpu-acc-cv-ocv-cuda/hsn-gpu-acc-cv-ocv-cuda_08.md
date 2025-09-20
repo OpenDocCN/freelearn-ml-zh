@@ -1,4 +1,4 @@
-# Jetson TX1 开发板简介及在 Jetson TX1 上安装 OpenCV
+# 第八章：Jetson TX1 开发板简介及在 Jetson TX1 上安装 OpenCV
 
 上一章介绍了使用 OpenCV 和 CUDA 的各种计算机视觉应用。当这些应用需要在实际场景中部署时，就需要一个嵌入式开发板，能够通过利用 OpenCV 和 CUDA 高速处理图像。Nvidia 提供了多个基于 GPU 的开发板，如 Jetson TK1、TX1 和 TX2，它们非常适合高端计算任务，如计算机视觉。本章将介绍其中一个开发板，即 Jetson TX1。还将详细讨论该板可用的特性和应用。CUDA 和 OpenCV 对于计算机视觉应用至关重要，因此本章将详细讨论在 Jetson TX1 上安装它们的步骤。
 

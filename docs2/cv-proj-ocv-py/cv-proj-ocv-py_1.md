@@ -1,4 +1,4 @@
-# 设置 Anaconda 环境
+# 第一章：设置 Anaconda 环境
 
 欢迎来到*使用 OpenCV 和 Python 3 的计算机视觉项目*。如果你是 OpenCV 和计算机视觉的新手，这本书你可能想看看。
 

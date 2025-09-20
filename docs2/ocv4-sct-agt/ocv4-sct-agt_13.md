@@ -1,4 +1,4 @@
-# 学习更多关于 OpenCV 中特征检测的知识
+# 第十章：学习更多关于 OpenCV 中特征检测的知识
 
 在 第四章*，使用优雅的手势控制手机应用* 中，我们使用了 Good Features to Track 算法来检测图像中的可追踪特征。OpenCV 提供了几个其他特征检测算法的实现。其中另外两种算法，称为最小特征值角和 Harris 角，是 Good Features to Track 的前身，它们在原有基础上进行了改进。一个官方教程在代码示例中展示了如何使用特征值角和 Harris 角，请参阅 [`docs.opencv.org/master/d9/dbc/tutorial_generic_corner_detector.h`](https://docs.opencv.org/master/d9/dbc/tutorial_generic_corner_detector.html)[tml](https://docs.opencv.org/master/d9/dbc/tutorial_generic_corner_detector.html)。
 
