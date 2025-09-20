@@ -1,6 +1,6 @@
-# Python 应用监督学习
+# 自动驾驶汽车的视觉和行为实用指南
 
-> 原文：[`annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47`](https://annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47)
+> 原文：[`annas-archive.org/md5/9b92075f71de367fabcae691ae8a60bd`](https://annas-archive.org/md5/9b92075f71de367fabcae691ae8a60bd)
 > 
 > 译者：[飞龙](https://github.com/wizardforcel)
 > 

@@ -1,6 +1,6 @@
-# Python 应用监督学习
+# OpenCV 和 CUDA GPU 加速的计算机视觉实用指南
 
-> 原文：[`annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47`](https://annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47)
+> 原文：[`annas-archive.org/md5/b5d2ddddf00cdfdea66355a7259934ba`](https://annas-archive.org/md5/b5d2ddddf00cdfdea66355a7259934ba)
 > 
 > 译者：[飞龙](https://github.com/wizardforcel)
 > 

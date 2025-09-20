@@ -1,6 +1,6 @@
-# Python 应用监督学习
+# Clojure 机器学习
 
-> 原文：[`annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47`](https://annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47)
+> 原文：[`annas-archive.org/md5/1b2ecfd03b995ad3ca86b0a07ad56e70`](https://annas-archive.org/md5/1b2ecfd03b995ad3ca86b0a07ad56e70)
 > 
 > 译者：[飞龙](https://github.com/wizardforcel)
 > 

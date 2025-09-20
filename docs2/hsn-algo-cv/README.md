@@ -1,6 +1,6 @@
-# Python 应用监督学习
+# 计算机视觉算法实用指南
 
-> 原文：[`annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47`](https://annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47)
+> 原文：[`annas-archive.org/md5/96ae7a0eb0ade91db24b62767897b433`](https://annas-archive.org/md5/96ae7a0eb0ade91db24b62767897b433)
 > 
 > 译者：[飞龙](https://github.com/wizardforcel)
 > 
