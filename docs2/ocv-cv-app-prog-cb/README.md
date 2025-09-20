@@ -1,6 +1,6 @@
-# Python 应用监督学习
+# OpenCV 计算机视觉应用编程秘籍
 
-> 原文：[`annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47`](https://annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47)
+> 原文：[`annas-archive.org/md5/746e42d5d67354a99dd75a9502953e31`](https://annas-archive.org/md5/746e42d5d67354a99dd75a9502953e31)
 > 
 > 译者：[飞龙](https://github.com/wizardforcel)
 > 

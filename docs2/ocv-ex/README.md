@@ -1,6 +1,6 @@
-# Python 应用监督学习
+# OpenCV 示例
 
-> 原文：[`annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47`](https://annas-archive.org/md5/d906d6d9346f8d8b7965d192afaf9a47)
+> 原文：[`annas-archive.org/md5/3b2c450033f2ee8cef2d72dbdd34f162`](https://annas-archive.org/md5/3b2c450033f2ee8cef2d72dbdd34f162)
 > 
 > 译者：[飞龙](https://github.com/wizardforcel)
 > 
