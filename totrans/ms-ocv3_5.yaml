@@ -1,0 +1,884 @@
+- en: 3D Head Pose Estimation Using AAM and POSIT
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: A good computer vision algorithm can't be complete without great, robust capabilities,
+    as well as wide generalization and a solid math foundation. All these features
+    accompany the work mainly developed by Timothy Cootes with Active Appearance Models.
+    This chapter will teach you how to create an **Active Appearance Model** (**AAM**)
+    of your own using OpenCV as well as how to use it to search for the closest position
+    your model is located at in a given frame. Besides, you will learn how to use
+    the POSIT algorithm and how to fit your 3D model in the *posed* image. With all
+    these tools, you will be able to track a 3D model in a video, in real time--ain't
+    it great? Although the examples focus on head pose, virtually any deformable model
+    could use the same approach.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'This chapter will cover the following topics:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Active Appearance Models overview
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Active Shape Models overview
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Model instantiation--playing with the Active Appearance Model
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: AAM search and fitting
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: POSIT
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'The following list has an explanation of the terms that you will come across
+    in the chapter:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**Active Appearance Model** (**AAM**): This is an object model containing statistical
+    information of its shape and texture. It is a powerful way of capturing shape
+    and texture variation from objects.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Active Shape Model** (**ASM**): This is a statistical model of the shape
+    of an object. It is very useful for learning shape variation.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Principal Component Analysis** (**PCA**): This is an orthogonal linear transformation
+    that transforms the data to a new coordinate system, such that the greatest variance
+    by any projection of the data comes to lie on the first coordinate (called the
+    first principal component), the second greatest variance on the second coordinate,
+    and so on. This procedure is often used in dimensionality reduction. When reducing
+    the dimension of the original problem, one can use a faster fitting algorithm.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Delaunay Triangulation (DT)**: For a set of *P* points in a plane, it is
+    a triangulation such that no point in *P* is inside the circumcircle of any triangle
+    in the triangulation. It tends to avoid skinny triangles. The triangulation is
+    required for texture mapping.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Affine transformation**: This is any transformation that can be expressed
+    in the form of a matrix multiplication followed by a vector addition. This can
+    be used for texture mapping.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Pose from Orthography and Scaling with Iterations** (**POSIT**): This is
+    a computer vision algorithm that performs 3D pose estimation.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Active Appearance Models overview
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In few words, Active Appearance Models are a nice model parameterization of
+    combined texture and shape, coupled to an efficient search algorithm that can
+    tell exactly where and how a model is located in a picture frame. In order to
+    do this, we will start with the *Active Shape Models* section and see that they
+    are more closely related to landmark positions. A Principal Component Analysis
+    and some hands-on experience will be better described in the following sections.
+    Then, we will be able to get some help from OpenCV's Delaunay functions and learn
+    some triangulation. From that, we will evolve to applying piecewise affine warps
+    in the triangle texture warping section, where we can get information from an
+    object's texture.
+  prefs: []
+  type: TYPE_NORMAL
+- en: As we get enough background to build a good model, we can play with the techniques
+    in the model instantiation section. We will then be able to solve the inverse
+    problem through AAM search and fitting. These, by themselves, are already very
+    useful algorithms for 2D and maybe even 3D image matching. However, when one is
+    able to get it to work, why not bridge it to **POSIT** (**Pose from Orthography
+    and Scaling with Iterations**), another rock-solid algorithm for 3D model fitting?
+    Diving into the POSIT section will give us enough background to work with it in
+    OpenCV, and you will then learn how to couple a head model to it, in the following
+    section. This way, we can use a 3D model to fit the already matched 2D frame.
+    If you want to know where this will take us, it is just a matter of combining
+    AAM and POSIT in a frame-by-frame fashion to get real-time 3D tracking by detection
+    for deformable models! These details will be covered in the tracking from the
+    webcam or video file section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'It is said that a picture is worth a thousand words; imagine if we get *N*
+    pictures. This way, what we previously mentioned is easily tracked in the following
+    screenshot:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/image_06_001.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: Overview of the chapter algorithms
+  prefs:
+  - PREF_H4
+  type: TYPE_NORMAL
+- en: Given an image (upper-left image in the preceding screenshot), we can use an
+    Active Appearance search algorithm to find the 2D pose of the human head. The
+    top-right figure in the screenshot shows a previously trained Active Appearance
+    model used in the search algorithm. After a pose has been found, POSIT can be
+    applied to extend the result to a 3D pose. If the procedure is applied to a video
+    sequence, 3D tracking by detection will be obtained.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Active Shape Models
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'As mentioned earlier, AAMs require a shape model, and this role is played by
+    Active Shape Models (ASMs). In the upcoming sections, we will create an ASM that
+    is a statistical model of shape variation. The shape model is generated through
+    the combination of shape variations. A training set of labeled images is required,
+    as described in the article *Active Shape Models--Their Training and Application*,
+    by Timothy Cootes. In order to build a face-shape model, several images marked
+    with points on key positions of a face are required to outline the main features.
+    The following screenshot shows such an example:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/image_06_002.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: There are 76 landmarks on a face, which are taken from the **MUCT** dataset.
+    These landmarks are usually marked up by hand, and they outline several face features
+    such as mouth contour, nose, eyes, eyebrows, and face shape, since they are easier
+    to track.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**Procrustes Analysis**: A form of statistical shape analysis used to analyze
+    the distribution of a set of shapes. Procrustes superimposition is performed by
+    optimally translating, rotating, and uniformly scaling the objects.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'If we have the previously mentioned set of images, we can generate a statistical
+    model of shape variation. Since the labeled points on an object describe the shape
+    of that object, we will first align all the sets of points into a coordinate frame
+    using Procrustes Analysis, if required, and represent each shape by a vector,
+    *x*. Then, we will apply Principal Component Analysis to the data. We can then
+    approximate any example using the following formula:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '*x = x + Ps bs*'
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the preceding formula, *x* is the mean shape, *Ps* is a set of orthogonal
+    modes of variation, and *bs* is a set of shape parameters. Well, in order to understand
+    this better, we will create a simple application in the rest of this section,
+    which will show us how to deal with PCA and shape models.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Why use PCA at all? Because PCA is going to really help us when it comes to
+    reducing the number of parameters of our model. We will also see how much that
+    helps when searching for it in a given image later in this chapter. The following
+    is said about PCA ([http://en.wikipedia.org/wiki/Principal_component_analysis](http://en.wikipedia.org/wiki/Principal_component_analysis)):'
+  prefs: []
+  type: TYPE_NORMAL
+- en: PCA can supply the user with a lower-dimensional picture, a *shadow* of this
+    object when viewed from its (in some sense) most informative viewpoint. This is
+    done by using only the first few principal components so that the dimensionality
+    of the transformed data is reduced.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'This becomes clear when we see the following figure:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/image_06_003.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Image source: [h t t p ://e n . w i k i p e d i a . o r g /w i k i /F i l e
+    :G a u s s i a n S c a t t e r P C A . p n g](http://en.wikipedia.org/wiki/File:GaussianScatterPCA.png)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The preceding figure shows the PCA of a multivariate Gaussian distribution centered
+    at *(2,3)*. The vectors shown are the eigenvectors of the covariance matrix, shifted
+    so their tails are at the mean.
+  prefs: []
+  type: TYPE_NORMAL
+- en: This way, if we wanted to represent our model with a single parameter, taking
+    the direction from the eigenvector that points to the upper-right part of the
+    screenshot would be a good idea. Besides, by varying the parameter a bit, we can
+    extrapolate data and get values similar to the ones we are looking for.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Getting the feel of PCA
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In order to get a feeling of how PCA could help us with our face model, we will
+    start with an Active Shape Model and test some parameters.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Since face detection and tracking have been studied for a while, several face
+    databases are available online for research purposes. We will use a couple of
+    samples from the IMM database.
+  prefs: []
+  type: TYPE_NORMAL
+- en: First, let's understand how the PCA class works in OpenCV. We can conclude from
+    the documentation that the PCA class is used to compute a special basis for a
+    set of vectors, which consist of eigenvectors of the covariance matrix computed
+    from the input set of vectors. This class can also transform vectors to and from
+    the new coordinate space, using project and **backproject** methods. This new
+    coordinate system can be quite accurately approximated by taking just the first
+    few of its components. This means, we can represent the original vector from a
+    high-dimensional space with a much shorter vector consisting of the projected
+    vector's coordinates in the subspace.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Since we want a parameterization in terms of a few scalar values, the main method
+    we will use from the class is the backproject method. It takes principal component
+    coordinates of projected vectors and reconstructs the original ones. We could
+    retrieve the original vectors if we retained all the components, but the difference
+    will be very small if we just use a couple of components; that's one of the reasons
+    for using PCA. Since we want some variability around the original vectors, our
+    parameterized scalars will be able to extrapolate the original data.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Besides, the PCA class can transform vectors to and from the new coordinate
+    space, defined by the basis. Mathematically, it means that we compute projection
+    of the vector to a subspace formed by a few eigenvectors corresponding to the
+    dominant eigenvalues of the covariance matrix, as one can see from the documentation.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Our approach will be annotating our face images with landmarks yielding a training
+    set for our **Point Distribution Model** (**PDM**). If we have *k*-aligned landmarks
+    in two dimensions, our shape description will look like this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '*X = { x1, y1, x2, y2, ..., xk, yk}*'
+  prefs: []
+  type: TYPE_NORMAL
+- en: It's important to note that we need consistent labeling across all image samples.
+    So, for instance, if the left part of the mouth is landmark number *3* in the
+    first image, it will need to be number *3* in all other images.
+  prefs: []
+  type: TYPE_NORMAL
+- en: These sequences of landmarks will now form the shape outlines, and a given training
+    shape can be defined as a vector. We generally assume this scattering is Gaussian
+    in this space, and we use PCA to compute normalized eigenvectors and eigenvalues
+    of the covariance matrix across all training shapes. Using the top-center eigenvectors,
+    we will create a matrix of dimensions *2k * m*, which we will call *P*. This way,
+    each eigenvector describes a principal mode of variation along the set.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Now, we can define a new shape through the following equation:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '*X'' = X'' + Pb*'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Here, *X'* is the mean shape across all training images--we just average each
+    of the landmarks--and *b* is a vector of scaling values for each principal component.
+    This leads us to create a new shape modifying the value of *b*. It's common to
+    set *b* to vary within three standard deviations so that the generated shape can
+    fall inside the training set.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The following screenshot shows point-annotated mouth landmarks for three different
+    pictures:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/image_06_004.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: As can be seen in the preceding screenshot, the shapes are described by their
+    landmark sequences. One could use a program such as *GIMP* or *ImageJ* as well
+    as building a simple application in OpenCV in order to annotate the training images.
+    We will assume the user has completed this process and saved the points as sequences
+    of *x* and *y* landmark positions for all training images in a text file, which
+    will be used in our PCA analysis. We will then add two parameters to the first
+    line of this file, which is the number of training images and the number of read
+    columns. So, for *k* 2D points, this number will be *2*k*.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In the following data, we have an instance of this file, which was obtained
+    through the annotation of three images from IMM database, in which *k* is equal
+    to 5:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE0]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Now that we have annotated images, let''s turn this data into our shape model.
+    First, load this data into a matrix. This will be achieved through the `loadPCA`
+    function. The following code snippet shows the use of the `loadPCA` function:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE1]'
+  prefs: []
+  type: TYPE_PRE
+- en: Note that our matrix is created in the `pcaset = Mat::eye(rows,cols,CV_64F)`
+    line and that enough space is allocated for *2*k* values. After the two `for`
+    loops load the data into the matrix, the PCA constructor is called with the data,
+    an empty matrix, that could be our precomputed mean vector, if we wish to make
+    it only once. We also indicate that our vectors will be stored as matrix rows
+    and that we wish to keep the same number of given rows as the number of components,
+    though we could use just a few ones.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Now that we have filled our PCA object with our training set, it has everything
+    it needs to back project our shape according to the parameters. We do so by invoking
+    `PCA.backproject`, passing the parameters as a row vector, and receiving the back
+    projected vector into the second argument:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/image_06_005.jpg)![](img/image_06_006.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: The two previous screenshots show two different shape configurations according
+    to the selected parameters chosen from the slider. The yellow and green shapes
+    show training data, while the red one reflects the shape generated from the chosen
+    parameters. A sample program can be used to experiment with Active Shape Models,
+    as it allows the user to try different parameters for the model. One is able to
+    note that varying only the first two scalar values through the slider (which correspond
+    to the first and second modes of variation), we can achieve a shape that is very
+    close to the trained ones. This variability will help us when searching for a
+    model in AAM, since it provides interpolated shapes. We will discuss triangulation,
+    texturing, AAM, and AAM search in the following sections.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Triangulation
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'As the shape we are looking for might be distorted, such as an open mouth for
+    instance, we are required to map our texture back to a mean shape and then apply
+    PCA to this normalized texture. In order to do this, we will use triangulation.
+    The concept is very simple: we will create triangles including our annotated points
+    and then map from one triangle to another. OpenCV comes with a handy class called
+    `Subdiv2D`, which deals with Delaunay Triangulation. You can just consider this
+    a good triangulation that will avoid skinny triangles.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: In mathematics and computational geometry, a Delaunay Triangulation for a set
+    *P* of points in a plane is a triangulation DT(P) such that no point in *P* is
+    inside the circumcircle of any triangle in DT(P). Delaunay Triangulations maximize
+    the minimum angle of all the angles of the triangles in the triangulation; they
+    tend to avoid skinny triangles. The triangulation is named after Boris Delaunay
+    for his work on this topic from 1934 onwards.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'After a Delaunay subdivision has been created, one will use the `insert` member
+    function to populate points into the subdivision. The following lines of code
+    will elucidate what a direct use of triangulation would be like:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE2]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Note that our points are going to be inside a rectangular frame that is passed
+    as a parameter to `Subdiv2D`. In order to create a subdivision, we need to instantiate
+    the `Subdiv2D` class, as seen earlier. Then, in order to create the triangulation,
+    we need to insert points using the insert method from `Subdiv2D`. This happens
+    inside the `for` loop in the preceding code. Note that the points should already
+    have been initialized, since they are the ones we''ll usually be using as inputs.
+    The following diagram shows what the triangulation could look like:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/image_06_007.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: This diagram is the output of the preceding code for a set of points that yield
+    the triangulation using Delaunay algorithm.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In order to iterate through all the triangles from a given subdivision, one
+    can use the following code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE3]'
+  prefs: []
+  type: TYPE_PRE
+- en: Given a subdivision, we will initialize its `triangleList` through a `Vec6f`
+    vector, which will save space for each set of three points, which can be obtained
+    iterating `triangleList`, as shown in the preceding `for` loop.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Triangle texture warping
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'Now that we''ve been able to iterate through the triangles of a subdivision,
+    we are able to warp one triangle from an original annotated image into a generated
+    distorted one. This is useful for mapping the texture from the original shape
+    to a distorted one. The following piece of code will guide the process:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE4]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The preceding code assumes we have the triangle vertices packed in the `srcTri`
+    array and the destination one packed in the `dstTri` array. The 2x3 `warp_mat`
+    matrix is used to get the Affine transformation from the source triangles to the
+    destination ones. More information can be quoted from OpenCV''s *cvGetAffineTransform*
+    documentation:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The `cvGetAffineTransform` function calculates the matrix of an affine transform
+    in the following way:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/image_06_008.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: In the preceding equation, destination *(i)* is equal to (*xi',yi'*), source
+    *(i)* is equal to (*xi, yi*), and *i* is equal to *0, 1, 2*.
+  prefs: []
+  type: TYPE_NORMAL
+- en: After retrieving the affine matrix, we can apply the Affine transformation to
+    the source image. This is done through the `warpAffine` function. Since we don't
+    want to do it in the entire image, we want to focus on our triangle, a mask can
+    be used for this task. This way, the last line copies only the triangle from our
+    original image with the mask we just created, which was made through a `cvFillConvexPoly`
+    call.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The following screenshot shows the result of applying this procedure to every
+    triangle in an annotated image. Note that the triangles are mapped back to the
+    alignment frame, which faces toward the viewer. This procedure is used to create
+    the statistical texture of the AAM:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/image_06_009.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: The preceding screenshot shows the result of warping all the mapped triangles
+    in the left image to a mean reference frame.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Model Instantiation - playing with the AAM
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'An interesting aspect of AAMs is their ability to easily interpolate the model
+    that we trained our images on. We can get used to their amazing representational
+    power through the adjustment of a couple of shape or model parameters. As we vary
+    shape parameters, the destination of our warp changes according to the trained
+    shape data. On the other hand, while appearance parameters are modified, the texture
+    on the base shape is modified. Our warp transforms will take every triangle from
+    the base shape to the modified destination shape so that we can synthesize a closed
+    mouth on top of an open mouth, as shown in the following screenshot:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/image_06_010.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: This preceding screenshot shows a synthesized closed mouth obtained through
+    Active Appearance Model instantiation on top of another image. It shows how one
+    could combine a smiling mouth with an admired face, extrapolating the trained
+    images.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The preceding screenshot was obtained by changing only three parameters for
+    shape and three for the texture, which is the goal of AAMs. A sample application
+    has been developed and is available at [http://www.packtpub.com/](http://www.packtpub.com/)
+    for you to try out AAM. Instantiating a new model is just a question of sliding
+    the equation parameters, as defined in the *Getting the feel of PCA* section.
+    You should note that AAM search and fitting rely on this flexibility to find the
+    best match for a given captured frame of our model in a different position from
+    the trained ones. We will see this in the next section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: AAM search and fitting
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'With our fresh, new combined shape and texture model, we have found a nice
+    way to describe how a face could change not only in shape, but also in appearance.
+    Now, we want to find which set of *p* shape and *λ* appearance parameters will
+    bring our model as close as possible to a given input image *I(x)*. We could naturally
+    calculate the error between our instantiated model and the given input image in
+    the coordinate frame of *I(x)*, or map the points back to the base appearance
+    and calculate the difference there. We are going to use the latter approach. This
+    way, we want to minimize the following function:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/image_06_011.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: In the preceding equation, *S0* denotes the set of pixels *x* is equal to *(x,y)T*
+    that lie inside the AAMs base mesh, *A0(x)* is our base mesh texture, *Ai(x)*
+    is appearance images from PCA, and *W(x;p)* is the warp that takes pixels from
+    the input image back to the base mesh frame.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Several approaches have been proposed for this minimization through years of
+    studying. The first idea was to use an additive approach, in which *∆pi* and *∆λi*
+    were calculated as linear functions of the error image and then the shape parameter
+    *p* and appearance *λ* were updated as *pi ← pi + ∆pi* and *λi ← λi + ∆λi*, in
+    the iteration. Although convergence can occur sometimes, the delta doesn''t always
+    depend on current parameters, and this might lead to divergence. Another approach,
+    which was studied based on the gradient descent algorithms, was very slow, so
+    another way of finding convergence was sought. Instead of updating the parameters,
+    the whole warp could be updated. This way, a compositional approach was proposed
+    by Ian Mathews and Simon Baker in a famous paper called *Active Appearance Models
+    Revisited*. More details can be found in the paper, but the important contribution
+    it gave to fitting was that it brought the most intensive computation to a pre-compute
+    step, as seen in the following screenshot:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/image_06_012.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Note that the update occurs in terms of a compositional step as seen in step
+    (9) (see the previous screenshot). Equations (40) and (41) from the paper can
+    be seen in the following screenshots:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/image_06_013.png)![](img/image_06_014.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Although the algorithm just mentioned will mostly converge very well from a
+    position near the final one, this might not be the case when there''s a big difference
+    in rotation, translation, or scale. We can bring more information to the convergence
+    through the parameterization of a global 2D similarity transform. This is equation
+    *42* in the paper and is shown as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/image_06_015.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'In the preceding equation, the four parameters *q* = (*a*, *b*, *t[x]*, *t[y]*)
+    have the following interpretations. The &filig;rst pair (*a*, *b*) is related
+    to the scale *k* and rotation *θ: a* is equal to k *cos θ - 1* and *b = k sin
+    θ*. The second pair (*t[x]*, *t[y]*) is the *x* and *y* translations, as proposed
+    in the *Active Appearance Models Revisited* paper.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: With a bit more of math transformations, you can finally use the preceding algorithm
+    to find the best image fit with a global 2D transform.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'As the warp compositional algorithm has several performance advantages, we
+    will use the one described in the AAM Revisited paper: the *inverse compositional
+    project-out algorithm*. Remember that in this method, the effect of appearance
+    variation during fitting can be precomputed, or projected out, improving AAM fitting
+    performance.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The following screenshot shows convergence for different images from the MUCT
+    dataset using the inverse compositional project-out AAM fitting algorithm:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/image_06_016.jpg)'
+  prefs: []
+  type: TYPE_IMG
+- en: The preceding screenshot shows successful convergences, over faces outside the
+    AAM training set-using the inverse compositional project, out AAM fitting algorithm.
+  prefs: []
+  type: TYPE_NORMAL
+- en: POSIT
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: After we have found the 2D position of our landmark points, we can derive the
+    3D pose of our model using the POSIT. The pose *P* of a 3D object is defined as
+    the 3 x 3 rotation matrix *R* and the 3D translation vector *T*; hence, *P* is
+    equal to *[ R | T ]*.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Most of this section is based on the *OpenCV POSIT* tutorial by Javier Barandiaran.
+  prefs: []
+  type: TYPE_NORMAL
+- en: As the name implies, POSIT uses the **Pose from Orthography and Scaling** (**POS**)
+    algorithm in several iterations, so it is an acronym for POS with iterations.
+    The hypothesis for its working is that we can detect and match in the image four
+    or more non-coplanar feature points of the object and that we know their relative
+    geometry on the object.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The main idea of the algorithm is that we can find a good approximation to the
+    object pose, supposing that all the model points are in the same plane, since
+    their depths are not very different from one another if compared to the distance
+    from the camera to a face. After the initial pose is obtained, the rotation matrix
+    and translation vector of the object are found by solving a linear system. Then,
+    the approximate pose is iteratively used to better compute scaled orthographic
+    projections of the feature points, followed by POS application to these projections
+    instead of the original ones. For more information, you can refer to the paper
+    by DeMenton, *Model-Based Object Pose in 25 Lines of Code*.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Diving into POSIT
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In order for POSIT to work, you need at least four non-coplanar 3D model points
+    and their respective matchings in the 2D image. We will add a termination criteria
+    to that, since POSIT is an iterative algorithm, which generally is a number of
+    iterations or a distance parameter. We will then call the `cvPOSIT` function,
+    included in `calib3d_c.h`, which yields the rotation matrix and the translation
+    vector.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'As an example, we will follow the tutorial from Javier Barandiaran, which uses
+    POSIT to obtain the pose of a cube. The model is created with four points. It
+    is initialized with the following code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE5]'
+  prefs: []
+  type: TYPE_PRE
+- en: Note that the model itself is created with the `cvCreatePOSITObject` method,
+    which returns a `CvPOSITObject` method that will be used in the `cvPOSIT` function.
+    Be aware that the pose will be calculated referring to the first model point,
+    which makes it a good idea to put it at the origin.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We then need to put the 2D image points in another vector. Remember that they
+    must be put in the array in the same order that the model points were inserted
+    in; this way, the *i^(th)* 2D image point matches the *i^(th)* 3D model point.
+    A catch here is that the origin for the 2D image points is located at the center
+    of the image, which might require you to translate them. You can insert the following
+    2D image points (of course, they will vary according to the user''s matching):'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE6]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Now, you only need to allocate memory for the matrixes and create termination
+    criteria, followed by a call to `cvPOSIT`, as shown in the following code snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE7]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'After the iterations, `cvPOSIT` will store the results in `rotation_matrix`
+    and `translation_vector`. The following screenshot shows the inserted `srcImagePoints`
+    with white circles as well as a coordinate axis showing the rotation and translation
+    results:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/image_06_017.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'With reference to the preceding screenshot, let''s see the following input
+    points and results of running the POSIT algorithm:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The white circles show input points, while the coordinate axes show the resulting
+    model pose.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Make sure you use the focal length of your camera as obtained through a calibration
+    process. You might want to check one of the calibration procedures available in
+    the *Camera calibration* section in [Chapter 7](https://www.packtpub.com/sites/default/files/downloads/NaturalFeatureTrackingforAugmentedReality.pdf),
+    *Natural Feature Tracking for Augmented Reality*. The current implementation of
+    POSIT will only allow square pixels, so there won't be room for focal length in
+    the *x* and *y* axes.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Expect the rotation matrix in the following format:'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '[rot[0] rot[1] rot[2]]'
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '[rot[3] rot[4] rot[5]]'
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '[rot[6] rot[7] rot[8]]'
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'The translation vector will be in the following format:'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '[trans[0]]'
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '[trans[1]]'
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '[trans[2]]'
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: POSIT and head model
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'In order to use POSIT as a tool for head pose, you will need to use a 3D head
+    model. There is one available from the Institute of Systems and Robotics of the
+    University of Coimbra and can be found at [http://aifi.isr.uc.pt/Downloads/OpenGL/glAnthropometric3DModel.cpp](http://aifi.isr.uc.pt/Downloads/OpenGL/glAnthropometric3DModel.cpp).
+    Note that the model can be obtained from where it says:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE8]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The model can be seen in the following screenshot:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/image_06_018.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: The preceding screenshot shows a 58-point 3D head model available for POSIT.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In order to get POSIT to work, the point corresponding to the 3D head model
+    must be matched accordingly. Note that at least four non-coplanar 3D points and
+    their corresponding 2D projections are required for POSIT to work, so these must
+    be passed as parameters, pretty much as described in the *Diving into POSIT* section.
+    Note that this algorithm is linear in terms of the number of matched points. The
+    following screenshot shows how matching should be done:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/image_06_019.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: The preceding screenshot shows the correctly matched points of a 3D head model
+    and an AAM mesh.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Tracking from webcam or video file
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'Now that all the tools have been assembled to get 6 degrees of freedom head
+    tracking, we can apply it to a camera stream or video file. OpenCV provides the
+    `VideoCapture` class that can be used in the following manner (see the *Accessing
+    the webcam* section in [Chapter 1](03913e76-ec18-4a31-875e-dfceca32d26f.xhtml),
+    *Cartoonifier and Skin Changer for Raspberry Pi*, for more details):'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE9]'
+  prefs: []
+  type: TYPE_PRE
+- en: The algorithm works like this. A video capture is initialized through `VideoCapture
+    cap(0)` so that the default webcam is used. Now that we have video capture working,
+    we also need to load our trained Active Appearance Model, which will occur in
+    the `loadPreviouslyTrainedAAM` pseudocode mapping. We will also load the 3D head
+    model for POSIT and the mapping of landmark points to 3D head points in our mapping
+    variable.
+  prefs: []
+  type: TYPE_NORMAL
+- en: After everything we need has been loaded, we will need to initialize the algorithm
+    from a known pose, which is a known 3D position, known rotation, and a known set
+    of AAM parameters. This could be made automatically through OpenCV's highly documented
+    Haar features classifier face detector (more details in the *Face Detection* section
+    of [Chapter 4](3f3bb6f3-e501-4491-b1f0-6cd7506a7b80.xhtml), *Non-rigid Face Tracking*,
+    or in OpenCV's cascade classifier documentation), or we could manually initialize
+    the pose from a previously annotated frame. A brute-force approach, which would
+    be to run an AAM fitting for every rectangle, could also be used, since it would
+    be very slow only during the first frame. Note that by initialization, we mean
+    finding the 2D landmarks of the AAM through their parameters.
+  prefs: []
+  type: TYPE_NORMAL
+- en: When everything is loaded, we can iterate through the main loop delimited by
+    the `while` loop. In this loop, we first query the next grabbed frame, and we
+    then run an Active Appearance Model fit so that we can find landmarks on the next
+    frame. Since the current position is very important at this step, we pass it as
+    a parameter to the pseudocode function `performAAMSearch(pose,aam)`. If we find
+    the current pose, which is signaled through error image convergence, we will get
+    the next landmark positions, so we can provide them to POSIT. This happens in
+    the following line, `applyPOSIT(new2DPose, headModel, mapping)`, where the new
+    2D pose is passed as a parameter, as also our previously loaded `headModel` and
+    the mapping. After that, we can render any 3D model in the obtained pose like
+    a coordinate axis or an augmented reality model. As we have landmarks, more interesting
+    effects can be obtained through model parameterization, such as opening a mouth
+    or changing eyebrow position.
+  prefs: []
+  type: TYPE_NORMAL
+- en: As this procedure relies on the previous pose for the next estimation, we could
+    accumulate errors and diverge from head position. A workaround could be to reinitialize
+    the procedure every time it happens, checking a given error image threshold. Another
+    factor to pay attention to is the use of filters when tracking, since jittering
+    can occur. A simple mean filter for each of the translation and rotation coordinates
+    can give reasonable results.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Summary
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In this chapter, we discussed how Active Appearance Models can be combined with
+    the POSIT algorithm in order to obtain a 3D head pose. An overview on how to create,
+    train, and manipulate AAMs has been given, and you can use this background for
+    any other field, such as medical, imaging, or industry. Besides dealing with AAMs,
+    we got familiar with Delaunay subdivisions and learned how to use such an interesting
+    structure as a triangulated mesh. We also showed you how to perform texture mapping
+    in the triangles using OpenCV functions. Another interesting topic was approached
+    in AAM fitting. Although only the inverse compositional project-out algorithm
+    was described, we could easily obtain the results of years of research by simply
+    using its output.
+  prefs: []
+  type: TYPE_NORMAL
+- en: After enough theory and practice of AAMs, we dived into the details of POSIT
+    in order to couple 2D measurements to 3D ones, explaining how to fit a 3D model
+    using matchings between model points. We concluded the chapter by showing how
+    to use all the tools in an online face tracker by detection, which yields 6 degrees
+    of freedom head pose-3 degrees for rotation, and 3 for translation. The complete
+    code for this chapter can be downloaded from [http://www.packtpub.com/](http://www.packtpub.com/).
+  prefs: []
+  type: TYPE_NORMAL
+- en: References
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: '*Active Appearance Models, T.F. Cootes, G. J. Edwards, and C. J. Taylor, ECCV,
+    2:484-498, 1998* ([http://www.cs.cmu.edu/~efros/courses/AP06/Papers/cootes-eccv-98.pdf](http://www.cs.cmu.edu/~efros/courses/AP06/Papers/cootes-eccv-98.pdf))'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '*Active Shape Models-Their Training and Application, T.F. Cootes, C.J. Taylor,
+    D.H. Cooper, and J. Graham, Computer Vision and Image Understanding, (61): 38-59,
+    1995* ([http://www.wiau.man.ac.uk/~bim/Papers/cviu95.pdf](http://www.wiau.man.ac.uk/~bim/Papers/cviu95.pdf))'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '*The MUCT Landmarked Face Database, S. Milborrow, J. Morkel, and F. Nicolls,
+    Pattern Recognition Association of South Africa, 2010* ([http://www.milbo.org/muct/](http://www.milbo.org/muct/))'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '*The IMM Face Database - An Annotated Dataset of 240 Face Images, Michael M.
+    Nordstrom, Mads Larsen, Janusz Sierakowski, and Mikkel B.**Stegmann, Informatics
+    and Mathematical Modeling, Technical University of Denmark, 2004,* ([http://www2.imm.dtu.dk/~aam/datasets/datasets.html](http://www2.imm.dtu.dk/~aam/datasets/datasets.html))'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '*Sur la sphère vide, B. Delaunay, Izvestia Akademii Nauk SSSR, Otdelenie Matematicheskikh
+    i Estestvennykh Nauk, 7:793-800, 1934*'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '*Active Appearance Models for Facial Expression Recognition and Monocular Head
+    Pose Estimation Master Thesis, P. Martins, 2008*'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '*Active Appearance Models Revisited, International Journal of Computer Vision,
+    Vol. 60, No. 2, pp. 135 - 164, I. Mathews and S. Baker, November, 2004* ([http://www.ri.cmu.edu/pub_files/pub4/matthews_iain_2004_2/matthews_iain_2004_2.pdf](http://www.ri.cmu.edu/pub_files/pub4/matthews_iain_2004_2/matthews_iain_2004_2.pdf))'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '*POSIT Tutorial, Javier Barandiaran* ([http://opencv.willowgarage.com/wiki/Posit](http://opencv.willowgarage.com/wiki/Posit))'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '*Model-Based Object Pose in 25 Lines of Code, International Journal of Computer
+    Vision, 15, pp. 123-141, Dementhon and L.S Davis, 1995* ([http://www.cfar.umd.edu/~daniel/daniel_papersfordownload/Pose25Lines.pdf](http://www.cfar.umd.edu/~daniel/daniel_papersfordownload/Pose25Lines.pdf))'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL

@@ -1,0 +1,1302 @@
+- en: Finding Objects via Feature Matching and Perspective Transforms
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In the previous chapter, you learned how to detect and track a simple object
+    (the silhouette of a hand) in a very controlled environment. To be more specific,
+    we instructed the user of our app to place the hand in the central region of the
+    screen and then made assumptions about the size and shape of the object (the hand).
+    In this chapter, we want to detect and track objects of arbitrary sizes, possibly
+    viewed from several different angles or under partial occlusion.
+  prefs: []
+  type: TYPE_NORMAL
+- en: For this, we will make use of feature descriptors, which are a way of capturing
+    the important properties of our object of interest. We do this so that the object
+    can be located even when it is embedded in a busy visual scene. We will apply
+    our algorithm to the live stream of a webcam and do our best to keep the algorithm
+    robust yet simple enough to run in real time.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In this chapter, we will cover the following topics:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Listing the tasks performed by the app
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Planning the app
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Setting up the app
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Understanding the process flow
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Learning feature extraction
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Looking at feature detection
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Understanding feature descriptors
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Understanding feature matching
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Learning feature tracking
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Seeing the algorithm in action
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The goal of this chapter is to develop an app that can detect and track an object
+    of interest in the video stream of a webcam—even if the object is viewed from
+    different angles or distances or under partial occlusion. Such an object can be
+    the cover image of a book, a drawing, or anything else that has a sophisticated
+    surface structure.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Once the template image is provided, the app will be able to detect that object,
+    estimate its boundaries, and then track it in the video stream.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Getting started
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: This chapter has been tested with **OpenCV 4.1.1**.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Note that you might have to obtain the so-called extra modules from [https://github.com/Itseez/opencv_contrib](https://github.com/Itseez/opencv_contrib).
+  prefs: []
+  type: TYPE_NORMAL
+- en: We install OpenCV with `OPENCV_ENABLE_NONFREE` and the `OPENCV_EXTRA_MODULES_PATH` variable
+    set in order to get **Speeded-Up Robust Features** (**SURF**) and the **Fast Library
+    for Approximate Nearest Neighbors** (**FLANN**) installed. You can also use the
+    Docker files available in the repository, which contain all the required installations.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Additionally, note that you may have to obtain a license to use **SURF** in
+    commercial applications.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The code for this chapter can be found in the GitHub book repository available
+    at [https://github.com/PacktPublishing/OpenCV-4-with-Python-Blueprints-Second-Edition/tree/master/chapter3](https://github.com/PacktPublishing/OpenCV-4-with-Python-Blueprints-Second-Edition/tree/master/chapter3).
+  prefs: []
+  type: TYPE_NORMAL
+- en: Listing the tasks performed by the app
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'The app will analyze each captured frame to perform the following tasks:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**Feature extraction**: We will describe an object of interest with **Speeded-Up
+    Robust Features** (**SURF**), which is an algorithm used to find distinctive keypoints in
+    an image that are both scale-invariant and rotation invariant. These keypoints
+    will help us to make sure that we are tracking the right object over multiple
+    frames because the appearance of the object might change from time to time. It
+    is important to find keypoints that do not depend on the viewing distance or viewing
+    angle of the object (hence, the scale and rotation invariance).'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Feature matching**: We will try to establish a correspondence between keypoints
+    using the **Fast Library for Approximate Nearest Neighbors** (**FLANN**) to see
+    whether a frame contains keypoints similar to the keypoints from our object of
+    interest. If we find a good match, we will mark the object on each frame.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Feature tracking**: We will keep track of the located object of interest
+    from frame to frame using various forms of **early** **outlier detection** and
+    **outlier rejection** to speed up the algorithm.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Perspective transform**: We will then reverse any translations and rotations
+    that the object has undergone by **warping the perspective** so that the object
+    appears upright in the center of the screen. This creates a cool effect in which
+    the object seems frozen in a position while the entire surrounding scene rotates
+    around it.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'An example of the first three steps, namely, the feature extraction, matching,
+    and tracking is shown in the following screenshot:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/a5306700-6259-401a-8bee-8823fa90ff4c.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: The screenshot contains a template image of our object of interest on the left
+    and a handheld printout of the template image on the right. Matching features
+    in the two frames are connected with blue lines, and the located object is outlined
+    in green on the right.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The last step is to transform the located object so that it is projected onto
+    the frontal plane, as depicted in the following photograph:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/07ffe9d6-54e5-4355-9322-6ddd5afb49a8.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: The image looks roughly like the original template image, appearing close-up,
+    while the entire scene seems to warp around it.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Let's first plan the application that we are going to create in this chapter.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Planning the app
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: The final app will consist of a Python class for detecting, matching, and tracking
+    image features, as well as a script that accesses the webcam and displays each
+    processed frame.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The project will contain the following modules and scripts:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '`feature_matching`: This module contains an algorithm for feature extraction,
+    feature matching, and feature tracking. We separate this algorithm from the rest
+    of the application so that it can be used as a standalone module.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`feature_matching.FeatureMatching`: This class implements the entire feature-matching
+    process flow. It accepts a **Blue, Green, Red (BGR)** camera frame and tries to
+    locate an object of interest in it.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`chapter3`: This is the main script for the chapter.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`chapter3.main`: This is the main function routine for starting the application,
+    accessing the camera, sending each frame for processing to an instance of the `FeatureMatching` class,
+    and for displaying results.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Let's set up the application before going into the details of the feature-matching
+    algorithm.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Setting up the app
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Before we can get down to the nitty-gritty of our feature-matching algorithm,
+    we need to make sure that we can access the webcam and display the video stream.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Let's learn how to run the application in the next section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Running the app – the main() function routine
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'To run our app, we will need to execute the `main()` function routine. The
+    following steps show us the execution of `main()` routine:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The function first accesses the webcam with the `VideoCapture` method by passing `0` as
+    an argument, which is a reference to the default webcam. If it can not access
+    the webcam, the app will be terminated:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE0]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Then, the desired frame size and frame per second of the video stream is set.
+    The following snippet shows the code for setting the frame size and frame per
+    second of the video:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE1]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Next, an instance of the `FeatureMatching` class is initialized with a path
+    to a template (or training) file that depicts the object of interest. The following
+    code shows the `FeatureMatching` class:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE2]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'After that, to process the frames from the camera, we create an iterator from
+    the `capture.read` function, which will terminate when the function fails to return
+    frame (`(False,None)`). This can be seen in the following code block:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE3]'
+  prefs: []
+  type: TYPE_PRE
+- en: In the previous code block, the `FeatureMatching.match` method processes the
+    **BGR** image (`capture.read` returns `frame` in BGR format). If the object is
+    detected in the current frame, the `match` method will report `match_success=True` and
+    return the warped image as well as the image that illustrates the matches—`img_flann`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Let's move on and display the results in which our match method will return.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Displaying results
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'In fact, we can display the results only if the `match` method returns a result,
+    right? This can be seen in the following block:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE4]'
+  prefs: []
+  type: TYPE_PRE
+- en: Displaying images in OpenCV is straightforward and is done by the `imshow` method,
+    which accepts the name of a window and an image. Additionally, loop termination
+    criteria on the *Esc *keypress are set.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Now that we have set up our app, let's take a look at the process flow in the
+    next section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Understanding the process flow
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Features are extracted, matched, and tracked by the `FeatureMatching` class—especially
+    by the public `match` method. However, before we can begin analyzing the incoming
+    video stream, we have some homework to do. It might not be clear right away what
+    some of these things mean (especially for SURF and FLANN), but we will discuss
+    these steps in detail in the following sections.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'For now, we only have to worry about initialization:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE5]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The following steps cover the initialization process:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The following line sets up a SURF detector, which we will use for detecting
+    and extracting features from images (see the *Learning feature extraction* section
+    for further details), with a Hessian threshold between 300 and 500, that is, `400`:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE6]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We load a template of our object of interest (`self.img_obj`), or print an
+    error if it cannot be found:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE7]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Also, we store the shape of the image (`self.sh_train`) for convenience:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE8]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We will call the template image the **train image**, as our algorithm will
+    be trained to find this image, and every incoming frame a **query image**, as
+    we will use these images to query the **train image**. The following photograph
+    is the train image:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/b9a54a7d-1b81-4d52-9efb-541bd1f28003.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: Image credit—Lenna.png by Conor Lawless is licensed under CC BY 2.0
+  prefs: []
+  type: TYPE_NORMAL
+- en: The previous train image has a size of 512 x 512 pixels and will be used to
+    train the algorithm.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Next, we apply SURF to the object of interest. This can be done with a convenient
+    function call that returns both a list of keypoints and the descriptor (you can
+    refer to the *Learning feature extraction* section for further explanation):'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE9]'
+  prefs: []
+  type: TYPE_PRE
+- en: We will do the same with each incoming frame and then compare lists of features
+    across images.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Now, we set up a FLANN object that will be used to match the features of the
+    train and query images (refer to the *Understanding feature matching* section
+    for further details). This requires the specification of some additional parameters
+    via dictionaries, such as which algorithm to use and how many trees to run in
+    parallel:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE10]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Finally, initialize some additional bookkeeping variables. These will come
+    in handy when we want to make our feature tracking both faster and more accurate.
+    For example, we will keep track of the latest computed homography matrix and of
+    the number of frames we have spent without locating our object of interest (refer
+    to the *Learning feature tracking* section for more details):'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE11]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Then, the bulk of the work is done by the **`FeatureMatching.match` **method. This
+    method follows the procedure elaborated here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: It extracts interesting image features from each incoming video frame.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: It matches features between the template image and the video frame. This is
+    done in `FeatureMatching.match_features`. If no such match is found, it skips
+    to the next frame.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: It finds the corner points of the template image in the video frame. This is
+    done in the `detect_corner_points` function. If any of the corners lie (significantly)
+    outside the frame, it skips to the next frame.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: It calculates the area of the quadrilateral that the four corner points span.
+    If the area is either too small or too large, it skips to the next frame.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: It outlines the corner points of the template image in the current frame.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: It finds the perspective transform that is necessary to bring the located object
+    from the current frame to the `frontoparallel` plane. If the result is significantly
+    different from the result we got recently for an earlier frame, it skips to the
+    next frame.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: It warps the perspective of the current frame to make the object of interest
+    appear centered and upright.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: In the following sections, we will discuss the previous steps in detail.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Let's first take a look at the feature extraction step in the next section.
+    This step is the core of our algorithm. It will find informative areas in the
+    image and represent them in a lower dimensionality so that we can use those representations
+    afterward to decide whether two images contain similar features.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Learning feature extraction
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Generally speaking, in machine learning, feature extraction is a process of
+    dimensionality reduction of the data that results in an informative description
+    of a data element.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In computer vision, a feature is usually an *interesting area* of an image.
+    It is a measurable property of an image that is very informative about what the
+    image represents. Usually, the grayscale value of an individual pixel (that is,
+    the *raw data*) does not tell us a lot about the image as a whole. Instead, we
+    need to derive a property that is more informative.
+  prefs: []
+  type: TYPE_NORMAL
+- en: For example, knowing that there are patches in the image that look like eyes,
+    a nose, and a mouth will allow us to reason about how likely it is that the image
+    represents a face. In this case, the number of resources required to describe
+    the data is drastically reduced. The data refers to, for example, whether we are
+    seeing an image of a face. Does the image contain two eyes, a nose, or a mouth?
+  prefs: []
+  type: TYPE_NORMAL
+- en: More low-level features, such as the presence of edges, corners, blobs, or ridges,
+    may be more informative generally. Some features may be better than others, depending
+    on the application.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Once we have made up our mind about what is our favorite feature, we first need
+    to come up with a way to check whether or not the image contains such features.
+    Additionally, we need to find out where it contains them and then create a descriptor
+    of the feature. Let's learn how to detect features in the next section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Looking at feature detection
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In computer vision, the process of finding areas of interest in an image is
+    called feature detection. Under the hood, for each point of the image, a feature
+    detection algorithm decides whether an image point contains a feature of interest.
+    OpenCV provides a whole range of feature detection (and description) algorithms.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In OpenCV, the details of the algorithms are encapsulated and all of them have
+    similar APIs. Here are some of the algorithms:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**Harris corner detection**: We know that edges are areas with high-intensity
+    changes in all directions. Harris and Stephens came up with this algorithm, which
+    is a fast way of finding such areas. This algorithm is implemented as `cv2.cornerHarris` in
+    OpenCV.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Shi-Tomasi corner detection**: Shi and Tomasi developed a corner detection
+    algorithm, and this algorithm is usually better than Harris corner detection by
+    finding the *N* strongest corners. This algorithm is implemented as `cv2.goodFeaturesToTrack`
+    in OpenCV.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Scale-Invariant Feature Transform** (**SIFT**): Corner detection is not sufficient
+    when the scale of the image changes. To this end, David Lowe developed a method
+    to describe keypoints in an image that are independent of orientation and size
+    (hence the term **scale-invariant**). The algorithm is implemented as `cv2.xfeatures2d_SIFT` in
+    OpenCV2 but has been moved to the *extra* modules in OpenCV3 since its code is
+    proprietary.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**SURF**: SIFT has proven to be really good, but it is not fast enough for
+    most applications. This is where SURF comes in, which replaces the expensive Laplacian
+    of a Gaussian (function) from SIFT with a box filter. The algorithm is implemented
+    as `cv2.xfeatures2d_SURF` in OpenCV2, but, like SIFT, it has been moved to the
+    *extra* modules in OpenCV3 since its code is proprietary.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: OpenCV has support for even more feature descriptors, such as **Features from
+    Accelerated Segment Test** (**FAST**), **Binary** **Robust Independent Elementary
+    Features** (**BRIEF**), and **Oriented FAST and Rotated BRIEF** (**ORB**), the
+    latter being an open source alternative to SIFT or SURF.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the next section, we'll learn how to use SURF to detect features in an image.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Detecting features in an image with SURF
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In the remainder of this chapter, we will make use of the SURF detector. The
+    SURF algorithm can be roughly divided into two distinct steps, which are detecting
+    points of interest and formulating a descriptor.
+  prefs: []
+  type: TYPE_NORMAL
+- en: SURF relies on the Hessian corner detector for interest point detection, which
+    requires the setting of a minimal `minhessianThreshold`. This threshold determines
+    how large the output from the Hessian filter must be in order for a point to be
+    used as an interesting point.
+  prefs: []
+  type: TYPE_NORMAL
+- en: When the value is larger, fewer interest points are obtained, but they are theoretically
+    more salient and vice versa. Feel free to experiment with different values.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In this chapter, we will choose a value of `400`, as we did earlier in `FeatureMatching.__init__`,
+    where we created a SURF descriptor with the following code snippet:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE12]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The keypoints in the image can be obtained in a single step, which is given
+    as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE13]'
+  prefs: []
+  type: TYPE_PRE
+- en: Here, `key_query` is a list of instances of `cv2.KeyPoint` and has the length
+    of the number of detected keypoints. Each `KeyPoint` contains information about
+    the location (`KeyPoint.pt`), the size ( `KeyPoint.size `), and other useful information
+    about our point of interest.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We can now easily draw the keypoints using the following function:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE14]'
+  prefs: []
+  type: TYPE_PRE
+- en: Depending on an image, the number of detected keypoints can be very large and
+    unclear when visualized; we check it with `len(keyQuery)`. If you care only about
+    drawing the keypoints, try setting `min_hessian` to a large value until the number
+    of returned keypoints provides a good illustration.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Note that SURF is protected by patent laws. Therefore, if you wish to use SURF
+    in a commercial application, you will be required to obtain a license.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In order to complete our feature extraction algorithm, we need to obtain descriptors
+    for our detected keypoints, which we will do in the next section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Obtaining feature descriptors with SURF
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'The process of extracting features from an image with OpenCV using SURF is
+    also a single step. It is done by the `compute` method of our feature extractor.
+    The latter accepts an image and the keypoints of the image as arguments:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE15]'
+  prefs: []
+  type: TYPE_PRE
+- en: Here, `desc_query` is a `NumPY` ndarray with shape `(num_keypoints, descriptor_size)`. You
+    can see that each descriptor is a vector in an *n*-dimensional space (*n*-length
+    array of numbers). Each vector describes the corresponding key point and provides
+    some meaningful information about our complete image.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Hence, we have completed our feature extraction algorithm that had to provide
+    meaningful information about our image in reduced dimensionality. It's up to the
+    creator of the algorithm to decide what kind of information is contained in the
+    descriptor vector, but at the very least the vectors should be such that they
+    are closer to similar keypoints than for keypoints that appear different.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Our feature extraction algorithm also has a convenient method to combine the
+    processes of feature detection and descriptor creation:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE16]'
+  prefs: []
+  type: TYPE_PRE
+- en: It returns both keypoints and descriptors in a single step and accepts a mask
+    of an area of interest, which, in our case, is the complete image.
+  prefs: []
+  type: TYPE_NORMAL
+- en: As we have extracted our features, the next step is to query and train images
+    that contain similar features, which is accomplished by a feature matching algorithm.
+    So, let's learn about feature matching in the next section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Understanding feature matching
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Once we have extracted features and their descriptors from two (or more) images,
+    we can start asking whether some of these features show up in both (or all) images.
+    For example, if we have descriptors for both our object of interest (`self.desc_train`)
+    and the current video frame (`desc_query`), we can try to find regions of the
+    current frame that look like our object of interest.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'This is done by the following method, which makes use of FLANN:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE17]'
+  prefs: []
+  type: TYPE_PRE
+- en: The process of finding frame-to-frame correspondences can be formulated as the
+    search for the nearest neighbor from one set of descriptors for every element
+    of another set.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The first set of descriptors is usually called the **train set**, because, in
+    machine learning, these descriptors are used to train a model, such as the model
+    of the object that we want to detect. In our case, the train set corresponds to
+    the descriptor of the template image (our object of interest). Hence, we call
+    our template image the **train image** (`self.img_train`).
+  prefs: []
+  type: TYPE_NORMAL
+- en: The second set is usually called the **query set** because we continually ask
+    whether it contains our train image. In our case, the query set corresponds to
+    the descriptor of each incoming frame. Hence, we call a frame the **query image**
+    (`img_query`).
+  prefs: []
+  type: TYPE_NORMAL
+- en: Features can be matched in any number of ways, for example, with the help of
+    a brute-force matcher (`cv2.BFMatcher`) that looks for each descriptor in the
+    first set and the closest descriptor in the second set by trying each one (an
+    exhaustive search).
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the next section, we'll learn how to match features across images with FLANN.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Matching features across images with FLANN
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'The alternative is to use an approximate **k-nearest neighbor** (**kNN**) algorithm
+    to find correspondences, which is based on the fast third-party library, FLANN.
+    A FLANN match is performed with the following code snippet, where we use kNN with
+    `k=2`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE18]'
+  prefs: []
+  type: TYPE_PRE
+- en: The result of `flann.knnMatch` is a list of correspondences between two sets
+    of descriptors, both contained in the `matches` variable. These are the train
+    set, because it corresponds to the pattern image of our object of interest, and
+    the query set, because it corresponds to the image in which we are searching for
+    our object of interest.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Now that we have found the nearest neighbors of our features, let's move ahead
+    and find out how we can remove outliers in the next section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Testing the ratio for outlier removal
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: The more correct matches that are found (which means that more pattern-to-image
+    correspondences exist), the higher the chance that the pattern is present in the
+    image. However, some matches might be false positives.
+  prefs: []
+  type: TYPE_NORMAL
+- en: A well-known technique for removing outliers is called the ratio test. Since
+    we performed kNN-matching with `k=2`, the two nearest descriptors are returned
+    for each match. The first match is the closest neighbor and the second match is
+    the second-closest neighbor. Intuitively, a correct match will have a much closer
+    first neighbor than its second-closest neighbor. On the other hand, the two closest
+    neighbors will be at a similar distance from an incorrect match.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Therefore, we can find out how good a match is by looking at the difference
+    between the distances. Theratio test says that the match is good only if the distance
+    ratio between the first match and the second match is smaller than a given number
+    (usually around 0.5). In our case, this number is chosen to be `0.7`. The following
+    snippet finds good matches:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE19]'
+  prefs: []
+  type: TYPE_PRE
+- en: To remove all matches that do not satisfy this requirement, we filter the list
+    of matches and store the good matches in the `good_matches` list.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Then, we pass the matches we found to `FeatureMatching.match` so that they
+    can be processed further:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE20]'
+  prefs: []
+  type: TYPE_PRE
+- en: However, before elaborating on our algorithm, let's first visualize our matches
+    in the next section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Visualizing feature matches
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'In OpenCV, we can easily draw matches using `cv2.drawMatches`. Here, we create
+    our own function for educational purposes as well as for ease of customization
+    of function behavior:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE21]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The function accepts two images, namely, in our case, the image of the object
+    of interest and the current video frame. It also accepts keypoints from both images
+    as well as the matches. It will draw the images next to each other on a single
+    illustration image, illustrate the matches on the image, and return the image.
+    The latter is achieved with the following steps:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Create a new output image of a size that will fit the two images together;
+    make it three-channel in order to draw colored lines on the image:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE22]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Place the first image on the left of the new image and the second image on
+    the right of the first image:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE23]'
+  prefs: []
+  type: TYPE_PRE
+- en: In these expressions, we used the broadcasting rules of the NumPy arrays, which
+    are rules for operations on arrays when their shapes do not match but meet certain
+    constraints instead. Here, `img[...,None]` assigns one rule to channel (third)
+    dimension of the two-dimensional grayscale image (array). Next, once `NumPy` meets
+    a dimension that does not match, but instead has the value of one, it broadcasts
+    the array. It means the same value is used for all three channels.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'For each matching pair of points between both images, we want to draw a small
+    blue circle on each image and connect the two circles with a line. For this purpose,
+    iterate over the list of matching keypoints with a `for` loop, extract the center
+    coordinates from the corresponding keypoints, and shift the coordinate of the
+    second center for drawing:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE24]'
+  prefs: []
+  type: TYPE_PRE
+- en: The keypoints are stored as tuples in Python, with two entries for the *x* and *y* coordinates.
+    Each match, `m`, stores the index in the key point lists, where `m.trainIdx` points
+    to the index in the first key point list (`kp1`) and `m.queryIdx` points to the
+    index in the second key point list (`kp2`).
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In the same loop, draw circles with a four-pixel radius, the color blue, and
+    a one-pixel thickness. Then, connect the circles with a line:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE25]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Finally, `return` the resulting image:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE26]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'So, now that we have a convenient function, we can illustrate the matches with
+    the following code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE27]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The blue lines connect the features in the object (left) to the features in
+    the scenery (right), as shown here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/e2f75f72-bfc2-4eb7-86ed-352171b6ded5.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: This works fine in a simple example such as this, but what happens when there
+    are other objects in the scene? Since our object contains some lettering that
+    seems highly salient, what happens when there are other words present?
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'As it turns out, the algorithm works even under such conditions, as you can
+    see in the following screenshot:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/5df97ad3-c129-4c21-8c2a-af86d856cd7b.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: Interestingly, the algorithm did not confuse the name of the author as seen
+    on the left with the black-on-white lettering next to the book in the scene, even
+    though they spell out the same name. This is because the algorithm found a description
+    of the object that does not rely purely on the grayscale representation. On the
+    other hand, an algorithm doing a pixel-wise comparison could have easily gotten
+    confused.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Now that we have matched our features, let's move ahead and learn how we can
+    use these results in order to highlight the object of the interest, which we will
+    do with the help of homography estimation in the next section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Mapping homography estimation
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Since we are assuming that the object of our interest is planar (that is, an
+    image) and rigid, we can find the homography transformation between the feature
+    points of the two images.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In the following steps, we will explore how homography can be used to calculate
+    the perspective transformation required to bring matched feature points in the
+    object image (`self.key_train`) into the same plane as corresponding feature points
+    in the current image frame (`key_query`):'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'First, we store the image coordinates of all the keypoints that are good matches
+    in lists for convenience, as shown in the following code snippet:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE28]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Now, let''s encapsulate the logic for corner point detections in a separate
+    function:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE29]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The previous code shows two sequences of points and the shape of the source
+    image, the function will return the corners of the points, which is accomplished
+    by the following steps:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Find the perspective transformation (a homography matrix, `H`) for the given
+    two sequences of coordinates:'
+  prefs:
+  - PREF_UL
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE30]'
+  prefs: []
+  type: TYPE_PRE
+- en: To find the transformation, the `cv2.findHomography` function will use the **random
+    sample consensus** (**RANSAC**) method to probe different subsets of input points.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'If the method fails to find the homography matrix, we `raise` an exception,
+    which we will catch later in our application:'
+  prefs:
+  - PREF_UL
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE31]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Given the shape of the source image, we store the coordinates of its corners
+    in an array:'
+  prefs:
+  - PREF_UL
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE32]'
+  prefs: []
+  type: TYPE_PRE
+- en: A homography matrix can be used to transform any point in the pattern into the
+    scenery, such as transforming a corner point in the training image to a corner
+    point in the query image. In other words, this means that we can draw the outline
+    of the book cover in the query image by transforming the corner points from the
+    training image.
+  prefs:
+  - PREF_UL
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'In order to do this, the list of corner points of the training image (`src_corners`)
+    is taken and projected in the query image by performing a perspective transform:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE33]'
+  prefs: []
+  type: TYPE_PRE
+- en: Also, the result is returned immediately, that is, an array of image points
+    (two-dimensional `NumPY` ndarray).
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Now that we have defined our function, we can call it to detect the corner
+    points:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE34]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'All that we need to do is draw a line between each point in `dst_corners` and
+    the very next one, and we will see an outline in the scenery:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE35]'
+  prefs: []
+  type: TYPE_PRE
+- en: Note, in order to draw the image points, first offset the *x* coordinate of
+    the points by the width of the pattern image (because we are showing the two images
+    next to each other). Then, we treat the image points as a closed polyline and
+    draw it with `cv2.polilines`. We also have to change the data type to an integer
+    for drawing.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Finally, the outline of the book cover is drawn like this:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![](img/cd7c3b27-d8b2-4d0b-93e0-6acf5f930e3f.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'This works even when the object is only partially visible, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/93a5f96d-90f7-4efc-875f-10eb837a2741.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: Although the book partially lies outside of the frame, the outline of the book
+    is predicted with the boundaries of the outline lying beyond the frame.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the next section, let's learn how to warp the image in order to make it look
+    closer to the original one.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Warping the image
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'We can also do the opposite of homography estimation/transformation by going
+    from the probed scenery to the training pattern coordinates. This makes it possible
+    for the book cover to be brought onto the frontal plane as if we were looking
+    at it directly from above. To achieve this, we can simply take the inverse of
+    the homography matrix to get the inverse transformation:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE36]'
+  prefs: []
+  type: TYPE_PRE
+- en: However, this would map the top-left corner of the book cover to the origin
+    of our new image, which would cut off everything to the left of and above the
+    book cover. Instead, we want to roughly center the book cover in the new image.
+    Thus, we need to calculate a new homography matrix.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The book cover should be roughly half of the size of the new image. Hence,
+    instead of using the point coordinates of the train image, the following method
+    demonstrates how to transform the point coordinates such that they appear in the
+    center of the new image:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'First, find the scaling factor and bias and then, apply the linear scaling
+    and transform the coordinates:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE37]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'As an output, we want an image that has the same shape as the pattern image
+    (`sh_query`):'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE38]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Then, we can find the homography matrix between the points in the query image
+    and the transformed points of the train image (make sure that the list is converted
+    to a `NumPy` array):'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE39]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'After that, we can use the homography matrix to transform every pixel in the
+    image (this is also called warping the image):'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE40]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The result looks like this (with the matching on the left and the warped image
+    on the right):'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/b3fd8f98-8217-4cb2-8f2f-f5bfa2bf9709.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'The image that results from the perspective transformation might not be perfectly
+    aligned with the `frontoparallel` plane, because, after all, the homography matrix
+    just gives an approximation. In most cases, however, our approach works just fine,
+    such as in the example shown in the following screenshot:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/f274e9d0-ec49-46f2-9550-c3f20fb3fa13.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: Now that we have a pretty good picture about how feature extraction and matching
+    is accomplished with a couple of images, let's move on to the completion of our
+    app and learn how we can track the features in the next section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Learning feature tracking
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Now that our algorithm works for single frames, we want to make sure that the
+    image found in one frame will also be found in the very next frame.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In `FeatureMatching.__init__`, we created some bookkeeping variables that we
+    said we would use for feature tracking. The main idea is to enforce some coherence
+    while going from one frame to the next. Since we are capturing roughly 10 frames
+    per second, it is reasonable to assume that the changes from one frame to the
+    next will not be too radical.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Therefore, we can be sure that the result we get in any given frame has to be
+    similar to the result we got in the previous frame. Otherwise, we discard the
+    result and move on to the next frame.
+  prefs: []
+  type: TYPE_NORMAL
+- en: However, we have to be careful not to get stuck with a result that we think
+    is reasonable but is actually an outlier. To solve this problem, we keep track
+    of the number of frames we have spent without finding a suitable result. We use `self.num_frames_no_success` to
+    hold the value of the number of frames. If this value is smaller than a certain
+    threshold, let's say `self.max_frames_no_success`, we do the comparison between
+    the frames.
+  prefs: []
+  type: TYPE_NORMAL
+- en: If it is greater than the threshold, we assume that too much time has passed
+    since the last result was obtained, in which case it would be unreasonable to
+    compare the results between the frames. Let's learn about early outlier detection
+    and rejection in the next section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Understanding early outlier detection and rejection
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: We can extend the idea of outlier rejection to every step in the computation.
+    The goal then becomes minimizing the workload while maximizing the likelihood
+    that the result we obtain is a good one.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The resulting procedure for early outlier detection and rejection is embedded
+    in the `FeatureMatching.match` method. This method first converts the image to
+    grayscale and stores its shape:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE41]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Then, if the outlier is detected during any step of the computation, we raise
+    an `Outlier` exception to terminate the computation. The following steps show
+    us the matching procedure:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'First, we find good matches between the feature descriptors of the pattern
+    and the query image, and then store the corresponding point coordinates from the
+    train and query images:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE42]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'In order for RANSAC to work in the very next step, we need at least four matches.
+    If fewer matches are found, we admit defeat and raise an `Outlier` exception with
+    a custom message. We wrap the outlier detection in a `try` block:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE43]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Then, we find the corner points of the pattern in the query image (`dst_corners`):'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE44]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'If any of these points lie significantly outside the image (by `20` pixels,
+    in our case), it means that either we are not looking at our object of interest,
+    or the object of interest is not entirely in the image. In both cases, we don''t
+    have to proceed, and raise or create an instance of `Outlier`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE45]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'If the four recovered corner points do not span a reasonable quadrilateral
+    (a polygon with four sides), it means that we are probably not looking at our
+    object of interest. The area of a quadrilateral can be calculated with the following
+    code:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE46]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'If the area is either unreasonably small or unreasonably large, we discard
+    the frame and raise an exception:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE47]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Then, we scale the good points of the train image and find the homography matrix
+    to bring the object to the frontal panel:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE48]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'If the recovered homography matrix is too different from the one that we last
+    recovered (`self.last_hinv`), it means that we are probably looking at a different
+    object. However, we only want to consider `self.last_hinv` if it is fairly recent,
+    say, from within the last `self.max_frames_no_success` frames:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE49]'
+  prefs: []
+  type: TYPE_PRE
+- en: This will help us to keep track of the same object of interest over time. If,
+    for any reason, we lose track of the pattern image for more than `self.max_frames_no_success`
+    frames, we skip this condition and accept whatever homography matrix was recovered
+    up to that point. This ensures that we do not get stuck with a `self.last_hinv`
+    matrix, which is actually an outlier.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'If we detect an outlier during the outlier detection process, we increase`self.num_frame_no_success`
+    and return `False`. We might also want to print a message of the outlier in order
+    to see when exactly it appears:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE50]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Otherwise, if the outlier was not detected, we can be fairly certain that we
+    have successfully located the object of interest in the current frame. In this
+    case, we first store the homography matrix and reset the counter:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE51]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The following lines show the warping of the image for illustration:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE52]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'And finally, we draw good matches and corner points, as we did previously,
+    and return the results:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE53]'
+  prefs: []
+  type: TYPE_PRE
+- en: In the preceding code, as explained previously, we shifted the *x* coordinate
+    of the corners by the width of the train image because the query image appears
+    next to the train image, and we changed the data type of the corners to integers
+    because the `polilines` method accepts integers as coordinates.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the next section, we'll explore how the algorithm works.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Seeing the algorithm in action
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'The result of the matching procedure in a live stream from a laptop''s webcam
+    looks like this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/45a68c97-f5c4-4006-8e18-c1e053676e9c.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: As you can see, most of the keypoints in the pattern image were matched correctly
+    with their counterparts in the query image on the right. The printout of the pattern
+    can now be slowly moved around, tilted, and turned. As long as all the corner
+    points stay in the current frame, the homography matrix is updated accordingly
+    and the outline of the pattern image is drawn correctly.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'This works even if the printout is upside down, as shown here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/78314d35-07a7-48d5-a6e5-d6148c2beb1f.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'In all cases, the warped image brings the pattern image to an upright, centered
+    position on the `frontoparallel` plane. This creates a cool effect of having the
+    pattern image frozen in place in the center of the screen, while the surroundings
+    twist and turn around it, like this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/0c091a5e-985f-4864-9210-cb228a9c144a.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: In most cases, the warped image looks fairly accurate, as shown in the one earlier.
+    If for any reason the algorithm accepts a wrong homography matrix that leads to
+    an unreasonably warped image, then the algorithm will discard the outlier and
+    recover within half a second (that is, within the `self.max_frames_no_success`
+    frames), leading to accurate and efficient tracking throughout.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Summary
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: This chapter looked at a robust feature tracking method that is fast enough
+    to run in real time when applied to the live stream of a webcam.
+  prefs: []
+  type: TYPE_NORMAL
+- en: First, the algorithm shows you how to extract and detect important features
+    in an image, which was independent of perspective and size, be it in a template
+    of our object of interest (train image) or a more complex scene in which we expect
+    the object of interest to be embedded (query image).
+  prefs: []
+  type: TYPE_NORMAL
+- en: A match between feature points in the two images is then found by clustering
+    the keypoints using a fast version of the nearest-neighbor algorithm. From there
+    on, it is possible to calculate a perspective transformation that maps one set
+    of feature points to the other. With this information, we can outline the train
+    image as found in the query image and warp the query image so that the object
+    of interest appears upright in the center of the screen.
+  prefs: []
+  type: TYPE_NORMAL
+- en: With this in hand, we now have a good starting point for designing a cutting-edge
+    feature tracking, image stitching, or augmented-reality application.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the next chapter, we will continue studying the geometrical features of a
+    scene, but, this time, we will be concentrating on the motion. Specifically, we
+    will study how to reconstruct a scene in 3D by inferring its geometrical features
+    from camera motion. For this, we will have to combine our knowledge of feature
+    matching with the optic flow and structure-from-motion techniques.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Attributions
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: '`Lenna.png`—the image of Lenna is available at [http://www.flickr.com/photos/15489034@N00/3388463896](http://www.flickr.com/photos/15489034@N00/3388463896) by
+    Conor Lawless under the CC 2.0 generic attribution.'
+  prefs: []
+  type: TYPE_NORMAL

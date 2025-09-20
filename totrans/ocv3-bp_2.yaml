@@ -1,0 +1,1591 @@
+- en: Chapter 2. Photographing Nature and Wildlife with an Automated Camera
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: '*National Geographic* is famous for its intimate photos of wild animals. Often,
+    in the magazine''s pages, the animals seem larger than life, as if they belong
+    to the same "geographic" scale as the landscapes behind them. This enlargement
+    effect can be achieved by capturing the subject at a very close distance with
+    a wide-angle lens. For example, one memorable photograph by Steve Winter shows
+    a snarling tiger reaching out to strike the lens!'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Let's consider the possible methods behind such a photo. The photographer could
+    try to stalk a wild tiger in person, but for safety, this approach would require
+    some distance and a long lens. A close encounter is likely to endanger the human,
+    the tiger, or both. Alternatively, the photographer could use a remote-controlled
+    rover or drone to approach and photograph the tiger. This would be safer but like
+    the first technique it is laborious, only covers one site at a time, and may spoil
+    opportunities for candid or natural photos because it attracts the animal's attention.
+    Finally, the photographer could deploy concealed and automated cameras, called
+    **camera traps**, in multiple locations that the tiger is likely to visit.
+  prefs: []
+  type: TYPE_NORMAL
+- en: This chapter will explore techniques for programming a camera trap. Maybe we
+    will not capture any tigers, but something will wander into our trap!
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Despite the name, a camera trap does not physically "trap" anything. It just
+    captures photos when a trigger is tripped. Different camera traps may use different
+    triggers but in our case, the trigger will be a computer vision system that is
+    sensitive to motion, color, or certain classes of objects. Our system''s software
+    components will include OpenCV 3, Python scripts, shell scripts, and a camera
+    control tool called gPhoto2\. While building our system, we will address the following
+    questions:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: How can we configure and trigger a photo camera from a host computer?
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: How can we detect the presence of a photogenic subject?
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: How can we capture and process multiple photos of a subject to create an effective
+    composite image or video?
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Note
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: All the scripts and data for this chapter's project can be found in the book's
+    GitHub repository at [https://github.com/OpenCVBlueprints/OpenCVBlueprints/tree/master/chapter_2/CameraTrap](https://github.com/OpenCVBlueprints/OpenCVBlueprints/tree/master/chapter_2/CameraTrap).
+  prefs: []
+  type: TYPE_NORMAL
+- en: This chapter will focus on techniques for Unix-like systems, including Linux
+    and Mac. We assume that users will ultimately deploy our camera trap on low-cost,
+    low-powered, single-board computers (SBCs), which will typically run Linux. A
+    good example is the Raspberry Pi 2 hardware, which typically runs the Raspbian
+    distribution of Linux.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Let's begin with an outline of a few simple tasks that our software will perform
+    before, during, and after image capture.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Planning the camera trap
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Our camera trap will use a computer with two attached cameras. One camera will
+    continuously capture low-resolution images. For example, this first camera may
+    be an ordinary webcam. Our software will analyze the low-resolution images to
+    detect the presence of a subject. We will explore three basic detection techniques
+    based on motion, color, and object classification. When a subject is detected,
+    the second camera will activate to capture and save a finite series of high-resolution
+    images. This second camera will be a dedicated photo camera, with its own battery
+    and storage. We will not necessarily analyze and record images at the fastest
+    possible rate; rather, we will take care to conserve the host computer's resources
+    as well as the photo camera's battery power and storage so that our photo trap
+    can function for a long time.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Optionally, our software will configure the photo camera for **exposure bracketing**.
+    This means that some photos in a series will be deliberately underexposed while
+    others will be overexposed. Later, we will upload photos from the camera to the
+    host computer, and merge the exposures to produce **high dynamic range** (**HDR**)
+    images. This means that the merged photo will exhibit fine details and saturated
+    colors throughout a broader range of shadows, midtones, and highlights than any
+    one exposure could capture. For example, the following lineup illustrates underexposure
+    (left), overexposure (right), and a merged HDR photo (center):'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Planning the camera trap](img/00020.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: HDR imaging is especially important in landscape photography. Typically, the
+    sky is much brighter than the land, yet we want to tame this contrast in order
+    to obtain saturated midtone colors in both these regions, rather than white, featureless
+    sky or black, featureless land. We will also explore techniques for turning a
+    series of images into a time-lapse video.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Note that the two cameras in this project fulfill different requirements. The
+    webcam provides a stream of images for real-time processing, and the photo camera
+    stores images for high-quality processing later. Consider the following comparison
+    table:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '| Feature | Typical webcam | Typical photo camera | High-end industrial camera
+    |'
+  prefs: []
+  type: TYPE_TB
+- en: '| --- | --- | --- | --- |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Price | Low | Medium | High |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Power consumption | Low | High (but has its own battery) | Medium |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Configuration options | Few | Many | Many |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Latency | Low | High | Low |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Resolution | Low | Very high | High |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Ruggedness | Poor | Good | Fair |'
+  prefs: []
+  type: TYPE_TB
+- en: 'Potentially, a high-end industrial camera could serve both purposes—real-time
+    imaging and high-quality imaging. However, the combination of a webcam and a photo
+    camera is likely to be cheaper. Consider the following examples:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '| Name | Purpose | Sensor Format | Highest Res Mode | Interface | Price |'
+  prefs: []
+  type: TYPE_TB
+- en: '| --- | --- | --- | --- | --- | --- |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Point Grey Research Grasshopper 3 GS3-U3-120S6M-C | Industrial camera | 1"
+    | 4242x2830 @ 7 FPS | USB 3.0 | $3,700 (new) |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Carl Zeiss Jena DDR Tevidon 10mm f/2 lens | Lens for industrial camera |
+    Covers 1" | Sharp, suitable for high res |   | $300 (used) |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Nikon 1 J5 with 10-30mm PD-ZOOM lens | Photo camera and lens | 1" | 5568x3712
+    @ 20 FPS | USB 2.0 | $500 (new) |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Odroid USB-Cam 720p | Webcam | 1/4" | 1280x720 @ 30 FPS | USB 2.0 | $20 (new)
+    |'
+  prefs: []
+  type: TYPE_TB
+- en: Here, the industrial camera and lens cost eight times as much as the photo camera,
+    lens, and webcam, yet the photo camera should offer the best image quality. Although
+    the photo camera has a *capture mode* of 5568x3712 @ 20 FPS, note that its USB
+    2.0 interface is much too slow to support this as a *transfer mode*. At the listed
+    resolution and rate, the photo camera can just record the images to its local
+    storage.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'For our purposes, a photo camera''s main weakness is its high latency. The
+    latency pertains to not only the electronics, but also the moving mechanical parts.
+    To mitigate the problem, we can take the following steps:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Use a webcam with a slightly wider angle of view than the photo camera. This
+    way, the camera trap may detect the subject early, and provide the photo camera
+    with more lead time to take the first shot.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Put the photo camera in the manual focus mode, and set the focus to the distance
+    where you plan to photograph a subject. Manual focus is quicker and quieter because
+    the autofocus motor does not run.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: If you are using a **digital single-lens reflex** (**DSLR**) camera, put it
+    in **mirror lock-up** (**MLU**) mode (if it supports MLU). Without MLU, the reflex
+    mirror (which deflects light into the optical viewfinder) must move out of the
+    optical path before each shot. With MLU, the mirror is already out of the way
+    (but the optical viewfinder is disabled). MLU is quicker, quieter, and has less
+    vibration because the mirror does not move. On some cameras, MLU is called **live
+    view** because the digital ("live") viewfinder may be activated when the optical
+    viewfinder is disabled.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Controlling a photo camera is a big part of this project. Once you learn to
+    write scripts of photographic commands, perhaps you will begin to think about
+    photography in new ways—for it is a process, not just a final moment when the
+    shutter falls. Let's turn our attention to this scripting topic now.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Controlling a photo camera with gPhoto2
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'gPhoto2 is an open source, vendor-neutral camera control tool for Unix-like
+    systems, such as Linux and Mac. It supports photo cameras of multiple brands,
+    including Canon, Nikon, Olympus, Pentax, Sony, and Fuji. The supported features
+    vary by model. The following table lists gPhoto2''s major features, alongside
+    the official count of supported cameras for each feature:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '| Feature | Number of Supported Devices | Description |'
+  prefs: []
+  type: TYPE_TB
+- en: '| --- | --- | --- |'
+  prefs: []
+  type: TYPE_TB
+- en: '| File transfer | 2105 | files to and from the device |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Image capture | 489 | Make the device capture an image to its local storage
+    |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Configuration | 428 | Change the device''s settings, such as shutter speed
+    |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Liveview | 309 | Continuously grab frames of live video from the device |'
+  prefs: []
+  type: TYPE_TB
+- en: These numbers are current as of version 2.5.8, and are conservative. For example,
+    some configuration features are supported on the Nikon D80, even though the gPhoto2
+    documentation does not list this camera as configurable. For our purposes, image
+    capture and configuration are required features, so gPhoto2 adequately supports
+    at least 428 cameras, and perhaps many more. This number includes all manner of
+    cameras, from point-and-shoot compacts to professional DSLRs.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Note
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: To check whether the latest version of gPhoto2 officially supports a feature
+    on a specific camera, see the official list at [http://www.gphoto.org/proj/libgphoto2/support.php](http://www.gphoto.org/proj/libgphoto2/support.php).
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Typically, gPhoto2 communicates with a camera via USB using a protocol called
+    **Picture Transfer Protocol** (**PTP**). Before proceeding, check whether your
+    camera has any instructions regarding PTP mode. You might need to change a setting
+    on the camera to ensure that the host computer will see it as a PTP device and
+    not a USB mass storage device. For example, on many Nikon cameras, it is necessary
+    to select **SETUP MENU** | **USB** | **PTP**, as seen in the following image:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Controlling a photo camera with gPhoto2](img/00021.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Moreover, if a camera is mounted as a disk drive, gPhoto2 cannot communicate
+    with it. This is slightly problematic because most operating systems automatically
+    mount a camera as a disk drive, regardless of whether the camera is in the PTP
+    mode. Thus, before we proceed to install and use gPhoto2, let's look at ways to
+    programmatically unmount a camera drive.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Writing a shell script to unmount camera drives
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'On Mac, a process called PTPCamera is responsible for mounting and controlling
+    cameras on behalf of applications such as iPhoto. After connecting a camera, we
+    can kill PTPCamera by running the following command in Terminal:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE0]'
+  prefs: []
+  type: TYPE_PRE
+- en: Then, the camera will be available to receive commands from gPhoto2\. However,
+    keep reading because we want to write code that will support Linux too!
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'On most desktop Linux systems, when the camera is connected, it will be mounted
+    as a **Gnome Virtual** **File System** (**GVFS**) volume. We can list the mounted
+    GVFS volumes by running the following command in Terminal:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE1]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'For example, this command produces the following output in Ubuntu, on a MacBook
+    Pro laptop with a Nikon D80 camera attached via USB:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE2]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Note that the output includes the camera''s mount point, in this case, `gphoto2://[usb:001,007]/`.
+    For a camera drive, the GVFS mount point will always start with `gphoto2://`.
+    We can unmount the camera drive by running a command such as the following:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE3]'
+  prefs: []
+  type: TYPE_PRE
+- en: Now, if we run `gvfs-mount -l` again, we should see that the camera is no longer
+    listed. Thus, it is unmounted and should be available to receive commands from
+    gPhoto2.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Tip
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: Alternatively, a file browser such as Nautilus will show mounted camera drives,
+    and will provide GUI controls to unmount them. However, as programmers, we prefer
+    shell commands because they are easier to automate.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We will need to unmount the camera every time it is plugged in. To simplify
+    this, let''s write a Bash shell script that supports multiple operating systems
+    (Mac or any Linux system with GVFS) and multiple cameras. Create a file named
+    `unmount_cameras.sh` and fill it with the following Bash code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE4]'
+  prefs: []
+  type: TYPE_PRE
+- en: Note that this script checks the operating system's family (where `"Darwin"`
+    is the family of Mac). On Mac, it runs `killall PTPCamera`. On other systems,
+    it uses a combination of the `gvfs-mount`, `grep`, and `uniq` commands to find
+    each unique `gphoto2://` mount point and then unmount all the cameras.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s give the script "executable" permissions by running the following command:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE5]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Anytime we want to ensure that the camera drives are unmounted, we can execute
+    the script like this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE6]'
+  prefs: []
+  type: TYPE_PRE
+- en: Now, we have a standard way to make a camera available, so we are ready to install
+    and use gPhoto2.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Setting up and testing gPhoto2
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: gPhoto2 and related libraries are widely available in open source software repositories
+    for Unix-like systems. No wonder—connecting to a photo camera is a common task
+    in desktop computing today!
+  prefs: []
+  type: TYPE_NORMAL
+- en: For Mac, Apple does not provide a package manager but third parties do. The
+    MacPorts package manager has the most extensive repository.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Note
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: To set up MacPorts and its dependencies, follow the official guide at [https://www.macports.org/install.php](https://www.macports.org/install.php).
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'To install gPhoto2 via MacPorts, run the following command in Terminal:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE7]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'On Debian and its derivatives, including Ubuntu, Linux Mint, and Raspbian,
+    we can install gPhoto2 by running the following command:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE8]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'On Fedora and its derivatives, including Red Hat Enterprise Linux (RHEL) and
+    CentOS, we can use the following installation command:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE9]'
+  prefs: []
+  type: TYPE_PRE
+- en: OpenSUSE has a one-click installer for gPhoto2 at [https://software.opensuse.org/package/gphoto](https://software.opensuse.org/package/gphoto).
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'After installing gPhoto2, let''s connect a camera. Ensure that the camera is
+    turned on and in PTP mode. Then, run the following commands to unmount the camera
+    drive and take a photo:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE10]'
+  prefs: []
+  type: TYPE_PRE
+- en: If the camera is in autofocus mode, you might see or hear the lens move. (Ensure
+    that the camera has a subject in view so that autofocus will succeed. Otherwise,
+    no photo will be captured.) Then, you might hear the shutter open and close. Disconnect
+    the camera and use its review menu to browse the captured photos. If a new photo
+    is there, gPhoto2 is working!
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'To upload all images from the camera to the current working directory, we could
+    reconnect the camera and run the following commands:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE11]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'To read about all the flags that gphoto2 supports, we can open its manual by
+    running the following command:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE12]'
+  prefs: []
+  type: TYPE_PRE
+- en: Next, let's try a more advanced task, involving configuration as well as image
+    capture. We will take a series of photos with exposure bracketing.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Writing a shell script for exposure bracketing
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'gPhoto2 provides a flag, `--set-config`, which allows us to reconfigure many
+    camera parameters, including **exposure compensation**. For example, suppose we
+    want to overexpose an image by the equivalent of one full f-stop (doubling the
+    aperture''s area or increasing its radius by a factor of sqrt(2)). This bias is
+    called an exposure compensation (or exposure adjustment) of +1.0 **exposure value**
+    (**EV**). The following command configures the camera to use +1.0 EV and then
+    takes a photo:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE13]'
+  prefs: []
+  type: TYPE_PRE
+- en: Note that the value of `exposurecompensation` is denominated in thousandths
+    of an EV, so `1000` is +1.0 EV. To underexpose, we would use a negative value.
+    A series of these commands, each with a different EV, would achieve exposure bracketing.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We can use the `--set-config` flag to control many photographic properties,
+    not just exposure compensation. For example, the following command captures a
+    photo with an exposure time of one second, while firing the flash in slow sync
+    mode:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE14]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The following command lists all the supported properties and values for the
+    given camera:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE15]'
+  prefs: []
+  type: TYPE_PRE
+- en: Note
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: For further discussion of f-stops, exposure, and other photographic properties,
+    refer back to [Chapter 1](part0015_split_000.html#E9OE2-940925703e144daa867f510896bffb69
+    "Chapter 1. Getting the Most out of Your Camera System"), *Getting the Most out
+    of Your Camera System*, especially the *Capturing the subject in the moment* section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Before taking a series of exposure bracketed photos, dial your camera to the
+    **aperture priority (A)** mode. This means that the aperture will be held constant
+    while the shutter speed will vary based on lighting and EV. A constant aperture
+    will help ensure that the same region is in focus in all images.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s automate the exposure bracketing commands with another shell script,
+    which we will call `capture_exposure_bracket.sh`. It will accept a flag, `-s`,
+    to specify the exposure step size between frames (in thousandths of an EV), and
+    another flag `-f`, to specify the number of frames. The defaults will be 3 frames
+    spaced at an interval of 1.0 EV. Here is the script''s implementation:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE16]'
+  prefs: []
+  type: TYPE_PRE
+- en: All the commands in this script are cross-platform for Linux and Mac. Note that
+    we are using the `getopts` command to parse arguments, and Bash arithmetic to
+    compute the EV of each photo.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Remember to give the script "executable" permissions by running the following
+    command:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE17]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'To unmount the camera and capture 5 photos at an interval of 1.5 EV, we could
+    run the following commands:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE18]'
+  prefs: []
+  type: TYPE_PRE
+- en: Now that we have a clear idea of how to control a camera from the command line,
+    let's consider how to wrap this functionality in a general-purpose programming
+    language that can also interface with OpenCV.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Writing a Python script to wrap gPhoto2
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: Python is a high-level, dynamic programming language with great third-party
+    libraries for mathematics and science. OpenCV's Python bindings are efficient
+    and quite mature, wrapping all the C++ library's major functionality except GPU
+    optimizations. Python is also a convenient scripting language, as its standard
+    libraries provide cross-platform interfaces to access much of the system's functionality.
+    For example, it is easy to write Python code to spawn a subprocess (also called
+    a child process), which may run any executable, even another interpreter such
+    as a Bash shell.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Note
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: For more information on spawning and communicating with a child process from
+    Python, see the `subprocess` module's documentation at [https://docs.python.org/2/library/subprocess.html](https://docs.python.org/2/library/subprocess.html).
+    For the special case where the child process is an additional Python interpreter,
+    see the documentation of the `multiprocessing` module at [https://docs.python.org/2/library/multiprocessing.html](https://docs.python.org/2/library/multiprocessing.html).
+  prefs: []
+  type: TYPE_NORMAL
+- en: We will use Python's standard subprocessing functionality to wrap gPhoto2 and
+    our own shell scripts. By sending camera commands from a child process, we will
+    enable the caller (in Python) to treat these as "fire and forget" commands. That
+    is to say, functions in the Python process return immediately so that the caller
+    is not obliged to wait for the camera to handle the commands. This is a good thing
+    because a camera might typically require several seconds to autofocus and capture
+    a series of photos.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s create a new file, `CameraCommander.py`, and begin its implementation
+    with the following import statements:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE19]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We will write a class, `CameraCommander`. As member variables, it will have
+    a current capture process (which may be `None`) and a log file. By default, the
+    log file will be `/dev/null`, which means that the log output will be discarded.
+    After setting member variables, the initialization method will call a helper method
+    to unmount thecamera drive so that the camera is ready to receive commands. Here
+    are the class''s declaration and initializer:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE20]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'When an instance of `CameraCommander` is deleted, it should close the log file,
+    as seen in the following code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE21]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Every time `CameraCommander` opens a subprocess, the command should be interpreted
+    by the shell (Bash), and the command''s print output and errors should be redirected
+    to the log file. Let''s standardize this configuration of a subprocess in the
+    following helper method:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE22]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Now, as our first wrapper around a shell command, let''s write a method to
+    run `unmount_cameras.sh` in a subprocess. Unmounting the camera drives is a short
+    process, and it must finish before other camera commands can run. Thus, we will
+    implement our wrapper method so that it does not return until `unmount_cameras.sh`
+    returns. That is to say, the subprocess will run synchronously in this case. Here
+    is the wrapper''s implementation:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE23]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Next, let''s consider how to capture a single image. We will start by calling
+    a helper method to stop any previous, conflicting command. Then, we will invoke
+    the `gphoto2` command with the usual `--capture-image` flag. Here is the implementation
+    of the wrapper method:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE24]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'As another capture mode, we can invoke `gphoto2` to record a time-lapse series.
+    The `-I` or `--interval` flag, with an integer value, specifies the delay between
+    frames, in seconds. The `-F` or `--frames` flag also takes an integer value, specifying
+    the number of frames in the series. If the `-I` flag is used but `-F` is omitted,
+    the process continues to capture frames indefinitely until forced to terminate.
+    Let''s provide the following wrapper for time-lapse functionality:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE25]'
+  prefs: []
+  type: TYPE_PRE
+- en: Before taking a series of time-lapse photos, you might want to dial your camera
+    to the **manual exposure** (**M**) mode. This means that the aperture and shutter
+    speed will be held constant at manually specified values. Assuming that the scene's
+    light level is approximately constant, a constant exposure will help prevent unpleasant
+    flickering in the time-lapse video. On the other hand, if we do expect lighting
+    conditions to vary a lot over the course of the time-lapse series, the M mode
+    may be inappropriate because in these circumstances, it will cause some frames
+    to be noticeably underexposed and others overexposed.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'To allow for exposure bracketing, we can simply wrap our `capture_exposure_bracket.sh`
+    script, as seen in the following code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE26]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'As we have seen in the previous three methods, it is sensible to terminate
+    any ongoing capture process before trying to start another. (After all, a camera
+    can only process one command at a time). Moreover, a caller might have other reasons
+    to terminate a capture process. For example, the subject might have gone away.
+    We will provide the following method to force the termination of any ongoing capture
+    process:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE27]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Similarly, we will provide the following method to await the completion of
+    any currently running capture process:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE28]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Finally, we will provide the following property getter to enable a caller to
+    check whether a capture process is currently running:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE29]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'This concludes the `CameraCommander` module. To test our work, let''s write
+    another script, `test_camera_commands.py`, with the following implementation:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE30]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Ensure that your camera is on, is in the PTP mode, and is connected. Then,
+    make the test script executable and run it, like this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE31]'
+  prefs: []
+  type: TYPE_PRE
+- en: Wait for all the commands to finish, and then disconnect the camera to review
+    the images. Check the timestamp and EV number of each photo. Ideally, a total
+    of six photos should have been captured. However, the actual number could vary
+    depending on factors such as the success or failure of autofocus, and the time
+    spent capturing and saving each image. In case of any doubts, review the log file,
+    `test_camera_commands.log`, in a text editor.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Finding libgphoto2 and wrappers
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: As an alternative to using the gPhoto2 command line tool, we could use the underlying
+    C library, libgphoto2 ([https://github.com/gphoto/libgphoto2](https://github.com/gphoto/libgphoto2)).
+    The library has several third-party wrappers, including a set of up-to-date Python
+    bindings called python-gphoto2 ([https://github.com/gphoto/libgphoto2-python](https://github.com/gphoto/libgphoto2-python)).
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'OpenCV 3''s videoio module has optional support for libgphoto2\. To enable
+    this feature, we could configure and build OpenCV from source using the `WITH_GPHOTO2`
+    CMake definition. Of course, for this option to work, the system must already
+    have an installation of libgphoto2 and its header files. For example, these can
+    be installed by the following command on Debian, Ubuntu, Linux Mint, Raspbian,
+    and similar systems:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE32]'
+  prefs: []
+  type: TYPE_PRE
+- en: For our purposes, controlling the photo camera via libgphoto2 or OpenCV's videoio
+    module is overkill. We do not want to grab frames for real-time processing. We
+    simply want our Python scripts to initiate additional processes to unmount and
+    configure the camera, and make it capture photos to its local storage. The gPhoto2
+    command-line tool and our own shell scripts are perfectly convenient to use as
+    subprocesses, so we will continue to rely on them throughout the rest of this
+    chapter.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Note
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: One of OpenCV's official samples demonstrates the use of a gPhoto2-compatible
+    camera via the videoio module. Specifically, the sample deals with focus control.
+    See the source code in OpenCV's GitHub repository at [https://github.com/Itseez/opencv/blob/master/samples/cpp/autofocus.cpp](https://github.com/Itseez/opencv/blob/master/samples/cpp/autofocus.cpp).
+  prefs: []
+  type: TYPE_NORMAL
+- en: Detecting the presence of a photogenic subject
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: '[Chapter 1](part0015_split_000.html#E9OE2-940925703e144daa867f510896bffb69
+    "Chapter 1. Getting the Most out of Your Camera System"), *Getting the Most out
+    of Your Camera System*, proposed that a photograph ought to capture a subject
+    in a moment. Let''s explore this notion further as we search for ways to detect
+    a desirable or "photogenic" subject and moment.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: As a medium, photography uses light, an aperture, a photosensitive surface,
+    and time to draw an image of a scene. The earliest photographic technology, in
+    the 1820s, lacked the resolution and speed to convey a detailed subject in a precise
+    moment, but it was able to capture a grainy scene on a sunny day. Later, with
+    better lenses, flashes, and photosensitive surfaces, photography became capable
+    of capturing a sharp scene, a formal portrait, a faster and more natural portrait,
+    and finally a moment of action, frozen in time.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Consider the following series of famous photographs, ranging from 1826 to 1942:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Detecting the presence of a photogenic subject](img/00022.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'For general interest, here are some details about the preceding photographs:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Upper left: *View from the Window at Le Gras* is history''s earliest surviving
+    photograph, taken by Nicéphore Niépce in 1826 or 1827 at Saint-Loup-de-Varennes,
+    France. The scene includes parts of the rooftops and countryside at Niépce''s
+    estate.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Middle left: *Boulevard du Temple*, taken by Louis Daguerre in 1838, is believed
+    to be the first photograph to include people. The scene is a busy street in Paris,
+    but most of the passersby are invisible because of the photograph''s slow speed.
+    Near the street corner, one man is polishing another man''s boots, so these two
+    people were in one place long enough to be recorded.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Upper right: Jean-Baptiste Sabatier-Blot captured this formal portrait of Louis
+    Daguerre in 1844.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Lower left: Sergei Prokudin-Gorsky, a pioneer of color photography, captured
+    this relatively informal portrait of factory workers in Kasli, Russia, in 1910\.
+    The men in the photograph are creating casts at the Kasli Iron Works, which produced
+    sculptures and luxury furniture in the 19th and early 20th centuries.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Lower right: Max Alpert took this combat photograph on July 12, 1942, near
+    Luhansk (today in Ukraine). The subject is Aleksey Gordeyevich Yeremenko, a 23-year-old
+    junior political officer in the Red Army. At the moment of the photograph, Yeremenko
+    is rallying his regiment to attack. A few seconds later, he was shot dead.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Even from these few examples, we can infer a historical trend toward more dynamic
+    images, which capture an atmosphere of activity, change, or even violence. Let's
+    contemplate this trend in the context of nature and wildlife photography. Color
+    photography began to reach the public eye around 1907, and after several more
+    decades of technological improvements, it prevailed as a more popular format than
+    black and white. Color is dynamic. Landscapes, plants, and even animals change
+    color depending on the season, weather, time of day, and their age. Today, it
+    would seem strange to see a nature documentary shot in black and white.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Changes in lens technology have also had a profound influence on nature and
+    wildlife photography. With longer, faster, and sharper lenses, photographers have
+    been able to peer into the lives of wild animals from a distance. For example,
+    today, documentaries are filled with scenes of predatory animals chasing their
+    prey. To shoot these scenes would have been difficult, or impossible, with lenses
+    of the 1920s. Similarly, the quality of macro (close-up) lenses has improved a
+    lot, and has been a boon to documentary work on insects and other small creatures.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Finally, as we discussed in the opening of this chapter, advances in automation
+    have enabled photographers to deploy cameras in remote wilderness, in the midst
+    of the action. With digital technology, a remote camera can store a huge number
+    of photos, and these photos can be combined easily to produce effects, such as
+    time-lapse (which accentuates motion) or HDR (which accentuates color). Today,
+    these techniques are in widespread use, so documentary fans may be familiar with
+    the sight of time-lapse flowers rocketing up from the ground, or time-lapse clouds
+    racing across saturated HDR skies. Whether small or large, everything is portrayed
+    as dynamic.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We can design a few simple rules to help distinguish between a dynamic scene
+    and a static scene. Here are some useful cues:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**Motion**: We may assume that any movement in a scene represents a chance
+    to capture a subject in a moment of action or change. Without needing to know
+    what the subject is, we can detect its motion and capture a photograph.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Color**: We may assume that certain color patterns are unusual in a given
+    environment, and that they arise in a dynamic situation. Without needing to know
+    exactly what the colorful subject is, we can detect its presence and photograph
+    it. For example, a big new splash of color could be a sunset as the clouds part,
+    or a flower as it opens.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '**Classification**: We may assume that certain kinds of subjects are alive
+    and will interact with their environment, creating opportunities for dynamic photos.
+    When we detect a given class of subject, we can respond by photographing it. As
+    an example, we will detect and photograph the faces of mammals.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'Regardless of the approach to detecting a subject, we must ensure that our
+    webcam and photo camera have a similar view of the scene. They should point at
+    the same target. The webcam''s angle of view should be as wide as the photo camera''s,
+    and perhaps a little wider to allow the webcam to detect a subject just before
+    it enters the photo camera''s view. Both cameras should be fixed firmly in place
+    so that they do not become misaligned due to vibrations, wind, or other typical
+    disturbances. For example, the photo camera could be mounted on a sturdy tripod,
+    and the webcam could be taped to the photo camera''s hotshoe (the slot that is
+    typically reserved for an external flash or external viewfinder). The following
+    image shows an example of this setup:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Detecting the presence of a photogenic subject](img/00023.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'For context, the following image is a slightly more distant view of the same
+    setup. Observe that the webcam and photo camera point at the same subject:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Detecting the presence of a photogenic subject](img/00024.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: We will implement each type of camera trap as a separate script, which will
+    accept command-line arguments to adjust the trap's sensitivity. To begin, let's
+    develop a motion-sensitive trap.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Detecting a moving subject
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'Our motion-activated camera trap will rely on the `CameraCommander` module
+    that we implemented earlier, in the section *Writing a Python script to wrap gPhoto2*.
+    Also, we will use OpenCV and NumPy to capture and analyze webcam images. Finally,
+    from Python''s standard library, we will import the `argparse` module, which will
+    help parse command-line arguments, and the `time` module, which we will use to
+    control the time delay between detection attempts. Let''s create a file, `set_motion_trap.py`,
+    and begin its implementation with the following imports:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE33]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'This script will have a simple structure, with just a `main()` function that
+    reads command-line arguments and performs motion detection in a loop. Several
+    arguments pertain to the use of the webcam, which we will call the detection camera.
+    Other arguments concern the motion detection algorithm and the use of the photo
+    camera. The `main()` function begins with the following definitions of the command-line
+    arguments:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE34]'
+  prefs: []
+  type: TYPE_PRE
+- en: Note
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'The arguments'' `help` text will appear when we run our script with the `-h`
+    or `--help` flag, like this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE35]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'At this point, we have only declared the arguments. Next, we need to parse
+    them and access their values, as shown in the following code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE36]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Besides the arguments, we will use several variables. A `VideoCapture` object
+    will enable us to configure and capture from the webcam. Matrices (which are actually
+    NumPy arrays in OpenCV''s Python wrapper) will enable us to store BGR and grayscale
+    versions of each webcam frame as well as a **foreground mask**. The foreground
+    mask will be output from a motion detection algorithm, and it will be a grayscale
+    image that is white in foreground (moving) areas, gray in shadow areas, and black
+    in background areas. Specifically, in our case, the motion detector will be an
+    instance of OpenCV''s `BackgroundSubtractorMOG2` class. Last, we need an instance
+    of our `CameraCommander` class to control the photo camera. Here are the declarations
+    of the relevant variables:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE37]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The remainder of the `main()` function''s implementation is a loop. On each
+    iteration, we will put the thread to sleep for a specified interval (by default,
+    0.25 seconds) because this will conserve system resources. As a result, we will
+    skip some of the webcam''s frames, but we probably do not need the full frame
+    rate to detect the subject. If we did not impose a sleep period, the camera trap
+    could utilize 100% of a CPU core all the time, particularly on a slow CPU in a
+    low-powered SBC. Here is this first part of the loop''s implementation:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE38]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'When we do read a frame, we will convert it to grayscale and equalize it:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE39]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We will pass the equalized frame and the foreground mask to the `BackgroundSubtractorMOG2`''s
+    `apply` method. This method accumulates a history of frames, and estimates whether
+    each pixel is part of a foreground region, shadow, or background region based
+    on differences between frames in the history. As a third argument, we will pass
+    a **learning rate**, which is a value in the range [0.0, 1.0]. A low value means
+    that more weight will be given to old frames, and thus the estimates will change
+    slowly. See how we call the method in this line of code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE40]'
+  prefs: []
+  type: TYPE_PRE
+- en: Note
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: Note that in background subtraction algorithms such as MOG2, the foreground
+    is defined as a region whose pixel values have changed in recent history. Conversely,
+    the background is a region whose pixel values have not changed. The shadow refers
+    to the foreground's shadow. For details about MOG2 and the other background subtraction
+    algorithms supported in OpenCV, see the official documentation at [http://docs.opencv.org/3.0-beta/modules/video/doc/motion_analysis_and_object_tracking.html#backgroundsubtractormog2](http://docs.opencv.org/3.0-beta/modules/video/doc/motion_analysis_and_object_tracking.html#backgroundsubtractormog2).
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'As an example of the background subtractor''s input and output, consider the
+    following pair of images. The top image is an RGB frame from a video, while the
+    bottom image is a foreground mask based on the video. Note that the scene is a
+    rocky seacoast with waves breaking in the foreground and boats going past in the
+    distance:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Detecting a moving subject](img/00025.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'By counting the white (foreground) values in the foreground mask, we can get
+    a rough measurement of the amount of movement that the webcam has captured in
+    recent history. We should normalize this figure based on the number of pixels
+    in the frame. Here is the relevant code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE41]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'If the script is running with the `--debug` flag, we will print the measurement
+    of motion:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE42]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'If the motion exceeds a specified threshold, and if we are not already capturing
+    photos, we will start to capture photos now. Depending on the command-line arguments,
+    we may capture either an exposure-bracketed series or a time-lapse series, as
+    seen in the next block of code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE43]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Here, the loop and the `main()` function end. To ensure that `main()` runs
+    when the script is executed, we must add the following code to the script:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE44]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We can give this Python script "executable" permissions and then run it like
+    any other shell script, as seen in following example:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE45]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Consider the pair of images below. The left-hand image shows the physical setup
+    of the motion-activated camera trap, which happens to be running `set_motion_trap.py`
+    with default parameters. The right-hand image is one of the resulting photos:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Detecting a moving subject](img/00026.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: These images were taken with two different cameras, and for this reason they
+    differ in color and contrast. However, they represent the same scene.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Experiment with the optional arguments to see which settings work best for a
+    given camera and a particular kind of moving subject. Once you have gained an
+    understanding of this camera trap's sensitivities, let's proceed to another design,
+    using a set of color values as the trigger.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Detecting a colorful subject
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'OpenCV provides a set of functions to measure and compare the color distribution
+    in images. This field is called histogram analysis. A histogram is just an array
+    of pixel counts for various colors or ranges of colors. Thus, for a BGR image
+    with 256 possible values per channel, a histogram can have as many as 256 ^ 3
+    = 16.8 million elements. To create such a histogram, we can use the following
+    code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE46]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The sum of the histogram''s values equals the total number of pixels in the
+    input images. To facilitate comparisons, we should normalize the histogram so
+    that the sum of its values is 1.0 or, in other words, each value represents the
+    *proportion* of pixels belonging to the given color bin. We can use the following
+    code to perform this type of normalization:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE47]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Then, to obtain a similarity measurement for two normalized histograms, we
+    can use code such as the following:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE48]'
+  prefs: []
+  type: TYPE_PRE
+- en: For the `HISTCMP_INTERSECT` method, the similarity is the sum of the per-element
+    minimums of the two histograms. If we consider the histograms as two curves, this
+    value measures the intersecting area beneath the curves.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Note
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: For a list of all the supported methods of histogram comparison and their mathematical
+    definitions, see the official documentation at [http://docs.opencv.org/3.0-beta/modules/imgproc/doc/histograms.html#comparehist](http://docs.opencv.org/3.0-beta/modules/imgproc/doc/histograms.html#comparehist).
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We will build a camera trap that uses histogram similarity as a trigger. When
+    the histogram of the webcam''s image is sufficiently similar to the histogram
+    of a reference image, we will activate the photo camera. The reference image could
+    be a colorful landscape (if we are interested in all the colors of the landscape),
+    or it could be a tightly cropped photo of a colorful object (if we are interested
+    in just the object''s colors, regardless of the surroundings). Consider the following
+    examples of tightly cropped photos:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Detecting a colorful subject](img/00027.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: The first image (left) shows an orange jacket, which is a common piece of outdoor
+    clothing during hunting season. (The intense, warm color makes the wearer more
+    visible, reducing the risk of hunting accidents.) This is potentially a good reference
+    image if we want to detect people in the woods. The second image (right) shows
+    an alpine poppy with red petals and yellow stamen. This may be a good reference
+    image if we want to detect a flower when it opens.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Note
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: These and other colorful images can be found in the book's GitHub repository
+    at [https://github.com/OpenCVBlueprints/OpenCVBlueprints/tree/master/chapter_2/CameraTrap/media](https://github.com/OpenCVBlueprints/OpenCVBlueprints/tree/master/chapter_2/CameraTrap/media).
+  prefs: []
+  type: TYPE_NORMAL
+- en: Let's implement the color-based camera trap in a new script called `set_color_trap.py`.
+    Much of the code will be similar to `set_motion_trap.py`, but we will cover the
+    differences here.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Under some circumstances, `set_color_trap.py` will print error messages to
+    `stderr`. For this functionality, Python 2 and Python 3 have different syntax.
+    We will add the following import statement for compatibility, to make Python 3''s
+    `print` syntax available even if we are running Python 2:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE49]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Our script''s command-line arguments will include the path to the reference
+    image, and a similarity threshold, which will determine the trap''s sensitivity.
+    Here are the definitions of the arguments:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE50]'
+  prefs: []
+  type: TYPE_PRE
+- en: Note
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: To read the omitted sections of this script, go to the book's GitHub repository
+    at [https://github.com/OpenCVBlueprints/OpenCVBlueprints/chapter_2/CameraTrap/set_color_trap.py](https://github.com/OpenCVBlueprints/OpenCVBlueprints/chapter_2/CameraTrap/set_color_trap.py).
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We will parse the arguments and try to load the reference image from file.
+    If the image cannot be loaded, the script will print an error message and exit
+    prematurely, as the following code shows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE51]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We will create a normalized histogram of the reference image, and later, we
+    will also create a normalized histogram of each frame from the webcam. To help
+    with the creation of a normalized histogram, we will define another function locally.
+    (Python allows nested function definitions.) Here is the relevant code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE52]'
+  prefs: []
+  type: TYPE_PRE
+- en: To reiterate, every time we capture a frame from the webcam, we will find its
+    normalized histogram. Then, we will measure the similarity of the reference histogram
+    and the current scene's histogram based on the `HISTCMP_INTERSECT` method of comparison,
+    meaning that we simply want to calculate the histograms' intersection or overlapping
+    area. If the similarity is equal to or greater than the threshold, we will begin
+    to capture photos.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Here is the main loop''s implementation:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE53]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'This concludes the `main()` function. Again, to ensure that `main()` is called
+    when the script is executed, we will add the following code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE54]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Make the script executable. Then, for example, we can run it like this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE55]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'See the pair of the following images. The left-hand image shows the physical
+    setup of the camera trap, which is running `set_color_trap.py` with the custom
+    parameters that we just noted. The right-hand image is one of the resulting photos:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Detecting a colorful subject](img/00028.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Again, these images come from different cameras, which give different renditions
+    of the scene's color and contrast.
+  prefs: []
+  type: TYPE_NORMAL
+- en: You may wish to experiment with `set_color_trap`'s arguments, especially the
+    reference image and similarity threshold. Note that the `HISTCMP_INTERSECT` method
+    of comparison tends to produce low similarities, so the default threshold is just
+    0.02, or a 2% overlap of the histograms. If you modify the code to use a different
+    method of comparison, you may need a much higher threshold, and the maximum similarity
+    may exceed 1.0.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Once you finish testing the color-based camera trap, let's proceed to use face
+    detection as our final kind of trigger.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Detecting the face of a mammal
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'As you probably know, OpenCV''s `CascadeClassifier` class is useful for face
+    detection and other kinds of object detection, using a model of the object''s
+    features called a cascade, which is loaded from an XML file. We used `CascadeClassifier`
+    and `haarcascade_frontalface_alt.xml` for human face detection in the section
+    *Supercharging the GS3-U3-23S6M-C and other Point Grey Research cameras* of [Chapter
+    1](part0015_split_000.html#E9OE2-940925703e144daa867f510896bffb69 "Chapter 1. Getting
+    the Most out of Your Camera System"), *Getting the Most out of Your Camera System*.
+    Later in this book, in [Chapter 5](part0043_split_000.html#190862-940925703e144daa867f510896bffb69
+    "Chapter 5. Generic Object Detection for Industrial Applications"), *Generic Object
+    Detection for Industrial Applications*, we will examine all of `CascadeClassifier`''s
+    functionality, along with a set of tools to create a cascade for any kind of object.
+    For now, we will continue to use pretrained cascades that come with OpenCV. Notably,
+    OpenCV offers the following cascade files for human and cat face detection:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'For human frontal faces:'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`data/haarcascades/haarcascade_frontalface_default.xml`'
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`data/haarcascades/haarcascade_frontalface_alt.xml`'
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`data/haarcascades/haarcascade_frontalface_alt2.xml`'
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`data/lbpcascades/lbpcascade_frontalface.xml`'
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'For human profile faces:'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`data/haarcascades/haarcascade_profileface.xml`'
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`data/lbpcascades/lbpcascade_profileface.xml`'
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'For cat frontal faces:'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`data/haarcascades/haarcascade_frontalcatface.xml`'
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`data/haarcascades/haarcascade_frontalcatface_extended.xml`'
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`data/lbpcascades/lbpcascade_frontalcatface.xml`'
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: LBP cascades are faster but slightly less accurate than Haar cascades. The extended
+    version of Haar cascades (as used in `haarcascade_frontalcatface_extended.xml`)
+    is sensitive to both horizontal and diagonal features, whereas standard Haar cascades
+    are only sensitive to horizontal features. For example, a cat's whiskers could
+    register as diagonal features.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Note
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: '[Chapter 5](part0043_split_000.html#190862-940925703e144daa867f510896bffb69
+    "Chapter 5. Generic Object Detection for Industrial Applications"), *Generic Object
+    Detection for Industrial Applications*, in this book, will discuss types of cascades
+    in detail. Also, for a complete tutorial on how OpenCV''s cat cascades were trained,
+    see [Chapter 3](part0029_split_000.html#RL0A1-940925703e144daa867f510896bffb69
+    "Chapter 3. Recognizing Facial Expressions with Machine Learning"), *Training
+    a Smart Alarm to Recognize the Villain and His Cat*, in the book *OpenCV for Secret
+    Agents*, by Joseph Howse (Packt Publishing, 2015).'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Incidentally, the cat face detection cascades may also detect other mammal
+    faces. The following images are visualizations of the detection results using
+    `haarcascade_frontalcatface_extended.xml` on photos of a cat (left), a red panda
+    (upper right), and a lynx (lower right):'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Detecting the face of a mammal](img/00029.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Note
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: The photos of the red panda and lynx are by Mathias Appel, who has generously
+    released these and many other images into the public domain. See his Flickr page
+    at [https://www.flickr.com/photos/mathiasappel/](https://www.flickr.com/photos/mathiasappel/).
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s implement the classification-based camera trap in a new script called
+    `set_classifier_trap.py`. The necessary imports are the same as for `set_color_trap.py`.
+    The command-line arguments for `set_classifier_trap.py` include the path to the
+    cascade file as well as other parameters that affect the use of `CascadeClassifer`.
+    Here is the relevant code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE56]'
+  prefs: []
+  type: TYPE_PRE
+- en: Note
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: To read the omitted sections of this script, go to the book's GitHub repository
+    at [https://github.com/OpenCVBlueprints/OpenCVBlueprints/chapter_2/CameraTrap/set_classifier_trap.py](https://github.com/OpenCVBlueprints/OpenCVBlueprints/chapter_2/CameraTrap/set_classifier_trap.py).
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'After parsing the arguments as usual, we will initialize an instance of `CascadeClassifier`
+    with the specified cascade file. If the file failed to load, we will print an
+    error message and exit the script prematurely. See the following code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE57]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'On each iteration of the script''s main loop, we will convert the webcam image
+    to an equalized black and white version, which we will pass to the `CascadeClassifier`''s
+    `detectMultiScale` method. We will use some of the command-line arguments as additional
+    parameters to control the sensitivity of `detectMultiScale`. If at least one face
+    (or other relevant object) is detected, we will start to capture photos, as usual.
+    Here is the loop''s implementation:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE58]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'This completes the `main()` function, and all that remains is to call `main()`
+    when the script executes, as usual:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE59]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Make the script executable. Then, for example, we can run it like this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE60]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Refer to the following set of images. The left-hand image shows the physical
+    setup of the camera trap, which is running `set_classifier_trap.py` with the custom
+    parameters that we just noted. The right-hand images are two of the resulting
+    photos:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Detecting the face of a mammal](img/00030.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: The left-hand image and right-hand images come from two different cameras, so
+    the color and contrast differ. Also, the two right-hand images come from separate
+    runs of `set_classifier_trap.py`, and the lighting conditions and camera position
+    have changed very slightly.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Feel free to experiment with the arguments of `set_classifier_trap.py`. You
+    might even want to create your own cascade files to detect different kinds of
+    faces or objects. [Chapter 5](part0043_split_000.html#190862-940925703e144daa867f510896bffb69
+    "Chapter 5. Generic Object Detection for Industrial Applications"), *Generic Object
+    Detection for Industrial Applications*, will provide a wealth of information to
+    help you do more with `CascadeClassifier` and cascade files.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Next, we will consider ways to process the photos that we may capture with any
+    of our scripts, or with simple gPhoto2 commands.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Processing images to show subtle colors and motion
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'By now, you have probably captured some exposure-bracketed photos and time-lapse
+    photos. Upload them onto your computer using a photo management application, a
+    file browser, or the following gPhoto2 command:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE61]'
+  prefs: []
+  type: TYPE_PRE
+- en: The latter command will upload the files to the current working directory.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We will merge exposure-bracketed photos to create HDR images, which will improve
+    color rendition in shadows and highlights. Similarly, we will merge time-lapse
+    photos to create time-lapse videos, which will show gradual motion on an accelerated
+    scale. We will start by processing some of the sample photos from the book's GitHub
+    repository at [https://github.com/OpenCVBlueprints/OpenCVBlueprints/tree/master/chapter_2/CameraTrap/media](https://github.com/OpenCVBlueprints/OpenCVBlueprints/tree/master/chapter_2/CameraTrap/media),
+    and then you will be able to adapt the code to use your photos instead.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Creating HDR images
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: OpenCV 3 has a new module called "photo". Two of its classes, `MergeDebevec`
+    and `MergeMertens`, create an HDR image by merging exposure-bracketed photos.
+    Regardless of which class is used, the resulting HDR image has channel values
+    in the range [0.0, 1.0]. `MergeDebevec` produces an HDR image that requires gamma
+    correction before it can be displayed or printed. The photo module provides several
+    **tone mapping** functions that are capable of performing the correction.
+  prefs: []
+  type: TYPE_NORMAL
+- en: On the other hand, the HDR image from `MergeMertens` does not require gamma
+    correction. Its channel values just need to be scaled up to the range [0, 255].
+    We will use `MergeMertens` because it is simpler and tends to be better at preserving
+    color saturation.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Note
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: For more information about HDR imaging and tone mapping in OpenCV 3, see the
+    official documentation at [http://docs.opencv.org/3.0-beta/modules/photo/doc/hdr_imaging.html](http://docs.opencv.org/3.0-beta/modules/photo/doc/hdr_imaging.html).
+    Also, see the official tutorial at [http://docs.opencv.org/3.0-beta/doc/tutorials/photo/hdr_imaging/hdr_imaging.html](http://docs.opencv.org/3.0-beta/doc/tutorials/photo/hdr_imaging/hdr_imaging.html).
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The `MergeDebevec` and `MergeMertens` classes are based on the following papers,
+    respectively:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: P. Debevec, and J. Malik, *Recovering High Dynamic Range Radiance Maps from
+    Photographs*, Proceedings OF ACM SIGGRAPH, 1997, 369 - 378.
+  prefs: []
+  type: TYPE_NORMAL
+- en: T. Mertens, J. Kautz, and F. Van Reeth, *Exposure Fusion*, Proceedings of the
+    15th Pacific Conference on Computer Graphics and Applications, 2007, 382 - 390.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'For demonstration purposes, the GitHub repository contains a pair of exposure-bracketed
+    photos of a cat named Plasma. (Her photos and the HDR merged version appear earlier
+    in this chapter, in the section *Planning the camera trap*.) Let''s create a script,
+    `test_hdr_merge.py`, to merge the unprocessed photos, `media/PlasmaWink_0.jpg`
+    and `media/PlasmaWink_1.jpg`. Here is the implementation:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE62]'
+  prefs: []
+  type: TYPE_PRE
+- en: Obtain the script and media from the repository, run the script, and view the
+    resulting HDR image. Then, adapt the script to process your own exposure-bracketed
+    photos. HDR can produce dramatic results for any scene that has intense light
+    and deep shadows. Landscapes and sunlit rooms are good examples.
+  prefs: []
+  type: TYPE_NORMAL
+- en: With HDR imaging, we have compressed differences in exposure. Next, with time-lapse
+    videography, we will compress differences in time.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Creating time-lapse videos
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: Previously, in the section *Supercharging the PlayStation Eye* in [Chapter 1](part0015_split_000.html#E9OE2-940925703e144daa867f510896bffb69
+    "Chapter 1. Getting the Most out of Your Camera System"), *Getting the Most out
+    of Your Camera System*, we created a slow-motion video. Remember that we simply
+    captured images at a high speed (187 FPS) and put them in a video that was configured
+    to play at a normal speed (60 FPS). Similarly, to create a time-lapse video, we
+    will read image files that were captured at a low speed (less than 1 FPS) and
+    put them in a video that is configured to play at a normal speed (60 FPS).
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'For demonstration purposes, the book''s GitHub repository contains a set of
+    time-lapse photographs of a cat named Josephine. When we make a time-lapse video
+    of Josephine, we will see that she is very dynamic, even when she is sitting in
+    a chair! As a preview, here are three consecutive frames of the time lapse:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Creating time-lapse videos](img/00031.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'The series spans 56 photos with names ranging from `media/JosephineChair_00.jpg`
+    to `media/JosephineChair_55.jpg`. The following script, which we will call `test_time_lapse_merge.py`,
+    will read the photos and produce a one-second time-lapse video named `media/JosephineChair_TimeLapse.avi`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE63]'
+  prefs: []
+  type: TYPE_PRE
+- en: Obtain the script and media from the repository, run the script, and view the
+    resulting video of Josephine watching the world from her chair. Then, adapt the
+    script to process some of your own images. Perhaps you will capture the motion
+    of other slow animals, flowers as they bloom, or sunlight and clouds as they cross
+    a landscape.
+  prefs: []
+  type: TYPE_NORMAL
+- en: As a further project, you may wish to create HDR time-lapse videos. You could
+    start by modifying our `capture_exposure_bracket.sh` script to capture multiple
+    batches of exposure-bracketed images, with a time delay between each batch. (For
+    example, the command `sleep 3` could be used to delay for 3 seconds.) After uploading
+    the captured images onto your computer, you can merge each batch into an HDR image,
+    and then merge the HDR images into a time-lapse video.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Explore other photographic techniques, and then try to automate them!
+  prefs: []
+  type: TYPE_NORMAL
+- en: Further study
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'Computational photography is a diverse and popular field, which combines the
+    work of artists, technicians, and scientists. Thus, there are many types of authors,
+    instructors, and mentors who can help you become a better "computational photographer".
+    Here are just a few examples of helpful guides:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '*Learning Image Processing with OpenCV*, by Gloria Bueno García et al (Packt
+    Publishing, 2015), covers a wide range of OpenCV 3''s capabilities with respect
+    to image capture, image editing, and computational photography. The book uses
+    C++, and is suitable for beginners in computer vision.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The *National Geographic Masters of Photography* video lectures (The Great Courses,
+    2015) provide great insight into the goals and techniques of master photographers.
+    Several of the lecturers are wildlife photographers, whose use of camera traps
+    was an inspiration for this chapter.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '*OpenSource Astrophotography*, by Karl Sarnow (CreateSpace Independent Publishing
+    Platform, 2013), covers the use of gPhoto2 and other open source software, along
+    with photographic hardware, to capture and process detailed images of the night
+    sky.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '*Science for the Curious Photographer*, by Charles S. Johnson, Jr. (CRC Press,
+    2010), explains the scientific history and principles of light, lenses, and photography.
+    Moreover, it provides practical solutions to common photographic problems, such
+    as selecting and setting up good equipment for macro photography.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Whether as a hobby or a profession, computational photography is a great way
+    to explore and chronicle the world from a particular viewpoint. It requires observation,
+    experimentation, and patience, so slow down! Take time to learn from other people's
+    explorations, and to share yours.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Summary
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: This chapter has demonstrated a set of surprisingly flexible commands and classes,
+    which enable us to conduct experiments in computational photography, with short
+    and simple code. We have written scripts to control a photo camera. Along the
+    way, we have acquainted ourselves with gPhoto2, the Bash shell, PTP communication,
+    GVFS mount points, and Python's support for subprocesses. We have also scripted
+    several variations of a photo trap to take pictures when a subject comes into
+    view. For this, OpenCV has provided us with the capability to detect motion, measure
+    color similarities, and classify objects. Finally, we have used OpenCV to combine
+    a set of photos into a time-lapse video or HDR image.
+  prefs: []
+  type: TYPE_NORMAL
+- en: So far, this book has provided a fairly broad survey of ways to capture light
+    as data, control a camera, detect a subject, and process a photo. The remaining
+    chapters will focus on a selection of advanced techniques, which will enable us
+    to perform much finer classification and identification of an image's subject,
+    and to process photos and videos in ways that account for camera motion and perspective.
+  prefs: []
+  type: TYPE_NORMAL

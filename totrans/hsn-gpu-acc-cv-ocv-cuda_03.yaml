@@ -1,0 +1,998 @@
+- en: Threads, Synchronization, and Memory
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In the last chapter, we saw how to write CUDA programs that leverage the processing
+    capabilities of a GPU by executing multiple threads and blocks in parallel. In
+    all programs, until the last chapter, all threads were independent of each other
+    and there was no communication between multiple threads. Most of the real-life
+    applications need communication between intermediate threads. So, in this chapter,
+    we will look in detail at how communication between different threads can be done,
+    and explain the synchronization between multiple threads working on the same data.
+    We will examine the hierarchical memory architecture of a CUDA and how different
+    memories can be used to accelerate CUDA programs. The last part of this chapter
+    explains a very useful application of a CUDA in the dot product of vectors and
+    matrix multiplication, using all the concepts we have covered earlier.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The following topics will be covered in this chapter:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Thread calls
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: CUDA memory architecture
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Global, local, and cache memory
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Shared memory and thread synchronization
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Atomic operations
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Constant and texture memory
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Dot product and a matrix multiplication example
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Technical requirements
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'This chapter requires familiarity with the basic C or C++ programming language
+    and the codes that were explained in the previous chapters. All the code used
+    in this chapter can be downloaded from the following GitHub link: [https://GitHub.com/PacktPublishing/Hands-On-GPU-Accelerated-Computer-Vision-with-OpenCV-and-CUDA](https://github.com/PacktPublishing/Hands-On-GPU-Accelerated-Computer-Vision-with-OpenCV-and-CUDA).
+    The code can be executed on any operating system, though it has only been tested
+    on Windows 10\.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Check out the following video to see the code in action:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[http://bit.ly/2prnGAD](http://bit.ly/2prnGAD)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Threads
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'The CUDA has a hierarchical architecture in terms of parallel execution. The
+    kernel execution can be done in parallel with multiple blocks. Each block is further
+    divided into multiple threads. In the last chapter, we saw that CUDA runtime can
+    carry out parallel operations by launching the same copies of the kernel multiple
+    times. We saw that it can be done in two ways: either by launching multiple blocks
+    in parallel, with one thread per block, or by launching a single block, with many
+    threads in parallel. So, two questions you might ask are, which method should
+    I use in my code? And, is there any limitation on the number of blocks and threads
+    that can be launched in parallel?'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The answers to these questions are pivotal. As we will see later on in this
+    chapter, threads in the same blocks can communicate with each other via shared
+    memory. So, there is an advantage to launching one block with many threads in
+    parallel so that they can communicate with each other. In the last chapter, we
+    also saw the `maxThreadPerBlock` property that limits the number of threads that
+    can be launched per block. Its value is 512 or 1,024 for the latest GPUs. Similarly,
+    in the second method, the maximum number of blocks that can be launched in parallel
+    is limited to 65,535.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Ideally, instead of launching multiple threads per single block or multiple
+    blocks with a single thread, we launch multiple blocks with each having multiple
+    threads (which can be equal to `maxThreadPerBlock`) in parallel. So, suppose you
+    want to launch N = 50,000 threads in parallel in the vector add example, which
+    we saw in the last chapter. The kernel call would be as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '`gpuAdd<< <((N +511)/512),512 > >>(d_a,d_b,d_c)`'
+  prefs: []
+  type: TYPE_NORMAL
+- en: The maximum threads per block are 512, and hence the total number of blocks
+    is calculated by dividing the total number of threads (N) by 512\. But if N is
+    not an exact multiple of 512, then N divided by 512 may give a wrong number of
+    blocks, which is one less than the actual count. So, to get the next highest integer
+    value for the number of blocks, 511 is added to N and then it is divided by 512\.
+    It is basically the **ceil** operation on division.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Now, the question is, will this work for all values of N? The answer, sadly,
+    is no. From the preceding discussion, the total number of blocks can''t go beyond
+    65,535\. So, in the afore as-mentioned kernel call, if `(N+511)/512` is above
+    65,535, then again the code will fail. To overcome this, a small constant number
+    of blocks and threads are launched with some modification in the kernel code,
+    which we will see further by rewriting the kernel for our vector addition program,
+    as seen in [Chapter 2](bf5e2281-2978-4e37-89d8-8c4b781a34cd.xhtml), *Parallel
+    Programming using Cuda C*:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE0]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'This kernel code is similar to what we wrote in the last chapter. It has two
+    modifications. One modification is in the calculation of thread ID and the second
+    is the inclusion of the `while` loop in the kernel function. The change in thread
+    ID calculation is due to the launching of multiple threads and blocks in parallel.
+    This calculation can be understood by considering blocks and threads as a two-dimensional
+    matrix with the number of blocks equal to the number of rows, and the number of
+    columns equal to the number of threads per block. We will take an example of three
+    blocks and three threads/blocks, as shown in the following table:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/af773f86-ee8e-4395-af5f-b6139b230bac.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'We can get the ID of each block by using `blockIdx.x` and the ID of each thread
+    in the current block by the `threadIdx.x` command. So, for the thread shown in
+    green, the block ID will be 2 and the thread ID will be 1\. But what if we want
+    a unique index for this thread among all the threads? This can be calculated by
+    multiplying its block ID with the total number of threads per block, which is
+    given by `blockDim.x`, and then summing it with its thread ID. This can be represented
+    mathematically as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE1]'
+  prefs: []
+  type: TYPE_PRE
+- en: For example, in green, `threadIdx.x = 1`, `blockIdx.x = 2` , and `blockDim.x
+    = 3` equals `tid = 7`. This calculation is very important to learn as it will
+    be used widely in your code.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The `while` loop is included in the code because when N is very large, the
+    total number of threads can''t be equal to N because of the limitation described
+    earlier. So, one thread has to do multiple operations separated by the total number
+    of threads launched. This value can be calculated by multiplying `blockDim.x`
+    by `gridDim.x`, which gives block and grid dimensions, respectively. Inside the
+    `while` loop, the thread ID is incremented by this offset value. Now, this code
+    will work for any value of N. To complete the program, we will write the main
+    function for this code as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE2]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Again, the main function is very similar to what we wrote last time. The only
+    changes are in terms of how we launch the kernel function. The kernel is launched
+    with 512 blocks, each having 512 threads in parallel. This will solve the problem
+    for large values of N. Instead of printing the addition of a very long vector,
+    only one print statement, which indicates whether the calculated answer is right
+    or wrong, is printed. The output of the code will be seen as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/e869db0f-e17a-4b05-84b4-9d28f024085d.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: This section explained the hierarchical execution concept in a CUDA. The next
+    section will take this concept further by explaining a hierarchical memory architecture.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Memory architecture
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'The execution of code on a GPU is divided among streaming multiprocessors,
+    blocks, and threads. The GPU has several different memory spaces, with each having
+    particular features and uses and different speeds and scopes. This memory space
+    is hierarchically divided into different chunks, like global memory, shared memory,
+    local memory, constant memory, and texture memory, and each of them can be accessed
+    from different points in the program. This memory architecture is shown in preceding
+    diagram:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/ec8e0d7d-05a0-4eca-9c5a-648df0f49a97.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: As shown in the diagram, each thread has its own local memory and a register
+    file. Unlike processors, GPU cores have lots of registers to store local data.
+    When the data of a thread does not fit in the register file, the local memory
+    is used. Both of them are unique to each thread. The register file is the fastest
+    memory. Threads in the same blocks have shared memory that can be accessed by
+    all threads in that block. It is used for communication between threads. There
+    is a global memory that can be accessed by all blocks and all threads. Global
+    memory has a large memory access latency. There is a concept of caching to speed
+    up this operation. L1 and L2 caches are available, as shown in the following table.
+    There is a read-only constant memory that is used to store constants and kernel
+    parameters. Finally, there is a texture memory that can take advantage of different
+    two-dimensional or three-dimensional access patterns.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The features of all memories are summarized in the following table:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '| **Memory** | **Access Pattern** | **Speed** | **Cached?** | **Scope** | **Lifetime**
+    |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Global | Read and Write | Slow | Yes | Host and All Threads | Entire Program
+    |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Local | Read and Write | Slow | Yes | Each Thread | Thread |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Registers | Read and Write | Fast | - | Each Thread | Thread |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Shared | Read and Write | Fast | No | Each Block | Block |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Constant | Read only | Slow | Yes | Host and All Threads | Entire Program
+    |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Texture | Read only | Slow | Yes | Host and All Threads | Entire Program
+    |'
+  prefs: []
+  type: TYPE_TB
+- en: The preceding table describes important features of all memories. The scope
+    defines the part of the program that can use this memory, and lifetime defines
+    the time for which data in that memory will be visible to the program. Apart from
+    this, L1 and L2 caches are also available for GPU programs for faster memory access.
+  prefs: []
+  type: TYPE_NORMAL
+- en: To summarize, all threads have a register file, which is the fastest. Multiple
+    threads in the same blocks have shared memory that is faster than global memory.
+    All blocks can access global memory, which will be the slowest. Constant and texture
+    memory are used for a special purpose, which will be discussed in the next section.
+    Memory access is the biggest bottleneck in the fast execution of the program.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Global memory
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'All blocks have read and write access to global memory. This memory is slow
+    but can be accessed from anywhere in your device code. The concept of caching
+    is used to speed up access to a global memory. All memories allocated using `cudaMalloc`
+    will be a global memory. The following simple example demonstrates how you can
+    use a global memory from your program:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE3]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'This code demonstrates how you can write in global memory from your device
+    code. The memory is allocated using `cudaMalloc` from the host code and a pointer
+    to this array is passed as a parameter to the kernel function. The kernel function
+    populates this memory chunk with values of the thread ID. This is copied back
+    to host memory for printing. The result is shown as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/a67ad366-a6c8-4cc6-bd8d-3b8e7327152a.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: As we are using global memory, this operation will be slow. There are advanced
+    concepts to speed up this operation which will be explained later on. In the next
+    section, we will explain local memory and registers that are unique to all threads.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Local memory and registers
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Local memory and register files are unique to each thread. Register files are
+    the fastest memory available for each thread. When variables of the kernel do
+    not fit in register files, they use local memory. This is called **register spilling**.
+    Basically, local memory is a part of global memory that is unique for each thread.
+    Access to local memory will be slow compared to register files. Though local memory
+    is cached in L1 and L2 caches, register spilling might not affect your program
+    adversely.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'A simple program to understand how to use local memory is shown as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE4]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The `t_local` variable will be local to each thread and stored in a register
+    file. When this variable is used for computation in the kernel function, the computation
+    will be the fastest. The output of the preceding code is shown as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/01037099-35aa-46bd-bf0b-3ffc7eb92540.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: Cache memory
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: On the latest GPUs, there is an L1 cache per multiprocessor and an L2 cache,
+    which is shared between all multiprocessors. Both global and local memories use
+    these caches. As L1 is near to thread execution, it is very fast. As shown in
+    the diagram for memory architecture earlier, the L1 cache and shared memory use
+    the same 64 KB. Both can be configured for how many bytes they will use out of
+    the 64 KB. All global memory access goes through an L2 cache. Texture memory and
+    constant memory have their separate caches.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Thread synchronization
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Up until now, whatever examples we have seen in this book had all threads independent
+    of each other. But rarely, in real life, do you find examples where threads operate
+    on data and terminate without passing results to any other threads. So there has
+    to be some mechanism for threads to communicate with each other, and that is why
+    the concept of shared memory is explained in this section. When many threads work
+    in parallel and operate on the same data or read and write from the same memory
+    location, there has to be synchronization between all threads. Thus, thread synchronization
+    is also explained in this section. The last part of this section explains atomic
+    operations, which are very useful in read-modified write conditions.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Shared memory
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'Shared memory is available on-chip, and hence it is much faster than global
+    memory. Shared memory latency is roughly 100 times lower than uncached global
+    memory latency. All the threads from the same block can access shared memory.
+    This is very useful in many applications where threads need to share their results
+    with other threads. However, it can also create chaos or false results if it is
+    not synchronized. If one thread reads data from memory before the other thread
+    has written to it, it can lead to false results. So, the memory access should
+    be controlled or managed properly. This is done by the `__syncthreads()` directive,
+    which ensures that all the `write` operations to memory are completed before moving
+    ahead in the programs. This is also called a **barrier**. The meaning of barrier
+    is that all threads will reach this line and wait for other threads to finish.
+    After all threads have reached this barrier, they can move further. To demonstrate
+    the use of shared memory and thread synchronization, an example of a moving average
+    is taken. The kernel function for that is shown as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE5]'
+  prefs: []
+  type: TYPE_PRE
+- en: The moving average operation is nothing but finding an average of all elements
+    in an array up to the current element. Many threads will need the same data of
+    an array for their calculation. This is an ideal case of using shared memory,
+    and it will provide faster data than global memory. This will reduce the number
+    of global memory accesses per thread, which in turn will reduce the latency of
+    the program. The shared memory location is defined using the `__shared__` directive.
+    In this example, the shared memory of ten float elements is defined. Normally,
+    the size of shared memory should be equal to the number of threads per block.
+    Here, we are working on an array of 10, and hence we have taken the shared memory
+    of this size.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The next step is to copy data from global memory to this shared memory. All
+    the threads copy the element indexed by its thread ID to the shared array. Now,
+    this is a shared memory write operation and, in the next line, we will read from
+    this shared array. So, before proceeding, we should ensure that all shared memory
+    write operations are completed. Therefore, let's introduce the `__synchronizethreads()`
+    barrier.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Next, the `for` loop calculates the average of all elements up to the current
+    elements using the values in shared memory and stores the answer in global memory
+    which is indexed by the current thread ID. The last line copies the calculated
+    value in shared memory also. This line will have no effect on the overall execution
+    of the code because shared memory has a lifetime up until the end of the current
+    block execution, and this is the last line after which block execution is complete.
+    It is just used to demonstrate this concept about shared memory. Now, we will
+    try to write the main function for this code as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE6]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'In the `main` function, after allocating memory for host and device arrays,
+    host array is populated with values from zero to nine. This is copied to device
+    memory where the moving average is calculated and the result is stored. The result
+    from device memory is copied back to host memory and then printed on the console.
+    The output on the console is shown as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/d25f4dfd-77ed-4a21-8a9b-3ec1b3a7ca9c.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: This section demonstrated the use of shared memory when multiple threads use
+    data from the same memory location. The next section demonstrates the use of the
+    `atomic` operations, which are very important in read-modified write operations.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Atomic operations
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Consider a situation in which a large number of threads try to modify a small
+    portion of memory. This is a frequently occurring phenomenon. It creates more
+    problems when we try to perform a read-modify-write operation. The example of
+    this operation is `d_out[i] ++,` where the first `d_out[i]` is read from memory,
+    then incremented and then written back to the memory. However, when multiple threads
+    are doing this operation on the same memory location, it can give a wrong output.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Suppose one memory location has an initial value of six, and threads p and
+    q are trying to increment this memory location, then the final answer should be
+    eight. But at the time of execution, it may happen that both the p and q threads
+    read this value simultaneously, then both will get the value six. They increment
+    it to seven and both will store this seven in the memory. So instead of eight,
+    our final answer is seven, which is wrong. How this can be dangerous is understood
+    by taking an example of ATM cash withdrawal. Suppose you have a balance of Rs
+    5,000 in your account. You have two ATM cards of the same account. You and your
+    friend go to two different ATMs simultaneously to withdraw Rs 4,000\. Both of
+    you swipe your card simultaneously; so, when the ATM checks for the balance, both
+    will show a balance of Rs 5,000\. When both of you withdraw Rs 4,000, then both
+    machines will look at the initial balance, which was Rs 5,000\. The amount to
+    withdraw is less than the balance, and hence both machines will give Rs 4,000\.
+    Even though your balance was Rs 5,000, you got Rs 8,000, which is dangerous. To
+    demonstrate this phenomenon, one example of large threads trying to access a small
+    array is taken. The kernel function for this example is shown as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE7]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The kernel function is just incrementing memory location in the `d_a[tid] +=1`
+    line. The issue is how many times this memory location is incremented. The total
+    number of threads is 10,000 and the array is only of size 10\. We are indexing
+    an array by taking the `modulo` operation between the thread ID and the size of
+    the array. So, 1,000 threads will try to increment the same memory location. Ideally,
+    every location in the array should be incremented 1,000 times. But as we will
+    see in the output, this is not the case. Before seeing the output, we will try
+    to write the `main` function:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE8]'
+  prefs: []
+  type: TYPE_PRE
+- en: In the `main` function, the device array is declared and initialized to zero.
+    Here, a special `cudaMemSet` function is used to initialize memory on the device.
+    This is passed as a parameter to the kernel, which increments these 10 memory
+    locations. Here, a total of 10,000 threads are launched as 1,000 blocks and 100
+    threads per block. The answer stored on the device after the kernel's execution
+    is copied back to the host, and the value of each memory location is displayed
+    on the console.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The output is as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/220c69ea-0945-4d74-9c6c-58b48f265382.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'As discussed previously, ideally, each memory location should have been incremented
+    1,000 times, but most of the memory locations have values of 16 and 17\. This
+    is because many threads read the same locations simultaneously and hence increment
+    the same value and store it in memory. As the timing of the thread''s execution
+    is beyond the control of the programmer, how many times simultaneous memory access
+    will happen is not known. If you run your program a second time, then will your
+    output be same as the first time? Your output might look like the following:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/4492405e-802e-4611-8571-0b5e79f7c4e4.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: As you might have guessed, every time you run your program, the memory locations
+    may have different values. This happens because of the random execution of all
+    threads on the device.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'To solve this problem, CUDA provides an API called `atomicAdd` operations.
+    It is a `blocking` operation, which means that when multiple threads are trying
+    to access the same memory location, only one thread can access the memory location
+    at a time. Other threads have to wait for this thread to finish and `write` its
+    answer on memory. The kernel function to use the `atomicAdd` operation is shown
+    as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE9]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The `kernel` function is quite similar to what we saw earlier. Instead of incrementing
+    memory location using the `+=` operator, the `atomicAdd` function is used. It
+    takes two arguments. The first is the memory location we want to increment, and
+    the second is the value by which this location has to be incremented. In this
+    code, 1,000 threads will again try to access the same location; so when one thread
+    is using this location, the other 999 threads have to wait. This will increase
+    the cost in terms of execution time. The `main` function of increment using `atomic`
+    operations is shown as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE10]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'In the `main` function, the array with 10 elements is initialized with a zero
+    value and passed to the kernel. But now, the kernel will do the `atomic add` operation.
+    So, the output of this program should be accurate. Each element in the array should
+    be incremented 1,000 times. The following will be the output:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/29bea1ee-443f-46cb-9742-0841c6ff3b47.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: If you measure the execution time of the program with atomic operations, it
+    may take a longer time than that taken by simple programs using global memory.
+    This is because many threads are waiting for memory access in the atomic operation.
+    Use of shared memory can help to speed up operations. Also, if the same number
+    of threads are accessing more memory locations, then the atomic operation will
+    incur less time overhead as a smaller number of threads having to wait for memory
+    access.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In this section, we have seen that atomic operations help in avoiding race conditions
+    in memory operations and make the code simpler to write and understand. In the
+    next section, we will explain two special types of memories, constant and texture,
+    which help in accelerating certain types of code.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Constant memory
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'The CUDA language makes another type of memory available to the programmer,
+    which is known as **constant** memory. NVIDIA hardware provides 64 KB of this
+    constant memory, which is used to store data that remains constant throughout
+    the execution of the kernel. This constant memory is cached on-chip so that the
+    use of constant memory instead of global memory can speed up execution. The use
+    of constant memory will also reduce memory bandwidth to the device''s global memory.
+    In this section, we will see how to use constant memory in CUDA programs. A simple
+    program that performs a simple math operation, `a*x + b`, where `a` and `b` are
+    constants, is taken as an example. The `kernel` function code for this program
+    is shown as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE11]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Constant memory variables are defined using the `__constant__` keyword. In
+    the preceding code, two float variables, `constant_f` and `constant_g`, are defined
+    as constants that will not change throughout the kernel''s execution. The second
+    thing to note is that once variables are defined as constants, they should not
+    be defined again in the kernel function. The kernel function computes a simple
+    mathematical operation using these two constants. There is a special way in which
+    constant variables are copied to memory from the `main` function. This is shown
+    in the following code:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE12]'
+  prefs: []
+  type: TYPE_PRE
+- en: In the `main` function, the `h_f` and `h_g` constants are defined and initialized
+    on the host, which will be copied to constant memory. The `cudaMemcpyToSymbol`
+    instruction is used to copy these constants onto constant memory for kernel execution.
+    It has five arguments. First is the destination, which is defined using the `__constant__`
+    keyword. Second is the host address, third is the size of the transfer, fourth
+    is memory offset, which is taken as zero, and fifth is the direction of data transfer,
+    which is taken as the host to the device. The last two arguments are optional,
+    and hence they are omitted in the second call to the `cudaMemcpyToSymbol` instruction.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The output of the code is shown as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/e604f1e3-6ad4-4b42-a22e-55ad71959484.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: One thing to note is that constant memory is a `Read-only` memory. This example
+    is used just to explain the use of the constant memory from the CUDA program.
+    It is not the optimal use of constant memory. As discussed earlier, constant memory
+    helps in conserving memory bandwidth to global memory. To understand this, you
+    have to understand the concept of warp. One warp is a collection of 32 threads
+    woven together and executed in lockstep. A single read from constant memory can
+    be broadcast to half warp, which can reduce up to 15 memory transactions. Also,
+    constant memory is cached so that memory access to a nearby location will not
+    incur an additional memory transaction. When each half warp, which contains 16
+    threads, operates on the same memory locations, the use of constant memory saves
+    a lot of execution time. It should also be noted that if half-warp threads use
+    completely different memory locations, then the use of constant memory may increase
+    the execution time. So, the constant memory should be used with proper care.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Texture memory
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: '**Texture** memory is another read-only memory that can accelerate the program
+    and reduce memory bandwidth when data is read in a certain pattern. Like constant
+    memory, it is also cached on a chip. This memory was originally designed for rendering
+    graphics, but it can also be used for general purpose computing applications.
+    It is very effective when applications have memory access that exhibits a great
+    deal of spatial locality. The meaning of spatial locality is that each thread
+    is likely to read from the nearby location what other nearby threads read. This
+    is great in image processing applications where we work on 4-point connectivity
+    and 8-point connectivity. A two-dimensional spatial locality for accessing memory
+    location by threads may look something like this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '| Thread 0 | Thread 2 |'
+  prefs: []
+  type: TYPE_TB
+- en: '| Thread 1 | Thread 3 |'
+  prefs: []
+  type: TYPE_TB
+- en: 'General global memory cache will not be able to capture this spatial locality
+    and will result in lots of memory traffic to global memory. Texture memory is
+    designed for this kind of access pattern so that it will only read from memory
+    once, and then it will be cached so that execution will be much faster. Texture
+    memory supports one and two-dimensional `fetch` operations. Using texture memory
+    in your CUDA program is not trivial, especially for those who are not programming
+    experts. In this section, a simple example of how to copy array values using texture
+    memory is explained. The `kernel` function for using texture memory is explained
+    as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE13]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The part of texture memory that should be fetched is defined by texture reference.
+    In code, it is defined using the texture API. It has three arguments. The first
+    argument indicates the data type of texture elements. In this example, it is a
+    `float`. The second argument indicates the type of texture reference, which can
+    be one-dimensional, two-dimensional, and so on. Here, it is a one-dimensional
+    reference. The third argument specifies the read mode and it is an optional argument.
+    Please make sure that this texture reference is declared as a static global variable,
+    and it should not be passed as parameters to any function. In the kernel function,
+    data stored at the thread ID is read from this texture reference and copied to
+    the `d_out` global memory pointer. Here, we are not using any spatial locality
+    as this example is only taken to show you how to use texture memory from CUDA
+    programs. The spatial locality will be explained in the next chapter when we see
+    some image processing applications with CUDA. The `main` function for this example
+    is shown as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE14]'
+  prefs: []
+  type: TYPE_PRE
+- en: In the `main` function, after declaring and allocating memory for host and device
+    arrays, the host array is initialized with values from zero to nine. In this example,
+    you will see the first use of CUDA arrays. They are similar to normal arrays,
+    but they are dedicated to textures. They are read-only to kernel functions and
+    can be written to device memory from the host by using the `cudaMemcpyToArray`
+    function, as shown in the preceding code. The second and third arguments in that
+    function are width and height offset that are taken as 0, 0, meaning that we are
+    starting from the top left corner. They are opaque memory layouts optimized for
+    texture memory fetches.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The `cudaBindTextureToArray` functions bind texture reference to this CUDA
+    array. This means, it copies this array to a texture reference starting from the
+    top left corner. After binding the texture reference, the kernel is called, which
+    uses this texture reference and computes the array to be stored on device memory.
+    After the kernel finishes, the output array is copied back to the host for displaying
+    on the console. When using texture memory, we have to unbind the texture from
+    our code. This is done by using the `cudaUnbindTexture` function. The `cudaFreeArray`
+    function is used to free up memory used by the CUDA array. The output of the program
+    displayed on the console is shown as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/047e2343-482f-480a-aa49-834805450ca6.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: This section finishes our discussion on memory architecture in CUDA. When the
+    memories available in CUDA are used judiciously according to your application,
+    it improves the performance of the program drastically. You need to look carefully
+    at the memory access pattern of all threads in your application and then select
+    which memory you should use for your application. The last section of this chapter
+    briefly describes the complex CUDA program, which uses all the concepts we have
+    used up until this point.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Dot product and matrix multiplication example
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Up to this point, we have learned almost all the important concepts related
+    to basic parallel programming using CUDA. In this section, we will show you how
+    to write CUDA programs for important mathematical operations like dot product
+    and matrix multiplication, which are used in almost all applications. This will
+    make use of all the concepts we saw earlier and help you in writing code for your
+    applications.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Dot product
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'The dot product between two vectors is an important mathematical operation.
+    It will also explain one important concept in CUDA programming that is called
+    **reduction** operation. The dot product between two vectors can be defined as
+    follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE15]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Now, if you see this operation, it is very similar to an element-wise addition
+    operation on vectors. Instead of addition, you have to perform element-wise multiplication.
+    All threads also have to keep running the sum of multiplication they have performed
+    because all individual multiplications need to be summed up to get a final answer
+    of the dot product. The answer of the dot product will be a single number. This
+    operation where the final answer is the reduced version of the original two arrays
+    is called a **reduce** operation in CUDA. It is useful in many applications. To
+    perform this operation in CUDA, we will start by writing a kernel function for
+    it, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE16]'
+  prefs: []
+  type: TYPE_PRE
+- en: The `kernel` function takes two input arrays as input and stores the final partial
+    sum in the third array. Shared memory is defined to store intermediate answers
+    of the partial answer. The size of the shared memory is equal to the number of
+    threads per block, as all separate blocks will have the separate copy of this
+    shared memory. After that, two indexes are calculated; the first one, which calculates
+    the unique thread ID, is similar to what we have done in the vector addition example.
+    The second index is used to store the partial product answer on shared memory.
+    Again, every block has a separate copy of shared memory, so only the thread ID
+    used to index the shared memory is of a given block.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The `while` loop will perform element-wise multiplication of elements indexed
+    by the thread ID. It will also do multiplication of elements that is offset by
+    the total threads to the current thread ID. The partial sum of this element is
+    stored in the shared memory. We are going to use these results from the shared
+    memory to calculate the partial sum for a single block. So, before reading this
+    shared memory block, we must ensure that all threads have finished writing to
+    this shared memory. This is ensured by using the `__syncthreads()` directive.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Now, one method to get an answer for the dot product is that one thread iterates
+    over all these partial sums to get a final answer. One thread can perform the
+    reduce operation. This will take N operations to complete, where N is the number
+    of partial sums to be added (equal to the number of threads per block) to get
+    a final answer.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The question is, can we do this reduce operation in parallel? The answer is
+    yes. The idea is that every thread will add two elements of the partial sum and
+    store the answer in the location of the first element. Since each thread combines
+    two entries in one, the operation can be completed in half entries. Now, we will
+    repeat this operation for the remaining half until we get the final answer that
+    calculates the partial sum for this entire block. The complexity of this operation
+    is `log[2](N)` , which is far better than the complexity of N when one thread
+    performs the reduce operation.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The operation explained is calculated by the block starting with `while (i !=
+    0)` . The block sums the partial answer of the current thread and the thread offset
+    by `blockdim/2`. It continues this addition until we get a final single answer,
+    which is a sum of all partial products in a given block. The final answer is stored
+    in the global memory. Each block will have a separate answer to be stored in the
+    global memory so that it is indexed by the block ID, which is unique for each
+    block. Still, we have not got the final answer. This can be performed in the `device`
+    function or the `main` function.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Normally, the last few additions in the reduce operation need very little resources.
+    Much of the GPU resource remains idle, and that is not the optimal use of the
+    GPU. So, the final addition operation of all partial sums for an individual block
+    is done in the `main` function. The `main` function is as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE17]'
+  prefs: []
+  type: TYPE_PRE
+- en: Three arrays are defined and memory is allocated for both host and device to
+    store inputs and output. The two host arrays are initialized inside a `for` loop.
+    One array is initialized with `0` to `N` and the second is initialized with a
+    constant value `2`. The calculation of the number of blocks in a grid and number
+    of threads in a block is also done. It is similar to what we did at the start
+    of this chapter. Bear in mind, you can also keep these value as constants, like
+    we did in the first program of this chapter, to avoid complexity.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'These arrays are copied to device memory and passed as parameters to the `kernel`
+    function. The `kernel` function will return an array, which has answers of the
+    partial products of individual blocks indexed by their block ID. This array is
+    copied back to the host in the `partial_sum` array. The final answer of the dot
+    product is calculated by iterating over this `partial_sum` array, using the `for`
+    loop starting from zero to the number of blocks per grid. The final dot product
+    is stored in `h_c`. To check whether the calculated dot product is correct or
+    not, the following code can be added to the `main` function:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE18]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The answer is verified with the answer calculated mathematically. In two input
+    arrays, if one array has values from `0` to `N-1` and the second array has a constant
+    value of 2, then the dot product will be `N*(N+1)`. We print the answer of the
+    dot product calculated mathematically, along with whether it has been calculated
+    correctly or not. The host and device memory is freed up in the end. The output
+    of the program is as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/ec2ca87b-9356-443f-83ee-d4d81cdcc920.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: Matrix multiplication
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'The second most important mathematical operation performed on a GPU using CUDA
+    is matrix multiplication. It is a very complicated mathematical operation when
+    the sizes of the matrices are very large. It should be kept in mind that for matrix
+    multiplication, the number of columns in the first matrix should be equal to the
+    number of rows in the second matrix. Matrix multiplication is not a cumulative
+    operation. To avoid complexity, in this example, we are taking a square matrix
+    of the same size. If you are familiar with the mathematics of matrix multiplication,
+    then you may recall that a row in the first matrix will be multiplied with all
+    the columns in the second matrix. This is repeated for all rows in the first matrix.
+    It is shown as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/64671ce5-f20d-4b13-a9d2-b0ac3767f5c6.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Same data is reused many times, so this is an ideal case of using shared memory.
+    In this section, we will make two separate kernel functions, with and without
+    using shared memory. You can compare the execution of two kernels to get an idea
+    of how shared memory improves the performance of the program. We will first start
+    by writing a `kernel` function without using shared memory:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE19]'
+  prefs: []
+  type: TYPE_PRE
+- en: Matrix multiplication is performed using two-dimensional threads. If we launch
+    two-dimensional threads with each thread performing a single element of the output
+    matrix, then up to 16 x 16 matrices can be multiplied. If the size is greater
+    than this, then it will need more than 512 threads for computation, which is not
+    possible on most GPUs. So, we need to launch multiple blocks with each containing
+    less than 512 threads. To accomplish this, the output matrix is divided into small
+    square blocks having dimensions of `TILE_SIZE` in both directions. Each thread
+    in a block will calculate elements of this square block. The total number of blocks
+    for matrix multiplication will be calculated by dividing the size of the matrix
+    by the size of this small square defined by `TILE_SIZE`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: If you understand this, then calculating the row and column index for the output
+    will be very easy. It is similar to what we have done up till now, with `blockdim.x`
+    being equal to `TILE_SIZE`. Now, every element in the output will be the dot product
+    of one row in the first matrix and one column in the second matrix. Both the matrices
+    have the same size so the dot product has to be performed for a number of elements
+    equal to the size variable. So the `for` loop in the `kernel` function is running
+    from `0` to `size`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'To calculate the individual index of both matrices, consider that this matrix
+    is stored as a linear array in system memory in row-major fashion. Its meaning
+    is that all elements in the first row are placed in a consecutive memory location
+    and then rows are placed one after the other, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/5f13d0c1-02da-4efa-8f76-3da8da6f4735.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: The index of a linear array can be calculated by its row ID multiplied by the
+    size of the matrix plus its column ID. So, the index for *M[1,0]* will be 2 as
+    its row ID is 1, the matrix size is 2 and the column ID is zero. This method is
+    used to calculate the element index in both the matrices.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'To calculate the element at `[row, col]` in the resultant matrix, the index
+    in the first matrix will be equal to `row*size + k` , and for the second matrix,
+    it will be `k*size + col`. This is a very simple `kernel` function. There is a
+    large amount of data reuse in matrix multiplication. This function is not utilizing
+    the advantage of shared memory. So, we will try to modify the kernel function
+    that makes use of shared memory. The modified `kernel` function is shown as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE20]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'A two-shared memory with size equal to the size of a small square block, which
+    is `TILE_SIZE`, is defined for storing data for reuse. Row and column indexes
+    are calculated in the same way as seen earlier. First, this shared memory is filled
+    up in the first `for` loop. After that, `__syncthreads()` is included so that
+    memory read from shared memory only happens when all threads have finished writing
+    to it. The last `for` loop again calculates the dot product. As this is done by
+    only using shared memory, this considerably reduces memory traffic to a global
+    memory, which in turn improves the performance of the program for larger matrix
+    dimensions. The `main` function of this program is shown as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE21]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'After defining and allocating memory for host and device arrays, the host array
+    is filled with some random values. These arrays are copied to device memory so
+    that it can be passed to the `kernel` functions. The number of grid blocks and
+    the number of block threads is defined using the `dim3` structure, with the dimensions
+    equal to that calculated earlier. You can call any of the kernels. The calculated
+    answer is copied back to the host memory. To display the output on the console,
+    the following code is added to the `main` function:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE22]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The memory used to store matrices on device memory is also freed up. The output
+    on the console is as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/b86bd951-bfd0-4b27-96b2-a20663044300.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: This section demonstrated CUDA programs for two important mathematical operations
+    used in a wide range of applications. It also explained the use of shared memory
+    and multidimensional threads.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Summary
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: This chapter explained the launch of multiple blocks, with each having multiple
+    threads from the kernel function. It showed the method for choosing the two parameters
+    for a large value of threads. It also explained the hierarchical memory architecture
+    that can be used by CUDA programs. The memory nearest to the thread being executed
+    is fast, and as we move away from it, memories get slower. When multiple threads
+    want to communicate with each other, then CUDA provides the flexibility of using
+    shared memory, by which threads from the same blocks can communicate with each
+    other. When multiple threads use the same memory location, then there should be
+    synchronization between the memory access; otherwise, the final result will not
+    be as expected. We also saw the use of an atomic operation to accomplish this
+    synchronization. If some parameters remain constant throughout the kernel's execution,
+    then it can be stored in constant memory for speed up. When CUDA programs exhibit
+    a certain communication pattern like spatial locality, then texture memory should
+    be used to improve the performance of the program. To summarize, to improve the
+    performance of CUDA programs, we should reduce memory traffic to slow memories.
+    If this is done efficiently, drastic improvement in the performance of the program
+    can be achieved.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the next chapter, the concept of CUDA streams will be discussed, which is
+    similar to multitasking in CPU programs. How we can measure the performance of
+    CUDA programs will also be discussed. It will also show the use of CUDA in simple
+    image processing applications.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Questions
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Suppose you want to launch 100,000 threads in parallel. What is the best choice
+    of the number of blocks in a grid and number of threads in a block and why?
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Write a CUDA program to find out the cube of every element in an array when
+    the number of elements in the array is 100,000.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'State whether the following statement is true or false and give a reason: An
+    assignment operator between local variables will be faster than an assignment
+    operator between global variables.'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: What is register spilling? How it can harm the performance of your CUDA program?
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'State whether the following line of code will give the required output or not:
+    `d_out[i]` = `d_out[i-1]`.'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'State whether the following statement is true or false and give a reason: Atomic
+    operations increase the execution time for CUDA programs.'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Which kinds of communication patterns are ideal for using texture memory in
+    your CUDA programs?
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: What will be the effect of using the `__syncthreads` directive inside an if
+    statement?
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL

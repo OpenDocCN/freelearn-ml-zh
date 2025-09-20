@@ -1,0 +1,1136 @@
+- en: Tracking Visually Salient Objects
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: The goal of this chapter is to track multiple visually salient objects in a
+    video sequence at once. Instead of labeling the objects of interest in the video
+    ourselves, we will let the algorithm decide which regions of a video frame are
+    worth tracking.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We have previously learned how to detect simple objects of interest (such as
+    a human hand) in tightly controlled scenarios and how to infer geometrical features
+    of a visual scene from camera motion. In this chapter, we ask what we can learn
+    about a visual scene by looking at the *image statistics* of a large number of
+    frames.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In this chapter, we will cover the following topics:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Planning the app
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Setting up the app
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Mapping visual saliency
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Understanding mean-shift tracking
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Learning about the OpenCV Tracking API
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Putting it all together
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: By analyzing the **Fourier spectrum** of natural images, we will build a **saliency
+    map**, which allows us to label certain statistically interesting patches of the
+    image as (potential or actual) *proto-objects*. We will then feed the location
+    of all the proto-objects to a **mean-shift tracker**, which will allow us to keep
+    track of where the objects move from one frame to the next.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Getting started
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: This chapter uses **OpenCV 4.1.0**, as well as the additional packages **NumPy**
+    ([http://www.numpy.org](http://www.numpy.org)), **wxPython 2.8** ([http://www.wxpython.org/download.php](http://www.wxpython.org/download.php)),
+    and **matplotlib** ([http://www.matplotlib.org/downloads.html](http://www.matplotlib.org/downloads.html)).
+    Although parts of the algorithms presented in this chapter have been added to
+    an optional Saliency module of the **OpenCV 3.0.0** release, there is currently
+    no Python API for it, so we will write our own code.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The code for this chapter can be found in the book's GitHub repository, available
+    at [https://github.com/PacktPublishing/OpenCV-4-with-Python-Blueprints-Second-Edition/tree/master/chapter6](https://github.com/PacktPublishing/OpenCV-4-with-Python-Blueprints-Second-Edition/tree/master/chapter6).
+  prefs: []
+  type: TYPE_NORMAL
+- en: Understanding visual saliency
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: '**Visual saliency** is a technical term from *cognitive psychology* that tries
+    to describe the visual quality of certain objects or items that allows them to
+    grab our immediate attention. Our brains constantly drive our gaze toward the *important* regions
+    of the visual scene and keep track of them over time, allowing us to quickly scan
+    our surroundings for interesting objects and events while neglecting the less
+    important parts.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'An example of a regular RGB image and its conversion to a **saliency map**,
+    where the statistically interesting *pop-out* regions appear bright and the others
+    dark, is shown in the following screenshot:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/0f8d0894-fb45-4c57-8cb4-57c13bbc2256.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: '**Fourier analysis** will enable us to get a general understanding of natural
+    image statistics, which will help us build a model of what general image backgrounds
+    look like. By comparing and contrasting the background model to a specific image
+    frame, we can locate subregions of the image that *pop out* of their surroundings
+    (as shown in the previous screenshot). Ideally, these subregions correspond to
+    the image patches that tend to grab our immediate attention when looking at the
+    image.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Traditional models might try to associate particular features with each target
+    (much like our feature-matching approach in [Chapter 3](905b17f6-8eea-4d33-9291-17ea93371f2d.xhtml), *Finding
+    Objects via Feature Matching and Perspective Transforms*), which would convert
+    the problem to the detection of specific categories of objects. However, these
+    models require manual labeling and training. But what if the features or the number
+    of the objects to track is not known?
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Instead, we will try to mimic what the brain does, that is, tune our algorithm
+    to the statistics of the natural images, so that we can immediately locate the
+    patterns or subregions that "*grab our attention*" in the visual scene (that is,
+    patterns that deviate from these statistical regularities) and flag them for further
+    inspection. The result is an algorithm that works for any number of proto-objects
+    in the scene, such as tracking all the players on a soccer field. Refer to the
+    following set of screenshots to see it in action:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/d7c88c8b-71f0-46b1-b61c-ee21b3c2e9d5.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: As we can see in these four screenshots, once all the potentially *interesting* patches
+    of an image have been located, we can track their movement over many frames using
+    a simple yet effective method called **object** **mean-shift tracking**. Because
+    it is possible to have multiple proto-objects in the scene that might change appearance
+    over time, we need to be able to distinguish between them and keep track of all
+    of them.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Planning the app
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'To build the app, we need to combine the two main features discussed previously—a
+    saliency map andobject tracking**. **The final app will convert each RGB frame
+    of a video sequence into a saliency map, extract all the interesting proto-objects,
+    and feed them to a mean-shift tracking algorithm. To do this, we need the following
+    components:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '`main`: This is the main function routine (in `chapter6.py`) to start the application.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`saliency.py`: This is a module to generate a saliency map and proto-object
+    map from an RGB color image. It includes the following functions:'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`get_saliency_map`: This is a function to convert an RGB color image to a saliency
+    map.'
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`get_proto_objects_map`: This is a function to convert a saliency map into
+    a binary mask containing all the proto-objects.'
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`plot_power_density`: This is a function to display the two-dimensional power
+    density of an RGB color image, which is helpful to understand the Fourier transform.'
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`plot_power_spectrum`: This is a function to display the radially averaged
+    power spectrum of an RGB color image, which is helpful to understand natural image
+    statistics.'
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`MultiObjectTracker`: This is a class that tracks multiple objects in a video
+    using mean-shift tracking. It includes the following public methods:'
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`MultiObjectTracker.advance_frame`: This is a method to update the tracking
+    information for a new frame, using the mean-shift algorithm on the saliency map
+    of the current frame to update the positions of boxes from the previous frame
+    to the current frame.'
+  prefs:
+  - PREF_IND
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`MultiObjectTracker.draw_good_boxes`: This is a method to illustrate tracking
+    results in the current frame.'
+  prefs:
+  - PREF_IND
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: In the following sections, we will discuss these steps in detail.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Setting up the app
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In order to run our app, we will need to execute the `main` function ,which
+    reads a frame of a video stream, generates a saliency map, extracts the location
+    of the proto-objects, and tracks these locations from one frame to the next.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Let's learn about the `main` function routine in the next section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Implementing the main function
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'The main process flow is handled by the `main` function in `chapter6.py`, which
+    instantiates the tracker  (`MultipleObjectTracker`) and opens a video file showing
+    the number of soccer players on the field:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE0]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The function will then read the video frame by frame and extract some meaningful
+    region of interest (for illustration purposes):'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE1]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'After that, the region of interest will be passed to a function that will generate
+    a saliency map of the region. Then, *interesting* proto-objects will be generated
+    based on the saliency map, which finally will be fed into the tracker together
+    with the region of interest. The output of the tracker is the input region annotated
+    with bounding boxes as shown in the preceding set of screenshots:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE2]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The app will run through all the frames of the video until the end of the file
+    is reached or the user presses the `q` key:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE3]'
+  prefs: []
+  type: TYPE_PRE
+- en: In the next section, we'll learn about the `MultiObjectTracker` class.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Understanding the MultiObjectTracker class
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'The constructor of the tracker class is straightforward. All it does is set
+    up the termination criteria for mean-shift tracking and store the conditions for
+    the minimum contour area (`min_area`) and the minimum average speed normalized
+    by object size (`min_speed_per_pix`) to be considered in the subsequent computation
+    steps:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE4]'
+  prefs: []
+  type: TYPE_PRE
+- en: From then on, the user may call the `advance_frame` method to feed a new frame
+    to the tracker.
+  prefs: []
+  type: TYPE_NORMAL
+- en: However, before we make use of all this functionality, we need to learn about
+    image statistics and how to generate a saliency map.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Mapping visual saliency
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: As already mentioned earlier in the chapter, visual saliency tries to describe
+    the visual quality of certain objects or items that allows them to grab our immediate
+    attention. Our brains constantly drive our gaze toward the important regions of
+    the visual scene, as if it were shining a flashlight on different subregions of
+    the visual world, allowing us to quickly scan our surroundings for interesting
+    objects and events while neglecting the less important parts.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'It is thought that this is an evolutionary strategy to deal with the constant **information
+    overflow** that comes with living in a visually rich environment. For example,
+    if you take a casual walk through a jungle, you want to be able to notice the
+    attacking tiger in the bush to your left before admiring the intricate color pattern
+    on the butterfly''s wings in front of you. As a result, the visually salient objects
+    have the remarkable quality of *popping out* of their surroundings, much like
+    the target bars in the following screenshot:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/485b2aad-27a3-42e6-8d95-420cef08611a.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: Identifying the visual quality that makes these targets pop out may not always
+    be trivial though. If you are viewing the image on the left in color, you may
+    immediately notice the only red bar in the image. However, if you are looking
+    at this image in grayscale, the target bar may be a little difficult to find (it
+    is the fourth bar from the top, fifth bar from the left).
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Similar to color saliency, there is a visually salient bar in the image on
+    the right. Although the target bar is of unique color in the left-hand image and
+    of unique orientation in the right-hand image, we put the two characteristics
+    together and suddenly the unique target bar does not pop out anymore:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/809dd314-8c2a-4d16-a671-a35b1e6dce54.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'In the preceding display, there is again one bar that is unique and different
+    from all the other ones. However, because of the way the distracting items were
+    designed, there is little salience to guide you toward the target bar. Instead,
+    you find yourself scanning the image, seemingly at random, looking for something
+    interesting. (*Hint*: the target is the only red and almost vertical bar in the
+    image, second row from the top, third column from the left.)'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '*What does this have to do with computer vision, you ask?* Quite a lot, actually.
+    Artificial vision systems suffer from information overload much like you and me,
+    except that they know even less about the world than we do. *What if we could
+    extract some insights from biology and use them to teach our algorithms something
+    about the world?*'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Imagine a dashboard camera in your car that automatically focuses on the most
+    relevant traffic sign. Imagine a surveillance camera that is part of a wildlife
+    observation station that will automatically detect and track the sighting of the
+    *notoriously shy platypus* but will ignore everything else. *How can we teach
+    the algorithm what is important and what is not? How can we make that platypus
+    "pop out"?*
+  prefs: []
+  type: TYPE_NORMAL
+- en: Thus, we enter the Fourier analysis domain.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Learning about Fourier analysis
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: To find the visually salient subregions of an image, we need to look at its **frequency
+    spectrum**. So far we have treated all our images and video frames in the **spatial
+    domain**, that is, by analyzing the pixels or studying how the image intensity
+    changes in different subregions of the image. However, the images can also be
+    represented in the **frequency domain**, that is, by analyzing the pixel frequencies
+    or studying how often and with what periodicity the pixels show up in the image.
+  prefs: []
+  type: TYPE_NORMAL
+- en: An image can be transformed from the space domain into the frequency domain
+    by applying the **Fourier transform**. In the frequency domain, we no longer think
+    in terms of image coordinates (*x*,*y*). Instead, we aim to find the spectrum
+    of an image. Fourier's radical idea basically boils down to the following question—*what
+    if any signal or image could be transformed into a series of circular paths (also
+    called **harm****onics**)?*
+  prefs: []
+  type: TYPE_NORMAL
+- en: For example, think of a rainbow. *Beautiful, isn't it?* In a rainbow, white
+    sunlight (composed of many different colors or parts of the spectrum) is spread
+    into its spectrum. Here, the color spectrum of the sunlight is exposed when the
+    rays of light pass through raindrops (much like white light passing through a
+    glass prism). The Fourier transform aims to do the same thing—to recover all the
+    different parts of the spectrum that are contained in the sunlight.
+  prefs: []
+  type: TYPE_NORMAL
+- en: A similar thing can be achieved for arbitrary images. In contrast to rainbows,
+    where frequency corresponds to electromagnetic frequency, with images we consider
+    spatial frequency, that is, the spatial periodicity of the pixel values. In an
+    image of a prison cell, you can think of spatial frequency as (the inverse of)
+    the distance between two adjacent prison bars.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The insights that can be gained from this change of perspective are very powerful.
+    Without going into too much detail, let''s just remark that a Fourier spectrum
+    comes with both a magnitude and a phase. While the magnitude describes the number/amount
+    of different frequencies in the image, the phase talks about the spatial location
+    of these frequencies. The following screenshot shows a natural image on the left
+    and the corresponding Fourier magnitude spectrum (of the grayscale version) on
+    the right:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/279133b7-af17-4229-b8f7-84b8a1881114.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: The magnitude spectrum on the right tells us which frequency components are
+    the most prominent (bright) in the grayscale version of the image on the left.
+    The spectrum is adjusted so that the center of the image corresponds to zero frequency
+    in *x* and *y*. The further you move to the border of the image, the higher the
+    frequency gets. This particular spectrum is telling us that there are a lot of
+    low-frequency components in the image on the left (clustered around the center
+    of the image).
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In OpenCV, this transformation can be achieved with the help of the **Discrete
+    Fourier Transform** (**DFT**). Let''s construct a function that does the job.
+    It consists of the following steps:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'First, convert the image to grayscale if necessary. The function accepts both
+    grayscale and RGB color images, so we need to make sure that we operate on a single-channel
+    image:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE5]'
+  prefs: []
+  type: TYPE_PRE
+- en: '**​**We resize the image to an optimal size. It turns out that the performance
+    of a DFT depends on the image size. It tends to be fastest for the image sizes
+    that are multiples of the number 2\. It is therefore generally a good idea to
+    pad the image with 0:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE6]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Then we apply the DFT. This is a single function call in NumPy. The result
+    is a two-dimensional matrix of complex numbers:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE7]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Then, transform the real and complex values to magnitude. A complex number
+    has a real and complex (imaginary) part. To extract the magnitude, we take the
+    absolute value:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE8]'
+  prefs: []
+  type: TYPE_PRE
+- en: Then we switch to a logarithmic scale. It turns out that the dynamic range of
+    the Fourier coefficients is usually too large to be displayed on the screen. We
+    have some low and some high changing values that we can't observe like this. Therefore,
+    the high values will all turn out as white points, and the low ones as black points.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'To use the grayscale values for visualization, we can transform our linear
+    scale to a logarithmic one:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE9]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We then shift quadrants, to center the spectrum on the image. This makes it
+    easier to visually inspect the magnitude `spectrum`:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE10]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We `return` the result for plotting:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE11]'
+  prefs: []
+  type: TYPE_PRE
+- en: The result can be plotted with `pyplot`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Now that we understand what the Fourier spectrum of an image is and how to calculate
+    it, let's analyze natural scene statistics in the next section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Understanding the natural scene statistics
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: The human brain figured out how to focus on visually salient objects a long
+    time ago. The natural world in which we live has some statistical regularities
+    that make it uniquely *natural*, as opposed to a chessboard pattern or a random
+    company logo. Probably, the most commonly known statistical regularity is the
+    *1/f* law. It states that the amplitude of the ensemble of natural images obeys
+    a *1/f* distribution (as shown in the following screenshot). This is sometimes
+    also referred to as **scale invariance**.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'A one-dimensional power spectrum (as a function of frequency) of a two-dimensional image
+    can be visualized with the following `plot_power_spectrum` function. We can use
+    a similar recipe as for the magnitude spectrum used previously, but we will have
+    to make sure that we correctly collapse the two-dimensional spectrum onto a single
+    axis:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Define the function and convert the image to grayscale if necessary (this is
+    the same as earlier):'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE12]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Expand the image to its optimal size (this is the same as earlier):'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE13]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We then apply the DFT and get the log spectrum. Here we give the user an option
+    (via the `use_numpy_fft` flag) to use either NumPy''s or OpenCV''s Fourier tools:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE14]'
+  prefs: []
+  type: TYPE_PRE
+- en: We then perform radial averaging. This is the tricky part. It would be wrong
+    to simply average the two-dimensional spectrum in the direction of *x* or *y*.
+    What we are interested in is a spectrum as a function of frequency, independent
+    of the exact orientation. This is sometimes also called the **Radially Averaged
+    Power Spectrum** (**RAPS**).
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'It can be achieved by summing up all the frequency magnitudes, starting at
+    the center of the image, looking into all possible (radial) directions, from some
+    frequency `r` to `r+dr`. We use the binning function of NumPy''s histogram to
+    sum up the numbers, and accumulate them in the `histo` variable:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE15]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We then plot the result and, finally, we can plot the accumulated numbers in
+    `histo`, but must not forget to normalize these by the bin size (`dcount`):'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE16]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The result is a function that is inversely proportional to the frequency. If
+    you want to be absolutely certain of the *1/f* property, you could take `np.log10` of
+    all the *x* values and make sure the curve is decreasing in a roughly linear fashion.
+    On a linear *x* axis and logarithmic *y* axis, the plot looks like the following
+    screenshot:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/61fc8f5b-f196-4e26-8c1b-bec7ca65c16f.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: This property is quite remarkable. It states that if we were to average all
+    the spectra of all the images ever taken of natural scenes (neglecting all the
+    ones taken with fancy image filters, of course), we would get a curve that would
+    look remarkably like the one shown in the preceding image.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'But, going back to the image of a peaceful little boat on the **Limmat** river,
+    *what about single images?* We have just looked at the power spectrum of this
+    image and witnessed the *1/f* property. *How can we use our knowledge of natural
+    image statistics to tell an algorithm not to stare at the tree on the left, but
+    instead focus on the boat that is chugging in the water?* The following photo
+    depicts a scene at the Limmat river:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/1ff3b240-c2b0-48ef-8e70-0e6b6cb0f53a.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: This is where we realize what saliency really means.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Let's see how to generate a saliency map with the spectral residual approach
+    in the next section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Generating a saliency map with the spectral residual approach
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: The things that deserve our attention in an image are not the image patches
+    that follow the *1/f* law, but the patches that stick out of the smooth curves,
+    in other words, statistical anomalies. These anomalies are termed the **spectral
+    residual** of an image and correspond to the potentially *interesting* patches
+    of an image (or proto-objects). A map that shows these statistical anomalies as
+    bright spots is called a **saliency map**.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The spectral residual approach described here is based on the original scientific
+    publication article *Saliency Detection: A Spectral Residual Approach* by Xiaodi
+    Hou and Liqing Zhang (2007), IEEE Transactions on Computer Vision and Pattern
+    Recognition (CVPR), p.1-8, DOI: 10.1109/CVPR.2007.383267.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The saliency map of a single channel can be generated with the `_get_channel_sal_magn` function using
+    the following process. In order to generate a saliency map based on the spectral
+    residual approach, we need to process each channel of an input image separately
+    (a single channel in the case of a grayscale input image, and three separate channels
+    in the case of an RGB input image):'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Calculate the (`magnitude` and phase of the) Fourier spectrum of an image,
+    by again using either the `fft` module of NumPy or the OpenCV functionality:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE17]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Calculate the log amplitude of the Fourier spectrum. We will clip the lower
+    bound of magnitudes to `1e-9` in order to prevent a division by 0 while calculating
+    the log:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE18]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Approximate the averaged spectrum of a typical natural image by convolving
+    the image with a local averaging filter:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE19]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Calculate the spectral `residual`. The spectral `residual` primarily contains
+    the non-trivial (or unexpected) parts of a scene:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE20]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Calculate the saliency map by using the inverse Fourier transform, again either
+    via the `fft` module in NumPy or with OpenCV:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE21]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'A single-channel saliency map (`magnitude`) is used by `get_saliency_map`,
+    where the procedure is repeated for all channels of the input image. If the input
+    image is grayscale, we are pretty much done:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE22]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'However, if the input image has multiple channels, as is the case for an RGB
+    color image, we need to consider each channel separately:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE23]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The overall salience of a multichannel image is then determined by the average
+    overall channels:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE24]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Finally, we need to apply some post-processing, such as an optional blurring
+    stage to make the result appear smoother:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE25]'
+  prefs: []
+  type: TYPE_PRE
+- en: Also, we need to square the values in `sal` in order to highlight the regions
+    of high salience, as outlined by the authors of the original paper. In order to
+    display the image, we scale it back up to its original resolution and normalize
+    the values, so that the largest value is 1.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Next, normalize the values in `sal` so that the largest value is 1, then square
+    them in order to highlight the regions of high salience as outlined by the authors
+    of the original paper, and, lastly, scale back to its original resolution in order
+    to display the image:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE26]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The resulting saliency map then looks like the following:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/27395e81-da35-4002-a05c-f4d7041789d1.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: Now we can clearly spot the boat in the water (in the lower-left corner), which
+    appears as one of the most salient subregions of the image. There are other salient
+    regions, too, such as the **Grossmünster** on the right (*have you guessed the
+    city yet?*).
+  prefs: []
+  type: TYPE_NORMAL
+- en: By the way, the fact that these two areas are the most salient ones in the image
+    seems to be clear and indisputable evidence that the algorithm is aware of the
+    ridiculous number of church towers in the city center of **Zurich**, effectively
+    prohibiting any chance of them being labeled as "*salient*".
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the next section, we'll see how to detect proto-objects in a scene.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Detecting proto-objects in a scene
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In a sense, the saliency map is already an explicit representation of proto-objects,
+    as it contains only the *interesting* parts of an image. So now that we have done
+    all the hard work, all that is left to do in order to obtain a proto-object map
+    is to threshold the saliency map.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The only open parameter to consider here is the threshold. Setting the threshold
+    too low will result in labeling a lot of regions as proto-objects, including some
+    that might not contain anything of interest (false alarm). On the other hand,
+    setting the threshold too high will ignore most of the salient regions in the
+    image and might leave us with no proto-objects at all.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The authors of the original spectral residual paper chose to label only those
+    regions of the image as proto-objects whose saliency was larger than three times
+    the mean saliency of the image. We give the user the choice either to implement
+    this threshold or to go with the **Otsu threshold** by setting the input flag `use_otsu` to `True`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE27]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We then convert saliency to `uint8` precision so that it can be passed to `cv2.threshold`,
+    set parameters for thresholding, and, finally, we apply thresholding and return
+    the proto-objects:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE28]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The resulting proto-objects mask looks as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/f3fabb1e-cfd2-493c-b3d2-33ab7c3e469f.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: The proto-objects mask then serves as an input to the tracking algorithm, which
+    we will see in the next section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Understanding mean-shift tracking
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: So far we used the salience detector discussed previously to find bounding boxes
+    of proto-objects. We could simply apply the algorithm to every frame of a video
+    sequence and get a good idea of the location of the objects. However, what is
+    getting lost is correspondence information.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Imagine a video sequence of a busy scene, such as from a city center or a sports
+    stadium. Although a saliency map could highlight all the proto-objects in every
+    frame of a recorded video, the algorithm would have no way to establish a correspondence
+    between proto-objects from the previous frame and proto-objects in the current
+    frame.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Also, the proto-objects map might contain some *false positives*, and we need
+    an approach to select the most probable boxes that correspond to real-world objects.
+    Such *false positives* can be noticed in the following example:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/faf177a8-dc30-43e4-846f-ddaf5292e74d.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: Note that the bounding boxes extracted from the proto-objects map made (at least)
+    three mistakes in the preceding example—it missed highlighting a player (upper-left),
+    merged two players into the same bounding box, and highlighted some additional
+    arguably non-interesting (although visually salient) objects. In order to improve
+    these results and maintain correspondence, we want to take advantage of a tracking
+    algorithm.
+  prefs: []
+  type: TYPE_NORMAL
+- en: To solve the correspondence problem, we could use the methods we have learned
+    about previously, such as feature matching and optical flow, but in this case,
+    we will use the mean-shift algorithm for tracking.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Mean-shift is a simple yet very effective technique for tracking arbitrary objects.
+    The intuition behind the mean-shift is to consider the pixels in a small region
+    of interest (say, the bounding box of an object we want to track) as sampled from
+    an underlying probability density function that best describes a target.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Consider, for example, the following image:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/152dad47-0db3-4d62-a1ff-dff96e83c526.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: Here, the small gray dots represent samples from a probability distribution.
+    Assume that the closer the dots, the more similar they are to each other. Intuitively
+    speaking, what mean-shift is trying to do is to find the densest region in this
+    landscape and draw a circle around it. The algorithm might start out centering
+    a circle over a region of the landscape that is not dense at all (the dashed circle).
+    Over time, it will slowly move toward the densest region (the solid circle) and
+    anchor on it.
+  prefs: []
+  type: TYPE_NORMAL
+- en: If we design the landscape to be more meaningful than dots, we can use mean-shift
+    tracking to find the objects of interest in the scene. For example, if we assign
+    to each dot some value for correspondence between the color histogram of an object
+    and the color histogram of a neighborhood of an image of the same size as the
+    object, we can use mean-shift on the resulting dots to track the object. It is
+    the latter approach that is usually associated with mean-shift tracking. In our
+    case, we will simply use the saliency map itself.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Mean-shift has many applications (such as clustering, or finding the mode of
+    probability density functions), but it is also particularly well suited to target
+    tracking. In OpenCV, the algorithm is implemented in `cv2.meanShift` and accepts
+    a two-dimensional array (for example, a grayscale image such as a saliency map)
+    and window (in our case, we use the bounding box of an object) as input. It returns
+    new positions of the window in accordance with the mean-shift algorithm as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: It fixes a window position.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: It computes the mean of the data within the window.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: It shifts the window to the mean and repeats until convergence. We can control
+    the length and accuracy of the iterative method by specifying the termination
+    criteria.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Next, let's see how the algorithm tracks and visually maps (with bounding boxes)
+    a player on the field.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Automatically tracking all players on a soccer field
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Our goal is to combine the saliency detector with mean-shift tracking to automatically
+    track all the players on a soccer field. The proto-objects identified by the saliency
+    detector will serve as input to the mean-shift tracker. Specifically, we will
+    focus on a video sequence from the Alfheim dataset, which can be freely obtained
+    from [http://home.ifi.uio.no/paalh/dataset/alfheim/](http://home.ifi.uio.no/paalh/dataset/alfheim/).
+  prefs: []
+  type: TYPE_NORMAL
+- en: The reason for combining the two algorithms (saliency map and mean-shift tracking),
+    is to maintain correspondence information between objects in different frames
+    as well as to remove some false positives and improve the accuracy of detected
+    objects.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The hard work is done by the previously introduced `MultiObjectTracker` class
+    and its `advance_frame` method. The `advance_frame` method is called whenever
+    a new frame arrives, and accepts proto-objects and saliency as input:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE29]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The following steps are covered in this method:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Create contours from `proto_objects_map` and find bounding rectangles for all
+    contours that have an area greater than `min_object_area`. The latter is the candidate
+    bounding boxes for tracking with the mean shift algorithm:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE30]'
+  prefs: []
+  type: TYPE_PRE
+- en: The candidate boxes might be not the best ones for tracking them throughout
+    the frames. For example, in this case, if two players are close to each other,
+    they result in a single object box. We need some approach to select the best boxes.
+    We could think about some algorithm that will analyze boxes tracked from previous
+    frames in combination with boxes obtained from saliency, and deduce the most probable
+    boxes.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: 'But we will do it in a simple manner here—if the number of boxes from the saliency
+    map doesn''t increase, boxes from the previous frame to the current frame using
+    the saliency map of the current frame are tracked, which are saved as `objcect_boxes`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE31]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'If it did increase, we reset the tracking information, which is the number
+    of frames through which the objects were tracked and the initial centers of the
+    objects were calculated:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE32]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Finally, save the boxes and make an illustration of the tracking information
+    on the frame:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE33]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We are interested in boxes that move. For that purpose, we calculate the displacements
+    of each box from their initial location at the start of tracking. We suppose that
+    objects that appear larger on a frame should move faster, hence we normalize the
+    displacements on box width:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE34]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Next, we draw boxes and their number, which have average displacement per frame
+    (or speed) greater than the value that we specified on the initialization of the
+    tracker. A small number is added in order not to divide by 0 on the first frame
+    of tracking:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE35]'
+  prefs: []
+  type: TYPE_PRE
+- en: Now you understand how it is possible to implement tracking using the mean-shift
+    algorithm. This is only one approach for tracking out of many others on offer.
+    Mean-shift tracking might particularly fail when the objects rapidly change in
+    size, as would be the case if an object of interest were to come straight at the
+    camera.
+  prefs: []
+  type: TYPE_NORMAL
+- en: For such cases, OpenCV has a different algorithm, `cv2.CamShift`, which also
+    takes into account rotations and changes in size, where **CAMShift** stands for
+    **Continuously Adaptive Mean-Shift**. Moreover, OpenCV has a range of available
+    trackers that can be used out of the box and are referred to as the **OpenCV Tracking
+    API**. Let's learn about them in the next section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: ​Learning about the OpenCV Tracking API
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: We have applied the mean-shift algorithm on the saliency map for tracking salient
+    objects. Surely, not all the objects in the world are salient, so we can't use
+    that approach for tracking any object. As mentioned previously, we could also
+    use an HSV histogram in combination with the mean-shift algorithm to track objects.
+    The latter does not require a saliency map—if a region is selected, that approach
+    will try to track selected objects throughout the consequent frames.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In this section, we will create a script that is able to track an object throughout
+    a video using the tracking algorithms available in OpenCV. All these algorithms
+    have the same API and are referred to collectively as the OpenCV Tracking API.
+    These algorithms track single objects—once the initial bounding box is provided
+    to the algorithm, it will try to maintain the new positions of the box throughout
+    the consequent frames. Surely, it's also possible to track multiple objects in
+    the scene by creating a new tracker for each object.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'First of all, we import the libraries that we will use and define our constants:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE36]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'OpenCV currently has eight built-in trackers. We define a map of the constructors
+    of all trackers:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE37]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Our script will be able to accept the name of the tracker and a path to a video
+    as arguments. In order to achieve this, we create arguments, set their default
+    values, and parse them with the previously imported `argparse` module:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE38]'
+  prefs: []
+  type: TYPE_PRE
+- en: Then, we make sure that such a tracker exists and we try to read the first frame
+    from the specified video.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Now that we have set up the script and can accept parameters, the next thing
+    to do is to instantiate the tracker:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'First of all, it''s a good idea to make the script case-insensitive and check
+    whether the passed tracker exists at all:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE39]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Open the video and read the first `frame`. Then, break the script if the video
+    cannot be read:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE40]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Select a region of interest (using a bounding box) for tracking throughout
+    the video. OpenCV has a user-interface-based implementation for that:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE41]'
+  prefs: []
+  type: TYPE_PRE
+- en: Once this method is called, an interface will appear where you can select a
+    box. Once the *Enter* key is pressed, the coordinates for the selected box are
+    returned.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Initiate the tracker with the first frame and the selected bounding box:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE42]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Now we have an instance of the tracker that has been initiated with the first
+    frame and selected a bounding box of interest. We update the tracker with the
+    next frames to find the new location of the object in the bounding box. We also
+    estimate the **frames per second** (**FPS**) of the selected tracking algorithm
+    using the `time` module:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE43]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'All the calculations are done by this point. Now we illustrate the results
+    for each iteration:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE44]'
+  prefs: []
+  type: TYPE_PRE
+- en: If a bounding box was returned by the algorithm, we draw that box on the frame,
+    otherwise, we illustrate that the tracking failed, which means that the selected
+    algorithm failed to find the object in the current frame. Also, we type the name
+    of the tracker and the current FPS on the frame.
+  prefs: []
+  type: TYPE_NORMAL
+- en: You can run this script on different videos with different algorithms in order
+    to see how the algorithms behave, especially how they handle occlusions, fast-moving
+    objects, and objects that change a lot in appearance. After trying the algorithms,
+    you might also be interested to read the original papers of the algorithms to
+    find out implementation details.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In order to track multiple objects using these algorithms, OpenCV has a convenient
+    wrapper class that combines multiple instances of the tracker and updates them
+    simultaneously. In order to use it, first, we create an instance of the class:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE45]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Next, for each bounding box of interest, a new tracker is created (MIL tracker,
+    in this case) and added to the `multiTracker` object:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE46]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Finally, the new positions of the bounding boxes are obtained by updating the `multiTracker` object
+    with a new frame:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE47]'
+  prefs: []
+  type: TYPE_PRE
+- en: As an exercise, you might want to replace the mean-shift tracking in the application
+    for tracking salient objects with one of the trackers introduced in this chapter.
+    In order to do it, you can use `multiTracker` with one of the trackers to update
+    the positions of bounding boxes for proto-objects.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Putting it all together
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'The result of our app can be seen in the following set of screenshots:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/1b1ed6e4-7749-467f-ac3b-0c8e47276039.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: Throughout the video sequence, the algorithm is able to pick up the location
+    of the players and successfully track them frame by frame by using mean-shift
+    tracking.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Summary
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In this chapter, we explored a way to label the potentially *interesting* objects
+    in a visual scene, even if their shape and number are unknown. We explored natural
+    image statistics using Fourier analysis and implemented a  method for extracting
+    the visually salient regions in the natural scenes. Furthermore, we combined the
+    output of the salience detector with a tracking algorithm to track multiple objects
+    of unknown shape and number in a video sequence of a soccer game.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We have introduced other, more complex tracking algorithms available in OpenCV,
+    which you can use to replace mean-shift tracking in the application or even create
+    your own application. Of course, it would also be possible to replace the mean-shift
+    tracker with a previously studied technique such as feature matching or optic
+    flow.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the next chapter, we will move on to the fascinating field of machine learning,
+    which will allow us to build more powerful descriptors of objects. Specifically,
+    we will focus on both detection (*the where*) and identification (*the what*)
+    of street signs in images. This will allow us to train a classifier that could
+    be used in a dashboard camera in your car and will familiarize us with the important
+    concepts of machine learning and object recognition.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Dataset attribution
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: '"*Soccer video and player position dataset*," *S. A. Pettersen, D. Johansen,
+    H. Johansen, V. Berg-Johansen, V. R. Gaddam, A. Mortensen, R. Langseth, C. Griwodz,
+    H. K. Stensland,* and *P. Halvorsen*, in Proceedings of the International Conference
+    on Multimedia Systems (MMSys), Singapore, March 2014, pp. 18-23.'
+  prefs: []
+  type: TYPE_NORMAL

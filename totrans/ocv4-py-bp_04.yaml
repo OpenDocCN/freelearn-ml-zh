@@ -1,0 +1,1243 @@
+- en: 3D Scene Reconstruction Using Structure from Motion
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In the previous chapter, you learned how to detect and track an object of interest
+    in the video stream of a webcam, even if the object is viewed from different angles
+    or distances, or under partial occlusion. Here, we will take the tracking of interesting
+    features a step further and see what we can learn about the entire visual scene
+    by studying similarities between image frames.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The goal of this chapter is to study how to reconstruct a scene in 3D by inferring
+    the geometrical features of the scene from camera motion. This technique is sometimes
+    referred to as **structure from motion**. By looking at the same scene from different
+    angles, we will be able to infer the real-world 3D coordinates of different features
+    in the scene. This process is known as **triangulation**, which allows us to **reconstruct**
+    the scene as a **3D point cloud**.
+  prefs: []
+  type: TYPE_NORMAL
+- en: If we take two pictures of the same scene from different angles, we can use
+    **feature matching** or **optic flow** to estimate any translational and rotational
+    movement that the camera underwent between taking the two pictures. However, in
+    order for this to work, we will first have to calibrate our camera.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In this chapter, we will cover the following topics:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Learning about camera calibration
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Setting up the app
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Estimating the camera motion from a pair of images
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Reconstructing the scene
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Understanding 3D point cloud visualization
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Learning about structure from motion
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Once you complete the app, you will understand the classical approaches that
+    are used to make a 3D reconstruction of a scene or object given several images
+    taken from different view points. You will be able to apply these approaches in
+    your own apps related to constructing 3D models from camera images or videos.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Getting started
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: This chapter has been tested with **OpenCV 4.1.0** and **wxPython 4.0.4** ([http://www.wxpython.org/download.php](http://www.wxpython.org/download.php)).
+    It also requires NumPy ([http://www.numpy.org](http://www.numpy.org)) and Matplotlib
+    ([http://www.matplotlib.org/downloads.html](http://www.matplotlib.org/downloads.html)).
+  prefs: []
+  type: TYPE_NORMAL
+- en: Note that you may have to obtain the so-called *extra* modules from [https://github.com/Itseez/opencv_contrib](https://github.com/Itseez/opencv_contrib) and
+    install OpenCV with the `OPENCV_EXTRA_MODULES_PATH` variable set in order to install
+    **scale-invariant feature transform** (**SIFT**). Also, note that you may have
+    to obtain a license to use SIFT in commercial applications.
+  prefs: []
+  type: TYPE_NORMAL
+- en: You can find the code that we present in this chapter in our GitHub repository, [https://github.com/PacktPublishing/OpenCV-4-with-Python-Blueprints-Second-Edition/tree/master/chapter4](https://github.com/PacktPublishing/OpenCV-4-with-Python-Blueprints-Second-Edition/tree/master/chapter4).
+  prefs: []
+  type: TYPE_NORMAL
+- en: Planning the app
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: The final app will extract and visualize structure from motion on a pair of
+    images. We will assume that these two images have been taken with the same camera,
+    whose internal camera parameters we know. If these parameters are not known, they
+    need to be estimated first in a camera calibration process.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The final app will then consist of the following modules and scripts:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '`chapter4.main`: This is the main function routine for starting the application.'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`scene3D.SceneReconstruction3D`: This is a class that contains a range of functionalities
+    for calculating and visualizing structure from motion. It includes the following
+    public methods:'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`__init__`: This constructor will accept the intrinsic camera matrix and the
+    distortion coefficients.'
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`load_image_pair`: This is a method used to load two images that have been
+    taken with the camera described earlier from the file.'
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`plot_optic_flow`: This is a method used to visualize the optic flow between
+    the two image frames.'
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`draw_epipolar_lines`: This method is used to draw the epipolar lines of the
+    two images.'
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`plot_rectified_images`: This method is used to plot a rectified version of
+    the two images.'
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: '`plot_point_cloud`: This is a method used to visualize the recovered real-world
+    coordinates of the scene as a 3D point cloud. In order to arrive at a 3D point
+    cloud, we will need to exploit epipolar geometry. However, epipolar geometry assumes
+    the pinhole camera model, which no real camera follows.'
+  prefs:
+  - PREF_IND
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'The complete procedure of the app involves the following steps:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '**Camera calibration**: We will use a chessboard pattern to extract the intrinsic
+    camera matrix as well as the distortion coefficients, which are important for
+    performing the scene reconstruction.'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '**Feature matching**: We will match points in two 2D images of the same visual
+    scene, either via SIFT or via optic flow, as seen in the following screenshot:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![](img/ba0e6aff-282a-4ab8-a0bd-ee62bebbb9b3.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: '**Image rectification**: By estimating the camera motion from a pair of images,
+    we will extract the **essential matrix** and rectify the images, as shown in the
+    following screenshot:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![](img/7f66eaa1-9a22-4830-8963-46351a36fb56.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: '**Triangulation**: We will reconstruct the 3D real-world coordinates of the
+    image points by making use of constraints from **epipolar geometry**.'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '**3D point cloud visualization**: Finally, we will visualize the recovered
+    3D structure of the scene using scatterplots in Matplotlib, which is most compelling
+    when studied using the Pan axes button from pyplot. This button lets you rotate
+    and scale the point cloud in all three dimensions. In the following screenshot,
+    the color corresponds to the depth of a point in the scene:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![](img/e3be9c94-8fb3-42f8-9285-683cdd36ea99.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: First, we need to rectify our images to make them look as if they have come
+    from a pinhole camera. For that, we need to estimate the parameters of the camera,
+    which leads us to the field of camera calibration.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Learning about camera calibration
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: So far, we have worked with whatever image came straight out of our webcam,
+    without questioning the way in which it was taken. However, every camera lens
+    has unique parameters, such as focal length, principal point, and lens distortion.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'What happens behind the covers when a camera takes a picture is this: light
+    falls through a lens, followed by an aperture, before falling on the surface of
+    a light sensor. This process can be approximated with the pinhole camera model.
+    The process of estimating the parameters of a real-world lens such that it would
+    fit the pinhole camera model is called camera calibration (or **camera resectioning**,
+    and it should not be confused with *photometric* camera calibration). So, let''s
+    start by learning about the pinhole camera model in the next section.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Understanding the pinhole camera model
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: The **pinhole camera model **is a simplification of a real camera in which there
+    is no lens and the camera aperture is approximated by a single point (the pinhole).
+    The formulas described here also hold exactly for a camera with a thin lens as
+    well as describing the main parameters of any usual camera.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'When viewing a real-world 3D scene (such as a tree), light rays pass through
+    the point-sized aperture, and fall on a 2D image plane inside the camera, as seen
+    in the following diagram:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/3ea08414-847b-4aac-aef3-b8ed24b114d7.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: In this model, a 3D point with coordinates (*X*, *Y*, *Z*) is mapped to a 2D
+    point with coordinates (*x*, *y*) that lies on the image plane. Note that this
+    leads to the tree appearing upside down on the image plane.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The line that is perpendicular to the image plane and passes through the pinhole
+    is called the **principal ray**, and its length is called the **focal length**.
+    The focal length is a part of the internal camera parameters, as it may vary depending
+    on the camera being used. In a simple camera with a lens, the **pinhole** is replaced
+    with a lens and the focal plane is placed at the focal length of the lens in order
+    to avoid blurring as much as possible.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Hartley and Zisserman found a mathematical formula to describe how a 2D point
+    with coordinates (*x*, *y*) can be inferred from a 3D point with coordinates(*X, Y, Z*) and
+    the camera''s intrinsic parameters, as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/ad7b9889-55c5-4862-a51f-cfb1ec9bcf7b.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: The 3 x 3 matrix in the preceding formula is the **intrinsic camera matrix**—a
+    matrix that compactly describes all internal camera parameters. The matrix comprises
+    focal lengths (*f[x ]*and *f[y]*) and optical centers *c[x]* and *c[y]*, which
+    in the case of digital imaging are simply expressed in pixel coordinates. As mentioned
+    earlier, the focal length is the distance between the pinhole and the image plane.
+  prefs: []
+  type: TYPE_NORMAL
+- en: A pinhole camera has only one focal length, in which case, *f[x]* = *f[x ]*= *f[x ]*.
+    However, in real cameras, these two values might differ, for example, due to imperfections
+    of lenses, imperfections of the focal plane (which is represented by a digital
+    camera sensor), or imperfections of assembly. The difference can be also intentional
+    for some purpose, which can be achieved by simply involving a lens that has different
+    curvature in different directions. The point at which the principal ray intersects
+    the image plane is called the **principal point**, and its relative position on
+    the image plane is captured by the optical center (or principal point offset).
+  prefs: []
+  type: TYPE_NORMAL
+- en: In addition, a camera might be subject to radial or tangential distortion, leading
+    to a **fish-eye effect**. This is because of hardware imperfections and lens misalignments.
+    These distortions can be described with a list of the **distortion coefficients**.
+    Sometimes, radial distortions are actually a desired artistic effect. At other
+    times, they need to be corrected.
+  prefs: []
+  type: TYPE_NORMAL
+- en: For more information on the pinhole camera model, there are many good tutorials
+    out there on the web, such as [http://ksimek.github.io/2013/08/13/intrinsic](http://ksimek.github.io/2013/08/13/intrinsic).
+  prefs: []
+  type: TYPE_NORMAL
+- en: Because these parameters are specific to the camera hardware (hence the name
+    *intrinsic*), we need to calculate them only once in the lifetime of a camera.
+    This is called **camera calibration**.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Next, we will cover the parameters of the intrinsic camera.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Estimating the intrinsic camera parameters
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In OpenCV, camera calibration is fairly straightforward. The official documentation
+    provides a good overview of the topic and some sample C++ scripts at [http://docs.opencv.org/doc/tutorials/calib3d/camera_calibration/camera_calibration.html](http://docs.opencv.org/doc/tutorials/calib3d/camera_calibration/camera_calibration.html).
+  prefs: []
+  type: TYPE_NORMAL
+- en: For educational purposes, we will develop our own calibration script in Python.
+    We will need to present a special pattern image, with known geometry (chessboard
+    plate or black circles on a white background), to the camera we wish to calibrate.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Because we know the geometry of the pattern image, we can use feature detection
+    to study the properties of the internal camera matrix. For example, if the camera
+    suffers from undesired radial distortion, the different corners of the chessboard
+    pattern will appear distorted in the image and not lie on a rectangular grid.
+    By taking about 10-20 snapshots of the chessboard pattern from different points
+    of view, we can collect enough information to correctly infer the camera matrix
+    and the distortion coefficients.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'For this, we will use the `calibrate.py` script, which first imports the following
+    modules:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE0]'
+  prefs: []
+  type: TYPE_PRE
+- en: Analogous to previous chapters, we will use a simple layout based on `BaseLayout` that
+    embeds processing of the webcam video stream.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The `main` function of the script will generate the GUI and execute the `main`
+    loop of the app:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE1]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The latter is accomplished with the following steps in the body of the function:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'First, connect to the camera and set standard VGA resolution:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE2]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Similarly to the previous chapters, create a `wx` application and the `layout` class,
+    which we will compose later in this section:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE3]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Show the GUI and execute the `MainLoop` of the `app`:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE4]'
+  prefs: []
+  type: TYPE_PRE
+- en: In the next section, we'll prepare the camera calibration GUI, which we used
+    in the `main` function.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Defining the camera calibration GUI
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'The GUI is a customized version of the generic `BaseLayout`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE5]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The layout consists of only the current camera frame and a single button below
+    it. This button allows us to start the calibration process:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE6]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'For these changes to take effect, `pnl` needs to be added to the list of existing
+    panels:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE7]'
+  prefs: []
+  type: TYPE_PRE
+- en: The rest of the visualization pipeline is handled by the `BaseLayout` class.
+    We only need to make sure that we initialize the required variables and provide `process_frame`
+    methods.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Now that we have defined a GUI for camera calibration, let's initialize a camera
+    calibration algorithm in the next section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Initializing the algorithm
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'In order to perform the calibration process, we need to do some bookkeeping.
+    We will do that by following the next steps:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'For now, let''s focus on a single 10 x 7 chessboard. The algorithm will detect
+    all the `9` x `6` inner corners of the chessboard (referred to as *object points*)
+    and store the detected image points of these corners in a list. So, let''s first
+    initialize the `chessboard_size` to the number of inner corners:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE8]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Next, we need to enumerate all the object points and assign them object point
+    coordinates so that the first point has coordinates (0,0), the second one (top
+    row) has coordinates (1,0), and the last one has coordinates (8,5):'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE9]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We also need to keep track of whether we are currently recording the object
+    and image points or not. We will initiate this process once the user clicks on
+    the `self.button_calibrate` button. After that, the algorithm will try to detect
+    a chessboard in all subsequent frames until `self.record_min_num_frames` chessboards
+    have been detected:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE10]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Whenever the `self.button_calibrate` button is clicked on, we reset all the
+    bookkeeping variables, disable the button, and start recording:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE11]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Resetting the bookkeeping variables involves clearing the lists of recorded
+    object and image points (`self.obj_points` and `self.img_points`) as well as resetting
+    the number of detected chessboards (`self.recordCnt`) to `0`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE12]'
+  prefs: []
+  type: TYPE_PRE
+- en: In the next section, we'll collect the image and object points.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Collecting image and object points
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'The `process_frame` method is responsible for doing the hard work of the calibration
+    technique, and we will collect images and object points by using the following
+    steps:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'After the `self.button_calibrate` button has been clicked on, this method starts
+    collecting data until a total of `self.record_min_num_frames` chessboards are
+    detected:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE13]'
+  prefs: []
+  type: TYPE_PRE
+- en: The `cv2.findChessboardCorners` function will parse a grayscale image (`img_gray`)
+    to find a chessboard of size `self.chessboard_size`. If the image indeed contains
+    a chessboard, the function will return `true` (`ret`) as well as a list of chessboard
+    corners (`corners`).
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Then, drawing the chessboard is straightforward:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE14]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The result looks like this (drawing the chessboard corners in color for the
+    effect):'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '![](img/4af66364-a9e5-48f4-a3f2-1b2d5d9db3c3.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'We could now simply store the list of detected corners and move on to the next
+    frame. However, in order to make the calibration as accurate as possible, OpenCV
+    provides a function to refine the corner point measurement:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE15]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'This will refine the coordinates of the detected corners to subpixel precision.
+    Now we are ready to append the object and image points to the list and advance
+    the frame counter:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE16]'
+  prefs: []
+  type: TYPE_PRE
+- en: In the next section, let's learn how to find the camera matrix, which will be
+    required to accomplish an appropriate 3D reconstruction.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Finding the camera matrix
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'Once we have collected enough data (that is, once `self.record_cnt` reaches
+    the value of `self.record_min_num_frames`), the algorithm is ready to perform
+    the calibration. This process can be performed with a single call to `cv2.calibrateCamera`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE17]'
+  prefs: []
+  type: TYPE_PRE
+- en: The function returns `true` on success (`ret`), the intrinsic camera matrix
+    (`K`), the distortion coefficients (`dist`), as well as two rotation and translation
+    matrices (`rvecs` and `tvecs`). For now, we are mainly interested in the camera
+    matrix and the distortion coefficients, because these will allow us to compensate
+    for any imperfections of the internal camera hardware.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We will simply `print` them on the console for easy inspection:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE18]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'For example, the calibration of my laptop''s webcam recovered the following
+    values:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE19]'
+  prefs: []
+  type: TYPE_PRE
+- en: This tells us that the focal lengths of my webcam are `fx=3366.9644` pixels
+    and `fy=3296.8392` pixels, with the optical center at `cx=299.1099` pixels and
+    `cy=269.4368` pixels.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'A good idea might be to double-check the accuracy of the calibration process.
+    This can be done by projecting the object points onto the image using the recovered
+    camera parameters so that we can compare them with the list of image points we
+    collected with the `cv2.findChessboardCorners` function. If the two points are
+    roughly the same, we know that the calibration was successful. Even better, we
+    can calculate the `mean error` of the reconstruction by projecting every object
+    point in the list:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE20]'
+  prefs: []
+  type: TYPE_PRE
+- en: Performing this check on my laptop's webcam resulted in a mean error of 0.95
+    pixels, which is fairly close to 0.
+  prefs: []
+  type: TYPE_NORMAL
+- en: With the internal camera parameters recovered, we can now set out to take beautiful,
+    undistorted pictures of the world, possibly from different viewpoints so that
+    we can extract some structure from motion. First, let's see how to set up our
+    app.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Setting up the app
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'Going forward, we will be using a famous open source dataset called `fountain-P11`.
+    It depicts a Swiss fountain viewed from various angles:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/ac6bebd0-35f9-4265-97b3-6621dd489e1c.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: The dataset consists of 11 high-resolution images and can be downloaded from [https://icwww.epfl.ch/multiview/denseMVS.html](https://icwww.epfl.ch/multiview/denseMVS.html).
+    Had we taken the pictures ourselves, we would have had to go through the entire
+    camera calibration procedure to recover the intrinsic camera matrix and the distortion
+    coefficients. Luckily, these parameters are known for the camera that took the
+    fountain dataset, so we can go ahead and hardcode these values in our code.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Let's prepare the `main` routine function in the next section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Understanding the main routine function
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'Our `main` routine function will consist of creating and interacting with an
+    instance of the `SceneReconstruction3D` class. This code can be found in the `chapter4.py`
+    file. The dependencies of the module are `numpy` and the class itself, which are
+    imported as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE21]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Next, we define the `main` function:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE22]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The function consists of the following steps:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We define the intrinsic camera matrix for the camera that took photos of the
+    fountain dataset (`K`) and set distortion coefficients (`d`):'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE23]'
+  prefs: []
+  type: TYPE_PRE
+- en: According to the photographer, these images are already distortion-free, so
+    we have set all the distortion coefficients to 0.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Note that if you want to run the code presented in this chapter on a dataset
+    other than `fountain-P11`, you will have to adjust the intrinsic camera matrix
+    and the distortion coefficients.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Next, we create an instance of the  `SceneReconstruction3D` class and load
+    a pair of images, which we would like to apply to our structure-from-motion techniques.
+    The dataset is downloaded into a subdirectory called `fountain_dense`:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE24]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Now we are ready to call methods from the class that perform various computations:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE25]'
+  prefs: []
+  type: TYPE_PRE
+- en: We will implement these methods throughout the rest of the chapter, and they
+    will be explained in detail in the upcoming sections.
+  prefs: []
+  type: TYPE_NORMAL
+- en: So now that we have prepared the main script of the app, let's start implementing
+    the `SceneReconstruction3D` class, which does all the heavy lifting and incorporates
+    the computations for 3D reconstruction.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Implementing the SceneReconstruction3D class
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'All of the relevant 3D scene reconstruction code for this chapter can be found
+    as part of the `SceneReconstruction3D` class in the `scene3D` module. Upon instantiation,
+    the class stores the intrinsic camera parameters to be used in all subsequent
+    calculations:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE26]'
+  prefs: []
+  type: TYPE_PRE
+- en: Then, we need to load a pair of images on which to operate.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In order to do it, first, we create a static method that will load an image
+    and convert it to an RGB format if it is grayscale, as other methods expect a
+    three-channel image. In the case of the fountain sequence, all images are of a
+    relatively high resolution. If an optional `downscale` flag is set, the method
+    will downscale the image to a width of roughly `600` pixels:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE27]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Next, we create a method that loads a pair of images and compensates them for
+    the radial and tangential lens distortions using the distortion coefficients specified
+    earlier (if there are any):'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE28]'
+  prefs: []
+  type: TYPE_PRE
+- en: Finally, we are ready to move on to the heart of the project—estimating the
+    camera motion and reconstructing the scene!
+  prefs: []
+  type: TYPE_NORMAL
+- en: Estimating the camera motion from a pair of images
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Now that we have loaded two images (`self.img1` and `self.img2`) of the same
+    scene, such as two examples from the fountain dataset, we find ourselves in a
+    similar situation as in the previous chapter. We are given two images that supposedly
+    show the same rigid object or static scene but from different viewpoints.
+  prefs: []
+  type: TYPE_NORMAL
+- en: However, this time we want to go a step further—if the only thing that changes
+    between taking the two pictures is the location of the camera, can we infer the
+    relative camera motion by looking at the matching features?
+  prefs: []
+  type: TYPE_NORMAL
+- en: Well, of course we can. Otherwise, this chapter would not make much sense, would
+    it? We will take the location and orientation of the camera in the first image
+    as a given and then find out how much we have to reorient and relocate the camera
+    so that its viewpoint matches that from the second image.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In other words, we need to recover the **essential matrix** of the camera in
+    the second image. An essential matrix is a 4 x 3 matrix that is the concatenation
+    of a 3 x 3 rotation matrix and a 3 x 1 translation matrix. It is often denoted
+    by *[R | t]*. You can think of it as capturing the position and orientation of
+    the camera in the second image relative to the camera in the first image.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The crucial step in recovering the essential matrix (as well as all other transformations
+    in this chapter) is feature matching. We can either apply the SIFT detector to
+    the two images or calculate the optic flow between the two images. The user may
+    choose their favorite method by specifying a feature extraction mode, which will
+    be implemented by the following private method:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE29]'
+  prefs: []
+  type: TYPE_PRE
+- en: Let's learn how to perform point matching using rich feature descriptors in
+    the next section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Applying point matching with rich feature descriptors
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'A robust way of extracting important features from an image is by using the
+    SIFT detector. In this chapter, we want to use it for two images, `self.img1`
+    and `self.img2`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE30]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'For feature matching, we will use a `BruteForce` matcher, so that other matchers
+    (such as **FLANN**) can work as well:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE31]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'For each of the `matches`, we need to recover the corresponding image coordinates.
+    These are maintained in the `self.match_pts1` and `self.match_pts2` lists:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE32]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The following screenshot shows an example of the feature matcher applied to
+    two arbitrary frames of the fountain sequence:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/a6e6d350-9f24-4319-b2e6-3572e1a177c7.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: In the next section, we'll learn about point matching using optic flow.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Using point matching with optic flow
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: An alternative to using rich features is using optic flow. Optic flow is the
+    process of estimating motion between two consecutive image frames by calculating
+    a displacement vector. A displacement vector can be calculated for every pixel
+    in the image (dense) or only for selected points (sparse).
+  prefs: []
+  type: TYPE_NORMAL
+- en: One of the most commonly used techniques for calculating dense optic flow is
+    the Lukas-Kanade method. It can be implemented in OpenCV with a single line of
+    code, by using the `cv2.calcOpticalFlowPyrLK` function.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'But before that, we need to select some points in the image that are worth
+    tracking. Again, this is a question of feature selection. If we are interested
+    in getting an exact result for only a few highly salient image points, we can
+    use Shi-Tomasi''s `cv2.goodFeaturesToTrack` function. This function might recover
+    features like this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/c7cca296-58d7-40ca-a677-03e7e3168037.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'However, in order to infer structure from motion, we might need many more features
+    and not just the most salient Harris corners. An alternative would be to detect
+    the **Features from Accelerated Segment Test** (**FAST**) features:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE33]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We can then calculate the optic flow for these features. In other words, we
+    want to find the points in the second image that most likely correspond to the
+    `first_key_points` from the first image. For this, we need to convert the keypoint
+    list into a NumPy array of (*x*, *y*) coordinates:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE34]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Then the optic flow will return a list of corresponding features in the second
+    image (`second_key_arr`):'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE35]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The function also returns a vector of status bits (`status`), which indicate
+    whether the flow for a keypoint has been found or not, and a vector of estimated
+    error values (`err`). If we were to ignore these two additional vectors, the recovered
+    flow field could look something like this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/5765bf9b-d466-4d75-92ef-ff05cfc81bf3.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: In this image, an arrow is drawn for each keypoint, starting at the location
+    of the keypoint in the first image and pointing to the location of the same keypoint
+    in the second image. By inspecting the flow image, we can see that the camera
+    moved mostly to the right, but there also seems to be a rotational component.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'However, some of these arrows are really large, and some of them make no sense.
+    For example, it is very unlikely that a pixel in the bottom-right image corner
+    actually moved all the way to the top of the image. It is much more likely that
+    the flow calculation for this particular keypoint is wrong. Thus, we want to exclude
+    all the keypoints for which the status bit is 0 or the estimated error is larger
+    than a certain value:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE36]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'If we draw the flow field again with a limited set of keypoints, the image
+    will look like this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/2814c59d-0556-4d6c-a49c-addee3d5b932.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'The flow field can be drawn with the following public method, which first extracts
+    the keypoints using the preceding code and then draws the actual arrows on the
+    image:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE37]'
+  prefs: []
+  type: TYPE_PRE
+- en: The advantage of using optic flow instead of rich features is that the process
+    is usually faster and can accommodate the matching of many more points, making
+    the reconstruction denser.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The caveat in working with the optic flow is that it works best for consecutive
+    images taken by the same hardware, whereas rich features are mostly agnostic to
+    this.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Let's learn how to find the camera matrices in the next section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Finding the camera matrices
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'Now that we have obtained the matches between keypoints, we can calculate two
+    important camera matrices—the fundamental matrix and the essential matrix. These
+    matrices will specify the camera motion in terms of rotational and translational
+    components. Obtaining the fundamental matrix (`self.F`) is another OpenCV one-liner:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE38]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The only difference between `fundamental_matrix` and `essential_matrix` is
+    that the latter operates on rectified images:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE39]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The essential matrix (`self.E`) can then be decomposed into rotational and
+    translational components, denoted by *[R | t]*, using **singular value decomposition**
+    (**SVD**):'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE40]'
+  prefs: []
+  type: TYPE_PRE
+- en: Using the unitary matrices *U* and *V* in combination with an additional matrix,
+    *W*, we can now reconstruct *[R | t]*. However, it can be shown that this decomposition
+    has four possible solutions and only one of them is the valid second camera matrix.
+    The only thing we can do is check all four possible solutions and find the one
+    that predicts that all the imaged keypoints lie in front of both cameras.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'But prior to that, we need to convert the keypoints from 2D image coordinates
+    to homogeneous coordinates. We achieve this by adding a *z* coordinate, which
+    we set to `1`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE41]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We then iterate over the four possible solutions and choose the one that has
+    `_in_front_of_both_cameras` returning `True`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE42]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Now, we can finally construct the *[R | t]* matrices of the two cameras. The
+    first camera is simply a canonical camera (no translation and no rotation):'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE43]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The second camera matrix consists of *[R | t]*, recovered earlier:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE44]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The `__InFrontOfBothCameras` private method is a helper function that makes
+    sure that every pair of keypoints is mapped to 3D coordinates that make them lie
+    in front of both cameras:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE45]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'If the function finds any keypoint that is not in front of both cameras, it
+    will return `False`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE46]'
+  prefs: []
+  type: TYPE_PRE
+- en: So now that we have found the camera matrices, let's rectify an image in the
+    next section, which is a good means to validating whenever the recovered matrices
+    are correct.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Applying image rectification
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Maybe the easiest way to make sure that we have recovered the correct camera
+    matrices is to rectify the images. If they are rectified correctly, then a point
+    in the first image and a point in the second image that corresponds to the same
+    3D world point will lie on the same vertical coordinate.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'In a more concrete example, such as in our case, since we know that the cameras
+    are upright, we can verify that horizontal lines in the rectified image correspond
+    to horizontal lines in the 3D scene. Thus, we follow these steps to rectify our
+    image:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'First, we perform all the steps described in the previous subsections to obtain
+    the *[R | t]* matrix of the second camera:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE47]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Then, rectification can be performed with two OpenCV one-liners that remap
+    the image coordinates to the rectified coordinates based on the camera matrix
+    (`self.K`), the distortion coefficients (`self.d`), the rotational component of
+    the essential matrix (`R`), and the translational component of the essential matrix
+    (`T`):'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE48]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'To make sure that the rectification is accurate, we plot the two rectified
+    images (`img_rect1` and `img_rect2`) next to each other:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE49]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We also draw horizontal blue lines after every `25` pixels, across the side-by-side
+    images, to further help us visually investigate the rectification process:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE50]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Now we can easily convince ourselves that the rectification was successful,
+    as shown here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/d2f5e874-9cc4-4721-9797-407769b822ee.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: Now that we have rectified our image, let's learn how to reconstruct the 3D
+    scene in the next section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Reconstructing the scene
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Finally, we can reconstruct the 3D scene by making use of a process called **triangulation**.
+    We are able to infer the 3D coordinates of a point because of the way **epipolar
+    geometry** works. By calculating the essential matrix, we get to know more about
+    the geometry of the visual scene than we might think. Because the two cameras
+    depict the same real-world scene, we know that most of the 3D real-world points
+    will be found in both images.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Moreover, we know that the mapping from the 2D image points to the corresponding
+    3D real-world points will follow the rules of geometry. If we study a sufficiently
+    large number of image points, we can construct, and solve, a (large) system of
+    linear equations to get the ground truth of the real-world coordinates.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Let's return to the Swiss fountain dataset. If we ask two photographers to take
+    a picture of the fountain from different viewpoints at the same time, it is not
+    hard to realize that the first photographer might show up in the picture of the
+    second photographer, and vice versa. The point on the image plane where the other
+    photographer is visible is called the **epipole** or **epipolar point**.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In more technical terms, the epipole is the point on one camera's image plane
+    onto which the center of projection of the other camera projects. It is interesting
+    to note that both the epipoles in their respective image planes, and both the
+    centers of projection, lie on a single 3D line.
+  prefs: []
+  type: TYPE_NORMAL
+- en: By looking at the lines between the epipoles and image points, we can limit
+    the number of possible 3D coordinates of the image points. In fact, if the projection
+    point is known, then the epipolar line (which is the line between the image point
+    and the epipole) is known, and, in turn, the same point projected onto the second
+    image must lie on that particular epipolar line. *Confusing?* I thought so.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s just look at these images:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/c524cbb7-fb6e-4f76-b44a-39b9a0eb14fc.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: Each line here is the epipolar line of a particular point in the image. Ideally,
+    all the epipolar lines drawn in the left-hand image should intersect at a point,
+    and that point typically lies outside the image. If the calculation is accurate,
+    then that point should coincide with the location of the second camera as seen
+    from the first camera.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In other words, the epipolar lines in the left-hand image tell us that the camera
+    that took the right-hand image is located to our (that is, the first camera's)
+    right-hand side. Analogously, the epipolar lines in the right-hand image tell
+    us that the camera that took the image on the left is located to our (that is,
+    the second camera's) left-hand side.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Moreover, for each point observed in one image, the same point must be observed
+    in the other image on a known epipolar line. This is known as the **epipolar constraint**.
+    We can use this fact to show that if two image points correspond to the same 3D
+    point, then the projection lines of those two image points must intersect precisely
+    at the 3D point. This means that the 3D point can be calculated from two image
+    points, which is what we are going to do next.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Luckily, OpenCV again provides a wrapper to solve an extensive set of linear
+    equations, which is done by following these steps:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'First, we have to convert our list of matching feature points into a NumPy
+    array:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE51]'
+  prefs: []
+  type: TYPE_PRE
+- en: '**Triangulation** is performed next using the preceding two *[R | t]* matrices
+    (`self.Rt1` for the first camera and `self.Rt2` for the second camera):'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE52]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'This will return the triangulated real-world points using 4D homogeneous coordinates.
+    To convert them to 3D coordinates, we need to divide the (*X*, *Y*, *Z*) coordinates
+    by the fourth coordinate, usually referred to as *W*:'
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: '[PRE53]'
+  prefs: []
+  type: TYPE_PRE
+- en: So now that we have obtained the points in the 3D space, let's visualize them
+    in the next section to see how they look.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Understanding 3D point cloud visualization
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: The last step is visualizing the triangulated 3D real-world points. An easy
+    way of creating 3D scatterplots is by using Matplotlib. However, if you are looking
+    for more professional visualization tools, you may be interested in **Mayavi**
+    ([http://docs.enthought.com/mayavi/mayavi](http://docs.enthought.com/mayavi/mayavi)),
+    **VisPy** ([http://vispy.org](http://vispy.org)), or the **Point Cloud Library**
+    ([http://pointclouds.org](http://pointclouds.org)).
+  prefs: []
+  type: TYPE_NORMAL
+- en: Although the last one does not have Python support for point cloud visualization
+    yet, it is an excellent tool for point cloud segmentation, filtering, and sample
+    consensus model fitting. For more information, head over to **Strawlab**'s GitHub
+    repository at [https://github.com/strawlab/python-pcl](https://github.com/strawlab/python-pcl).
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Before we can plot our 3D point cloud, we obviously have to extract the *[R
+    | t]* matrix and perform the triangulation as explained earlier:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE54]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Then, all we need to do is open a Matplotlib figure and draw each entry of
+    `pts3D` in a 3D scatterplot:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE55]'
+  prefs: []
+  type: TYPE_PRE
+- en: The result is most compelling when studied using pyplot's `pan axes` button,
+    which lets you rotate and scale the point cloud in all three dimensions. In the
+    following screenshot, two projections are illustrated.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The first one is from the top and the second one is from some vertical angle
+    from the left of the fountain. The color of a point corresponds to the depth of
+    that point (*y* coordinate). Most of the points lie near a plane that makes an
+    angle with the *XZ* plane (points from red to green). These points represent the
+    wall behind the fountain. The other points (from yellow to blue) represent the
+    rest of the structure of the fountain:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/2b3c5918-30af-4d8f-ab31-644a5aa2d12e.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'The projection from some vertical angle from the left of the fountain is shown
+    in the following screenshot:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![](img/368d1588-2a17-4455-836e-4cf24c4f58d4.png)'
+  prefs: []
+  type: TYPE_IMG
+- en: So now that you have completed your first app for 3D reconstruction, you have
+    started to dive into a computer vision field called structure from motion. This
+    is an intensively developing field. Let's understand what this field of research
+    is trying to deal with within the next section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Learning about structure from motion
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: So far in this chapter, we have gone through some math and we can reconstruct
+    the depth of a scene based on a couple of images taken from different angles,
+    which is a problem of reconstruction of a 3D structure from camera motion.
+  prefs: []
+  type: TYPE_NORMAL
+- en: In computer vision, the process of reconstruction of 3D structures of the scene
+    based on the sequence of images is usually referred to as **structure from motion**.
+    A similar set of problems is the structure from stereo vision—in reconstruction
+    from stereo vision, there are two cameras, located at a certain distance from
+    each other and in structure from motion, there are different images taken from
+    different angles and positions. *There's not much difference conceptually, right?*
+  prefs: []
+  type: TYPE_NORMAL
+- en: Let's think about human vision. People are good at estimating distance and relative
+    locations of objects. A person doesn't even need two eyes for it—we can look with
+    one eye and estimate distances and relative locations pretty well. Moreover, stereoscopic
+    vision only takes place when the distance between eyes is of a similar order of
+    magnitude as the distance to an object when the projections of the scene on the
+    eye have noticeable differences.
+  prefs: []
+  type: TYPE_NORMAL
+- en: For example, if one object is a football field away, the relative location of
+    the eyes doesn't matter, whereas if you look at your nose, the view changes a
+    lot. To illustrate further that stereoscopy is not the essence of our vision,
+    we could look at a photograph where we can describe the relative location of the
+    objects pretty well, but what we are actually looking at is a flat surface.
+  prefs: []
+  type: TYPE_NORMAL
+- en: People do not have such skills at infancy; observations show that infants are
+    bad at locating the placements of the objects. So, probably, a person learns this
+    skill during their conscious life by looking at the world and playing with objects.
+    Next, a question arises—*if a person learns the 3D structure of the world, can't
+    we make a computer to do so?*
+  prefs: []
+  type: TYPE_NORMAL
+- en: There are already interesting models that try to do so. For example, **Vid2Depth**
+    ([https://arxiv.org/pdf/1802.05522.pdf](https://arxiv.org/pdf/1802.05522.pdf)) is
+    a deep learning model where the authors train a model that predicts depth in a
+    single image; meanwhile, the model is trained on a sequence of video frames without
+    any depth annotation. Similar problems are active topics for research nowadays.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Summary
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: In this chapter, we explored a way of reconstructing a scene in 3D by inferring
+    the geometrical features of 2D images taken by the same camera. We wrote a script
+    to calibrate a camera, and you learned about fundamental and essential matrices.
+    We used this knowledge to perform triangulation. We then went on to visualize
+    the real-world geometry of a scene in a 3D point cloud using simple 3D scatterplots
+    in Matplotlib.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Going forward from here, it will be possible to store the triangulated 3D points
+    in a file that can be parsed by the Point Cloud Library or to repeat the procedure
+    for different image pairs so that we can generate a denser and more accurate reconstruction.
+    Although we have covered a lot in this chapter, there is a lot more left to do.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Typically, when talking about a structure-from-motion pipeline, we include two
+    additional steps that we have not talked about so far—**bundle adjustment** and
+    **geometry fitting**. One of the most important steps in such a pipeline is to
+    refine the 3D estimate in order to minimize reconstruction errors. Typically,
+    we would also want to get all points that do not belong to our object of interest
+    out of the cloud. But with the basic code in hand, you can now go ahead and write
+    your own advanced structure-from-motion pipeline!
+  prefs: []
+  type: TYPE_NORMAL
+- en: In the next chapter, we will use the concepts we learned in 3D Scene reconstruction.
+    We will use the key points and features that we learned to extract in this chapter,
+    and we'll apply other alignment algorithms to create panoramas. We will also dive
+    deep into other topics in computational photography, understand the core concepts,
+    and create **High Dynamic Range** (**HDR**) images.
+  prefs: []
+  type: TYPE_NORMAL

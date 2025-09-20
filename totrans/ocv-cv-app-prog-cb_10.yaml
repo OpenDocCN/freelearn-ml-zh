@@ -1,0 +1,1043 @@
+- en: Chapter 10. Estimating Projective Relations in Images
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'In this chapter, we will cover the following recipes:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Calibrating a camera
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Computing the fundamental matrix of an image pair
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Matching images using a random sample consensus
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Computing a homography between two images
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Introduction
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Images are generally produced using a digital camera, which captures a scene
+    by projecting light going through its lens onto an image sensor. The fact that
+    an image is formed by the projection of a 3D scene onto a 2D plane implies the
+    existence of important relationships between a scene and its image and between
+    different images of the same scene. Projective geometry is the tool that is used
+    to describe and characterize, in mathematical terms, the process of image formation.
+    In this chapter, we will introduce you to some of the fundamental projective relations
+    that exist in multiview imagery and explain how these can be used in computer
+    vision programming. You will learn how matching can be made more accurate through
+    the use of projective constraints and how a mosaic from multiple images can be
+    composited using two-view relations. Before we start the recipes, let's explore
+    the basic concepts related to scene projection and image formation.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Image formation
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'Fundamentally, the process used to produce images has not changed since the
+    beginning of photography. The light coming from an observed scene is captured
+    by a camera through a frontal **aperture**; the captured light rays hit an **image
+    plane** (or an **image sensor**) located at the back of the camera. Additionally,
+    a lens is used to concentrate the rays coming from the different scene elements.
+    This process is illustrated by the following figure:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Image formation](img/00161.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Here, **do** is the distance from the lens to the observed object, **di** is
+    the distance from the lens to the image plane, and **f** is the focal length of
+    the lens. These quantities are related by the so-called thin lens equation:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Image formation](img/00162.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'In computer vision, this camera model can be simplified in a number of ways.
+    First, we can neglect the effect of the lens by considering that we have a camera
+    with an infinitesimal aperture since, in theory, this does not change the image
+    appearance. (However, by doing so, we ignore the focusing effect by creating an
+    image with an infinite **depth of field**.) In this case, therefore, only the
+    central ray is considered. Second, since most of the time we have `do>>di`, we
+    can assume that the image plane is located at the focal distance. Finally, we
+    can note from the geometry of the system that the image on the plane is inverted.
+    We can obtain an identical but upright image by simply positioning the image plane
+    in front of the lens. Obviously, this is not physically feasible, but from a mathematical
+    point of view, this is completely equivalent. This simplified model is often referred
+    to as the **pin-hole camera** model, and it is represented as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Image formation](img/00163.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'From this model, and using the law of similar triangles, we can easily derive
+    the basic projective equation that relates a pictured object with its image:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Image formation](img/00164.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: The size (**hi**) of the image of an object (of height **ho**) is therefore
+    inversely proportional to its distance (**do**) from the camera, which is naturally
+    true. In general, this relation describes where a 3D scene point will be projected
+    on the image plane given the geometry of the camera.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Calibrating a camera
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: From the introduction of this chapter, we learned that the essential parameters
+    of a camera under the pin-hole model are its focal length and the size of the
+    image plane (which defines the **field of view** of the camera). Also, since we
+    are dealing with digital images, the number of pixels on the image plane (its
+    **resolution**) is another important characteristic of a camera. Finally, in order
+    to be able to compute the position of an image's scene point in pixel coordinates,
+    we need one additional piece of information. Considering the line coming from
+    the focal point that is orthogonal to the image plane, we need to know at which
+    pixel position this line pierces the image plane. This point is called the **principal
+    point**. It might be logical to assume that this principal point is at the center
+    of the image plane, but in practice, this point might be off by a few pixels depending
+    on the precision at which the camera has been manufactured.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Camera calibration is the process by which the different camera parameters are
+    obtained. One can obviously use the specifications provided by the camera manufacturer,
+    but for some tasks, such as 3D reconstruction, these specifications are not accurate
+    enough. Camera calibration will proceed by showing known patterns to the camera
+    and analyzing the obtained images. An optimization process will then determine
+    the optimal parameter values that explain the observations. This is a complex
+    process that has been made easy by the availability of OpenCV calibration functions.
+  prefs: []
+  type: TYPE_NORMAL
+- en: How to do it...
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: To calibrate a camera, the idea is to show it a set of scene points for which
+    their 3D positions are known. Then, you need to observe where these points project
+    on the image. With the knowledge of a sufficient number of 3D points and associated
+    2D image points, the exact camera parameters can be inferred from the projective
+    equation. Obviously, for accurate results, we need to observe as many points as
+    possible. One way to achieve this would be to take one picture of a scene with
+    many known 3D points, but in practice, this is rarely feasible. A more convenient
+    way is to take several images of a set of some 3D points from different viewpoints.
+    This approach is simpler but requires you to compute the position of each camera
+    view in addition to the computation of the internal camera parameters, which fortunately
+    is feasible.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'OpenCV proposes that you use a chessboard pattern to generate the set of 3D
+    scene points required for calibration. This pattern creates points at the corners
+    of each square, and since this pattern is flat, we can freely assume that the
+    board is located at `Z=0`, with the *X* and *Y* axes well-aligned with the grid.
+    In this case, the calibration process simply consists of showing the chessboard
+    pattern to the camera from different viewpoints. Here is one example of a `6x4`
+    calibration pattern image:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![How to do it...](img/00165.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'The good thing is that OpenCV has a function that automatically detects the
+    corners of this chessboard pattern. You simply provide an image and the size of
+    the chessboard used (the number of horizontal and vertical inner corner points).
+    The function will return the position of these chessboard corners on the image.
+    If the function fails to find the pattern, then it simply returns `false`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE0]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The output parameter, `imageCorners`, will simply contain the pixel coordinates
+    of the detected inner corners of the shown pattern. Note that this function accepts
+    additional parameters if you need to tune the algorithm, which are not discussed
+    here. There is also a special function that draws the detected corners on the
+    chessboard image, with lines connecting them in a sequence:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE1]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The following image is obtained:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![How to do it...](img/00166.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: The lines that connect the points show the order in which the points are listed
+    in the vector of detected image points. To perform a calibration, we now need
+    to specify the corresponding 3D points. You can specify these points in the units
+    of your choice (for example, in centimeters or in inches); however, the simplest
+    is to assume that each square represents one unit. In that case, the coordinates
+    of the first point would be `(0,0,0)` (assuming that the board is located at a
+    depth of `Z=0`), the coordinates of the second point would be `(1,0,0)`, and so
+    on, the last point being located at `(5,3,0)`. There are a total of `24` points
+    in this pattern, which is too small to obtain an accurate calibration. To get
+    more points, you need to show more images of the same calibration pattern from
+    various points of view. To do so, you can either move the pattern in front of
+    the camera or move the camera around the board; from a mathematical point of view,
+    this is completely equivalent. The OpenCV calibration function assumes that the
+    reference frame is fixed on the calibration pattern and will calculate the rotation
+    and translation of the camera with respect to the reference frame.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s now encapsulate the calibration process in a `CameraCalibrator` class.
+    The attributes of this class are as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE2]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Note that the input vectors of the scene and image points are in fact made
+    of `std::vector` of point instances; each vector element is a vector of the points
+    from one view. Here, we decided to add the calibration points by specifying a
+    vector of the chessboard image filename as input:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE3]'
+  prefs: []
+  type: TYPE_PRE
+- en: The first loop inputs the 3D coordinates of the chessboard, and the corresponding
+    image points are the ones provided by the `cv::findChessboardCorners` function.
+    This is done for all the available viewpoints. Moreover, in order to obtain a
+    more accurate image point location, the `cv::cornerSubPix` function can be used,
+    and as the name suggests, the image points will then be localized at a subpixel
+    accuracy. The termination criterion that is specified by the `cv::TermCriteria`
+    object defines the maximum number of iterations and the minimum accuracy in subpixel
+    coordinates. The first of these two conditions that is reached will stop the corner
+    refinement process.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'When a set of chessboard corners have been successfully detected, these points
+    are added to our vectors of the image and scene points using our `addPoints` method.
+    Once a sufficient number of chessboard images have been processed (and consequently,
+    a large number of 3D scene point / 2D image point correspondences are available),
+    we can initiate the computation of the calibration parameters as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE4]'
+  prefs: []
+  type: TYPE_PRE
+- en: In practice, 10 to 20 chessboard images are sufficient, but these must be taken
+    from different viewpoints at different depths. The two important outputs of this
+    function are the camera matrix and the distortion parameters. These will be described
+    in the next section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: How it works...
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'In order to explain the result of the calibration, we need to go back to the
+    figure in the introduction, which describes the pin-hole camera model. More specifically,
+    we want to demonstrate the relationship between a point in 3D at the position
+    (X,Y,Z) and its image (x,y) on a camera specified in pixel coordinates. Let''s
+    redraw this figure by adding a reference frame that we position at the center
+    of the projection as seen here:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![How it works...](img/00167.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'Note that the *y* axis is pointing downward to get a coordinate system compatible
+    with the usual convention that places the image origin at the upper-left corner.
+    We learned previously that the point **(X,Y,Z)** will be projected onto the image
+    plane at `(fX/Z,fY/Z)`. Now, if we want to translate this coordinate into pixels,
+    we need to divide the 2D image position by the pixel''s width (`px`) and height
+    (`py`), respectively. Note that by dividing the focal length given in world units
+    (generally given in millimeters) by `px`, we obtain the focal length expressed
+    in (horizontal) pixels. Let''s then define this term as `fx`. Similarly, `fy =f/py`
+    is defined as the focal length expressed in vertical pixel units. Therefore, the
+    complete projective equation is as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![How it works...](img/00168.jpeg)![How it works...](img/00169.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Recall that (u[0],v[0]) is the principal point that is added to the result in
+    order to move the origin to the upper-left corner of the image. These equations
+    can be rewritten in the matrix form through the introduction of **homogeneous
+    coordinates**, in which 2D points are represented by 3-vectors and 3D points are
+    represented by 4-vectors (the extra coordinate is simply an arbitrary scale factor,
+    `S`, that needs to be removed when a 2D coordinate needs to be extracted from
+    a homogeneous 3-vector).
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Here is the rewritten projective equation:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![How it works...](img/00170.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: The second matrix is a simple projection matrix. The first matrix includes all
+    of the camera parameters, which are called the intrinsic parameters of the camera.
+    This `3x3` matrix is one of the output matrices returned by the `cv::calibrateCamera`
+    function. There is also a function called `cv::calibrationMatrixValues` that returns
+    the value of the intrinsic parameters given by a calibration matrix.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'More generally, when the reference frame is not at the projection center of
+    the camera, we will need to add a rotation vector (a `3x3` matrix) and a translation
+    vector (a `3x1` matrix). These two matrices describe the rigid transformation
+    that must be applied to the 3D points in order to bring them back to the camera
+    reference frame. Therefore, we can rewrite the projection equation in its most
+    general form:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![How it works...](img/00171.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Remember that in our calibration example, the reference frame was placed on
+    the chessboard. Therefore, there is a rigid transformation (made of a rotation
+    component represented by the matrix entries `r1` to `r9` and a translation represented
+    by `t1`, `t2`, and `t3`) that must be computed for each view. These are in the
+    output parameter list of the `cv::calibrateCamera` function. The rotation and
+    translation components are often called the **extrinsic parameters** of the calibration,
+    and they are different for each view. The intrinsic parameters remain constant
+    for a given camera/lens system. The intrinsic parameters of our test camera obtained
+    from a calibration based on 20 chessboard images are `fx=167`, `fy=178`, `u0=156`,
+    and `v0=119`. These results are obtained by `cv::calibrateCamera` through an optimization
+    process aimed at finding the intrinsic and extrinsic parameters that will minimize
+    the difference between the predicted image point position, as computed from the
+    projection of the 3D scene points, and the actual image point position, as observed
+    on the image. The sum of this difference for all the points specified during the
+    calibration is called the **re-projection error**.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Let's now turn our attention to the distortion parameters. So far, we have mentioned
+    that under the pin-hole camera model, we can neglect the effect of the lens. However,
+    this is only possible if the lens that is used to capture an image does not introduce
+    important optical distortions. Unfortunately, this is not the case with lower
+    quality lenses or with lenses that have a very short focal length. You may have
+    already noted that the chessboard pattern shown in the image that we used for
+    our example is clearly distorted—the edges of the rectangular board are curved
+    in the image. Also, note that this distortion becomes more important as we move
+    away from the center of the image. This is a typical distortion observed with
+    a fish-eye lens, and it is called **radial distortion**. The lenses used in common
+    digital cameras usually do not exhibit such a high degree of distortion, but in
+    the case of the lens used here, these distortions certainly cannot be ignored.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'It is possible to compensate for these deformations by introducing an appropriate
+    distortion model. The idea is to represent the distortions induced by a lens by
+    a set of mathematical equations. Once established, these equations can then be
+    reverted in order to undo the distortions visible on the image. Fortunately, the
+    exact parameters of the transformation that will correct the distortions can be
+    obtained together with the other camera parameters during the calibration phase.
+    Once this is done, any image from the newly calibrated camera will be undistorted.
+    Therefore, we have added an additional method to our calibration class:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE5]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Running this code results in the following image:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![How it works...](img/00172.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: As you can see, once the image is undistorted, we obtain a regular perspective
+    image.
+  prefs: []
+  type: TYPE_NORMAL
+- en: To correct the distortion, OpenCV uses a polynomial function that is applied
+    to the image points in order to move them at their undistorted position. By default,
+    five coefficients are used; a model made of eight coefficients is also available.
+    Once these coefficients are obtained, it is possible to compute two `cv::Mat`
+    mapping functions (one for the `x` coordinate and one for the `y` coordinate)
+    that will give the new undistorted position of an image point on a distorted image.
+    This is computed by the `cv::initUndistortRectifyMap` function, and the `cv::remap`
+    function remaps all the points of an input image to a new image. Note that because
+    of the nonlinear transformation, some pixels of the input image now fall outside
+    the boundary of the output image. You can expand the size of the output image
+    to compensate for this loss of pixels, but you will now obtain output pixels that
+    have no values in the input image (they will then be displayed as black pixels).
+  prefs: []
+  type: TYPE_NORMAL
+- en: There's more...
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: More options are available when it comes to camera calibration.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Calibration with known intrinsic parameters
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: When a good estimate of the camera's intrinsic parameters is known, it could
+    be advantageous to input them in the `cv::calibrateCamera` function. They will
+    then be used as initial values in the optimization process. To do so, you just
+    need to add the `CV_CALIB_USE_INTRINSIC_GUESS` flag and input these values in
+    the calibration matrix parameter. It is also possible to impose a fixed value
+    for the principal point (`CV_CALIB_FIX_PRINCIPAL_POINT`), which can often be assumed
+    to be the central pixel. You can also impose a fixed ratio for the focal lengths
+    `fx` and `fy` (`CV_CALIB_FIX_RATIO`); in which case, you assume the pixels of
+    the square shape.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Using a grid of circles for calibration
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'Instead of the usual chessboard pattern, OpenCV also offers the possibility
+    to calibrate a camera by using a grid of circles. In this case, the centers of
+    the circles are used as calibration points. The corresponding function is very
+    similar to the function we used to locate the chessboard corners:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE6]'
+  prefs: []
+  type: TYPE_PRE
+- en: See also
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: The *Computing a homography between two images* recipe in this chapter will
+    examine the projective equation in special situations
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The *A flexible new technique for camera calibration* article by Z. Zhang in
+    *IEEE Transactions on Pattern Analysis and Machine Intelligence, vol. 22, no 11,
+    2000*, is a classic paper on the problem of camera calibration
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Computing the fundamental matrix of an image pair
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: The previous recipe showed you how to recover the projective equation of a single
+    camera. In this recipe, we will explore the projective relationship that exists
+    between two images that display the same scene. These two images could have been
+    obtained by moving a camera at two different locations to take pictures from two
+    viewpoints or by using two cameras, each of them taking a different picture of
+    the scene. When these two cameras are separated by a rigid baseline, we use the
+    term **stereovision**.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Getting ready
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'Let''s now consider two cameras observing a given scene point, as shown in
+    the following figure:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Getting ready](img/00173.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: We learned that we can find the image **x** of a 3D point **X** by tracing a
+    line joining this 3D point with the camera's center. Conversely, the scene point
+    that has its image at the position **x** on the image plane can be located anywhere
+    on this line in the 3D space. This implies that if we want to find the corresponding
+    point of a given image point in another image, we need to search along the projection
+    of this line onto the second image plane. This imaginary line is called the **epipolar
+    line** of point **x**. It defines a fundamental constraint that must satisfy two
+    corresponding points; that is, the match of a given point must lie on the epipolar
+    line of this point in the other view, and the exact orientation of this epipolar
+    line depends on the respective position of the two cameras. In fact, the configuration
+    of the epipolar line characterizes the geometry of a two-view system.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Another observation that can be made from the geometry of this two-view system
+    is that all the epipolar lines pass through the same point. This point corresponds
+    to the projection of one camera's center onto the other camera. This special point
+    is called an **epipole**.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Mathematically, the relationship between an image point and its corresponding
+    epipolar line can be expressed using a `3x3` matrix as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Getting ready](img/00174.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: In projective geometry, a 2D line is also represented by a 3-vector. It corresponds
+    to the set of 2D points, `(x',y')`, that satisfy the equation *l* *[1]* *'x'+
+    l* *[2]* *'y'+ l* *[3]* *'=0* (the prime superscript denotes that this line belongs
+    to the second image). Consequently, the matrix **F**, called the fundamental matrix,
+    maps a 2D image point in one view to an epipolar line in the other view.
+  prefs: []
+  type: TYPE_NORMAL
+- en: How to do it...
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'The fundamental matrix of an image pair can be estimated by solving a set of
+    equations that involve a certain number of known matched points between the two
+    images. The minimum number of such matches is seven. In order to illustrate the
+    fundamental matrix estimation process and using the image pair from the previous
+    chapter, we can manually select seven good matches. These will be used to compute
+    the fundamental matrix using the `cv::findFundamentalMat` OpenCV function, as
+    shown in the following screenshot:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![How to do it...](img/00175.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'If we have the image points in each image as the `cv::keypoint` instances (for
+    example, if they were detected using a keypoint detector as in [Chapter 8](part0058_split_000.html#page
+    "Chapter 8. Detecting Interest Points"), *Detecting Interest Points*), they first
+    need to be converted into `cv::Point2f` in order to be used with `cv::findFundamentalMat`.
+    An OpenCV function can be used to this end:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE7]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The two vectors `selPoints1` and `selPoints2` contain the corresponding points
+    in the two images. The keypoint instances are `keypoints1` and `keypoints2`. The
+    `pointIndexes1` and `pointIndexes2` vectors contain the indexes of the keypoints
+    to be converted. The call to the `cv::findFundamentalMat` function is then as
+    follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE8]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'One way to visually verify the validity of the fundamental matrix is to draw
+    the epipolar lines of some selected points. Another OpenCV function allows the
+    epipolar lines of a given set of points to be computed. Once these are computed,
+    they can be drawn using the `cv::line` function. The following lines of code accomplish
+    these two steps (that is, computing and drawing epipolar lines in the image on
+    the right from the points in the image on the left):'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE9]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The result can be seen in the following screenshot:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![How to do it...](img/00176.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Remember that the epipole is at the intersection of all the epipolar lines,
+    and it is the projection of the other camera's center. This epipole is visible
+    in the preceding image. Often, the epipolar lines intersect outside the image
+    boundaries. In the case of our example, it is at the location where the first
+    camera would be visible if the two images were taken at the same instant. Note
+    that the results can be quite instable when the fundamental matrix is computed
+    from seven matches. Indeed, substituting one match for another could lead to a
+    significantly different set of epipolar lines.
+  prefs: []
+  type: TYPE_NORMAL
+- en: How it works...
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'We previously explained that for a point in one image, the fundamental matrix
+    gives the equation of the line on which its corresponding point in the other view
+    should be found. If the corresponding point of a point `p` (expressed in homogenous
+    coordinates) is `p''` and if `F` is the fundamental matrix between the two views,
+    then since `p''` lies on the epipolar line `Fp`, we have the following equation:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![How it works...](img/00177.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: This equation expresses the relationship between two corresponding points and
+    is known as the **epipolar constraint**. Using this equation, it becomes possible
+    to estimate the entries of the matrix using known matches. Since the entries of
+    the `F` matrix are given up to a scale factor, there are only eight entries to
+    be estimated (the ninth can be arbitrarily set to `1`). Each match contributes
+    to one equation. Therefore, with eight known matches, the matrix can be fully
+    estimated by solving the resulting set of linear equations. This is what is done
+    when you use the `CV_FM_8POINT` flag with the `cv::findFundamentalMat` function.
+    Note that in this case, it is possible (and preferable) to input more than eight
+    matches. The obtained over-determined system of linear equations can then be solved
+    in a mean-square sense.
+  prefs: []
+  type: TYPE_NORMAL
+- en: To estimate the fundamental matrix, an additional constraint can also be exploited.
+    Mathematically, the F matrix maps a 2D point to a 1D pencil of lines (that is,
+    lines that intersect at a common point). The fact that all these epipolar lines
+    pass through this unique point (that is, the epipole) imposes a constraint on
+    the matrix. This constraint reduces the number of matches required to estimate
+    the fundamental matrix to seven. Unfortunately, in this case, the set of equations
+    become nonlinear with up to three possible solutions (in this case, `cv::findFundamentalMat`
+    will return a fundamental matrix of the size `9x3`, that is, three `3x3` matrices
+    stacked up). The seven-match solution of the `F` matrix estimation can be invoked
+    in OpenCV by using the `CV_FM_7POINT` flag. This is what we did in the example
+    of the preceding section.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Lastly, we would like to mention that the choice of an appropriate set of matches
+    in the image is important to obtain an accurate estimation of the fundamental
+    matrix. In general, the matches should be well distributed across the image and
+    include points at different depths in the scene. Otherwise, the solution will
+    become unstable or degenerate configurations. In particular, the selected scene
+    points should not be coplanar as the fundamental matrix (in this case) becomes
+    degenerated.
+  prefs: []
+  type: TYPE_NORMAL
+- en: See also
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: '*Multiple View Geometry in Computer Vision, Cambridge University Press, 2004,
+    R. Hartley and A. Zisserman*, is the most complete reference on projective geometry
+    in computer vision'
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The next recipe explains how a fundamental matrix can be robustly estimated
+    from a larger match set
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The *Computing a homography between two images* recipe explains why a fundamental
+    matrix cannot be computed when the matched points are coplanar or are the result
+    of a pure rotation
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: Matching images using a random sample consensus
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: When two cameras observe the same scene, they see the same elements but under
+    different viewpoints. We have already studied the feature point matching problem
+    in the previous chapter. In this recipe, we come back to this problem, and we
+    will learn how to exploit the epipolar constraint between two views to match image
+    features more reliably.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The principle that we will follow is simple: when we match feature points between
+    two images, we only accept those matches that fall on the corresponding epipolar
+    lines. However, to be able to check this condition, the fundamental matrix must
+    be known, but we need good matches to estimate this matrix. This seems to be a
+    chicken-and-egg problem. However, in this recipe, we propose a solution in which
+    the fundamental matrix and a set of good matches will be jointly computed.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: How to do it...
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'The objective is to be able to compute a fundamental matrix and a set of good
+    matches between two views. To do so, all the found feature point correspondences
+    will be validated using the epipolar constraint introduced in the previous recipe.
+    To this end, we have created a class that encapsulates the different steps of
+    the proposed robust matching process:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE10]'
+  prefs: []
+  type: TYPE_PRE
+- en: Note how we used the `create` methods of the `cv::FeatureDetector` and `cv::DescriptorExtractor`
+    interfaces so that a user can select the `create` methods by their names. Note
+    that the `create` methods can also be specified using the defined `setFeatureDetector`
+    and `setDescriptorExtractor` setter methods.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The main method is our `match` method that returns matches, detected keypoints,
+    and the estimated fundamental matrix. The method proceeds in four distinct steps
+    (explicitly identified in the comments of the following code) that we will now
+    explore:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE11]'
+  prefs: []
+  type: TYPE_PRE
+- en: The first two steps simply detect the feature points and compute their descriptors.
+    Next, we proceed to feature matching using the `cv::BFMatcher` class, as we did
+    in the previous chapter. We use the crosscheck flag to obtain matches of better
+    quality.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The fourth step is the new concept introduced in this recipe. It consists of
+    an additional filtering test that will this time use the fundamental matrix in
+    order to reject matches that do not obey the epipolar constraint. This test is
+    based on the `RANSAC` method that can compute the fundamental matrix even when
+    outliers are still present in the match set (this method will be explained in
+    the next section):'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE12]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'This code is a bit long because the keypoints need to be converted into `cv::Point2f`
+    before the F matrix computation. Using this class, the robust matching of an image
+    pair is then easily accomplished by the following calls:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE13]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'This results in `62` matches that are shown in the following screenshot:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![How to do it...](img/00178.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Interestingly, almost all these matches are correct, even if a few false matches
+    remain; these accidently fell on the corresponding epipolar lines of the computed
+    fundamental matrix.
+  prefs: []
+  type: TYPE_NORMAL
+- en: How it works...
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: In the preceding recipe, we learned that it is possible to estimate the fundamental
+    matrix associated with an image pair from a number of feature point matches. Obviously,
+    to be exact, this match set must be made up of only good matches. However, in
+    a real context, it is not possible to guarantee that a match set obtained by comparing
+    the descriptors of the detected feature points will be completely exact. This
+    is why a fundamental matrix estimation method based on the **RANSAC** (**RANdom
+    SAmpling Consensus**) strategy has been introduced.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The RANSAC algorithm aims at estimating a given mathematical entity from a data
+    set that may contain a number of outliers. The idea is to randomly select some
+    data points from the set and perform the estimation only with these. The number
+    of selected points should be the minimum number of points required to estimate
+    the mathematical entity. In the case of the fundamental matrix, eight matched
+    pairs is the minimum number (in fact, it could be seven matches, but the 8-point
+    linear algorithm is faster to compute). Once the fundamental matrix is estimated
+    from these eight random matches, all the other matches in the match set are tested
+    against the epipolar constraint that derives from this matrix. All the matches
+    that fulfill this constraint (that is, matches for which the corresponding feature
+    is at a short distance from its epipolar line) are identified. These matches form
+    the **support set** of the computed fundamental matrix.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The central idea behind the RANSAC algorithm is that the larger the support
+    set, the higher the probability that the computed matrix is the right one. Conversely,
+    if one (or more) of the randomly selected matches is a wrong match, then the computed
+    fundamental matrix will also be incorrect, and its support set is expected to
+    be small. This process is repeated a number of times, and in the end, the matrix
+    with the largest support will be retained as the most probable one.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Therefore, our objective is to pick eight random matches several times so that
+    eventually we select eight good ones, which should give us a large support set.
+    Depending on the number of wrong matches in the entire data set, the probability
+    of selecting a set of eight correct matches will differ. We, however, know that
+    the more selections we make, the higher our confidence will be that we have at
+    least one good match set among those selections. More precisely, if we assume
+    that the match set is made of `w%` inliers (good matches), then the probability
+    that we select eight good matches is `w%`. Consequently, the probability that
+    a selection contains at least one wrong match is `(1-w)`. If we make `k` selections,
+    the probability of having one random set that contains good matches only is `1-(1-w)k`.
+    This is the confidence probability, `c`, and we want this probability to be as
+    high as possible since we need at least one good set of matches in order to obtain
+    the correct fundamental matrix. Therefore, when running the RANSAC algorithm,
+    one needs to determine the number of `k` selections that need to be made in order
+    to obtain a given confidence level.
+  prefs: []
+  type: TYPE_NORMAL
+- en: When using the `cv::findFundamentalMat` function with the `CV_FM_RANSAC` method,
+    two extra parameters are provided. The first parameter is the confidence level,
+    which determines the number of iterations to be made (by default, it is `0.99`).
+    The second parameter is the maximum distance to the epipolar line for a point
+    to be considered as an inlier. All the matched pairs in which a point is at a
+    greater distance from its epipolar line than the distance specified will be reported
+    as an outlier. The function also returns `std::vector` of the character value,
+    indicating that the corresponding match in the input set has been identified as
+    an outlier (`0`) or as an inlier (`1`).
+  prefs: []
+  type: TYPE_NORMAL
+- en: The more good matches you have in your initial match set, the higher the probability
+    that RANSAC will give you the correct fundamental matrix. This is why we applied
+    the crosscheck filter when matching the feature points. You could have also used
+    the ratio test presented in the previous recipe in order to further improve the
+    quality of the final match set. It is just a question of balancing the computational
+    complexity, the final number of matches, and the required level of confidence
+    that the obtained match set will contain only exact matches.
+  prefs: []
+  type: TYPE_NORMAL
+- en: There's more...
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: The result of the robust matching process presented in this recipe is an estimate
+    of the fundamental matrix computed using the eight selected matches that have
+    the largest support and the set matches included in this support set. Using this
+    information, it is possible to refine these results in two ways.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Refining the fundamental matrix
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'Since we now have a match set of good quality, as a last step, it might be
+    a good idea to use all of them to re-estimate the fundamental matrix. We already
+    mentioned that there exists a linear 8-point algorithm to estimate this matrix.
+    We can, therefore, obtain an over-determined system of equations that will solve
+    the fundamental matrix in a least-squares sense. This step can be added at the
+    end of our `ransacTest` function:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE14]'
+  prefs: []
+  type: TYPE_PRE
+- en: The `cv::findFundamentalMat` function indeed accepts more than `8` matches by
+    solving the linear system of equations using singular value decomposition.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Refining the matches
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: 'We learned that in a two-view system, every point must lie on the epipolar
+    line of its corresponding point. This is the epipolar constraint expressed by
+    the fundamental matrix. Consequently, if you have a good estimate of a fundamental
+    matrix, you can use this epipolar constraint to correct the obtained matches by
+    forcing them to lie on their epipolar lines. This can be easily done by using
+    the `cv::correctMatches` OpenCV function:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE15]'
+  prefs: []
+  type: TYPE_PRE
+- en: This function proceeds by modifying the position of each corresponding point
+    such that it satisfies the epipolar constraint while minimizing the cumulative
+    (squared) displacement.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Computing a homography between two images
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: The second recipe of this chapter showed you how to compute the fundamental
+    matrix of an image pair from a set of matches. In projective geometry, another
+    very useful mathematical entity also exists. This one can be computed from multiview
+    imagery and, as we will see, is a matrix with special properties.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Getting ready
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'Again, let''s consider the projective relation between a 3D point and its image
+    on a camera, which we introduced in the first recipe of this chapter. Basically,
+    we learned that this equation relates a 3D point with its image using the intrinsic
+    properties of the camera and the position of this camera (specified with a rotation
+    and a translation component). If we now carefully examine this equation, we realize
+    that there are two special situations of particular interest. The first situation
+    is when two views of a scene are separated by a pure rotation. It can then be
+    observed that the fourth column of the extrinsic matrix will be made up of 0s
+    (that is, the translation is null):'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Getting ready](img/00179.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'As a result, the projective relation in this special case becomes a `3x3` matrix.
+    A similarly interesting situation also occurs when the object we observe is a
+    plane. In this specific case, we can assume that the points on this plane will
+    be located at `Z=0`, without the loss of generality. As a result, we obtain the
+    following equation:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Getting ready](img/00180.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'This zero coordinate of the scene points will then cancel the third column
+    of the projective matrix, which will then again become a `3x3` matrix. This special
+    matrix is called a **homography**, and it implies that, under special circumstances
+    (here, a pure rotation or a planar object), a point is related to its image by
+    a linear relation of the following form:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Getting ready](img/00181.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Here, `H` is a `3x3` matrix. This relation holds up to a scale factor represented
+    here by the `s` scalar value. Once this matrix is estimated, all the points in
+    one view can be transferred to a second view using this relation. Note that as
+    a side effect of the homography relation, the fundamental matrix becomes undefined
+    in these cases.
+  prefs: []
+  type: TYPE_NORMAL
+- en: How to do it...
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: 'Suppose that we have two images separated by a pure rotation. This happens,
+    for example, when you take pictures of a building or a landscape by rotating yourself;
+    as you are sufficiently far away from your subject, the translational component
+    is negligible. These two images can be matched using the features of your choice
+    and the `cv::BFMatcher` function. Then, as we did in the previous recipe, we will
+    apply a RANSAC step that will this time involve the estimation of a homography
+    based on a match set (which obviously contains a good number of outliers). This
+    is done by using the `cv::findHomography` function, which is very similar to the
+    `cv::findFundamentalMat` function:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE16]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Recall that a homography exists (instead of a fundamental matrix) because our
+    two images are separated by a pure rotation. The images are shown here. We also
+    displayed the inlier keypoints as identified by the `inliers` argument of the
+    function. Refer to the following screenshot:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![How to do it...](img/00182.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'The second image is shown as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![How to do it...](img/00183.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'The resulting inliers that comply with the found homography have been drawn
+    on these images using the following loop:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE17]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The homography is a `3x3` invertible matrix; therefore, once it has been computed,
+    you can transfer image points from one image to the other. In fact, you can do
+    this for every pixel of an image. Consequently, you can transfer a complete image
+    to the point of view of a second image. This process is called image **mosaicking**,
+    and it is often used to build a large panorama from multiple images. An OpenCV
+    function that does exactly this is given as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE18]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Once this new image is obtained, it can be appended to the other image in order
+    to expand the view (since the two images are now from the same point of view):'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE19]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The following image is the result:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![How to do it...](img/00184.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: How it works...
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: When two views are related by a homography, it becomes possible to determine
+    where a given scene point on one image is found on the other image. This property
+    becomes particularly interesting for the points in one image that fall outside
+    the image boundaries of the other. Indeed, since the second view shows a portion
+    of the scene that is not visible in the first image, you can use the homography
+    in order to expand the image by reading the color value of the additional pixels
+    in the other image. That's how we were able to create a new image that is an expansion
+    of our second image in which extra columns were added to the right-hand side.
+  prefs: []
+  type: TYPE_NORMAL
+- en: The homography computed by `cv::findHomography` is the one that maps the points
+    in the first image to the points in the second image. This homography can be computed
+    from a minimum of four matches, and the RANSAC algorithm is again used here. Once
+    the homography with the best support is found, the `cv::findHomography` method
+    refines it using all the identified inliers.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Now, in order to transfer the points of image `1` to image `2`, what we need
+    is, in fact, inverse homography. This is exactly what the `cv::warpPerspective`
+    function is doing by default; that is, it uses the inverse of the homography provided
+    as the input to get the color value of each point of the output image (this is
+    what we called backward mapping in [Chapter 2](part0019_split_000.html#page "Chapter 2. Manipulating
+    Pixels"), *Manipulating Pixels*). When an output pixel is transferred to a point
+    outside the input image, a black value (`0`) is simply assigned to this pixel.
+    Note that a `cv::WARP_INVERSE_MAP` flag can be specified as the optional fifth
+    argument in `cv::warpPerspective` if you want to use direct homography instead
+    of the inverted one during the pixel transfer process.
+  prefs: []
+  type: TYPE_NORMAL
+- en: There's more...
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: A homography also exists between two images of a plane. We can then make use
+    of this to recognize a planar object in an image.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Detecting planar targets in an image
+  prefs:
+  - PREF_H3
+  type: TYPE_NORMAL
+- en: Suppose you want to detect the occurrence of a planar object in an image. This
+    object could be a poster, painting, signage, book cover (as in the following example),
+    and so on. Based on what we learned in this chapter, the strategy would consist
+    of detecting feature points on this object and to try and match them with the
+    feature points in the image. These matches would then be validated using a robust
+    matching scheme similar to the one we used in the previous recipe, but this time
+    based on a homography.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s define a `TargetMatcher` class very similar to our `RobustMatcher` class:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE20]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Here, we simply add a `target` attribute that represents the reference image
+    of the planar object to be matched. The matching methods are identical to the
+    ones of the `RobustMatcher` class, except that they include `cv::findHomography`
+    instead of `cv::findFundamentalMat` in the `ransacTest` method. We also added
+    a method to initiate target matching and find the position of the target:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE21]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Once the homography has been found by the match method, we define the four
+    corners of the target (that is, the four corners of its reference image). These
+    are then transferred to the image using the `cv::perspectiveTransform` function.
+    This function simply multiplies each point in the input vector by the homography
+    matrix. This gives us the coordinates of these points in the other image. Target
+    matching is then performed as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE22]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Using the `cv::drawMatches` function, we display the results as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Detecting planar targets in an image](img/00185.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: You can also use homographies to modify the perspectives of planar objects.
+    For example, if you have several pictures from different points of view of the
+    flat facade of a building, you can compute the homography between these images
+    and build a large mosaic of the facade by wrapping the images and assembling them
+    together, as we did in this recipe. A minimum of four matched points between two
+    views are required to compute a homography. The `cv::getPerspectiveTransform`
+    function allows such a transformation from four corresponding points to be computed.
+  prefs: []
+  type: TYPE_NORMAL
+- en: See also
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: The *Remapping an image* recipe in [Chapter 2](part0019_split_000.html#page
+    "Chapter 2. Manipulating Pixels"), *Manipulating Pixels*, discusses the concept
+    of backward mapping
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: The *Automatic panoramic image stitching using invariant features* article by
+    M.Brown and D.Lowe in *International Journal of Computer Vision,74, 1, 2007*,
+    describes the complete method to build panoramas from multiple images
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL

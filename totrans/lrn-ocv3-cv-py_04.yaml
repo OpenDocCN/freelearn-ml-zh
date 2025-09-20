@@ -1,0 +1,642 @@
+- en: Chapter 4. Depth Estimation and Segmentation
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: This chapter shows you how to use data from a depth camera to identify foreground
+    and background regions, so that we can limit an effect to only the foreground
+    or only the background. As prerequisites, we need a depth camera, such as Microsoft
+    Kinect, and we need to build OpenCV with support for our depth camera. For build
+    instructions, see [Chapter 1](part0014.xhtml#aid-DB7S2 "Chapter 1. Setting Up
+    OpenCV"), *Setting Up OpenCV*.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'We''ll deal with two main topics in this chapter: depth estimation and segmentation.
+    We will explore depth estimation with two distinct approaches: firstly, by using
+    a depth camera (a prerequisite of the first part of the chapter), such as Microsoft
+    Kinect, and then, by using stereo images, for which a normal camera will suffice.
+    For instructions on how to build OpenCV with support for depth cameras, see [Chapter
+    1](part0014.xhtml#aid-DB7S2 "Chapter 1. Setting Up OpenCV"), *Setting Up OpenCV*.
+    The second part of the chapter is about segmentation, the technique that allows
+    us to extract foreground objects from an image.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: Creating modules
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'The code to capture and manipulate depth-camera data will be reusable outside
+    `Cameo.py`. So, we should separate it into a new module. Let''s create a file
+    called `depth.py` in the same directory as `Cameo.py`. We need the following `import`
+    statement in `depth.py`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE0]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We will also need to modify our preexisting `rects.py` file so that our copy
+    operations can be limited to a nonrectangular subregion of a rectangle. To support
+    the changes we are going to make, let''s add the following `import` statements
+    to `rects.py`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE1]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Finally, the new version of our application will use depth-related functionalities.
+    So, let''s add the following `import` statement to `Cameo.py`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE2]'
+  prefs: []
+  type: TYPE_PRE
+- en: Now, let's go deeper into the subject of depth.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Capturing frames from a depth camera
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: Back in [Chapter 2](part0019.xhtml#aid-I3QM2 "Chapter 2. Handling Files, Cameras,
+    and GUIs"), *Handling Files, Cameras, and GUIs*, we discussed the concept that
+    a computer can have multiple video capture devices and each device can have multiple
+    channels. Suppose a given device is a stereo camera. Each channel might correspond
+    to a different lens and sensor. Also, each channel might correspond to different
+    kinds of data, such as a normal color image versus a depth map. The C++ version
+    of OpenCV defines some constants for the identifiers of certain devices and channels.
+    However, these constants are not defined in the Python version.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'To remedy this situation, let''s add the following definitions in `depth.py`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE3]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The depth-related channels require some explanation, as given in the following
+    list:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: A **depth map** is a grayscale image in which each pixel value is the estimated
+    distance from the camera to a surface. Specifically, an image from the `CAP_OPENNI_DEPTH_MAP`
+    channel gives the distance as a floating-point number of millimeters.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: A **point cloud** **map** is a color image in which each color corresponds to
+    an (x, y, or z) spatial dimension. Specifically, the `CAP_OPENNI_POINT_CLOUD_MAP`
+    channel yields a BGR image, where B is x (blue is right), G is y (green is up),
+    and R is z (red is deep), from the camera's perspective. The values are in meters.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: A **disparity map** is a grayscale image in which each pixel value is the stereo
+    disparity of a surface. To conceptualize stereo disparity, let's suppose we overlay
+    two images of a scene, shot from different viewpoints. The result would be similar
+    to seeing double images. For points on any pair of twin objects in the scene,
+    we can measure the distance in pixels. This measurement is the stereo disparity.
+    Nearby objects exhibit greater stereo disparity than far-off objects. Thus, nearby
+    objects appear brighter in a disparity map.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: A **valid depth mask** shows whether the depth information at a given pixel
+    is believed to be valid (shown by a nonzero value) or invalid (shown by a value
+    of zero). For example, if the depth camera depends on an infrared illuminator
+    (an infrared flash), depth information is invalid in regions that are occluded
+    (shadowed) from this light.
+  prefs:
+  - PREF_UL
+  type: TYPE_NORMAL
+- en: 'The following screenshot shows a point cloud map of a man sitting behind a
+    sculpture of a cat:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Capturing frames from a depth camera](img/image00200.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'The following screenshot has a disparity map of a man sitting behind a sculpture
+    of a cat:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Capturing frames from a depth camera](img/image00201.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'A valid depth mask of a man sitting behind a sculpture of a cat is shown in
+    the following screenshot:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Capturing frames from a depth camera](img/image00202.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Creating a mask from a disparity map
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: For the purposes of Cameo, we are interested in disparity maps and valid depth
+    masks. They can help us refine our estimates of facial regions.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Using the `FaceTracker` function and a normal color image, we can obtain rectangular
+    estimates of facial regions. By analyzing such a rectangular region in the corresponding
+    disparity map, we can tell that some pixels within the rectangle are outliers—too
+    near or too far to really be a part of the face. We can refine the facial region
+    to exclude these outliers. However, we should only apply this test where the data
+    is valid, as indicated by the valid depth mask.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s write a function to generate a mask whose values are `0` for the rejected
+    regions of the facial rectangle and `1` for the accepted regions. This function
+    should take a disparity map, valid depth mask, and a rectangle as arguments. We
+    can implement it in `depth.py` as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE4]'
+  prefs: []
+  type: TYPE_PRE
+- en: To identify outliers in the disparity map, we first find the median using `numpy.median()`,
+    which takes an array as an argument. If the array is of an odd length, `median()`
+    returns the value that would lie in the middle of the array if the array were
+    sorted. If the array is of even length, `median()` returns the average of the
+    two values that would be sorted nearest to the middle of the array.
+  prefs: []
+  type: TYPE_NORMAL
+- en: To generate a mask based on per-pixel Boolean operations, we use `numpy.where()`
+    with three arguments. In the first argument, `where()` takes an array whose elements
+    are evaluated for truth or falsity. An output array of like dimensions is returned.
+    Wherever an element in the input array is `true`, the `where()` function's second
+    argument is assigned to the corresponding element in the output array. Conversely,
+    wherever an element in the input array is `false`, the `where()` function's third
+    argument is assigned to the corresponding element in the output array.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Our implementation treats a pixel as an outlier when it has a valid disparity
+    value that deviates from the median disparity value by 12 or more. I've chosen
+    the value of 12 just by experimentation. Feel free to tweak this value later based
+    on the results you encounter when running Cameo with your particular camera setup.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Masking a copy operation
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: As part of the previous chapter's work, we wrote `copyRect()` as a copy operation
+    that limits itself to the given rectangles of a source and destination image.
+    Now, we want to apply further limits to this copy operation. We want to use a
+    given mask that has the same dimensions as the source rectangle.
+  prefs: []
+  type: TYPE_NORMAL
+- en: We shall copy only those pixels in the source rectangle where the mask's value
+    is not zero. Other pixels shall retain their old values from the destination image.
+    This logic, with an array of conditions and two arrays of possible output values,
+    can be expressed concisely with the `numpy.where()` function that we have recently
+    learned.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Let's open `rects.py` and edit `copyRect()` to add a new mask argument. This
+    argument may be `None`, in which case, we fall back to our old implementation
+    of the copy operation. Otherwise, we next ensure that mask and the images have
+    the same number of channels. We assume that mask has one channel but the images
+    may have three channels (BGR). We can add duplicate channels to mask using the
+    `repeat()` and `reshape()` methods of `numpy.array`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Finally, we perform the copy operation using `where()`. The complete implementation
+    is as follows:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE5]'
+  prefs: []
+  type: TYPE_PRE
+- en: We also need to modify our `swapRects()` function, which uses `copyRect()` to
+    perform a circular swap of a list of rectangular regions. The modifications to
+    `swapRects()` are quite simple. We just need to add a new `masks` argument, which
+    is a list of masks whose elements are passed to the respective `copyRect()` calls.
+    If the value of the given `masks` argument is `None`, we pass `None` to every
+    `copyRect()` call.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The following code shows you the full implementation of this:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE6]'
+  prefs: []
+  type: TYPE_PRE
+- en: Note that the `masks` argument in `copyRect()` and `swapRects()` both default
+    to `None`. Thus, our new versions of these functions are backward compatible with
+    our previous versions of Cameo.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Depth estimation with a normal camera
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: A depth camera is a fantastic little device to capture images and estimate the
+    distance of objects from the camera itself, but, how does the depth camera retrieve
+    depth information? Also, is it possible to reproduce the same kind of calculations
+    with a normal camera?
+  prefs: []
+  type: TYPE_NORMAL
+- en: A depth camera, such as Microsoft Kinect, uses a traditional camera combined
+    with an infrared sensor that helps the camera differentiate similar objects and
+    calculate their distance from the camera. However, not everybody has access to
+    a depth camera or a Kinect, and especially when you're just learning OpenCV, you're
+    probably not going to invest in an expensive piece of equipment until you feel
+    your skills are well-sharpened, and your interest in the subject is confirmed.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Our setup includes a simple camera, which is most likely integrated in our machine,
+    or a webcam attached to our computer. So, we need to resort to less fancy means
+    of estimating the difference in distance of objects from the camera.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Geometry will come to the rescue in this case, and in particular, Epipolar Geometry,
+    which is the geometry of stereo vision. Stereo vision is a branch of computer
+    vision that extracts three-dimensional information out of two different images
+    of the same subject.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'How does epipolar geometry work? Conceptually, it traces imaginary lines from
+    the camera to each object in the image, then does the same on the second image,
+    and calculates the distance of objects based on the intersection of the lines
+    corresponding to the same object. Here is a representation of this concept:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Depth estimation with a normal camera](img/image00203.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Let's see how OpenCV applies epipolar geometry to calculate a so-called disparity
+    map, which is basically a representation of the different depths detected in the
+    images. This will enable us to extract the foreground of a picture and discard
+    the rest.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Firstly, we need two images of the same subject taken from different points
+    of view, but paying attention to the fact that the pictures are taken at an equal
+    distance from the object, otherwise the calculations will fail and the disparity
+    map will be meaningless.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'So, moving on to an example:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE7]'
+  prefs: []
+  type: TYPE_PRE
+- en: In this example, we take two images of the same subject and calculate a disparity
+    map, showing in brighter colors the points in the map that are closer to the camera.
+    The areas marked in black represent the disparities.
+  prefs: []
+  type: TYPE_NORMAL
+- en: First of all, we import `numpy` and `cv2` as usual.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Let''s skip the definition of the `update` function for a second and take a
+    look at the main code; the process is quite simple: load two images, create a
+    `StereoSGBM` instance (`StereoSGBM` stands for **semiglobal block matching**,
+    and it is an algorithm used for computing disparity maps), and also create a few
+    trackbars to play around with the parameters of the algorithm and call the `update`
+    function.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'The `update` function applies the trackbar values to the `StereoSGBM` instance,
+    and then calls the `compute` method, which produces a disparity map. All in all,
+    pretty simple! Here is the first image I''ve used:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Depth estimation with a normal camera](img/image00204.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'This is the second one:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Depth estimation with a normal camera](img/image00205.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'There you go: a nice and quite easy to interpret disparity map.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Depth estimation with a normal camera](img/image00206.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'The parameters used by `StereoSGBM` are as follows (taken from the OpenCV documentation):'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '| Parameter | Description |'
+  prefs: []
+  type: TYPE_TB
+- en: '| --- | --- |'
+  prefs: []
+  type: TYPE_TB
+- en: '| `minDisparity` | This parameter refers to the minimum possible disparity
+    value. Normally, it is zero but sometimes, rectification algorithms can shift
+    images, so this parameter needs to be adjusted accordingly. |'
+  prefs: []
+  type: TYPE_TB
+- en: '| `numDisparities` | This parameter refers to the maximum disparity minus minimum
+    disparity. The resultant value is always greater than zero. In the current implementation,
+    this parameter must be divisible by 16. |'
+  prefs: []
+  type: TYPE_TB
+- en: '| `windowSize` | This parameter refers to a matched block size. It must be
+    an odd number greater than or equal to 1\. Normally, it should be somewhere in
+    the 3-11 range. |'
+  prefs: []
+  type: TYPE_TB
+- en: '| `P1` | This parameter refers to the first parameter controlling the disparity
+    smoothness. See the next point. |'
+  prefs: []
+  type: TYPE_TB
+- en: '| `P2` | This parameter refers to the second parameter that controls the disparity
+    smoothness. The larger the values are, the smoother the disparity is. `P1` is
+    the penalty on the disparity change by plus or minus 1 between neighbor pixels.
+    `P2` is the penalty on the disparity change by more than 1 between neighbor pixels.
+    The algorithm requires `P2 > P1`.See the `stereo_match.cpp` sample where some
+    reasonably good `P1` and `P2` values are shown (such as `8*number_of_image_channels*windowSize*windowSize`
+    and `32*number_of_image_channels*windowSize*windowSize`, respectively). |'
+  prefs: []
+  type: TYPE_TB
+- en: '| `disp12MaxDiff` | This parameter refers to the maximum allowed difference
+    (in integer pixel units) in the left-right disparity check. Set it to a nonpositive
+    value to disable the check. |'
+  prefs: []
+  type: TYPE_TB
+- en: '| `preFilterCap` | This parameter refers to the truncation value for prefiltered
+    image pixels. The algorithm first computes the x-derivative at each pixel and
+    clips its value by the `[-preFilterCap, preFilterCap]` interval. The resultant
+    values are passed to the Birchfield-Tomasi pixel cost function. |'
+  prefs: []
+  type: TYPE_TB
+- en: '| `uniquenessRatio` | This parameter refers to the margin in percentage by
+    which the best (minimum) computed cost function value should "win" the second
+    best value to consider the found match to be correct. Normally, a value within
+    the 5-15 range is good enough. |'
+  prefs: []
+  type: TYPE_TB
+- en: '| `speckleWindowSize` | This parameter refers to the maximum size of smooth
+    disparity regions to consider their noise speckles and invalidate. Set it to `0`
+    to disable speckle filtering. Otherwise, set it somewhere in the 50-200 range.
+    |'
+  prefs: []
+  type: TYPE_TB
+- en: '| `speckleRange` | This parameter refers to the maximum disparity variation
+    within each connected component. If you do speckle filtering, set the parameter
+    to a positive value; it will implicitly be multiplied by 16\. Normally, 1 or 2
+    is good enough. |'
+  prefs: []
+  type: TYPE_TB
+- en: With the preceding script, you'll be able to load the images and play around
+    with parameters until you're happy with the disparity map generated by `StereoSGBM`.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Object segmentation using the Watershed and GrabCut algorithms
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'Calculating a disparity map can be very useful to detect the foreground of
+    an image, but `StereoSGBM` is not the only algorithm available to accomplish this,
+    and in fact, `StereoSGBM` is more about gathering 3D information from 2D pictures,
+    than anything else. **GrabCut**, however, is a perfect tool for this purpose.
+    The GrabCut algorithm follows a precise sequence of steps:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: A rectangle including the subject(s) of the picture is defined.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: The area lying outside the rectangle is automatically defined as a background.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: The data contained in the background is used as a reference to distinguish background
+    areas from foreground areas within the user-defined rectangle.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: A **Gaussians Mixture Model** (**GMM**) models the foreground and background,
+    and labels undefined pixels as probable background and foregrounds.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Each pixel in the image is virtually connected to the surrounding pixels through
+    virtual edges, and each edge gets a probability of being foreground or background,
+    based on how similar it is in color to the pixels surrounding it.
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Each pixel (or node as it is conceptualized in the algorithm) is connected to
+    either a foreground or a background node, which you can picture looking like this:![Object
+    segmentation using the Watershed and GrabCut algorithms](img/image00207.jpeg)
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: After the nodes have been connected to either terminal (background or foreground,
+    also called a source and sink), the edges between nodes belonging to different
+    terminals are cut (the famous cut part of the algorithm), which enables the separation
+    of the parts of the image. This graph adequately represents the algorithm:![Object
+    segmentation using the Watershed and GrabCut algorithms](img/image00208.jpeg)
+  prefs:
+  - PREF_OL
+  type: TYPE_NORMAL
+- en: Example of foreground detection with GrabCut
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: Let's look at an example. We start with the picture of a beautiful statue of
+    an angel.
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Example of foreground detection with GrabCut](img/image00209.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: 'We want to grab our angel and discard the background. To do this, we will create
+    a relatively short script that will instantiate GrabCut, operate the separation,
+    and then display the resulting image side by side to the original. We will do
+    this using `matplotlib`, a very useful Python library, which makes displaying
+    charts and images a trivial task:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE8]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'This code is actually quite straightforward. Firstly, we load the image we
+    want to process, and then we create a mask populated with zeros with the same
+    shape as the image we''ve loaded:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE9]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We then create zero-filled foreground and background models:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE10]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'We could have populated these models with data, but we''re going to initialize
+    the GrabCut algorithm with a rectangle identifying the subject we want to isolate.
+    So, background and foreground models are going to be determined based on the areas
+    left out of the initial rectangle. This rectangle is defined in the next line:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE11]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Now to the interesting part! We run the GrabCut algorithm specifying the empty
+    models and mask, and the fact that we''re going to use a rectangle to initialize
+    the operation:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE12]'
+  prefs: []
+  type: TYPE_PRE
+- en: You'll also notice an integer after `fgdModel`, which is the number of iterations
+    the algorithm is going to run on the image. You can increase these, but there
+    is a point in which pixel classifications will converge, and effectively, you'll
+    just be adding iterations without obtaining any more improvements.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'After this, our mask will have changed to contain values between 0 and 3\.
+    The values, `0` and `2`, will be converted into zeros, and 1-3 into ones, and
+    stored into `mask2`, which we can then use to filter out all zero-value pixels
+    (theoretically leaving all foreground pixels intact):'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE13]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'The last part of the code displays the images side by side, and here''s the
+    result:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Example of foreground detection with GrabCut](img/image00210.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: This is quite a satisfactory result. You'll notice that an area of background
+    is left under the angel's arm. It is possible to apply touch strokes to apply
+    more iterations; the technique is quite well illustrated in the `grabcut.py` file
+    in `samples/python2` of your OpenCV installation.
+  prefs: []
+  type: TYPE_NORMAL
+- en: Image segmentation with the Watershed algorithm
+  prefs:
+  - PREF_H2
+  type: TYPE_NORMAL
+- en: Finally, we take a quick look at the Watershed algorithm. The algorithm is called
+    Watershed, because its conceptualization involves water. Imagine areas with low
+    density (little to no change) in an image as valleys, and areas with high density
+    (lots of change) as peaks. Start filling the valleys with water to the point where
+    water from two different valleys is about to merge. To prevent the merging of
+    water from different valleys, you build a barrier to keep them separated. The
+    resulting barrier is the image segmentation.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'As an Italian, I love food, and one of the things I love the most is a good
+    plate of pasta with a pesto sauce. So here''s a picture of the most vital ingredient
+    for a pesto, basil:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Image segmentation with the Watershed algorithm](img/image00211.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Now, we want to segment the image to separate the basil leaves from the white
+    background.
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'Once more, we import `numpy`, `cv2`, and `matplotlib`, and then import our
+    basil leaves'' image:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE14]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'After changing the color to grayscale, we run a threshold on the image. This
+    operation helps dividing the image in two, blacks and whites:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE15]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Next up, we remove noise from the image by applying the `morphologyEx` transformation,
+    an operation that consists of dilating and then eroding an image to extract features:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE16]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'By dilating the result of the `morphology` transformation, we can obtain areas
+    of the image that are most certainly background:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE17]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Conversely, we can obtain sure foreground areas by applying `distanceTransform`.
+    In practical terms, of all the areas most likely to be foreground, the farther
+    away from the "border" with the background a point is, the higher the chance it
+    is foreground. Once we''ve obtained the `distanceTransform` representation of
+    the image, we apply a threshold to determine with a highly mathematical probability
+    whether the areas are foreground:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE18]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'At this stage, we have some `sure` foregrounds and backgrounds. Now, what about
+    the areas in between? First of all, we need to determine these regions, which
+    can be done by subtracting the `sure` foreground from the background:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE19]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Now that we have these areas, we can build our famous "barriers" to stop the
+    water from merging. This is done with the `connectedComponents` function. We took
+    a glimpse at the graph theory when we analyzed the GrabCut algorithm, and conceptualized
+    an image as a set of nodes that are connected by edges. Given the sure foreground
+    areas, some of these nodes will be connected together, but some won''t. This means
+    that they belong to different water valleys, and there should be a barrier between
+    them:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE20]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Now we add 1 to the background areas because we only want unknowns to stay
+    at `0`:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE21]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Finally, we open the gates! Let the water fall and our barriers be drawn in
+    red:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '[PRE22]'
+  prefs: []
+  type: TYPE_PRE
+- en: 'Now, let''s show the result:'
+  prefs: []
+  type: TYPE_NORMAL
+- en: '![Image segmentation with the Watershed algorithm](img/image00212.jpeg)'
+  prefs: []
+  type: TYPE_IMG
+- en: Needless to say, I am now hungry!
+  prefs: []
+  type: TYPE_NORMAL
+- en: Summary
+  prefs:
+  - PREF_H1
+  type: TYPE_NORMAL
+- en: 'In this chapter, we learned about gathering three-dimensional information from
+    bi-dimensional input (a video frame or an image). Firstly, we examined depth cameras,
+    and then epipolar geometry and stereo images, so we are now able to calculate
+    disparity maps. Finally, we looked at image segmentation with two of the most
+    popular methods: GrabCut and Watershed.'
+  prefs: []
+  type: TYPE_NORMAL
+- en: 'This chapter has introduced us to the world of interpreting information provided
+    by images and we are now ready to explore another important feature of OpenCV:
+    feature descriptors and keypoint detection.'
+  prefs: []
+  type: TYPE_NORMAL
