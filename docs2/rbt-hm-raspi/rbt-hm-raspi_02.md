@@ -1,6 +1,6 @@
-# 2
 
-# 准备 Raspberry Pi Pico
+
+# 第二章：准备 Raspberry Pi Pico
 
 纯粹的**Raspberry Pi Pico**可以运行代码，但在我们能够使用它之前，我们需要做一些准备工作。在本章中，您将了解如何启动**CircuitPython**并开始编程 Pico 的第一步。然后，您将学习**焊接**，这样您就可以将引脚添加到 Pico 上——让您可以将其插入其他设备。
 
