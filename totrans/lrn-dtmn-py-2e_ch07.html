@@ -1,0 +1,466 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html>
+
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xmlns:m="http://www.w3.org/1998/Math/MathML" xmlns:pls="http://www.w3.org/2005/01/pronunciation-lexicon" xmlns:ssml="http://www.w3.org/2001/10/synthesis">
+<head>
+  <meta charset="UTF-8"/>
+  <title>Follow Recommendations Using Graph Mining</title>
+  <link type="text/css" rel="stylesheet" media="all" href="style.css"/>
+  <link type="text/css" rel="stylesheet" media="all" href="core.css"/>
+</head>
+<body>
+  <div id="sbo-rt-content"><section>
+
+            <header>
+                <h1 class="header-title">Follow Recommendations Using Graph Mining</h1>
+            </header>
+
+            <article>
+                
+<p>Graphs can be used to represent a wide range of phenomena. This is particularly true for online social networks, and the <strong>Internet of Things</strong> (<strong>IoT</strong>). Graph mining is big business, with websites such as Facebook running on data&#160;analysis experiments performed on graphs.</p>
+<p>Social media websites are built upon engagement. Users without active news feeds, or interesting friends to follow, do not engage with sites. In contrast, users with more interesting friends and <em>followees</em> engage more, see more ads. This leads to larger revenue streams for the website.</p>
+<p>In this chapter, we look at how to define similarity on graphs, and how to use them within a data mining context. Again, this is based on a model of the&#160;<span>phenomena</span>.&#160;We look at some basic graph concepts, like sub-graphs and connected components. This leads to an investigation of cluster analysis, which we delve more deeply into in&#160; <a href="lrn-dtmn-py-2e_ch10.html">Chapter 10</a><q>,</q> <em>Clustering News Articles.</em></p>
+<p>The topics covered in this chapter include:</p>
+<ul>
+<li>Clustering data to find patterns</li>
+<li>Loading datasets from previous experiments</li>
+<li>Getting follower information from Twitter</li>
+<li>Creating graphs and networks</li>
+<li>Finding subgraphs for cluster analysis</li>
+</ul>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    </div>
+
+
+  <div id="sbo-rt-content"><section>
+
+            <header>
+                <h1 class="header-title">Loading the dataset</h1>
+            </header>
+
+            <article>
+                
+<p>In this chapter, our task is to recommend users on online social networks based on shared connections. Our logic is that if two users have the same friends, they are highly similar and worth recommending to each other. We want our recommendations to be of high value. We can only recommend so many people before it becomes tedious, therefore we need to find recommendations that engage users.</p>
+<p>To do this, we use the previous chapter's disambiguation model to find only users talking about <em>Python as a programming language</em>. In this chapter, we use the results from one data mining experiment as input into another data mining experiment. Once we have our Python programmers selected, we then use their friendships to find clusters of users that are highly similar to each other. The similarity between two users will be defined by how many friends they have in common. Our intuition will be that the more friends two people have in common, the more likely two people are to be friends (and therefore should be on our social media platform).</p>
+<p>We are going to create a small social graph from Twitter using the API we introduced in the previous chapter. The data we are looking for is a subset of users interested in a similar topic (again, the Python programming language) and a list of all of their friends (people they follow). With this data, we will check how similar two users are, based on how many friends they have in common.</p>
+<div class="packt_tip">There are many other online social networks apart from Twitter. The reason we have chosen Twitter for this experiment is that their API makes it quite easy to get this sort of information. The information is available from other sites, such as Facebook, LinkedIn, and Instagram, as well. However, getting this information is more difficult.</div>
+<p>To start collecting data, set up a new Jupyter Notebook and an instance of the <kbd>twitter</kbd> connection, as we did in the previous chapter. You can reuse the app information from the previous chapter or create a new one:</p>
+<pre>import twitter<br/>consumer_key = "&lt;Your Consumer Key Here&gt;"<br/>consumer_secret = "&lt;Your Consumer Secret Here&gt;"<br/>access_token = "&lt;Your Access Token Here&gt;"<br/>access_token_secret = "&lt;Your Access Token Secret Here&gt;"<br/>authorization = twitter.OAuth(access_token, <br/>access_token_secret, consumer_key, consumer_secret)<br/>t = twitter.Twitter(auth=authorization, retry=True)
+</pre>
+<p>Also, set up the filenames. You will want to use a different folder for this experiment from the one you used in&#160; <a href="lrn-dtmn-py-2e_ch06.html">Chapter 6</a>, <em>Social Media Insight Using Naive Bayes</em>, ensuring you do not override your previous dataset!</p>
+<pre>import os <br/>data_folder = os.path.join(os.path.expanduser("~"), "Data", "twitter")<br/>output_filename = os.path.join(data_folder, "python_tweets.json")
+</pre>
+<p>Next, we will need a list of users. We will do a search for tweets, as we did in the previous chapter, and look for those mentioning the word <kbd>python</kbd>. First, create two lists for storing the tweet's text and the corresponding users. We will need the user IDs later, so we create a dictionary mapping that now. The code is as follows:</p>
+<pre>original_users = [] <br/>tweets = []<br/>user_ids = {}
+</pre>
+<p>We will now perform a search for the word python, as we did in the previous chapter, and iterate over the search results and only saving Tweets with text&#160;(as per the last chapter's requirements):</p>
+<pre>search_results = t.search.tweets(q="python", count=100)['statuses']<br/>for tweet in search_results:<br/>    if 'text' in tweet:<br/>        original_users.append(tweet['user']['screen_name']) <br/>        user_ids[tweet['user']['screen_name']] = tweet['user']['id']<br/>        tweets.append(tweet['text'])
+</pre>
+<p>Running this code will get about 100 tweets, maybe a little fewer in some cases. Not all of them will be related to the programming language, though. We will address that by using the model we trained in the previous chapter.</p>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    </div>
+
+
+  <div id="sbo-rt-content"><section>
+
+            <header>
+                <h1 class="header-title">Classifying with an existing model</h1>
+            </header>
+
+            <article>
+                
+<p>As we learned in the previous chapter, not all tweets that mention the word python are going to be relating to the programming language. To do that, we will use the classifier we used in the previous chapter to get tweets based on the programming language. Our classifier wasn't perfect, but it will result in a better specialization than just doing the search alone.</p>
+<p>In this case, we are only interested in users who are tweeting about Python, the programming language. We will use our classifier from the last chapter to determine which tweets are related to the programming language. From there, we will select only those users who were tweeting about the programming language.</p>
+<p>To do this part of our broader experiment, we first need to save the model from the previous chapter. Open the Jupyter Notebook we made in the last chapter, the one in which we built and trained the classifier.</p>
+<div class="packt_infobox">If you have closed it, then the Jupyter Notebook won't remember what you did, and you will need to run the cells again. To do this, click on the Cell menu on the Notebook and choose Run All.</div>
+<p>After all of the cells have computed, choose the final blank cell. If your Notebook doesn't have a blank cell at the end, choose the last cell, select the Insert menu, and select the <span class="packt_screen">Insert Cell Below</span> option.</p>
+<p>We are going to use the <kbd>joblib</kbd> library to save our model and load it.</p>
+<div class="packt_tip"><kbd>joblib</kbd> is included with the <kbd>scikit-learn</kbd> package as a built-in external package. No extra installation step needed! This library has tools for saving and loading models, and also for simple parallel processing - which is used in <kbd>scikit-learn</kbd> quite a lot.</div>
+<p>First, import the library and create an output filename for our model (make sure the directories exist, or else they won't be created). I've stored this model in my <kbd>Models</kbd> directory, but you could choose to store them somewhere else. The code is as follows:</p>
+<pre>from sklearn.externals import joblib<br/>output_filename = os.path.join(os.path.expanduser("~"), "Models", "twitter", "python_context.pkl")
+</pre>
+<p>Next, we use the <kbd>dump</kbd> function in <kbd>joblib</kbd>, which works much like the similarly named version in the <kbd>json</kbd> library. We pass the model itself and the output filename:</p>
+<pre>joblib.dump(model, output_filename)
+</pre>
+<p>Running this code will save our model to the given filename. Next, go back to the new Jupyter Notebook you created in the last subsection and load this model.</p>
+<p>You will need to set the model's filename again in this Notebook by copying the following code:</p>
+<pre>model_filename = os.path.join(os.path.expanduser("~"), "Models", "twitter", "python_context.pkl")
+</pre>
+<p>Make sure the filename is the one you used just before to save the model. Next, we need to recreate our BagOfWords class, as it was a custom-built class and can't be loaded directly by joblib. Simply copy the entire <span class="packt_screen">BagOfWords</span> class from the previous chapter's code, including its dependencies:</p>
+<pre>import spacy<br/>from sklearn.base import TransformerMixin<br/><br/># Create a spaCy parser<br/>nlp = spacy.load('en')<br/><br/><br/>class BagOfWords(TransformerMixin):<br/>    def fit(self, X, y=None):<br/>        return self<br/><br/>    def transform(self, X):<br/>        results = []<br/>        for document in X:<br/>            row = {}<br/>            for word in list(nlp(document, tag=False, parse=False, entity=False)):<br/>                if len(word.text.strip()): # Ignore words that are just whitespace<br/>                    row[word.text] = True<br/>                    results.append(row)<br/>        return results
+</pre>
+<div class="packt_infobox">In production, you would need to develop your custom transformers in separate, centralized files, and import them into the Notebook instead. This little hack simplifies the workflow, but feel free to experiment with centralizing important code by creating a library of common functionality.</div>
+<p>Loading the model now just requires a call to the&#160; <kbd>load</kbd> function of <kbd>joblib</kbd>:</p>
+<pre>from sklearn.externals import joblib<br/>context_classifier = joblib.load(model_filename)
+</pre>
+<p>Our <span class="packt_screen">context_classifier</span> works exactly like the model object of the notebook we saw in <a href="lrn-dtmn-py-2e_ch06.html">Chapter 6</a><q>,</q> <em>Social Media Insight Using Naive Bayes</em>, It is an instance of a <span class="packt_screen">Pipeline</span>, with the same three steps as before (<kbd>BagOfWords</kbd>, <kbd>DictVectorizer</kbd>, and a <kbd>BernoulliNB</kbd> classifier). Calling the predict function on this model gives us a prediction as to whether our tweets are relevant to the programming language. The code is as follows:</p>
+<pre>y_pred = context_classifier.predict(tweets)
+</pre>
+<p>The <em>ith</em> item in <kbd>y_pred</kbd> will be 1 if the <em>ith</em> tweet is (predicted to be) related to the programming language, or else it will be 0. From here, we can get just the tweets that are relevant and their relevant users:</p>
+<pre>relevant_tweets = [tweets[i] for i in range(len(tweets)) if y_pred[i] == 1]<br/>relevant_users = [original_users[i] for i in range(len(tweets)) if y_pred[i] == 1]
+</pre>
+<p>Using my data, this comes up to 46 relevant users. A little lower than our 100 tweets/users from before, but now we have a basis for building our social network. We can always add more data to get more users, but 40+ users will be sufficient to go through this chapter as a first pass. I recommend coming back, adding more data, and running the code again, to see what results you obtain.</p>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    </div>
+
+
+  <div id="sbo-rt-content"><section>
+
+            <header>
+                <h1 class="header-title">Getting follower information from Twitter </h1>
+            </header>
+
+            <article>
+                
+<p>With our initial set of users, we now need to get the friends of each of these users. A friend is a person whom the user is following. The API for this is called friends/ids, and it has both good and bad points. The good news is that it returns up to 5,000 friend IDs in a single API call. The bad news is that you can only make 15 calls every 15 minutes, which means it will take you at least 1 minute per user to get all followers—more if they have more than 5,000 friends (which happens more often than you may think).</p>
+<p>The code is similar to the code from our previous API usage (obtaining tweets). We will package it as a function, as we will use this code in the next two sections. Our function takes a twitter user's ID value, and returns their friends. While it may be surprising to some, many Twitter users have more than 5,000 friends. Due to this we will need to use Twitter's pagination function, which lets Twitter return multiple pages of data through separate API calls. When you ask Twitter for information, it gives you your information along with a cursor, which is an integer that Twitter uses to track your request. If there is no more information, this cursor is 0; otherwise, you can use the supplied cursor to get the next page of results. &#160;Passing this cursor lets twitter continue your query, returning the next set of data to you.</p>
+<p>In the function, we keep looping while this cursor is not equal to 0 (as, when it is, there is no more data to collect). We then perform a request for the user's followers and add them to our list. We do this in a try block, as there are possible errors that can happen that we can handle. The follower's IDs are stored in the ids key of the results dictionary. After obtaining that information, we update the cursor. It will be used in the next iteration of the loop. Finally, we check if we have more than 10,000 friends. If so, we break out of the loop. The code is as follows:</p>
+<pre>import time<br/><br/>def get_friends(t, user_id):<br/>    friends = []<br/>    cursor = -1<br/>    while cursor != 0: <br/>        try:<br/>            results = t.friends.ids(user_id= user_id, cursor=cursor, count=5000)<br/>            friends.extend([friend for friend in results['ids']])<br/>            cursor = results['next_cursor'] <br/>            if len(friends) &gt;= 10000:<br/>                break<br/>        except TypeError as e:<br/>            if results is None:<br/>                print("You probably reached your API limit, waiting for 5 minutes")<br/>                sys.stdout.flush() <br/>                time.sleep(5*60) # 5 minute wait <br/>            else: <br/>                # Some other error happened, so raise the error as normal<br/>                raise e<br/>        except twitter.TwitterHTTPError as e:<br/>            print(e)<br/>            break<br/>        finally:<br/>            # Break regardless -- this stops us going over our API limit<br/>            time.sleep(60)
+</pre>
+<div class="packt_tip">It is worth inserting a warning here. We are dealing with data from the Internet, which means weird things can and do happen regularly. A problem I ran into when developing this code was that some users have many, many, many thousands of friends. As a fix for this issue, we will put a failsafe here, exiting&#160;the function if we reach more than 10,000 users. If you want to collect the full dataset, you can remove these lines, but beware that it may get stuck on a particular user for a very long time.</div>
+<p>Much of the above function is error handling, as quite a lot can go wrong when dealing with external APIs!</p>
+<p>The most likely error that can happen is if we accidentally reach our API limit (while we have a sleep to stop that, it can occur if you stop and run your code before this sleep finishes). In this case, results is <kbd>None</kbd> and our code will fail with a <kbd>TypeError</kbd>. In this case, we wait for 5 minutes and try again, hoping that we have reached our next 15-minute window. There may be another <kbd>TypeError</kbd> that occurs at this time. If one of them does, we raise it and will need to handle it separately.</p>
+<p>The second error that can happen occurs at Twitter's end, such as asking for a user that doesn't exist or some other data-based error, resulting in a <kbd>TwitterHTTPError</kbd>&#160;(which is a similar concept to a&#160;HTTP 404 error). In this case, don't try this user anymore, and just return any followers we did get (which, in this case, is likely to be 0).</p>
+<p>Finally, Twitter only lets us ask for follower information 15 times every 15 minutes, so we will wait for 1 minute before continuing. We do this in a <span class="packt_screen">finally</span> block so that it happens even if an error occurs.</p>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    </div>
+
+
+  <div id="sbo-rt-content"><section>
+
+            <header>
+                <h1 class="header-title">Building the network</h1>
+            </header>
+
+            <article>
+                
+<p>Now we are going to build our network of users, where users are linked if the two users follow each other. The aim of building this network is to give us a data structure we can use to segment our list of users into groups. From these groups, we can then recommend people in the same group to each other. Starting with our original users, we will get the friends for each of them and store them in a dictionary. Using this concept we can grow the graph outwards from an initial set of users.</p>
+<p>Starting with our original users, we will get the friends for each of them and store them in a dictionary (after obtaining the user's ID from our <kbd><em><span class="packt_screen">user_id</span></em></kbd> dictionary):</p>
+<pre>friends = {} <br/>for screen_name in relevant_users:<br/>    user_id = user_ids[screen_name]<br/>    friends[user_id] = get_friends(t, user_id)
+</pre>
+<p>Next, we are going to remove any user who doesn't have any friends. For these users, we can't really make a recommendation in this way. Instead, we might have to look at their content or people who follow them. We will leave that out of the scope of this chapter, though, so let's just remove these users. The code is as follows:</p>
+<pre>friends = {user_id:friends[user_id] <br/>           for user_id in friends<br/>           if len(friends[user_id]) &gt; 0}
+</pre>
+<p>We now have between 30 and 50 users, depending on your initial search results. We are now going to increase that amount to 150. The following code will take quite a long time to run—given the limits on the API, we can only get the friends for a user once every minute. Simple math will tell us that 150 users will take 150 minutes, which is at least 2 hours and 30 minutes. Given the time we are going to be spending on getting this data, it pays to ensure we get only good users.</p>
+<p>What makes a good user, though? Given that we will be looking to make recommendations based on shared connections, we will search for users based on shared connections. We will get the friends of our existing users, starting with those users who are better connected to our existing users. To do that, we maintain a count of all the times a user is in one of our friend's lists. It is worth considering the goals of the application when considering your sampling strategy. For this purpose, getting lots of similar users enables the recommendations to be more regularly applicable.</p>
+<p>To do this, we simply iterate over all the friend lists we have and then count each time a friend occurs.</p>
+<pre>from collections import defaultdict<br/>def count_friends(friends): <br/>    friend_count = defaultdict(int)<br/>    for friend_list in friends.values(): <br/>        for friend in friend_list:<br/>            friend_count[friend] += 1 <br/>    return friend_count
+</pre>
+<p>Computing our current friend count, we can then get the most connected (that is, most friends from our existing list) person from our sample. The code is as follows:</p>
+<pre>friend_count = count_friends(friends)<br/>from operator import itemgetter<br/>best_friends = sorted(friend_count, key=friend_count.get, reverse=True)
+</pre>
+<p>From here, we set up a loop that continues until we have the friends of 150 users. We then iterate over all of our best friends (which happens in order of the number of people who have them as friends) until we find a user we have not yet checked. We then get the friends of that user and update the <kbd>friends</kbd> counts. Finally, we work out who is the most connected user who we haven't already got in our list:</p>
+<pre>while len(friends) &lt; 150:<br/>    for user_id, count in best_friends:<br/>        if user_id in friends:<br/>            # Already have this user, move to next one<br/>            continue<br/>        friends[user_id] = get_friends(t, user_id) <br/>        for friend in friends[user_id]: <br/>            friend_count[friend] += 1<br/>        best_friends = sorted(friend_count.items(), key=itemgetter(1), reverse=True)<br/>        break
+</pre>
+<p>The codes will then loop and continue until we reach 150 users.</p>
+<div class="packt_infobox">You may want to set these values lower, such as 40 or 50 users (or even just skip this bit of code temporarily). Then, complete the chapter's code and get a feel for how the results work. After that, reset the number of users in this loop to 150, leave the code to run for a few hours, and then come back and rerun the later code.</div>
+<p>Given that collecting that data probably took nearly 3 hours, it would be a good idea to save it in case we have to turn our computer off. Using the <kbd>json</kbd> library, we can easily save our friends dictionary to a file:</p>
+<pre>import json<br/>friends_filename = os.path.join(data_folder, "python_friends.json")<br/>with open(friends_filename, 'w') as outf: <br/>    json.dump(friends, outf)
+</pre>
+<p>If you need to load the file, use the <kbd>json.load</kbd> function:&#160;</p>
+<pre>with open(friends_filename) as inf:<br/>    friends = json.load(inf)
+</pre>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    </div>
+
+
+  <div id="sbo-rt-content"><section>
+
+            <header>
+                <h1 class="header-title">Creating a graph</h1>
+            </header>
+
+            <article>
+                
+<p>At this point in our experiment, we have a list of users and their friends. This gives us a graph where some users are friends of other users (although not necessarily the other way around).</p>
+<p>A <strong>graph</strong> is a set of nodes and edges. Nodes are usually objects of interest - in this case, they are our users. The edges in this initial graph indicate that user A is a friend of user B. We call this a <strong>directed graph</strong>, as the order of the nodes matters. Just because user A is a friend of user B, that doesn't imply that user B is a friend of user A. The example network below shows this, along with a user C who is friends of user B, and is friended in turn by user B as well:</p>
+<div class="CDPAlignCenter CDPAlign"><img height="98" width="110" class=" image-border" src="images/B06162_07_01.png"/></div>
+<p>In python, one of the best libraries for working with graphs, including creating, visualising and computing, is called <strong>NetworkX</strong>.</p>
+<div class="packt_infobox">Once again, you can use Anaconda to install NetworkX: <kbd>conda install networkx</kbd></div>
+<p>First, we create a directed graph using NetworkX. By convention, when importing NetworkX, we use the abbreviation nx (although this isn't necessary). The code is as follows:&#160;</p>
+<pre>import networkx as nx <br/>G = nx.DiGraph()
+</pre>
+<p>We will only visualize our key users, not all of the friends (as there are many thousands of these and it is hard to visualize). We get our main users and then add them to our graph as nodes:</p>
+<pre>main_users = friends.keys() <br/>G.add_nodes_from(main_users)
+</pre>
+<p>Next we set up the edges. We create an edge from a user to another user if the second user is a friend of the first user. To do this, we iterate through all of the friends of a given user. We ensure that the friend is one of our main users (as we currently aren't interested in visualizing the other users), and add the edge if they are.</p>
+<pre>for user_id in friends:<br/>    for friend in friends[user_id]:<br/>        if str(friend) in main_users: <br/>            G.add_edge(user_id, friend) 
+</pre>
+<p>We can now visualize the network using NetworkX's draw function, which uses matplotlib. To get the image in our notebook, we use the inline function on matplotlib and then call the draw function. The code is as follows:</p>
+<pre> %matplotlib inline <br/> nx.draw(G)
+</pre>
+<p>The results are a bit hard to make sense of; they show just the ring of nodes, and its hard to work anything specific out about the dataset. Not a good image at all:</p>
+<div class="CDPAlignCenter CDPAlign"><img height="181" width="242" class=" image-border" src="images/B06162_07_02.png"/></div>
+<p>We can make the graph a bit better by using <span class="packt_screen">pyplot</span> to handle the creation of the figure, which is used by NetworkX to do graph drawing. Import <kbd>pyplot,</kbd> create a larger figure, and then call NetworkX's <kbd>draw</kbd> function to increase the size of the image:</p>
+<pre>from matplotlib import pyplot as plt<br/>plt.figure(3,figsize=(20,20))<br/>nx.draw(G, alpha=0.1, edge_color='b')
+</pre>
+<p>By making the graph bigger and adding transparency, an outline of how the graph appears can now be seen:</p>
+<div class="CDPAlignCenter CDPAlign"><img height="176" width="181" class=" image-border" src="images/B06162_07_03.png"/></div>
+<p>In my graph, there was a major group of users all highly connected to each other, and most other users didn't have many connections at all.&#160;As you can see, it is very well connected in the center!</p>
+<p>This is actually a property of our method of choosing new users—we choose those who are already well linked in our graph, so it is likely they will just make this group larger. For social networks, generally the number of connections a user has follows a power law. A small percentage of users have many connections, and others have only a few. The shape of the graph is often described as having a <em>long tail</em>.&#160;</p>
+<p>By zooming into parts of the graph you can start seeing structure. Visualizing and analyzing graphs like this is hard - we will see some tools for making this process easier in the next section.</p>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    </div>
+
+
+  <div id="sbo-rt-content"><section>
+
+            <header>
+                <h1 class="header-title">Creating a similarity graph</h1>
+            </header>
+
+            <article>
+                
+<p>The final step to this experiment is to recommend users, based on how many friends they share. As mentioned previously, our logic is that, if two users have the same friends, they are highly similar. We could recommend one user to the other on this basis.</p>
+<p>We are therefore going to take our existing graph (which has edges relating to friendship) and create a new graph from its information. The nodes are still users, but the edges are going to be <strong>weighted edges</strong>. A weighted edge is simply an edge with a weight property. The logic is that a higher weight indicates more similarity between the two nodes than a lower weight. This is context-dependent. If the weights represent distance, then the lower weights indicate more similarity.</p>
+<p>For our application, the weight will be the similarity of the two users connected by that edge (based on the number of friends they share). This graph also has the property that it is not directed. This is due to our similarity computation, where the similarity of user A to user B is the same as the similarity of user B to user A.</p>
+<div class="packt_infobox">Other similarity measurements are directed. An example is ratio of similar users, which is the number of friends in common divided by the user's total number of friends. In this case, you would need a directed graph.</div>
+<p>There are many ways to compute the similarity between two lists like this. For example, we could compute the number of friends the two have in common. However, this measure is always going to be higher for people with more friends. Instead, we can normalize it by dividing by the total number of distinct friends the two have. This is called the <strong>Jaccard Similarity</strong>.</p>
+<p>The Jaccard Similarity, always between 0 and 1, represents the percentage overlap of the two. As we saw in <a href="lrn-dtmn-py-2e_ch07.html">Chapter 2</a>, <em>Classifying with scikit-learn Estimators</em>, normalization is an important part of data mining exercises and generally a good thing to do. There are fringe cases where you wouldn't normalize data, but by default normalize first.</p>
+<p>To compute the Jaccard similarity, we divide the intersection of the two sets of followers by the union of the two. These are set operations and we have lists, so we will need to convert the friends lists to <span class="packt_screen">sets</span> first. The code is as follows:</p>
+<pre>friends = {user: set(friends[user]) for user in friends}
+</pre>
+<p>We then create a function that computes the similarity of two sets of friends lists. The code is as follows:</p>
+<pre>def compute_similarity(friends1, friends2):<br/>    return len(friends1 &amp; friends2) / (len(friends1 | friends2)  + 1e-6)
+</pre>
+<div class="packt_infobox">We add <span class="packt_screen">1e-6</span> (or 0.000001) to the similarity above to ensure we never get a division by zero error, in cases where neither user has any friends. It is small enough to not really affect our results, but big enough to be more than zero.</div>
+<p>From here, we can create our weighted graph of the similarity between users. We will use this quite a lot in the rest of the chapter, so we will create a function to perform this action. Let's take a look at the threshold parameter:</p>
+<pre>def create_graph(followers, threshold=0): <br/>    G = nx.Graph()<br/>    for user1 in friends.keys(): <br/>        for user2 in friends.keys(): <br/>            if user1 == user2:<br/>                continue<br/>            weight = compute_similarity(friends[user1], friends[user2])<br/>            if weight &gt;= threshold:<br/>                G.add_node(user1) <br/>                G.add_node(user2)<br/>                G.add_edge(user1, user2, weight=weight)<br/>    return G
+</pre>
+<p>We can now create a graph by calling this function. We start with no threshold, which means all links are created. The code is as follows:</p>
+<pre>G = create_graph(friends)
+</pre>
+<p>The result is a very strongly connected graph—all nodes have edges, although many of those will have a weight of 0. We will see the weight of the edges by drawing the graph with line widths relative to the weight of the edge—thicker lines indicate higher weights.</p>
+<p>Due to the number of nodes, it makes sense to make the figure larger to get a clearer sense of the connections:</p>
+<pre>plt.figure(figsize=(10,10))
+</pre>
+<p>We are going to draw the edges with a weight, so we need to draw the nodes first. NetworkX uses <span class="packt_screen">layouts</span> to determine where to put the nodes and edges, based on certain criteria. Visualizing networks is a very difficult problem, especially as the number of nodes grows. Various techniques exist for visualizing networks, but the degree to which they work depends heavily on your dataset, personal preferences, and the aim of the visualization. I found that the <span class="packt_screen">spring_layout</span> worked quite well, but other options such as <span class="packt_screen">circular_layout</span> (which is a good default if nothing else works), <span class="packt_screen">random_layout</span>, <span class="packt_screen">shell_layout</span>, and <span class="packt_screen">spectral_layout</span> also exist and have uses where the others may fail.</p>
+<div class="packt_tip">Visit <a href="http://networkx.lanl.gov/reference/drawing.html">http://networkx.lanl.gov/reference/drawing.html</a>&#160; for more details on layouts in NetworkX. Although it adds some complexity, the <kbd>draw_graphviz</kbd> option works quite well and is worth investigating for better visualizations. It is well worth considering in real-world uses.</div>
+<p>Let's use <kbd>spring_layout</kbd> for visualization:</p>
+<pre>pos = nx.spring_layout(G)
+</pre>
+<p>Using our <kbd>pos</kbd> layout, we can then position the nodes:</p>
+<pre>nx.draw_networkx_nodes(G, pos)
+</pre>
+<p>Next, we draw the edges. To get the weights, we iterate over the edges in the graph (in a specific order) and collect the weights:</p>
+<pre>edgewidth = [ d['weight'] for (u,v,d) in G.edges(data=True)]
+</pre>
+<p>We then draw the edges:&#160;</p>
+<pre>nx.draw_networkx_edges(G, pos, width=edgewidth)
+</pre>
+<p>The result will depend on your data, but it will typically show a graph with a large set of nodes connected quite strongly and a few nodes poorly connected to the rest of the network.</p>
+<div class="CDPAlignCenter CDPAlign"><img height="312" width="320" src="images/B06162_07_04.png"/></div>
+<p>The difference in this graph compared to the previous graph is that the edges determine the similarity between the nodes based on our similarity metric and not on whether one is a friend of another (although there are similarities between the two!). We can now start extracting information from this graph in order to make our recommendations.</p>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    </div>
+
+
+  <div id="sbo-rt-content"><section>
+
+            <header>
+                <h1 class="header-title">Finding subgraphs</h1>
+            </header>
+
+            <article>
+                
+<p>From our similarity function, we could simply rank the results for each user, returning the most similar user as a recommendation - as we did with our product recommendations. This works, and is indeed one way to perform this type of analysis.</p>
+<p>Instead, we might want to find clusters of users that are all similar to each other. We could advise these users to start a group, create advertising targeting this segment, or even just use those clusters to do the recommendations themselves. Finding these clusters of similar users is a task called <strong>cluster analysis</strong>.</p>
+<div class="packt_infobox">Cluster analysis is a difficult task, with complications that classification tasks do not typically have. For example, evaluating classification results is relatively easy - we compare our results to the ground truth (from our training set) and see what percentage we got right. With cluster analysis, though, there isn't typically a ground truth. Evaluation usually comes down to seeing if the clusters make sense, based on some preconceived notion we have of what the cluster should look like.</div>
+<p>Another complication with cluster analysis is that the model can't be trained against the expected result to learn—it has to use some approximation based on a mathematical model of a cluster, not what the user is hoping to achieve from the analysis.</p>
+<p>Due to these issues, cluster analysis is more of an exploratory tool, rather than a prediction tool. Some research and applications use clustering&#160;for analysis, but its usefulness as a predictive model is dependent on an analyst selecting parameters and finding graphs that <em>look right</em>, rather than a specific evaluation metric.</p>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    </div>
+
+
+  <div id="sbo-rt-content"><section>
+
+            <header>
+                <h1 class="header-title">Connected components</h1>
+            </header>
+
+            <article>
+                
+<p>One of the simplest methods for clustering is to find the <strong>connected components</strong> in a graph. A connected component is a set of nodes in a graph that are connected via edges. Not all nodes need to be connected to each other to be a connected component. However, for two nodes to be in the same connected component, there needs to be a way to <em>travel</em> from one node to another in that connected component by moving along edges.</p>
+<div class="packt_infobox">Connected components do not consider edge weights when being computed; they only check for the presence of an edge. For that reason, the code that follows will remove any edge with a low weight.</div>
+<p>NetworkX has a function for computing connected components that we can call on our graph. First, we create a new graph using our <kbd>create_graph</kbd> function, but this time we pass a threshold of 0.1 to get only those edges that have a weight of at least 0.1, indicative of 10% of followers in common between the two node users:</p>
+<pre>G = create_graph(friends, 0.1)
+</pre>
+<p>We then use NetworkX to find the connected components in the graph:</p>
+<pre>sub_graphs = nx.connected_component_subgraphs(G)
+</pre>
+<p>To get a sense of the sizes of the graph, we can iterate over the groups and print out some basic information:</p>
+<pre>for i, sub_graph in enumerate(sub_graphs):<br/>    n_nodes = len(sub_graph.nodes()) <br/>    print("Subgraph {0} has {1} nodes".format(i, n_nodes))
+</pre>
+<p>The results will tell you how big each of the connected components is. My results had one large subgraph of 62 users and lots of little ones with a dozen or fewer users.</p>
+<p>We can alter the <strong>threshold</strong> to alter the connected components. This is because a higher threshold has fewer edges connecting nodes, and therefore will have smaller connected components and more of them. We can see this by running the preceding code with a higher threshold:</p>
+<pre>G = create_graph(friends, 0.25) <br/>sub_graphs = nx.connected_component_subgraphs(G) <br/>for i, sub_graph in enumerate(sub_graphs): <br/>    n_nodes = len(sub_graph.nodes()) <br/>    print("Subgraph {0} has {1} nodes".format(i, n_nodes))
+</pre>
+<p>The preceding code gives us much smaller subgraphs&#160;and more of them. My largest cluster was broken into at least three parts and none of the clusters had more than 10 users. An example cluster is shown in the following figure, and the connections within this cluster are also shown. Note that, as it is a connected component, there were no edges from nodes in this component to other nodes in the graph (at least, with the threshold set at 0.25).</p>
+<p>We can <span>draw</span>&#160;the entire graph, showing each connected component in a different color. As these connected components are not connected to each other, it actually makes little sense to plot these on a single graph. This is because the positioning of the nodes and components is arbitrary, and it can confuse the visualization. Instead, we can plot each separately on a separate subfigure.</p>
+<p>In a new cell, obtain the connected components and also the count of the connected components:</p>
+<pre>sub_graphs = nx.connected_component_subgraphs(G) <br/>n_subgraphs = nx.number_connected_components(G)
+</pre>
+<div class="packt_infobox"><kbd>sub_graphs</kbd> is a generator, not a list of the connected components. For this reason, use <kbd>nx.number_connected_components</kbd> to find out how many connected components there are; don't use <kbd>len</kbd>, as it doesn't work due to the way that NetworkX stores this information. This is why we need to recompute the connected components here.</div>
+<p>Create a new pyplot figure and give enough room to show all of our connected components. For this reason, we allow the graph to increase in size with the number of connected components.</p>
+<p>Next, iterate over each connected component and add a subplot for each. The parameters to add_subplot are the number of rows of subplots, the number of columns, and the index of the subplot we are interested in. My visualization uses three columns, but you can try other values instead of three (just remember to change both values):</p>
+<pre>fig = plt.figure(figsize=(20, (n_subgraphs * 3)))<br/>for i, sub_graph in enumerate(sub_graphs): <br/>    ax = fig.add_subplot(int(n_subgraphs / 3) + 1, 3, i + 1)<br/>    ax.get_xaxis().set_visible(False) <br/>    ax.get_yaxis().set_visible(False)<br/>    pos = nx.spring_layout(G) <br/>    nx.draw_networkx_nodes(G, pos, sub_graph.nodes(), ax=ax, node_size=500) <br/>    nx.draw_networkx_edges(G, pos, sub_graph.edges(), ax=ax)
+</pre>
+<p>The results visualize each connected component, giving us a sense of the number of nodes in each and also how connected they are.</p>
+<div class="CDPAlignCenter CDPAlign"><img height="459" width="280" class=" image-border" src="images/B06162_07_05.png"/></div>
+<div class="packt_tip"><span>If you are not</span>&#160;seeing anything on your graphs, try rerunning the line:<br/>
+<kbd>sub_graphs = nx.connected_component_subgraphs(G)</kbd><br/>
+The <kbd>sub_graphs</kbd> object is a generator and is "consumed" after being used.</div>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    </div>
+
+
+  <div id="sbo-rt-content"><section>
+
+            <header>
+                <h1 class="header-title">Optimizing criteria</h1>
+            </header>
+
+            <article>
+                
+<p>Our algorithm for finding these connected components relies on the <strong>threshold</strong> parameter, which dictates whether edges are added to the graph or not. In turn, this directly dictates how many connected components we discover and how big they are. From here, we probably want to settle on some notion of which is the <em>best</em> threshold to use. This is a very subjective problem, and there is no definitive answer. This is a major problem with any cluster analysis task.</p>
+<p>We can, however, determine what we think a good solution should look like and define a metric based on that idea. As a general rule, we usually want a solution where:</p>
+<ul>
+<li>Samples in the same cluster (connected components) are highly <em>similar</em> to each other</li>
+<li>Samples in different clusters are highly <em>dissimilar</em> to each other</li>
+</ul>
+<p>The <strong>Silhouette Coefficient</strong> is a metric that quantifies these points. Given a single sample, we define the Silhouette Coefficient as follows:</p>
+<div class="CDPAlignCenter CDPAlign"><img class=" image-border" src="images/B06162_07_06.png"/></div>
+<p>Where <em>a</em> is the <strong>intra-cluster distance</strong> or the average distance to the other samples in the sample's cluster, and <q>b</q> is the <strong>inter-cluster distance</strong> or the average distance to the other samples in the <em>next-nearest</em> cluster.</p>
+<div class="packt_infobox">To compute the overall Silhouette Coefficient, we take the mean of the Silhouette Coefficients for each sample. A clustering that provides a Silhouette Coefficient close to the maximum of 1 has clusters that have samples all similar to each other, and these clusters are very spread apart. Values near 0 indicate that the clusters all overlap and there is little distinction between clusters. Values close to the minimum of -1 indicate that samples are probably in the wrong cluster, that is, they would be better off in other clusters.</div>
+<p>Using this metric, we want to find a solution (that is, a value for the threshold) that maximizes the Silhouette Coefficient by altering the threshold parameter. To do that, we create a function that takes the threshold as a parameter and computes the Silhouette Coefficient.</p>
+<p>We then pass this into the <strong>optimize</strong> module of SciPy, which contains the <kbd>minimize</kbd> function that is used to find the minimum value of a function by altering one of the parameters. While we are interested in maximizing the Silhouette Coefficient, SciPy doesn't have a maximize function. Instead, we minimize the inverse of the Silhouette (which is basically the same thing).</p>
+<p>The scikit-learn library has a function for computing the Silhouette Coefficient, <kbd>sklearn.metrics.silhouette_score</kbd>; however, it doesn't fix the function format that is required by the SciPy minimize function. The minimize function requires the variable parameter to be first (in our case, the threshold value), and any arguments to be after it. In our case, we need to pass the friends dictionary as an argument in order to compute the graph.&#160;</p>
+<div class="packt_infobox">The Silhouette Coefficient is not defined unless there are at least two nodes (in order for distance to be computed at all). In this case, we define the problem scope as invalid. There are a few ways to handle this, but the easiest is to return a very poor score. In our case, the minimum value that the Silhouette Coefficient can take is -1, and we will return -99 to indicate an invalid problem. Any valid solution will score higher than this.&#160;</div>
+<p>The function below incorporates all of these issues giving us a function that takes a threshold value and a friends list, and computes the Silhouette Coefficient. It does this by building a matrix from the graph using NetworkX's&#160;<kbd>to_scipy_sparse_matrix</kbd> function.</p>
+<pre>import numpy as np<br/>from sklearn.metrics import silhouette_score<br/><br/>def compute_silhouette(threshold, friends):<br/>    G = create_graph(friends, threshold=threshold) <br/>    if len(G.nodes()) &lt; 2:<br/>        return -99<br/>    sub_graphs = nx.connected_component_subgraphs(G)<br/><br/>    if not (2 &lt;= nx.number_connected_components() &lt; len(G.nodes()) - 1): <br/>        return -99<br/><br/>    label_dict = {}<br/>    for i, sub_graph in enumerate(sub_graphs): <br/>        for node in sub_graph.nodes(): <br/>            label_dict[node] = i<br/><br/>    labels = np.array([label_dict[node] for node in G.nodes()])<br/>    X = nx.to_scipy_sparse_matrix(G).todense()<br/>    X = 1 - X<br/>    return silhouette_score(X, labels, metric='precomputed')
+</pre>
+<div class="packt_tip">For evaluating sparse datasets, I recommend that you look into V-Measure or Adjusted Mutual Information. These are both implemented in scikit-learn, but they have very different parameters for performing their evaluation.</div>
+<p>The Silhouette Coefficient implementation in scikit-learn, at the time of writing, doesn't support sparse matrices. For this reason, we need to call the <kbd>todense</kbd> function. Typically, this is a bad idea--sparse matrices are usually used because the data typically shouldn't be in a dense format. In this case, it will be fine because our dataset is relatively small; however, don't try this for larger datasets.</p>
+<div class="packt_infobox">We have two forms of inversion happening here. The first is taking the inverse of the similarity to compute a distance function; this is needed, as the Silhouette Coefficient only accepts distances. The second is the inverting of the Silhouette Coefficient score so that we can minimize with SciPy's optimize module.</div>
+<p>Finally, we create the function that we will minimize. This function is the inverse of the <kbd>compute_silhouette</kbd> function, because we want lower scores to be better. We could do this in our <kbd>compute_silhouette</kbd> function--I've separated them here to clarify the different steps involved.&#160;</p>
+<pre>def inverted_silhouette(threshold, friends):<br/>    return -compute_silhouette(threshold, friends)
+</pre>
+<p>This function creates a new function from an original function. When the new function is called, all of the same arguments and keywords are passed onto the original function and the return value is returned, except that this returned value is negated before it is returned.</p>
+<p>Now we can do our actual optimization. We call the minimize function on the inverted <kbd>compute_silhouette</kbd> function we defined:</p>
+<pre>from scipy.optimize import minimize<br/>result = minimize(inverted_silhouette, 0.1, args=(friends,))
+</pre>
+<div class="packt_infobox">This function will take quite a while to run. Our graph creation function isn't that fast, nor is the function that computes the Silhouette Coefficient. Decreasing the <kbd>maxiter</kbd>&#160;parameter's value will result in fewer iterations being performed, but we run the risk of finding a suboptimal solution.</div>
+<p>Running this function, I got a threshold of 0.135 that returns 10 components. The score returned by the minimize function was -0.192. However, we must remember that we negated this value. This means our score was actually 0.192. The value is positive, which indicates that the clusters tend to be better separated than not (a good thing). We could run other models and check whether it results in a better score, which means that the clusters are better separated.</p>
+<p>We could use this result to recommend users—if a user is in a specific connected component, then we can recommend other users in that same component. This recommendation follows our use of the Jaccard Similarity to find good connections between users, our use of connected components to split them up into clusters, and our use of the optimization technique to find the best model in this setting.</p>
+<p>However, a large number of users may not be connected at all, so we will use a different algorithm to find clusters for them. We will see other methods for cluster analysis in <a href="lrn-dtmn-py-2e_ch10.html">Chapter 10</a><em>, Clustering News Articles</em>.</p>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    </div>
+
+
+  <div id="sbo-rt-content"><section>
+
+            <header>
+                <h1 class="header-title">Summary</h1>
+            </header>
+
+            <article>
+                
+<p>In this chapter, we looked at graphs from social networks and how to do cluster analysis on them. We also looked at saving and loading models from scikit-learn by using the classification model we created in <a href="lrn-dtmn-py-2e_ch06.html">Chapter 6</a><q>,</q> <em>Social Media Insight Using Naive Bayes</em><q>.</q></p>
+<p>We created a graph of friends from the social network Twitter. We then examined how similar two users were, based on their friends. Users with more friends in common were considered more similar, although we normalize this by considering the overall number of friends they have. This is a commonly used way to infer knowledge (such as age or general topic of discussion) based on similar users. We can use this logic for recommending users to others—if they follow user X and user Y is similar to user X, they will probably like user Y. This is, in many ways, similar to our transaction-led similarity of previous chapters.</p>
+<p>The aim of this analysis was to recommend users, and our use of cluster analysis allowed us to find clusters of similar users. To do this, we found connected components on a weighted graph we created based on this similarity metric. We used the NetworkX package for creating graphs, using our graphs, and finding these connected components.</p>
+<p>We then used the Silhouette Coefficient, which is a metric that evaluates how good a clustering solution is. Higher scores indicate a better clustering, according to the concepts of intracluster and intercluster distance. SciPy's optimize module was used to find the solution that maximizes this value.</p>
+<p>In this chapter, we saw a few opposites in action. Similarity is a measure between two objects, where higher values indicate more similarity between those objects. In contrast, distance is a measure where lower values indicate more similarity. Another contrast we saw was a loss function, where lower scores are considered better (that is, we lost less). Its opposite is the score function, where higher scores are considered better.</p>
+<p>To extend the work in this chapter, examine the V-measure and Adjusted Mutual Information scores in scikit-learn. These replace the Silhouette Coefficient used in this chapter. Are the clusters that result from maximizing these metrics better than the Silhouette Coefficient's clusters? Further, how can you tell? Often, the problem with cluster analysis is that you cannot objectively tell and may use human intervention to choose the best option.</p>
+<p>In the next chapter, we will see how to extract features from another new type of data--images. We will discuss how to use neural networks to identify numbers in images and develop a program to automatically beat CAPTCHA images.</p>
+
+
+            </article>
+
+            <footer style="margin-top: 5em;">
+                
+            </footer>
+
+        </section>
+    </div>
+</body>
+</html>
