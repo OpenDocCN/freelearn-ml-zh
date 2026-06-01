@@ -450,9 +450,6 @@ pip install category_encoders
     " A6"].value_counts().sort_values(
     ascending=False).head(5).index
     ]
-    ```
-
-    ```py
 
     ```
 

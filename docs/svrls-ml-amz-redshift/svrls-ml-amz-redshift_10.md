@@ -88,109 +88,31 @@
 
     ```py
     create table chapter10_xgboost.cust_payment_tx_history
-    ```
-
-    ```py
     (
-    ```
-
-    ```py
     transaction_id integer,
-    ```
-
-    ```py
     tx_datetime timestamp,
-    ```
-
-    ```py
     customer_id integer,
-    ```
-
-    ```py
     terminal_id integer,
-    ```
-
-    ```py
     tx_amount decimal(9,2),
-    ```
-
-    ```py
     tx_time_seconds integer,
-    ```
-
-    ```py
     tx_time_days integer,
-    ```
-
-    ```py
     tx_fraud integer,
-    ```
-
-    ```py
     tx_fraud_scenario integer,
-    ```
-
-    ```py
     tx_during_weekend integer,
-    ```
-
-    ```py
     tx_during_night integer,
-    ```
-
-    ```py
     customer_id_nb_tx_1day_window decimal(9,2),
-    ```
-
-    ```py
     customer_id_avg_amount_1day_window decimal(9,2),
-    ```
-
-    ```py
     customer_id_nb_tx_7day_window decimal(9,2),
-    ```
-
-    ```py
     customer_id_avg_amount_7day_window decimal(9,2),
-    ```
-
-    ```py
     customer_id_nb_tx_30day_window decimal(9,2),
-    ```
-
-    ```py
     customer_id_avg_amount_30day_window decimal(9,2),
-    ```
-
-    ```py
     terminal_id_nb_tx_1day_window decimal(9,2),
-    ```
-
-    ```py
     terminal_id_risk_1day_window decimal(9,2),
-    ```
-
-    ```py
     terminal_id_nb_tx_7day_window decimal(9,2),
-    ```
-
-    ```py
     terminal_id_risk_7day_window decimal(9,2),
-    ```
-
-    ```py
     terminal_id_nb_tx_30day_window decimal(9,2),
-    ```
-
-    ```py
     terminal_id_risk_30day_window decimal(9,2)
-    ```
-
-    ```py
     )
-    ```
-
-    ```py
     ;
     ```
 
@@ -198,21 +120,9 @@
 
     ```py
     copy chapter10_xgboost.cust_payment_tx_history
-    ```
-
-    ```py
     from 's3://packt-serverless-ml-redshift/chapter10/credit_card_transactions_transformed_balanced.csv'
-    ```
-
-    ```py
     iam_role default
-    ```
-
-    ```py
     ignoreheader 1
-    ```
-
-    ```py
     csv region 'eu-west-1';
     ```
 
@@ -220,13 +130,7 @@
 
     ```py
     select * from
-    ```
-
-    ```py
     chapter10_xgboost.cust_payment_tx_history
-    ```
-
-    ```py
     limit 10;
     ```
 

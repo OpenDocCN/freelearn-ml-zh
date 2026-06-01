@@ -80,53 +80,17 @@
 
     ```py
     create schema chapter9_deeplearning;
-    ```
-
-    ```py
     create table chapter9_deeplearning.robot_navigation (
-    ```
-
-    ```py
          id bigint identity(0,1),
-    ```
-
-    ```py
     us1 float, us2 float, us3 float, us4 float, us5 float, us6 float, us7 float, us8 float, us9 float,us10 float, us11 float, us12 float, us13 float, us14 float, us15 float, us16 float, us17 float, us18 float, us19 float, us20 float, us21 float, us22 float, us23 float, us24 float, direction varchar(256)
-    ```
-
-    ```py
     )
-    ```
-
-    ```py
     diststyle auto;
-    ```
-
-    ```py
     copy chapter9_deeplearning.robot_navigation from 's3://packt-serverless-ml-redshift/chapter09/sensor_readings_24.data'
-    ```
-
-    ```py
     iam_role  default
-    ```
-
-    ```py
     format as csv
-    ```
-
-    ```py
     delimiter ','
-    ```
-
-    ```py
     quote '"'
-    ```
-
-    ```py
     region as 'eu-west-1'
-    ```
-
-    ```py
     ;
     ```
 
@@ -134,13 +98,7 @@
 
     ```py
     select * from
-    ```
-
-    ```py
     chapter9_deeplearning.robot_navigation
-    ```
-
-    ```py
     limit 10;
     ```
 

@@ -845,9 +845,6 @@ wheelbase_mm = 170
 
     ```py
         def move_poses(self, rot1, trans, rot2):
-    ```
-
-    ```py
             self.poses[:,2] += rot1
     ```
 
@@ -855,13 +852,7 @@ wheelbase_mm = 170
 
     ```py
             rot1_radians = np.radians(self.poses[:,2])
-    ```
-
-    ```py
             self.poses[:,0] += trans * np.cos(rot1_radians)
-    ```
-
-    ```py
             self.poses[:,1] += trans * np.sin(rot1_radians)
     ```
 
@@ -871,9 +862,6 @@ wheelbase_mm = 170
 
     ```py
             self.poses[:,2] += rot2
-    ```
-
-    ```py
             self.poses[:,2] = np.array([float(theta % 360) for theta in self.poses[:,2]])
     ```
 
@@ -883,13 +871,7 @@ wheelbase_mm = 170
 
     ```py
             self.collision_avoider = CollisionAvoid(self.distance_sensors)
-    ```
-
-    ```py
             self.last_encoder_left = robot.left_encoder.read()
-    ```
-
-    ```py
             self.last_encoder_right = robot.right_encoder.read()
     ```
 
@@ -899,13 +881,7 @@ wheelbase_mm = 170
 
     ```py
         def motion_model(self):
-    ```
-
-    ```py
             new_encoder_left = robot.left_encoder.read()
-    ```
-
-    ```py
             new_encoder_right = robot.right_encoder.read()
     ```
 
@@ -913,13 +889,7 @@ wheelbase_mm = 170
 
     ```py
             rot1, trans, rot2 = self.convert_odometry_to_motion(
-    ```
-
-    ```py
                 new_encoder_left - self.last_encoder_left, 
-    ```
-
-    ```py
                 new_encoder_right - self.last_encoder_right)
     ```
 
@@ -927,9 +897,6 @@ wheelbase_mm = 170
 
     ```py
             self.last_encoder_left = new_encoder_left
-    ```
-
-    ```py
             self.last_encoder_right = new_encoder_right
     ```
 
@@ -999,13 +966,7 @@ def get_random_sample(mean, scale):
 
     ```py
             rot1_scale = self.alpha_rot * abs(rot1) + self.alpha_rot_trans * abs(trans)
-    ```
-
-    ```py
             trans_scale = self.alpha_trans * abs(trans) + self.alpha_trans_rot * (abs(rot1) + abs(rot2))
-    ```
-
-    ```py
             rot2_scale = self.alpha_rot * abs(rot2) + self.alpha_rot_trans * abs(trans)
     ```
 
@@ -1015,13 +976,7 @@ def get_random_sample(mean, scale):
 
     ```py
             rot1_model = np.array([get_random_sample(rot1, rot1_scale) for _ in range(self.poses.shape[0])])
-    ```
-
-    ```py
             trans_model = np.array([get_random_sample(trans, trans_scale) for _ in range(self.poses.shape[0])])
-    ```
-
-    ```py
             rot2_model = np.array([get_random_sample(rot2, rot2_scale) for _ in range(self.poses.shape[0])])
     ```
 
@@ -1097,13 +1052,7 @@ def get_random_sample(mean, scale):
 
     ```py
       if x < 0 or x > width \
-    ```
-
-    ```py
         or y < 0 or y > height:
-    ```
-
-    ```py
         return False
     ```
 
@@ -1111,9 +1060,6 @@ def get_random_sample(mean, scale):
 
     ```py
       if x > (width - cutout_width) and y < cutout_height:
-    ```
-
-    ```py
         return False
     ```
 
@@ -1129,9 +1075,6 @@ def get_random_sample(mean, scale):
 
     ```py
         def observation_model(self):
-    ```
-
-    ```py
             weights = np.ones(self.poses.shape[0], dtype=np.float)
     ```
 
@@ -1139,13 +1082,7 @@ def get_random_sample(mean, scale):
 
     ```py
             for index, pose in enumerate(self.poses):
-    ```
-
-    ```py
                 if not arena.contains(pose[0], pose[1]):
-    ```
-
-    ```py
                     weights[index] = arena.low_probability
     ```
 
@@ -1181,9 +1118,6 @@ def get_random_sample(mean, scale):
 
     ```py
         def resample(self, weights, sample_count):
-    ```
-
-    ```py
             samples = np.zeros((sample_count, 3))
     ```
 
@@ -1193,9 +1127,6 @@ def get_random_sample(mean, scale):
 
     ```py
             interval = np.sum(weights) / sample_count
-    ```
-
-    ```py
             shift = random.uniform(0, interval)
     ```
 
@@ -1205,9 +1136,6 @@ def get_random_sample(mean, scale):
 
     ```py
             cumulative_weights = weights[0]
-    ```
-
-    ```py
             source_index = 0
     ```
 
@@ -1215,9 +1143,6 @@ def get_random_sample(mean, scale):
 
     ```py
             for current_index in range(sample_count):
-    ```
-
-    ```py
                 weight_index = shift + current_index * interval
     ```
 
@@ -1225,17 +1150,8 @@ def get_random_sample(mean, scale):
 
     ```py
                 while weight_index > cumulative_weights:
-    ```
-
-    ```py
                     source_index += 1
-    ```
-
-    ```py
                     source_index = min(len(weights) - 1, source_index)
-    ```
-
-    ```py
                     cumulative_weights += weights[source_index]
     ```
 
@@ -1412,17 +1328,8 @@ dist_forward_mm = 66
 
     ```py
     def get_distance_likelihood_at(x, y):
-    ```
-
-    ```py
       """Return the distance grid value at the given point."""
-    ```
-
-    ```py
       grid_x = int(x // grid_cell_size + overscan)
-    ```
-
-    ```py
       grid_y = int(y // grid_cell_size + overscan)
     ```
 
@@ -1430,9 +1337,6 @@ dist_forward_mm = 66
 
     ```py
       if grid_x < 0 or grid_x >= distance_grid.shape[0] or grid_y < 0 or grid_y >= distance_grid.shape[1]:
-    ```
-
-    ```py
         return low_probability
     ```
 
@@ -1454,17 +1358,8 @@ dist_forward_mm = 66
 
     ```py
             adjacent = sensor_reading + robot.dist_forward_mm
-    ```
-
-    ```py
             angle = np.atan(robot.dist_side_mm / adjacent)
-    ```
-
-    ```py
             if right:
-    ```
-
-    ```py
                 angle = - angle
     ```
 
@@ -1486,17 +1381,8 @@ dist_forward_mm = 66
 
     ```py
             sensor_endpoints = np.zeros((self.poses.shape[0], 2), dtype=np.float)
-    ```
-
-    ```py
             sensor_endpoints[:,0] = self.poses[:,0] + hypotenuse * np.cos(pose_angles)
-    ```
-
-    ```py
             sensor_endpoints[:,1] = self.poses[:,1] + hypotenuse * np.sin(pose_angles)
-    ```
-
-    ```py
             return sensor_endpoints
     ```
 
@@ -1514,9 +1400,6 @@ dist_forward_mm = 66
 
     ```py
             left_sensor = self.get_sensor_endpoints(self.distance_sensors.left)
-    ```
-
-    ```py
             right_sensor = self.get_sensor_endpoints(self.distance_sensors.right, True)
     ```
 

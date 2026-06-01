@@ -158,53 +158,17 @@
 
     ```py
     CREATE TABLE chapter6_supervisedclassification.bank_details_training(
-    ```
-
-    ```py
        age numeric, "job" varchar marital varchar, education varchar,
-    ```
-
-    ```py
        "default" varchar, housing varchar, loan varchar,
-    ```
-
-    ```py
        contact varchar, month varchar, day_of_week varchar,
-    ```
-
-    ```py
        …,
-    ```
-
-    ```py
        y boolean ) ;
-    ```
-
-    ```py
     --create table to store data for running predictions
-    ```
-
-    ```py
     CREATE TABLE chapter6_supervisedclassification.bank_details_inference(
-    ```
-
-    ```py
        age numeric, "job" varchar marital varchar, education varchar,
-    ```
-
-    ```py
        "default" varchar, housing varchar, loan varchar,
-    ```
-
-    ```py
        contact varchar, month varchar, day_of_week varchar,
-    ```
-
-    ```py
        …,
-    ```
-
-    ```py
        y boolean ) ;
     ```
 
@@ -220,25 +184,10 @@
 
     ```py
     --load data into  bank_details_inference
-    ```
-
-    ```py
     TRUNCATE chapter6_supervisedclassification.bank_details_inference;
-    ```
-
-    ```py
      COPY chapter6_supervisedclassification.bank_details_inference from 's3://packt-serverless-ml-redshift/chapter06/bank-marketing-data/inference-data/inference.csv' REGION 'eu-west-1' IAM_ROLE default CSV IGNOREHEADER 1 delimiter ';';
-    ```
-
-    ```py
     -- load data into bank_details_training
-    ```
-
-    ```py
     TRUNCATE chapter6_supervisedclassification.bank_details_training;
-    ```
-
-    ```py
      COPY chapter6_supervisedclassification.bank_details_training from 's3://packt-serverless-ml-redshift/chapter06/bank-marketing-data/training-data/training.csv' REGION 'eu-west-1' IAM_ROLE default CSV IGNOREHEADER 1 delimiter ';';
     ```
 
@@ -246,13 +195,7 @@
 
     ```py
     SELECT y, COUNT(*) Customer_Count FROM chapter6_supervisedclassification.bank_details_training
-    ```
-
-    ```py
     GROUP BY y
-    ```
-
-    ```py
     ;
     ```
 
@@ -515,9 +458,6 @@ COPY chapter6_supervisedclassification.cust_segmentation_test FROM 's3://packt-s
 
     ```py
     select segmentation, count(*)  from chapter6_supervisedclassification.cust_segmentation_train
-    ```
-
-    ```py
     group by 1;
     ```
 

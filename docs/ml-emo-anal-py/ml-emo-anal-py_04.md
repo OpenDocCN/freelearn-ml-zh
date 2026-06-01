@@ -26,9 +26,6 @@
 
     ```py
     <w c5=NN1  hw=factsheet  pos= SUBST >FACTSHEET </w>
-    ```
-
-    ```py
     <w c5=DTQ  hw=what  pos= PRON >WHAT </w>
     ```
 
@@ -570,33 +567,12 @@ SUFFIXES = fixaffixes(    {"": "tense[finite=infinitive]; tense[finite=tense
 
     ```py
     ;--- Ab(1)
-    ```
-
-    ```py
     ;; >ab~-ui_1
-    ```
-
-    ```py
     >b (أب) >ab~ (أَبّ) PV_V desire;aspire
-    ```
-
-    ```py
     >bb (أبب) >abab (أَبَب) PV_C desire;aspire
-    ```
-
-    ```py
     &b (ؤب) &ub~ (ؤُبّ) IV_Vd desire;aspire
-    ```
-
-    ```py
     >bb (أبب) >obub (أْبُب) IV_C desire;aspire
-    ```
-
-    ```py
     }b (ئب) }ib~ (ئِبّ) IV_Vd desire;aspire
-    ```
-
-    ```py
     >bb (أبب) >obib (أْبِب) IV_C desire;aspire
     ```
 

@@ -251,25 +251,10 @@ plt.show()
 
     ```py
     import matplotlib.pyplot as plt
-    ```
-
-    ```py
     dataset.plot(kind='hist',y='Speed')
-    ```
-
-    ```py
     plt.xlabel("Speed")
-    ```
-
-    ```py
     plt.ylabel("Incidents")
-    ```
-
-    ```py
     plt.title("Speed for Incidents without Damage")
-    ```
-
-    ```py
     plt.show()
     ```
 
@@ -287,25 +272,10 @@ plt.show()
 
     ```py
     import matplotlib.pyplot as plt
-    ```
-
-    ```py
     dataset.plot(kind='hist',y='Height',color='black')
-    ```
-
-    ```py
     plt.xlabel("Height")
-    ```
-
-    ```py
     plt.ylabel("Incidents")
-    ```
-
-    ```py
     plt.title("Height for Incidents with Damage")
-    ```
-
-    ```py
     plt.show()
     ```
 
@@ -313,25 +283,10 @@ plt.show()
 
     ```py
     import matplotlib.pyplot as plt
-    ```
-
-    ```py
     dataset.plot(kind='hist',y='Height',color='black')
-    ```
-
-    ```py
     plt.xlabel("Height")
-    ```
-
-    ```py
     plt.ylabel("Incidents")
-    ```
-
-    ```py
     plt.title("Height for Incidents without Damage")
-    ```
-
-    ```py
     plt.show()
     ```
 

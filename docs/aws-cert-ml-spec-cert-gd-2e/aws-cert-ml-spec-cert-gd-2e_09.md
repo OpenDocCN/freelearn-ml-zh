@@ -164,9 +164,6 @@ SageMaker 提供训练实例，用于使用数据训练模型，并提供端点�
 
     ```py
     sh-4.2$ cd ~/SageMaker/
-    ```
-
-    ```py
     sh-4.2$ git clone https://github.com/PacktPublishing/AWS-Certified-Machine-Learning-Specialty-MLS-C01-Certification-Guide-Second-Edition.git
     ```
 
@@ -902,29 +899,11 @@ Amazon SageMaker Data Wrangler 不仅仅是一个工具；它是简化并增强�
 
     ```py
     # Example code for ingesting data into Feature Store
-    ```
-
-    ```py
     from sagemaker.feature_store.feature_group import FeatureGroup
-    ```
-
-    ```py
     feature_group_name = "financial-transaction-feature-group"
-    ```
-
-    ```py
     feature_group = FeatureGroup(name=feature_group_name, sagemaker_session=sagemaker_session)
-    ```
-
-    ```py
     feature_group.load_feature_definitions(data_frame=df)
-    ```
-
-    ```py
     feature_group.create()
-    ```
-
-    ```py
     feature_group.ingest(data_frame=df, max_workers=3, wait=True)
     ```
 
@@ -932,49 +911,16 @@ Amazon SageMaker Data Wrangler 不仅仅是一个工具；它是简化并增强�
 
     ```py
     from sagemaker.compiler import compile_model
-    ```
-
-    ```py
     compiled_model = compile_model(
-    ```
-
-    ```py
         target_instance_family='ml.m5.large',
-    ```
-
-    ```py
         target_platform_os='LINUX',
-    ```
-
-    ```py
         sources=['train.py'],
-    ```
-
-    ```py
         dependencies=['requirements.txt'],
-    ```
-
-    ```py
         framework='pytorch',
-    ```
-
-    ```py
         framework_version='1.8.0',
-    ```
-
-    ```py
         role='arn:aws:iam::123456789012:role/service-role/AmazonSageMaker-ExecutionRole-20201231T000001',
-    ```
-
-    ```py
         entry_point='train.py',
-    ```
-
-    ```py
         instance_type='ml.m5.large',
-    ```
-
-    ```py
     )
     ```
 
@@ -982,33 +928,12 @@ Amazon SageMaker Data Wrangler 不仅仅是一个工具；它是简化并增强�
 
     ```py
     from smdebug import SaveConfig
-    ```
-
-    ```py
     from smdebug.pytorch import Hook
-    ```
-
-    ```py
     # Create an instance of your model
-    ```
-
-    ```py
     model = FraudDetectionModel(input_size, hidden_size, output_size)
-    ```
-
-    ```py
     hook = Hook.create_from_json_file()
-    ```
-
-    ```py
     hook.register_hook(model)
-    ```
-
-    ```py
     # Your training script here...
-    ```
-
-    ```py
     # Train the model train_model(model, train_loader, criterion, optimizer, num_epochs=5)
     ```
 
@@ -1018,61 +943,19 @@ Amazon SageMaker Data Wrangler 不仅仅是一个工具；它是简化并增强�
 
     ```py
     from sagemaker.model_monitor import DefaultModelMonitor
-    ```
-
-    ```py
     from sagemaker.model_monitor.dataset_format import DatasetFormat
-    ```
-
-    ```py
     monitor = DefaultModelMonitor(
-    ```
-
-    ```py
         role=role,
-    ```
-
-    ```py
         instance_count=1,
-    ```
-
-    ```py
         instance_type='ml.m5.large',
-    ```
-
-    ```py
         volume_size_in_gb=20,
-    ```
-
-    ```py
         max_runtime_in_seconds=3600,
-    ```
-
-    ```py
     )
-    ```
-
-    ```py
     baseline_data_uri = 's3://path/to/baseline_data'
-    ```
-
-    ```py
     monitor.suggest_baseline(
-    ```
-
-    ```py
         baseline_dataset=baseline_data_uri,
-    ```
-
-    ```py
         dataset_format=DatasetFormat.csv(header=True),
-    ```
-
-    ```py
         output_s3_uri='s3://path/to/baseline_output',
-    ```
-
-    ```py
     )
     ```
 

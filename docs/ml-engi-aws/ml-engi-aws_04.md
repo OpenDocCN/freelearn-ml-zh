@@ -371,9 +371,6 @@ VPC 创建可能需要大约 1 到 2 分钟才能完成。
 
     ```py
     BUCKET_NAME=<INSERT BUCKET NAME>
-    ```
-
-    ```py
     aws s3 mb s3://$BUCKET_NAME
     ```
 
@@ -389,9 +386,6 @@ VPC 创建可能需要大约 1 到 2 分钟才能完成。
 
     ```py
     FILE=synthetic.bookings.100000.csv
-    ```
-
-    ```py
     aws s3 cp $FILE s3://$BUCKET_NAME/input/$FILE
     ```
 
@@ -645,25 +639,10 @@ VPC 创建可能需要大约 1 到 2 分钟才能完成。
 
     ```py
     SELECT booking_changes, has_booking_changes, * 
-    ```
-
-    ```py
     FROM dev.public.bookings 
-    ```
-
-    ```py
     WHERE 
-    ```
-
-    ```py
     (booking_changes=0 AND has_booking_changes='True') 
-    ```
-
-    ```py
     OR 
-    ```
-
-    ```py
     (booking_changes>0 AND has_booking_changes='False');
     ```
 
@@ -673,25 +652,10 @@ VPC 创建可能需要大约 1 到 2 分钟才能完成。
 
     ```py
     SELECT total_of_special_requests, has_special_requests, * 
-    ```
-
-    ```py
     FROM dev.public.bookings 
-    ```
-
-    ```py
     WHERE 
-    ```
-
-    ```py
     (total_of_special_requests=0 AND has_special_requests='True') 
-    ```
-
-    ```py
     OR 
-    ```
-
-    ```py
     (total_of_special_requests>0 AND has_special_requests='False');
     ```
 
@@ -705,45 +669,15 @@ VPC 创建可能需要大约 1 到 2 分钟才能完成。
 
     ```py
     CREATE MATERIALIZED VIEW data_integrity_issues AS
-    ```
-
-    ```py
     SELECT * 
-    ```
-
-    ```py
     FROM dev.public.bookings 
-    ```
-
-    ```py
     WHERE
-    ```
-
-    ```py
     (booking_changes=0 AND has_booking_changes='True') 
-    ```
-
-    ```py
     OR 
-    ```
-
-    ```py
     (booking_changes>0 AND has_booking_changes='False')
-    ```
-
-    ```py
     OR
-    ```
-
-    ```py
     (total_of_special_requests=0 AND has_special_requests='True') 
-    ```
-
-    ```py
     OR 
-    ```
-
-    ```py
     (total_of_special_requests>0 AND has_special_requests='False');
     ```
 
@@ -783,25 +717,10 @@ VPC 创建可能需要大约 1 到 2 分钟才能完成。
 
     ```py
     UNLOAD ('SELECT * FROM dev.public.bookings;') 
-    ```
-
-    ```py
     TO 's3://<INSERT BUCKET NAME>/unloaded/'
-    ```
-
-    ```py
     IAM_ROLE 'arn:aws:iam::<ACCOUNT ID>:role/service-role/<ROLE NAME>'
-    ```
-
-    ```py
     FORMAT AS CSV DELIMITER ',' 
-    ```
-
-    ```py
     PARALLEL ON
-    ```
-
-    ```py
     HEADER;
     ```
 
@@ -827,9 +746,6 @@ VPC 创建可能需要大约 1 到 2 分钟才能完成。
 
     ```py
     BUCKET_NAME=<INSERT BUCKET NAME>
-    ```
-
-    ```py
     aws s3 ls s3://$BUCKET_NAME/unloaded/
     ```
 
@@ -1097,17 +1013,8 @@ f
 
     ```py
     SELECT * 
-    ```
-
-    ```py
     FROM "AwsDataCatalog"."mle-ch4-db"."unloaded" 
-    ```
-
-    ```py
     WHERE is_cancelled=1 AND previous_cancellations > 0 
-    ```
-
-    ```py
     LIMIT 100;
     ```
 
@@ -1115,17 +1022,8 @@ f
 
     ```py
     SELECT * 
-    ```
-
-    ```py
     FROM "AwsDataCatalog"."mle-ch4-db"."unloaded" 
-    ```
-
-    ```py
     WHERE is_cancelled=1 AND days_in_waiting_list > 50 
-    ```
-
-    ```py
     LIMIT 100;
     ```
 
@@ -1133,29 +1031,11 @@ f
 
     ```py
     SELECT booking_changes, has_booking_changes, * 
-    ```
-
-    ```py
     FROM "AwsDataCatalog"."mle-ch4-db"."unloaded" 
-    ```
-
-    ```py
     WHERE 
-    ```
-
-    ```py
     (booking_changes=0 AND has_booking_changes=true) 
-    ```
-
-    ```py
     OR 
-    ```
-
-    ```py
     (booking_changes>0 AND has_booking_changes=false)
-    ```
-
-    ```py
     LIMIT 100;
     ```
 
@@ -1165,29 +1045,11 @@ f
 
     ```py
     SELECT total_of_special_requests, has_special_requests, *  
-    ```
-
-    ```py
     FROM "AwsDataCatalog"."mle-ch4-db"."unloaded" 
-    ```
-
-    ```py
     WHERE 
-    ```
-
-    ```py
     (total_of_special_requests=0 AND has_special_requests=true) 
-    ```
-
-    ```py
     OR 
-    ```
-
-    ```py
     (total_of_special_requests>0 AND has_special_requests=false)
-    ```
-
-    ```py
     LIMIT 100;
     ```
 
@@ -1197,45 +1059,15 @@ f
 
     ```py
     CREATE OR REPLACE VIEW data_integrity_issues AS
-    ```
-
-    ```py
     SELECT * 
-    ```
-
-    ```py
     FROM "AwsDataCatalog"."mle-ch4-db"."unloaded" 
-    ```
-
-    ```py
     WHERE
-    ```
-
-    ```py
     (booking_changes=0 AND has_booking_changes=true) 
-    ```
-
-    ```py
     OR 
-    ```
-
-    ```py
     (booking_changes>0 AND has_booking_changes=false)
-    ```
-
-    ```py
     OR
-    ```
-
-    ```py
     (total_of_special_requests=0 AND has_special_requests=true) 
-    ```
-
-    ```py
     OR 
-    ```
-
-    ```py
     (total_of_special_requests>0 AND has_special_requests=false);
     ```
 
@@ -1245,17 +1077,8 @@ f
 
     ```py
     SELECT booking_changes, has_booking_changes, 
-    ```
-
-    ```py
     total_of_special_requests, has_special_requests 
-    ```
-
-    ```py
     FROM data_integrity_issues 
-    ```
-
-    ```py
     LIMIT 100;
     ```
 

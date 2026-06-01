@@ -130,17 +130,8 @@
 
     ```py
     (if [Struck Engine 1] = true then 1 else 0) +
-    ```
-
-    ```py
     (if [Struck Engine 2] = true then 1 else 0) +
-    ```
-
-    ```py
     (if [Struck Engine 3] = true then 1 else 0) +
-    ```
-
-    ```py
     (if [Struck Engine 4] = true then 1 else 0)
     ```
 
@@ -160,9 +151,6 @@
 
     ```py
     if [Number of Engines] = "NULL" then 0 else
-    ```
-
-    ```py
     Value.Divide([Number of Engines Struck],Number.From([Number of Engines]))
     ```
 

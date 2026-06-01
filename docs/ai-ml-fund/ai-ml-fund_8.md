@@ -206,9 +206,6 @@
     step 6\. Moves: 18606
     step 7\. Moves: 19592
     step 8\. Moves: 30936
-    ```
-
-    ```py
     First player wins: 20843
     Second player wins: 962
     Draw 20243
@@ -242,9 +239,6 @@
                 if game_won_by(new_board) == AI_SIGN:
                     return [new_board]
         if sign == AI_SIGN:
-    ```
-
-    ```py
             safe_moves = []
             for move in move_list:
                 if not player_can_win(move, OPPONENT_SIGN):
@@ -353,9 +347,6 @@
                     for row in range(3)
                     for column in range(7)
                 ]
-    ```
-
-    ```py
                 # diagonal forward
                 tuples += [
                     list(range(row*7+column, row*7+column+32, 8))
@@ -1054,9 +1045,6 @@ label_encoders
             extra_trees_classifier.predict(features_test)
         )
     )
-    ```
-
-    ```py
                  precision    recall f1-score support
               0     0.72     0.72     0.72        36
               1     0.00     0.00     0.00         5

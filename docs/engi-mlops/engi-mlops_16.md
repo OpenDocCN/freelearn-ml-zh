@@ -193,9 +193,6 @@
                     return output
                 except Exception as e:
     track_event() function to generate a custom event called InferenceError. This will be logged on Application Insights with an error message and a custom error code of 401. This way, we can log custom errors and exceptions on Application Insights and generate actions based on these errors and exceptions. 
-    ```
-
-    ```py
 
     ```
 

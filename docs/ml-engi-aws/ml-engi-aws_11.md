@@ -286,9 +286,6 @@ execution = pipeline.start()
 
     ```py
     s3_bucket = '<INSERT S3 BUCKET NAME HERE>'
-    ```
-
-    ```py
     prefix = 'pipeline'
     ```
 
@@ -308,9 +305,6 @@ execution = pipeline.start()
 
     ```py
     source_path = f's3://{s3_bucket}/{prefix}' + \
-    ```
-
-    ```py
                    '/source/dataset.all.csv'
     ```
 
@@ -362,93 +356,27 @@ execution = pipeline.start()
 
     ```py
     import boto3
-    ```
-
-    ```py
     import sagemaker
-    ```
-
-    ```py
     from sagemaker import get_execution_role
-    ```
-
-    ```py
     from sagemaker.sklearn.processing import (
-    ```
-
-    ```py
         SKLearnProcessor
-    ```
-
-    ```py
     )
-    ```
-
-    ```py
     from sagemaker.workflow.steps import (
-    ```
-
-    ```py
         ProcessingStep, 
-    ```
-
-    ```py
         TrainingStep
-    ```
-
-    ```py
     )
-    ```
-
-    ```py
     from sagemaker.workflow.step_collections import (
-    ```
-
-    ```py
         RegisterModel
-    ```
-
-    ```py
     )
-    ```
-
-    ```py
     from sagemaker.processing import (
-    ```
-
-    ```py
         ProcessingInput, 
-    ```
-
-    ```py
         ProcessingOutput
-    ```
-
-    ```py
     )
-    ```
-
-    ```py
     from sagemaker.workflow.parameters import (
-    ```
-
-    ```py
         ParameterString
-    ```
-
-    ```py
     )
-    ```
-
-    ```py
     from sagemaker.inputs import TrainingInput
-    ```
-
-    ```py
     from sagemaker.estimator import Estimator
-    ```
-
-    ```py
     from sagemaker.workflow.pipeline import Pipeline
     ```
 
@@ -472,17 +400,8 @@ execution = pipeline.start()
 
     ```py
     input_data = ParameterString(
-    ```
-
-    ```py
         name="RawData",
-    ```
-
-    ```py
         default_value=source_path, 
-    ```
-
-    ```py
     )
     ```
 
@@ -490,37 +409,13 @@ execution = pipeline.start()
 
     ```py
     input_raw = ProcessingInput(
-    ```
-
-    ```py
         source=input_data,
-    ```
-
-    ```py
         destination='/opt/ml/processing/input/'
-    ```
-
-    ```py
     )
-    ```
-
-    ```py
     output_split = ProcessingOutput(
-    ```
-
-    ```py
         output_name="split",
-    ```
-
-    ```py
         source='/opt/ml/processing/output/', 
-    ```
-
-    ```py
         destination=f's3://{s3_bucket}/{prefix}/output/'
-    ```
-
-    ```py
     )
     ```
 
@@ -528,53 +423,17 @@ execution = pipeline.start()
 
     ```py
     processor = SKLearnProcessor(
-    ```
-
-    ```py
         framework_version='0.20.0',
-    ```
-
-    ```py
         role=role,
-    ```
-
-    ```py
         instance_count=1,
-    ```
-
-    ```py
         instance_type='ml.m5.large'
-    ```
-
-    ```py
     )
-    ```
-
-    ```py
     step_process = ProcessingStep(
-    ```
-
-    ```py
         name="PrepareData",  
-    ```
-
-    ```py
         processor=processor,
-    ```
-
-    ```py
         inputs=[input_raw],
-    ```
-
-    ```py
         outputs=[output_split],
-    ```
-
-    ```py
         code="processing.py",
-    ```
-
-    ```py
     )
     ```
 
@@ -608,37 +467,13 @@ execution = pipeline.start()
 
     ```py
     from sagemaker import image_uris
-    ```
-
-    ```py
     train_image_uri = image_uris.retrieve(
-    ```
-
-    ```py
         region=region_name,
-    ```
-
-    ```py
         framework=None,
-    ```
-
-    ```py
         model_id=model_id,
-    ```
-
-    ```py
         model_version="*",
-    ```
-
-    ```py
         image_scope="training",
-    ```
-
-    ```py
         instance_type="ml.m5.xlarge",
-    ```
-
-    ```py
     )
     ```
 
@@ -648,25 +483,10 @@ execution = pipeline.start()
 
     ```py
     from sagemaker import script_uris
-    ```
-
-    ```py
     train_source_uri = script_uris.retrieve(
-    ```
-
-    ```py
         model_id=model_id, 
-    ```
-
-    ```py
         model_version="*", 
-    ```
-
-    ```py
         script_scope="training"
-    ```
-
-    ```py
     )
     ```
 
@@ -680,25 +500,10 @@ execution = pipeline.start()
 
     ```py
     from sagemaker import model_uris
-    ```
-
-    ```py
     train_model_uri = model_uris.retrieve(
-    ```
-
-    ```py
         model_id=model_id, 
-    ```
-
-    ```py
         model_version="*", 
-    ```
-
-    ```py
         model_scope="training"
-    ```
-
-    ```py
     )
     ```
 
@@ -708,53 +513,17 @@ execution = pipeline.start()
 
     ```py
     from sagemaker.estimator import Estimator
-    ```
-
-    ```py
     estimator = Estimator(
-    ```
-
-    ```py
         image_uri=train_image_uri,
-    ```
-
-    ```py
         source_dir=train_source_uri,
-    ```
-
-    ```py
         model_uri=train_model_uri,
-    ```
-
-    ```py
         entry_point="transfer_learning.py",
-    ```
-
-    ```py
         instance_count=1,
-    ```
-
-    ```py
         instance_type="ml.m5.xlarge",
-    ```
-
-    ```py
         max_run=900,
-    ```
-
-    ```py
         output_path=model_path,
-    ```
-
-    ```py
         session=session,
-    ```
-
-    ```py
         role=role
-    ```
-
-    ```py
     )
     ```
 
@@ -764,29 +533,11 @@ execution = pipeline.start()
 
     ```py
     from sagemaker.hyperparameters import retrieve_default
-    ```
-
-    ```py
     hyperparameters = retrieve_default(
-    ```
-
-    ```py
         model_id=model_id, 
-    ```
-
-    ```py
         model_version="*"
-    ```
-
-    ```py
     )
-    ```
-
-    ```py
     hyperparameters["verbosity"] = "3"
-    ```
-
-    ```py
     estimator.set_hyperparameters(**hyperparameters) 
     ```
 
@@ -794,57 +545,18 @@ execution = pipeline.start()
 
     ```py
     s3_data = step_process         \
-    ```
-
-    ```py
         .properties                \
-    ```
-
-    ```py
         .ProcessingOutputConfig    \
-    ```
-
-    ```py
         .Outputs["split"]          \
-    ```
-
-    ```py
         .S3Output.S3Uri            \
-    ```
-
-    ```py
     step_train = TrainingStep(
-    ```
-
-    ```py
         name="TrainModel",
-    ```
-
-    ```py
         estimator=estimator,
-    ```
-
-    ```py
         inputs={
-    ```
-
-    ```py
             "training": TrainingInput(
-    ```
-
-    ```py
                 s3_data=s3_data,
-    ```
-
-    ```py
             )
-    ```
-
-    ```py
         },
-    ```
-
-    ```py
     )
     ```
 
@@ -870,53 +582,17 @@ execution = pipeline.start()
 
     ```py
     deploy_image_uri = image_uris.retrieve(
-    ```
-
-    ```py
         region=region_name,
-    ```
-
-    ```py
         framework=None,
-    ```
-
-    ```py
         image_scope="inference",
-    ```
-
-    ```py
         model_id=model_id,
-    ```
-
-    ```py
         model_version="*",
-    ```
-
-    ```py
         instance_type="ml.m5.xlarge",
-    ```
-
-    ```py
     )
-    ```
-
-    ```py
     deploy_source_uri = script_uris.retrieve(
-    ```
-
-    ```py
         model_id=model_id, 
-    ```
-
-    ```py
         model_version="*", 
-    ```
-
-    ```py
         script_scope="inference"
-    ```
-
-    ```py
     )
     ```
 
@@ -930,13 +606,7 @@ execution = pipeline.start()
 
     ```py
     updated_source_uri = f's3://{s3_bucket}/{prefix}' + \
-    ```
-
-    ```py
                           '/sourcedir/sourcedir.tar.gz'
-    ```
-
-    ```py
     !aws s3 cp tmp/sourcedir.tar.gz {updated_source_uri}
     ```
 
@@ -944,13 +614,7 @@ execution = pipeline.start()
 
     ```py
     import uuid
-    ```
-
-    ```py
     def random_string():
-    ```
-
-    ```py
         return uuid.uuid4().hex.upper()[0:6]
     ```
 
@@ -960,61 +624,19 @@ execution = pipeline.start()
 
     ```py
     from sagemaker.model import Model
-    ```
-
-    ```py
     from sagemaker.workflow.pipeline_context import \
-    ```
-
-    ```py
         PipelineSession
-    ```
-
-    ```py
     pipeline_session = PipelineSession()
-    ```
-
-    ```py
     model_data = step_train    \
-    ```
-
-    ```py
         .properties            \
-    ```
-
-    ```py
         .ModelArtifacts        \
-    ```
-
-    ```py
         .S3ModelArtifacts      \
-    ```
-
-    ```py
     model = Model(image_uri=deploy_image_uri, 
-    ```
-
-    ```py
                   source_dir=updated_source_uri,
-    ```
-
-    ```py
                   model_data=model_data,
-    ```
-
-    ```py
                   role=role,
-    ```
-
-    ```py
                   entry_point="inference.py",
-    ```
-
-    ```py
                   sagemaker_session=pipeline_session,
-    ```
-
-    ```py
                   name=random_string())
     ```
 
@@ -1024,57 +646,18 @@ execution = pipeline.start()
 
     ```py
     from sagemaker.workflow.model_step import ModelStep
-    ```
-
-    ```py
     model_package_group_name = "AutoGluonModelGroup"
-    ```
-
-    ```py
     register_args = model.register(
-    ```
-
-    ```py
         content_types=["text/csv"],
-    ```
-
-    ```py
         response_types=["application/json"],
-    ```
-
-    ```py
         inference_instances=["ml.m5.xlarge"],
-    ```
-
-    ```py
         transform_instances=["ml.m5.xlarge"],
-    ```
-
-    ```py
         model_package_group_name=model_package_group_name,
-    ```
-
-    ```py
         approval_status="Approved",
-    ```
-
-    ```py
     )
-    ```
-
-    ```py
     step_model_create = ModelStep(
-    ```
-
-    ```py
         name="CreateModel",
-    ```
-
-    ```py
         step_args=register_args
-    ```
-
-    ```py
     )
     ```
 
@@ -1082,49 +665,16 @@ execution = pipeline.start()
 
     ```py
     pipeline_name = f"PARTIAL-PIPELINE"
-    ```
-
-    ```py
     partial_pipeline = Pipeline(
-    ```
-
-    ```py
         name=pipeline_name,
-    ```
-
-    ```py
         parameters=[
-    ```
-
-    ```py
             input_data
-    ```
-
-    ```py
         ],
-    ```
-
-    ```py
         steps=[
-    ```
-
-    ```py
             step_process, 
-    ```
-
-    ```py
             step_train,
-    ```
-
-    ```py
             step_model_create,
-    ```
-
-    ```py
         ],
-    ```
-
-    ```py
     )
     ```
 
@@ -1166,9 +716,6 @@ execution = partial_pipeline.start(
 
     ```py
     execution = partial_pipeline.start()
-    ```
-
-    ```py
     execution.describe()
     ```
 
@@ -1186,9 +733,6 @@ execution = partial_pipeline.start(
 
     ```py
     steps = execution.list_steps()
-    ```
-
-    ```py
     steps[0]['Metadata']['RegisterModel']['Arn']
     ```
 
@@ -1306,33 +850,12 @@ execution = partial_pipeline.start(
 
     ```py
     import json
-    ```
-
-    ```py
     from utils import (
-    ```
-
-    ```py
         create_model, 
-    ```
-
-    ```py
         create_endpoint_config, 
-    ```
-
-    ```py
         create_endpoint, 
-    ```
-
-    ```py
         random_string,
-    ```
-
-    ```py
         block
-    ```
-
-    ```py
     )
     ```
 
@@ -1340,101 +863,29 @@ execution = partial_pipeline.start(
 
     ```py
     def lambda_handler(event, context):
-    ```
-
-    ```py
         role = event['role']
-    ```
-
-    ```py
         endpoint_name = event['endpoint_name']
-    ```
-
-    ```py
         package_arn = event['package_arn']
-    ```
-
-    ```py
         model_name = 'model-' + random_string()
-    ```
-
-    ```py
         with block('CREATE MODEL'):
-    ```
-
-    ```py
             create_model(
-    ```
-
-    ```py
                 model_name=model_name,
-    ```
-
-    ```py
                 package_arn=package_arn,
-    ```
-
-    ```py
                 role=role
-    ```
-
-    ```py
             )
-    ```
-
-    ```py
         with block('CREATE ENDPOINT CONFIG'):
-    ```
-
-    ```py
             endpoint_config_name = create_endpoint_config(
-    ```
-
-    ```py
                 model_name
-    ```
-
-    ```py
             )
-    ```
-
-    ```py
         with block('CREATE ENDPOINT'):
-    ```
-
-    ```py
             create_endpoint(
-    ```
-
-    ```py
                 endpoint_name=endpoint_name, 
-    ```
-
-    ```py
                 endpoint_config_name=endpoint_config_name
-    ```
-
-    ```py
             )
-    ```
-
-    ```py
         return {
-    ```
-
-    ```py
             'statusCode': 200,
-    ```
-
-    ```py
             'body': json.dumps(event),
-    ```
-
-    ```py
             'model': model_name
-    ```
-
-    ```py
         }
     ```
 
@@ -1446,21 +897,9 @@ execution = partial_pipeline.start(
 
     ```py
     {
-    ```
-
-    ```py
       "role": "<INSERT SAGEMAKER EXECUTION ROLE ARN>",
-    ```
-
-    ```py
       "endpoint_name": "AutoGluonEndpoint",
-    ```
-
-    ```py
       "package_arn": "<INSERT MODEL PACKAGE ARN>"
-    ```
-
-    ```py
     }
     ```
 
@@ -1522,9 +961,6 @@ execution = partial_pipeline.start(
 
     ```py
     import boto3
-    ```
-
-    ```py
     sm_client = boto3.client('sagemaker')
     ```
 
@@ -1532,49 +968,16 @@ execution = partial_pipeline.start(
 
     ```py
     def endpoint_exists(endpoint_name):
-    ```
-
-    ```py
         response = sm_client.list_endpoints(
-    ```
-
-    ```py
             NameContains=endpoint_name
-    ```
-
-    ```py
         )
-    ```
-
-    ```py
         results = list(
-    ```
-
-    ```py
             filter(
-    ```
-
-    ```py
                 lambda x: \
-    ```
-
-    ```py
                 x['EndpointName'] == endpoint_name, 
-    ```
-
-    ```py
                 response['Endpoints']
-    ```
-
-    ```py
             )
-    ```
-
-    ```py
         )
-    ```
-
-    ```py
         return len(results) > 0
     ```
 
@@ -1582,29 +985,11 @@ execution = partial_pipeline.start(
 
     ```py
     def lambda_handler(event, context):
-    ```
-
-    ```py
         endpoint_name = event['endpoint_name']
-    ```
-
-    ```py
         return {
-    ```
-
-    ```py
             'endpoint_exists': endpoint_exists(
-    ```
-
-    ```py
                 endpoint_name=endpoint_name
-    ```
-
-    ```py
             )
-    ```
-
-    ```py
         }
     ```
 
@@ -1614,13 +999,7 @@ execution = partial_pipeline.start(
 
     ```py
     {
-    ```
-
-    ```py
       "endpoint_name": "AutoGluonEndpoint"
-    ```
-
-    ```py
     }
     ```
 
@@ -1630,13 +1009,7 @@ execution = partial_pipeline.start(
 
     ```py
     {
-    ```
-
-    ```py
       "endpoint_exists": true
-    ```
-
-    ```py
     }
     ```
 
@@ -1696,33 +1069,12 @@ execution = partial_pipeline.start(
 
     ```py
     import json
-    ```
-
-    ```py
     from utils import (
-    ```
-
-    ```py
         create_model, 
-    ```
-
-    ```py
         create_endpoint_config, 
-    ```
-
-    ```py
         update_endpoint, 
-    ```
-
-    ```py
         random_string,
-    ```
-
-    ```py
         block
-    ```
-
-    ```py
     )
     ```
 
@@ -1730,101 +1082,29 @@ execution = partial_pipeline.start(
 
     ```py
     def lambda_handler(event, context):
-    ```
-
-    ```py
         role = event['role']
-    ```
-
-    ```py
         endpoint_name = event['endpoint_name']
-    ```
-
-    ```py
         package_arn = event['package_arn']
-    ```
-
-    ```py
         model_name = 'model-' + random_string()
-    ```
-
-    ```py
         with block('CREATE MODEL'):
-    ```
-
-    ```py
             create_model(
-    ```
-
-    ```py
                 model_name=model_name,
-    ```
-
-    ```py
                 package_arn=package_arn,
-    ```
-
-    ```py
                 role=role
-    ```
-
-    ```py
             )
-    ```
-
-    ```py
         with block('CREATE ENDPOINT CONFIG'):
-    ```
-
-    ```py
             endpoint_config_name = create_endpoint_config(
-    ```
-
-    ```py
                 model_name
-    ```
-
-    ```py
             )
-    ```
-
-    ```py
         with block('UPDATE ENDPOINT'):
-    ```
-
-    ```py
             update_endpoint(
-    ```
-
-    ```py
                 endpoint_name=endpoint_name, 
-    ```
-
-    ```py
                 endpoint_config_name=endpoint_config_name
-    ```
-
-    ```py
             )
-    ```
-
-    ```py
         return {
-    ```
-
-    ```py
             'statusCode': 200,
-    ```
-
-    ```py
             'body': json.dumps(event),
-    ```
-
-    ```py
             'model': model_name
-    ```
-
-    ```py
         } 
     ```
 
@@ -1834,21 +1114,9 @@ execution = partial_pipeline.start(
 
     ```py
     {
-    ```
-
-    ```py
       "role": "<INSERT SAGEMAKER EXECUTION ROLE ARN>",
-    ```
-
-    ```py
       "endpoint_name": "AutoGluonEndpoint",
-    ```
-
-    ```py
       "package_arn": "<INSERT MODEL PACKAGE ARN>"
-    ```
-
-    ```py
     }
     ```
 
@@ -1916,9 +1184,6 @@ execution = partial_pipeline.start(
 
     ```py
     from sklearn.metrics import accuracy_score
-    ```
-
-    ```py
     accuracy_score(actual_list, predicted_list)
     ```
 
@@ -1952,17 +1217,8 @@ execution = partial_pipeline.start(
 
     ```py
     input_endpoint_name = ParameterString(
-    ```
-
-    ```py
         name="EndpointName",
-    ```
-
-    ```py
         default_value=f'AutoGluonEndpoint', 
-    ```
-
-    ```py
     )
     ```
 
@@ -1970,61 +1226,19 @@ execution = partial_pipeline.start(
 
     ```py
     from sagemaker.workflow.lambda_step import (
-    ```
-
-    ```py
         LambdaStep, 
-    ```
-
-    ```py
         LambdaOutput, 
-    ```
-
-    ```py
         LambdaOutputTypeEnum
-    ```
-
-    ```py
     )
-    ```
-
-    ```py
     from sagemaker.lambda_helper import (
-    ```
-
-    ```py
         Lambda
-    ```
-
-    ```py
     )
-    ```
-
-    ```py
     from sagemaker.workflow.conditions import (
-    ```
-
-    ```py
         ConditionEquals
-    ```
-
-    ```py
     )
-    ```
-
-    ```py
     from sagemaker.workflow.condition_step import (
-    ```
-
-    ```py
         ConditionStep, 
-    ```
-
-    ```py
         JsonGet
-    ```
-
-    ```py
     )
     ```
 
@@ -2032,17 +1246,8 @@ execution = partial_pipeline.start(
 
     ```py
     output_endpoint_exists = LambdaOutput(
-    ```
-
-    ```py
         output_name="endpoint_exists", 
-    ```
-
-    ```py
         output_type=LambdaOutputTypeEnum.Boolean
-    ```
-
-    ```py
     )
     ```
 
@@ -2050,53 +1255,17 @@ execution = partial_pipeline.start(
 
     ```py
     package_arn = step_model_create \
-    ```
-
-    ```py
         .properties.ModelPackageArn
-    ```
-
-    ```py
     endpoint_exists_lambda = LambdaStep(
-    ```
-
-    ```py
         name="CheckIfEndpointExists",
-    ```
-
-    ```py
         lambda_func=Lambda(
-    ```
-
-    ```py
             function_arn="<INSERT FUNCTION ARN>"
-    ```
-
-    ```py
         ),
-    ```
-
-    ```py
         inputs={
-    ```
-
-    ```py
             "endpoint_name": input_endpoint_name,
-    ```
-
-    ```py
             "package_arn": package_arn
-    ```
-
-    ```py
         },
-    ```
-
-    ```py
         outputs=[output_endpoint_exists]
-    ```
-
-    ```py
     )
     ```
 
@@ -2106,49 +1275,16 @@ execution = partial_pipeline.start(
 
     ```py
     step_lambda_deploy_to_existing_endpoint = LambdaStep(
-    ```
-
-    ```py
         name="DeployToExistingEndpoint",
-    ```
-
-    ```py
         lambda_func=Lambda(
-    ```
-
-    ```py
             function_arn="<INSERT FUNCTION ARN>"
-    ```
-
-    ```py
         ),
-    ```
-
-    ```py
         inputs={
-    ```
-
-    ```py
             "role": role,
-    ```
-
-    ```py
             "endpoint_name": input_endpoint_name,
-    ```
-
-    ```py
             "package_arn": package_arn
-    ```
-
-    ```py
         },
-    ```
-
-    ```py
         outputs=[]
-    ```
-
-    ```py
     )
     ```
 
@@ -2158,49 +1294,16 @@ execution = partial_pipeline.start(
 
     ```py
     step_lambda_deploy_to_new_endpoint = LambdaStep(
-    ```
-
-    ```py
         name="DeployToNewEndpoint",
-    ```
-
-    ```py
         lambda_func=Lambda(
-    ```
-
-    ```py
             function_arn="<INSERT FUNCTION ARN>"
-    ```
-
-    ```py
         ),
-    ```
-
-    ```py
         inputs={
-    ```
-
-    ```py
             "role": role,
-    ```
-
-    ```py
             "endpoint_name": input_endpoint_name,
-    ```
-
-    ```py
             "package_arn": package_arn
-    ```
-
-    ```py
         },
-    ```
-
-    ```py
         outputs=[]
-    ```
-
-    ```py
     )
     ```
 
@@ -2210,61 +1313,19 @@ execution = partial_pipeline.start(
 
     ```py
     left = endpoint_exists_lambda \
-    ```
-
-    ```py
         .properties               \
-    ```
-
-    ```py
         .Outputs['endpoint_exists']
-    ```
-
-    ```py
     cond_equals = ConditionEquals(
-    ```
-
-    ```py
         left=left,
-    ```
-
-    ```py
         right=True
-    ```
-
-    ```py
     )
-    ```
-
-    ```py
     if_steps = [step_lambda_deploy_to_existing_endpoint]
-    ```
-
-    ```py
     else_steps = [step_lambda_deploy_to_new_endpoint]
-    ```
-
-    ```py
     step_endpoint_exists_condition = ConditionStep(
-    ```
-
-    ```py
         name="EndpointExists",
-    ```
-
-    ```py
         conditions=[cond_equals],
-    ```
-
-    ```py
         if_steps=if_steps,
-    ```
-
-    ```py
         else_steps=else_steps
-    ```
-
-    ```py
     )
     ```
 
@@ -2286,65 +1347,20 @@ execution = partial_pipeline.start(
 
     ```py
     pipeline_name = f"COMPLETE-PIPELINE"
-    ```
-
-    ```py
     complete_pipeline = Pipeline(
-    ```
-
-    ```py
         name=pipeline_name,
-    ```
-
-    ```py
         parameters=[
-    ```
-
-    ```py
             input_data,
-    ```
-
-    ```py
             input_endpoint_name
-    ```
-
-    ```py
         ],
-    ```
-
-    ```py
         steps=[
-    ```
-
-    ```py
             step_process, 
-    ```
-
-    ```py
             step_train,
-    ```
-
-    ```py
             step_model_create,
-    ```
-
-    ```py
             endpoint_exists_lambda, 
-    ```
-
-    ```py
             step_endpoint_exists_condition
-    ```
-
-    ```py
         ],
-    ```
-
-    ```py
     )
-    ```
-
-    ```py
     complete_pipeline.upsert(role_arn=role)
     ```
 
@@ -2370,9 +1386,6 @@ execution = complete_pipeline.start(
 
     ```py
     execution = complete_pipeline.start()
-    ```
-
-    ```py
     execution.describe()
     ```
 
@@ -2422,9 +1435,6 @@ execution = complete_pipeline.start(
 
     ```py
     from sklearn.metrics import accuracy_score
-    ```
-
-    ```py
     accuracy_score(actual_list, predicted_list)
     ```
 

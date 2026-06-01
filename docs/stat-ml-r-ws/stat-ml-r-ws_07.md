@@ -605,9 +605,6 @@ In this exercise, we will go through a few ways to configure the code chunks we 
       group_by(Year) %>%
       summarise(max_closing = max(GOOG.Close))
     kable(tmp_df)
-    ```
-
-    ```py
 
     Here, we first convert `Year` into an integer-typed variable, then subset the DataFrame to keep only the last five years of data, followed by extracting the maximum closing price for each year. The result is then shown via the `kable()` function.
 
@@ -631,9 +628,6 @@ Figure 6.23 – Displaying the maximum closing price for the past five years
 
     ```py{r}
     total_max_price
-    ```
-
-    ```py
 
     Knitting the document with these commands produces *Figure 6**.24*:
 
@@ -649,9 +643,6 @@ Figure 6.24 – Hiding the code and result in one code chunk and displaying the 
 
     ```py{r echo=FALSE}
     kable(tmp_df)
-    ```
-
-    ```py
 
     Knitting the document with these commands produces *Figure 6**.25*:
 
@@ -667,9 +658,6 @@ Figure 6.25 – Hiding the code chunk and displaying the result in the report
 
     ```py{r eval=FALSE}
     kable(tmp_df)
-    ```
-
-    ```py
 
     Knitting the document with these commands produces *Figure 6**.26*:
 
@@ -693,9 +681,6 @@ Figure 6.26 – Displaying the code chunk without executing it in the report
     ```py{r collapse=TRUE}
     print("This is a test message")
     warning("This is a test message")
-    ```
-
-    ```py
 
     Knitting the document with these commands produces *Figure 6**.27*, which shows that both the printed and warning messages are shown in a single block together with the code:
 
@@ -714,9 +699,6 @@ In addition, we can hide the warning by configuring the `warning` attribute in t
     ```py{r collapse=TRUE, warning=FALSE}
     print("This is a test message")
     warning("This is a test message")
-    ```
-
-    ```py
 
     Knitting the document with these commands produces *Figure 6**.28*, where the warning has now been removed from the report:
 
@@ -861,9 +843,6 @@ In this exercise, we will configure parameters to generate reports that are simi
       filter(Year == params$year) %>%
       select(GOOG.Close) %>%
       summary()
-    ```
-
-    ```py
 
     Knitting the document with these commands produces *Figure 6**.31*, where we use `Year` `== params$year` as a filtering condition in the `filter()` function:
 
@@ -920,9 +899,6 @@ We can also create a report based on multiple parameters, which can be appended 
              Qter == params$quarter) %>%
       select(GOOG.Close) %>%
       summary()
-    ```
-
-    ```py
 
     Here, we create a new column to represent the quarter using the `quarters()` function based on the date, followed by filtering using the `year` and `the` `quarter` parameters set in the YAML header. Knitting the document with these commands produces *Figure 6**.33*:
 

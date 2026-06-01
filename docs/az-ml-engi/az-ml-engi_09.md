@@ -230,13 +230,7 @@ Azure DevOps 项目包括以下两个关键组件：
 
     ```py
     git config --global user.email <username_from_azuredevOps>
-    ```
-
-    ```py
     git config --global user.name "Firstname Lastname"
-    ```
-
-    ```py
     git config --global push.default simple
     ```
 
@@ -244,17 +238,8 @@ Azure DevOps 项目包括以下两个关键组件：
 
     ```py
     git status
-    ```
-
-    ```py
     git add –A
-    ```
-
-    ```py
     git commit –m "updated"
-    ```
-
-    ```py
     git push origin main
     ```
 

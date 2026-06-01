@@ -84,17 +84,8 @@ S3 有两个主要组件：**存储桶**和**对象**。
 
     ```py
     $ pwd
-    ```
-
-    ```py
     /Users/baba/AWS-Certified-Machine-Learning-Specialty-
-    ```
-
-    ```py
     2020-Certification-Guide/Chapter-5/s3demo/demo-files
-    ```
-
-    ```py
     $ aws s3 ls
     ```
 
@@ -102,17 +93,8 @@ S3 有两个主要组件：**存储桶**和**对象**。
 
     ```py
     $ aws s3 mb s3://demo-bucket-baba --region us-east-1
-    ```
-
-    ```py
     make_bucket: demo-bucket-baba
-    ```
-
-    ```py
     $ aws s3 ls
-    ```
-
-    ```py
     2020-11-04 14:39:50 demo-bucket-baba
     ```
 
@@ -120,13 +102,7 @@ S3 有两个主要组件：**存储桶**和**对象**。
 
     ```py
     $ aws s3 cp sample-file.txt s3://demo-bucket-baba/
-    ```
-
-    ```py
     upload: ./sample-file.txt to s3://demo-bucket-
-    ```
-
-    ```py
     baba/sample-file.txt
     ```
 
@@ -150,21 +126,9 @@ $ aws s3 ls s3://demo-bucket-baba/
 
     ```py
     $ aws s3 cp . s3://demo-bucket-baba/ --recursive
-    ```
-
-    ```py
     upload: folder-1/a.txt to s3://demo-bucket-baba/folder-1/a.txt
-    ```
-
-    ```py
     upload: folder-2/sample-image.jpg to s3://demo-bucket-baba/folder-2/sample-image.jpg
-    ```
-
-    ```py
     upload: ./sample-file.txt to s3://demo-bucket-baba/sample-file.txt
-    ```
-
-    ```py
     $ aws s3 ls s3://demo-bucket-baba/
     ```
 
@@ -172,37 +136,13 @@ $ aws s3 ls s3://demo-bucket-baba/
 
     ```py
     $ aws s3 mb s3://demo-bucket-baba-copied --region us-east-2
-    ```
-
-    ```py
     $ aws s3 mb s3://demo-bucket-baba-moved --region us-east-2
-    ```
-
-    ```py
     $ aws s3 cp s3://demo-bucket-baba s3://demo-bucket-baba-copied/ --recursive
-    ```
-
-    ```py
     $ aws s3 mv s3://demo-bucket-baba s3://demo-bucket-baba-moved/ --recursive
-    ```
-
-    ```py
     $ aws s3 ls
-    ```
-
-    ```py
     2020-11-04 14:39:50 demo-bucket-baba
-    ```
-
-    ```py
     2020-11-04 15:44:28 demo-bucket-baba-copied
-    ```
-
-    ```py
     2020-11-04 15:44:37 demo-bucket-baba-moved
-    ```
-
-    ```py
     $ aws s3 ls s3://demo-bucket-baba/
     ```
 
@@ -216,13 +156,7 @@ $ aws s3 ls s3://demo-bucket-baba/
 
     ```py
     $ aws s3 rb s3://demo-bucket-baba
-    ```
-
-    ```py
     $ aws s3 rb s3://demo-bucket-baba-moved
-    ```
-
-    ```py
     remove_bucket failed: s3://demo-bucket-baba-moved An error occurred (BucketNotEmpty) when calling the DeleteBucket operation: The bucket you tried to delete is not empty
     ```
 
@@ -462,25 +396,10 @@ $ aws s3 ls s3://demo-bucket-baba/
 
     ```py
     $ aws s3 mb s3://version-demo-mlpractice/
-    ```
-
-    ```py
     $ aws s3api put-bucket-versioning --bucket version-demo-mlpractice --versioning-configuration Status=Enabled
-    ```
-
-    ```py
     $ aws s3api get-bucket-versioning --bucket version-demo-mlpractice
-    ```
-
-    ```py
     {
-    ```
-
-    ```py
         "Status": "Enabled"
-    ```
-
-    ```py
     }
     ```
 
@@ -494,9 +413,6 @@ $ aws s3 ls s3://demo-bucket-baba/
 
     ```py
     $ aws s3api put-bucket-encryption --bucket version-demo-mlpractice --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":
-    ```
-
-    ```py
     {"SSEAlgorithm":"AES256"}}]}'
     ```
 
@@ -512,49 +428,16 @@ $ aws s3 ls s3://demo-bucket-baba/
 
     ```py
     $ echo "Version-1">version-doc.txt
-    ```
-
-    ```py
     $ aws s3 cp version-doc.txt s3://version-demo-mlpractice
-    ```
-
-    ```py
     $ aws s3 cp s3://version-demo-mlpractice/version-doc.txt
-    ```
-
-    ```py
     check.txt
-    ```
-
-    ```py
     $ cat check.txt
-    ```
-
-    ```py
     Version-1
-    ```
-
-    ```py
     $ echo "Version-2">version-doc.txt
-    ```
-
-    ```py
     $ aws s3 cp version-doc.txt s3://version-demo-mlpractice
-    ```
-
-    ```py
     $ aws s3 cp s3://version-demo-mlpractice/version-doc.txt
-    ```
-
-    ```py
     check.txt
-    ```
-
-    ```py
     $ cat check.txt
-    ```
-
-    ```py
     Version-2
     ```
 
@@ -562,129 +445,36 @@ $ aws s3 ls s3://demo-bucket-baba/
 
     ```py
     {
-    ```
-
-    ```py
         "Versions": [
-    ```
-
-    ```py
             {
-    ```
-
-    ```py
                 "ETag":
-    ```
-
-    ```py
     "\"b6690f56ca22c410a2782512d24cdc97\"",
-    ```
-
-    ```py
                 "Size": 10,
-    ```
-
-    ```py
                 "StorageClass": "STANDARD",
-    ```
-
-    ```py
                 "Key": "version-doc.txt",
-    ```
-
-    ```py
                 "VersionId":
-    ```
-
-    ```py
     "70wbLG6BMBEQhCXmwsriDgQoXafFmgGi",
-    ```
-
-    ```py
                 "IsLatest": true,
-    ```
-
-    ```py
                 "LastModified": "2020-11-07T15:57:05+00:00",
-    ```
-
-    ```py
                 "Owner": {
-    ```
-
-    ```py
                     "DisplayName": "baba",
-    ```
-
-    ```py
                     "ID": "XXXXXXXXXXXX"
-    ```
-
-    ```py
                 }
-    ```
-
-    ```py
             },
-    ```
-
-    ```py
             {
-    ```
-
-    ```py
                 "ETag": "\"5022e6af0dd3d2ea70920438271b21a2\"",
-    ```
-
-    ```py
                 "Size": 10,
-    ```
-
-    ```py
                 "StorageClass": "STANDARD",
-    ```
-
-    ```py
                 "Key": "version-doc.txt",
-    ```
-
-    ```py
                 "VersionId": "f1iC.9L.MsP00tIb.sUMnfOEae240sIW",
-    ```
-
-    ```py
                 "IsLatest": false,
-    ```
-
-    ```py
                 "LastModified": "2020-11-07T15:56:27+00:00",
-    ```
-
-    ```py
                 "Owner": {
-    ```
-
-    ```py
                     "DisplayName": "baba",
-    ```
-
-    ```py
                     "ID": " XXXXXXXXXXXX"
-    ```
-
-    ```py
                 }
-    ```
-
-    ```py
             }
-    ```
-
-    ```py
         ]
-    ```
-
-    ```py
     }
     ```
 
@@ -694,17 +484,8 @@ $ aws s3 ls s3://demo-bucket-baba/
 
     ```py
     {
-    ```
-
-    ```py
         "DeleteMarker": true,
-    ```
-
-    ```py
         "VersionId": "BKv_Cxixtm7V48MWqBO_KUkKbcOaH5JP"
-    ```
-
-    ```py
     }
     ```
 
@@ -718,13 +499,7 @@ $ aws s3 ls s3://demo-bucket-baba/
 
     ```py
         "DeleteMarker": true,
-    ```
-
-    ```py
         "VersionId": "BKv_Cxixtm7V48MWqBO_KUkKbcOaH5JP"
-    ```
-
-    ```py
     }
     ```
 
@@ -732,9 +507,6 @@ $ aws s3 ls s3://demo-bucket-baba/
 
     ```py
     $ aws s3 ls s3://version-demo-mlpractice/
-    ```
-
-    ```py
     2020-11-07 15:57:05         10 version-doc.txt
     ```
 
@@ -744,13 +516,7 @@ $ aws s3 ls s3://demo-bucket-baba/
 
     ```py
     $ aws s3api delete-object --bucket version-demo-mlpractice --key version-doc.txt --version-id 70wbLG6BMBEQhCXmwsriDgQoXafFmgGi
-    ```
-
-    ```py
     $ aws s3api delete-object --bucket version-demo-mlpractice --key version-doc.txt --version-id f1iC.9L.MsP00tIb.sUMnfOEae240sIW
-    ```
-
-    ```py
     $ aws s3api list-object-versions --bucket version-demo-mlpractice
     ```
 

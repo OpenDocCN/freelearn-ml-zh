@@ -126,161 +126,44 @@ Amazon Rekognition 的以下是一些常见用途：
 
     ```py
     from __future__ import print_function
-    ```
-
-    ```py
     import boto3
-    ```
-
-    ```py
     def lambda_handler(event, context):
-    ```
-
-    ```py
         print("========lambda_handler started=======")
-    ```
-
-    ```py
         # read the bucket name (key) from the event
-    ```
-
-    ```py
         name_of_the_bucket=event['Records'][0]['s3']['bucket']
-    ```
-
-    ```py
     ['name']
-    ```
-
-    ```py
         # read the object from the event
-    ```
-
-    ```py
         name_of_the_photo=event['Records'][0]['s3']['object']['key']
-    ```
-
-    ```py
         detect_labels(name_of_the_photo,name_of_the_bucket)
-    ```
-
-    ```py
         print("Labels detected Successfully")
-    ```
-
-    ```py
     def detect_labels(photo, bucket):
-    ```
-
-    ```py
         client=boto3.client('rekognition')
-    ```
-
-    ```py
      response=client.detect_labels(Image={'S3Object':{'Bucket':bucket,'Name':photo}})
-    ```
-
-    ```py
         print('Detected labels for ' + photo)
-    ```
-
-    ```py
         print('==============================')
-    ```
-
-    ```py
         for label in response['Labels']:
-    ```
-
-    ```py
             print ("Label: " + label['Name'])
-    ```
-
-    ```py
             print ("Confidence: " +
-    ```
-
-    ```py
     str(label['Confidence']))
-    ```
-
-    ```py
             print ("Instances:")
-    ```
-
-    ```py
             for instance in label['Instances']:
-    ```
-
-    ```py
                 print ("  Bounding box")
-    ```
-
-    ```py
                 print ("Top:
-    ```
-
-    ```py
     "+str(instance['BoundingBox']['Top']))
-    ```
-
-    ```py
                 print ("Left: \
-    ```
-
-    ```py
     "+str(instance['BoundingBox']['Left']))
-    ```
-
-    ```py
                 print ("Width: \
-    ```
-
-    ```py
     "+str(instance['BoundingBox']['Width']))
-    ```
-
-    ```py
                 print ("Height: \
-    ```
-
-    ```py
     "+str(instance['BoundingBox']['Height']))
-    ```
-
-    ```py
                 print ("Confidence:
-    ```
-
-    ```py
     "+str(instance['Confidence']))
-    ```
-
-    ```py
                 print()
-    ```
-
-    ```py
             print ("Parents:")
-    ```
-
-    ```py
             for parent in label['Parents']:
-    ```
-
-    ```py
                 print ("   " + parent['Name'])
-    ```
-
-    ```py
             print ("----------")
-    ```
-
-    ```py
             print('==============================')
-    ```
-
-    ```py
         return response
     ```
 
@@ -446,69 +329,21 @@ Amazon Polly 的常见用途包括以下内容：
 
     ```py
     File Content:  Hello Everyone, Welcome to Dublin. How
-    ```
-
-    ```py
     are you doing today?
-    ```
-
-    ```py
     {'ResponseMetadata': {'RequestId': '74ca4afd-5844-
-    ```
-
-    ```py
     47d8-9664-3660a26965e4', 'HTTPStatusCode': 200,
-    ```
-
-    ```py
     'HTTPHeaders': {'x-amzn-requestid': '74ca4afd-5844-
-    ```
-
-    ```py
     47d8-9664-3660a26965e4', 'content-type':
-    ```
-
-    ```py
     'application/json', 'content-length': '471', 'date':
-    ```
-
-    ```py
     'Thu, 24 Sep 2020 18:50:57 GMT'}, 'RetryAttempts': 0},
-    ```
-
-    ```py
     'SynthesisTask': {'Engine': 'standard', 'TaskId':
-    ```
-
-    ```py
     '57548c6b-d21a-4885-962f-450952569dc7', 'TaskStatus':
-    ```
-
-    ```py
     'scheduled', 'OutputUri': 'https://s3.us-east-
-    ```
-
-    ```py
     1.amazonaws.com/polly-test-baba/output-
-    ```
-
-    ```py
     audio/.57548c6b-d21a-4885-962f-450952569dc7.mp3',
-    ```
-
-    ```py
     'CreationTime': datetime.datetime(2020, 9, 24, 18, 50,
-    ```
-
-    ```py
     57, 769000, tzinfo=tzlocal()), 'RequestCharacters':
-    ```
-
-    ```py
     59, 'OutputFormat': 'mp3', 'TextType': 'text',
-    ```
-
-    ```py
     'VoiceId': 'Aditi', 'LanguageCode': 'en-GB'}}
     ```
 
@@ -974,125 +809,35 @@ Amazon Textract 的常见用途包括以下内容：
 
     ```py
     import boto3
-    ```
-
-    ```py
     import time
-    ```
-
-    ```py
     from trp import Document
-    ```
-
-    ```py
     textract_client=boto3.client('textract')
-    ```
-
-    ```py
     def lambda_handler(event, context):
-    ```
-
-    ```py
         print("- - - Amazon Textract Demo - - -")
-    ```
-
-    ```py
         # read the bucket name from the event
-    ```
-
-    ```py
         name_of_the_bucket=event['Records'][0]['s3']['bucket'] ['name']
-    ```
-
-    ```py
         # read the object from the event
-    ```
-
-    ```py
         name_of_the_doc=event['Records'][0]['s3']['object']['key']
-    ```
-
-    ```py
         print(name_of_the_bucket)
-    ```
-
-    ```py
         print(name_of_the_doc)
-    ```
-
-    ```py
         response =
-    ```
-
-    ```py
     textract_client.analyze_document(Document={'S3Object':
-    ```
-
-    ```py
     {'Bucket': name_of_the_bucket,'Name':
-    ```
-
-    ```py
     name_of_the_doc}},FeatureTypes=["TABLES","FORMS"])
-    ```
-
-    ```py
         print(str(response))
-    ```
-
-    ```py
         doc=Document(response)
-    ```
-
-    ```py
         for page in doc.pages:
-    ```
-
-    ```py
             # Print tables
-    ```
-
-    ```py
             for table in page.tables:
-    ```
-
-    ```py
                 for r, row in enumerate(table.rows):
-    ```
-
-    ```py
                     for c, cell in enumerate(row.cells):
-    ```
-
-    ```py
                         print("Table[{}][{}] =
-    ```
-
-    ```py
     {}".format(r, c, cell.text))
-    ```
-
-    ```py
         for page in doc.pages:
-    ```
-
-    ```py
             # Print fields
-    ```
-
-    ```py
             print("Fields:")
-    ```
-
-    ```py
             for field in page.form.fields:
-    ```
-
-    ```py
                 print("Key: {}, Value:
-    ```
-
-    ```py
     {}".format(field.key, field.value))
     ```
 

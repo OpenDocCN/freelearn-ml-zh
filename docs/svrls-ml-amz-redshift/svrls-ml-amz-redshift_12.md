@@ -215,45 +215,15 @@ Online Retail. (2015). UCI Machine Learning Repository. [`doi.org/10.24432/C5BW3
 
     ```py
     CREATE SCHEMA chapter12_forecasting;
-    ```
-
-    ```py
     Create table chapter12_forecasting.web_retail_sales
-    ```
-
-    ```py
     (invoice_Date date, item_id varchar(500), quantity int);
-    ```
-
-    ```py
     COPY chapter12_forecasting.web_retail_sales
-    ```
-
-    ```py
     FROM 's3://packt-serverless-ml-redshift/chapter12/web_retail_sales.csv'
-    ```
-
-    ```py
     IAM_ROLE default
-    ```
-
-    ```py
     FORMAT AS CSV
-    ```
-
-    ```py
     DELIMITER ','
-    ```
-
-    ```py
     IGNOREHEADER 1
-    ```
-
-    ```py
     DATEFORMAT 'YYYY-MM-DD'
-    ```
-
-    ```py
     REGION AS 'eu-west-1';
     ```
 

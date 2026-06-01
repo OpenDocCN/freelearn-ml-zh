@@ -622,53 +622,17 @@ model.eval()
 
     ```py
     X_train_BERT = []
-    ```
-
-    ```py
     for x in X_train:
-    ```
-
-    ```py
       # Add CLS and SEP
-    ```
-
-    ```py
       marked_text = "[CLS] " + x + " [SEP]"
-    ```
-
-    ```py
       # Split the sentence into tokens.
-    ```
-
-    ```py
       tokenized_text = tokenizer.tokenize(marked_text)
-    ```
-
-    ```py
       # Map the token strings to their vocabulary indices.
-    ```
-
-    ```py
       indexed_tokens = tokenizer.convert_tokens_to_ids(tokenized_text)
-    ```
-
-    ```py
       tokens_tensor = torch.tensor([indexed_tokens])
-    ```
-
-    ```py
       with torch.no_grad():
-    ```
-
-    ```py
         outputs = model(tokens_tensor)
-    ```
-
-    ```py
         feature_vector = outputs[0]
-    ```
-
-    ```py
       X_train_BERT.append(feature_vector)
     ```
 
@@ -676,57 +640,18 @@ model.eval()
 
     ```py
     X_train_BERT = []
-    ```
-
-    ```py
     for x in X_train:
-    ```
-
-    ```py
       # Add CLS and SEP
-    ```
-
-    ```py
       marked_text = "[CLS] " + x + " [SEP]"
-    ```
-
-    ```py
       # Split the sentence into tokens.
-    ```
-
-    ```py
       tokenized_text = tokenizer.tokenize(marked_text)
-    ```
-
-    ```py
       # Map the token strings to their vocabulary indeces.
-    ```
-
-    ```py
       indexed_tokens = tokenizer.convert_tokens_to_ids(tokenized_text)
-    ```
-
-    ```py
       tokens_tensor = torch.tensor([indexed_tokens])
-    ```
-
-    ```py
       with torch.no_grad():
-    ```
-
-    ```py
         outputs = model(tokens_tensor)
-    ```
-
-    ```py
         hidden_states = outputs[2]
-    ```
-
-    ```py
         feature_vector = torch.stack(hidden_states).sum(0)
-    ```
-
-    ```py
       X_train_BERT.append(feature_vector)
     ```
 
@@ -734,57 +659,18 @@ model.eval()
 
     ```py
     X_train_BERT = []
-    ```
-
-    ```py
     for x in X_train:
-    ```
-
-    ```py
       # Add CLS and SEP
-    ```
-
-    ```py
       marked_text = "[CLS] " + x + " [SEP]"
-    ```
-
-    ```py
       # Split the sentence into tokens.
-    ```
-
-    ```py
       tokenized_text = tokenizer.tokenize(marked_text)
-    ```
-
-    ```py
       # Map the token strings to their vocabulary indeces.
-    ```
-
-    ```py
       indexed_tokens = tokenizer.convert_tokens_to_ids(tokenized_text)
-    ```
-
-    ```py
       tokens_tensor = torch.tensor([indexed_tokens])
-    ```
-
-    ```py
       with torch.no_grad():
-    ```
-
-    ```py
         outputs = model(tokens_tensor)
-    ```
-
-    ```py
         hidden_states = outputs[2]
-    ```
-
-    ```py
         feature_vector = torch.stack(hidden_states[-4:]).sum(0)
-    ```
-
-    ```py
       X_train_BERT.append(feature_vector)
     ```
 
@@ -792,57 +678,18 @@ model.eval()
 
     ```py
     X_train_BERT = []
-    ```
-
-    ```py
     for x in X_train:
-    ```
-
-    ```py
       # Add CLS and SEP
-    ```
-
-    ```py
       marked_text = "[CLS] " + x + " [SEP]"
-    ```
-
-    ```py
       # Split the sentence into tokens.
-    ```
-
-    ```py
       tokenized_text = tokenizer.tokenize(marked_text)
-    ```
-
-    ```py
       # Map the token strings to their vocabulary indeces.
-    ```
-
-    ```py
       indexed_tokens = tokenizer.convert_tokens_to_ids(tokenized_text)
-    ```
-
-    ```py
       tokens_tensor = torch.tensor([indexed_tokens])
-    ```
-
-    ```py
       with torch.no_grad():
-    ```
-
-    ```py
         outputs = model(tokens_tensor)
-    ```
-
-    ```py
         hidden_states = outputs[2]
-    ```
-
-    ```py
         feature_vector = torch.cat([hidden_states[i] for i in [-1,-2,-3,-4]], dim=-1)
-    ```
-
-    ```py
       X_train_BERT.append(feature_vector)
     ```
 

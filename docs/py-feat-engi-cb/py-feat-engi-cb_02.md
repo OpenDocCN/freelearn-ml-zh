@@ -448,9 +448,6 @@
     ```py
      top_5 = [x for x in X_train[ <st c="18816">" A6"].value_counts().sort_values(</st> **<st c="18851">ascending=False).head(5).index
     ]</st>**
-    ```
-
-    ```py
 
     ```
 

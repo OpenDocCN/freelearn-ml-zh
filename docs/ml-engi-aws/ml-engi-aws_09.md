@@ -567,49 +567,16 @@ Machine Learning with Amazon SageMaker Cookbook) https://bit.ly/3POKbKf.
 
     ```py
     def load_model():
-    ```
-
-    ```py
         sym_json = json_load(open('mx-mod-symbol.json')) 
-    ```
-
-    ```py
         sym_json_string = json_dumps(sym_json)
-    ```
-
-    ```py
         model = gluon.nn.SymbolBlock( 
-    ```
-
-    ```py
             outputs=mxnet.sym.load_json(sym_json_string), 
-    ```
-
-    ```py
             inputs=mxnet.sym.var('data'))
-    ```
-
-    ```py
         model.load_parameters(
-    ```
-
-    ```py
             'mx-mod-0000.params', 
-    ```
-
-    ```py
             allow_missing=True
-    ```
-
-    ```py
         )
-    ```
-
-    ```py
         model.initialize()
-    ```
-
-    ```py
         return model
     ```
 
@@ -647,9 +614,6 @@ Machine Learning with Amazon SageMaker Cookbook) https://bit.ly/3POKbKf.
 
     ```py
     processor = SageMakerClarifyProcessor(...)
-    ```
-
-    ```py
     processor.run_explainability(...)
     ```
 
@@ -683,9 +647,6 @@ Machine Learning with Amazon SageMaker Cookbook) https://bit.ly/3POKbKf.
 
     ```py
     processor = SageMakerClarifyProcessor(...)
-    ```
-
-    ```py
     processor.run_bias(...)
     ```
 

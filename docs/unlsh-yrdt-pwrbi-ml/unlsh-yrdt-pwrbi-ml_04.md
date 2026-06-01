@@ -210,13 +210,7 @@
 
     ```py
     = if [Cost of Repairs Adjusted] = null then [Other Costs Adjusted]
-    ```
-
-    ```py
     else if [Other Costs Adjusted] = null then [Cost of Repairs Adjusted]
-    ```
-
-    ```py
     else [Cost of Repairs Adjusted] + [Other Costs Adjusted]
     ```
 

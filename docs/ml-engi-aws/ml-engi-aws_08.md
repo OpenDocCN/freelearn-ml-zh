@@ -142,17 +142,8 @@
 
     ```py
     %%bash
-    ```
-
-    ```py
     mkdir -p tmp
-    ```
-
-    ```py
     wget -O tmp/knn.model.tar.gz https://bit.ly/3yZ6qHE
-    ```
-
-    ```py
     wget -O tmp/ll.model.tar.gz https://bit.ly/3ahj1fd
     ```
 
@@ -166,9 +157,6 @@
 
     ```py
     s3_bucket = "<INSERT S3 BUCKET HERE>"
-    ```
-
-    ```py
     prefix = "chapter08"
     ```
 
@@ -186,17 +174,8 @@
 
     ```py
     ll_model_data = \
-    ```
-
-    ```py
     f's3://{s3_bucket}/{prefix}/models/ll.model.tar.gz'
-    ```
-
-    ```py
     knn_model_data = \
-    ```
-
-    ```py
     f's3://{s3_bucket}/{prefix}/models/knn.model.tar.gz'
     ```
 
@@ -206,9 +185,6 @@
 
     ```py
     !aws s3 cp tmp/ll.model.tar.gz {ll_model_data}
-    ```
-
-    ```py
     !aws s3 cp tmp/knn.model.tar.gz {knn_model_data}
     ```
 
@@ -218,45 +194,15 @@
 
     ```py
     from sagemaker.image_uris import retrieve
-    ```
-
-    ```py
     ll_image_uri = retrieve(
-    ```
-
-    ```py
         "linear-learner", 
-    ```
-
-    ```py
         region="us-west-2", 
-    ```
-
-    ```py
         version="1"
-    ```
-
-    ```py
     )
-    ```
-
-    ```py
     knn_image_uri = retrieve(
-    ```
-
-    ```py
         "knn", 
-    ```
-
-    ```py
         region="us-west-2", 
-    ```
-
-    ```py
         version="1"
-    ```
-
-    ```py
     )
     ```
 
@@ -264,9 +210,6 @@
 
     ```py
     import boto3
-    ```
-
-    ```py
     client = boto3.client(service_name="sagemaker")
     ```
 
@@ -274,29 +217,11 @@
 
     ```py
     import string 
-    ```
-
-    ```py
     import random
-    ```
-
-    ```py
     def generate_random_string():
-    ```
-
-    ```py
         return ''.join(
-    ```
-
-    ```py
             random.sample(
-    ```
-
-    ```py
             string.ascii_uppercase,12)
-    ```
-
-    ```py
         )
     ```
 
@@ -306,37 +231,13 @@
 
     ```py
     group_id = generate_random_string()
-    ```
-
-    ```py
     package_group_name = f"group-{group_id}"
-    ```
-
-    ```py
     package_group_desc = f"Model package group {group_id}"
-    ```
-
-    ```py
     response = client.create_model_package_group(
-    ```
-
-    ```py
         ModelPackageGroupName=package_group_name,
-    ```
-
-    ```py
         ModelPackageGroupDescription=package_group_desc
-    ```
-
-    ```py
     )
-    ```
-
-    ```py
     package_group_arn = response['ModelPackageGroupArn']
-    ```
-
-    ```py
     package_group_arn
     ```
 
@@ -344,61 +245,19 @@
 
     ```py
     def prepare_inference_specs(image_uri, model_data):
-    ```
-
-    ```py
         return {
-    ```
-
-    ```py
             "Containers": [
-    ```
-
-    ```py
                 {
-    ```
-
-    ```py
                     "Image": image_uri,
-    ```
-
-    ```py
                     "ModelDataUrl": model_data
-    ```
-
-    ```py
                 }
-    ```
-
-    ```py
             ],
-    ```
-
-    ```py
             "SupportedContentTypes": [ 
-    ```
-
-    ```py
                 "text/csv" 
-    ```
-
-    ```py
             ],
-    ```
-
-    ```py
             "SupportedResponseMIMETypes": [ 
-    ```
-
-    ```py
                 "application/json" 
-    ```
-
-    ```py
             ],
-    ```
-
-    ```py
         }
     ```
 
@@ -414,57 +273,18 @@
 
         ```py
         def create_model_package(
-        ```
-
-        ```py
                 package_group_arn, 
-        ```
-
-        ```py
                 inference_specs, 
-        ```
-
-        ```py
                 client=client):
-        ```
-
-        ```py
             input_dict = {
-        ```
-
-        ```py
                 "ModelPackageGroupName" : package_group_arn,
-        ```
-
-        ```py
                 "ModelPackageDescription" : "Description",
-        ```
-
-        ```py
                 "ModelApprovalStatus" : "Approved",
-        ```
-
-        ```py
                 "InferenceSpecification" : inference_specs
-        ```
-
-        ```py
             }
-        ```
-
-        ```py
             response = client.create_model_package(
-        ```
-
-        ```py
                 **input_dict
-        ```
-
-        ```py
             )
-        ```
-
-        ```py
             return response["ModelPackageArn"]
         ```
 
@@ -478,33 +298,12 @@
 
     ```py
     knn_inference_specs = prepare_inference_specs(
-    ```
-
-    ```py
         image_uri=knn_image_uri,
-    ```
-
-    ```py
         model_data=knn_model_data
-    ```
-
-    ```py
     )
-    ```
-
-    ```py
     ll_inference_specs = prepare_inference_specs(
-    ```
-
-    ```py
         image_uri=ll_image_uri,
-    ```
-
-    ```py
         model_data=ll_model_data
-    ```
-
-    ```py
     )
     ```
 
@@ -512,33 +311,12 @@
 
     ```py
     knn_package_arn = create_model_package(
-    ```
-
-    ```py
         package_group_arn=package_group_arn,
-    ```
-
-    ```py
         inference_specs=knn_inference_specs
-    ```
-
-    ```py
     )
-    ```
-
-    ```py
     ll_package_arn = create_model_package(
-    ```
-
-    ```py
         package_group_arn=package_group_arn,
-    ```
-
-    ```py
         inference_specs=ll_inference_specs
-    ```
-
-    ```py
     )
     ```
 
@@ -546,17 +324,8 @@
 
     ```py
     %store knn_package_arn
-    ```
-
-    ```py
     %store ll_package_arn
-    ```
-
-    ```py
     %store s3_bucket
-    ```
-
-    ```py
     %store prefix
     ```
 
@@ -600,9 +369,6 @@
 
     ```py
     %store -r knn_package_arn
-    ```
-
-    ```py
     %store -r ll_package_arn
     ```
 
@@ -610,49 +376,16 @@
 
     ```py
     import sagemaker
-    ```
-
-    ```py
     from sagemaker import get_execution_role
-    ```
-
-    ```py
     from sagemaker import ModelPackage
-    ```
-
-    ```py
     from sagemaker.predictor import Predictor
-    ```
-
-    ```py
     session = sagemaker.Session()
-    ```
-
-    ```py
     role = get_execution_role()
-    ```
-
-    ```py
     model = ModelPackage(
-    ```
-
-    ```py
         role=role,
-    ```
-
-    ```py
         model_package_arn=knn_package_arn,
-    ```
-
-    ```py
         sagemaker_session=session
-    ```
-
-    ```py
     )
-    ```
-
-    ```py
     model.predictor_cls = Predictor
     ```
 
@@ -662,33 +395,12 @@
 
     ```py
     from sagemaker.serializers import JSONSerializer
-    ```
-
-    ```py
     from sagemaker.deserializers import JSONDeserializer
-    ```
-
-    ```py
     predictor = model.deploy(
-    ```
-
-    ```py
         instance_type='ml.m5.xlarge', 
-    ```
-
-    ```py
         initial_instance_count=1,
-    ```
-
-    ```py
         serializer=JSONSerializer(),
-    ```
-
-    ```py
         deserializer=JSONDeserializer()
-    ```
-
-    ```py
     )
     ```
 
@@ -702,33 +414,12 @@
 
     ```py
     payload = {
-    ```
-
-    ```py
         'instances': [
-    ```
-
-    ```py
             {
-    ```
-
-    ```py
               "features": [ 1.5, 2 ]
-    ```
-
-    ```py
             },
-    ```
-
-    ```py
         ]
-    ```
-
-    ```py
     }
-    ```
-
-    ```py
     predictor.predict(data=payload)
     ```
 
@@ -738,13 +429,7 @@
 
     ```py
     def process_prediction_result(raw_result):
-    ```
-
-    ```py
         first = raw_result['predictions'][0]
-    ```
-
-    ```py
         return first['predicted_label']
     ```
 
@@ -754,49 +439,16 @@
 
     ```py
     def predict(x, y, predictor=predictor):
-    ```
-
-    ```py
         payload = {
-    ```
-
-    ```py
             'instances': [
-    ```
-
-    ```py
                 {
-    ```
-
-    ```py
                   "features": [ x, y ]
-    ```
-
-    ```py
                 },
-    ```
-
-    ```py
             ]
-    ```
-
-    ```py
         }
-    ```
-
-    ```py
         raw_result = predictor.predict(
-    ```
-
-    ```py
             data=payload
-    ```
-
-    ```py
         )
-    ```
-
-    ```py
         return process_prediction_result(raw_result)
     ```
 
@@ -816,45 +468,15 @@
 
     ```py
     from time import sleep
-    ```
-
-    ```py
     def test_different_values(predictor=predictor):
-    ```
-
-    ```py
         for x in range(-3, 3+1):
-    ```
-
-    ```py
             for y in range(-3, 3+1):
-    ```
-
-    ```py
                 label = predict(
-    ```
-
-    ```py
                             x=x, 
-    ```
-
-    ```py
                             y=y, 
-    ```
-
-    ```py
                             predictor=predictor
-    ```
-
-    ```py
                         )
-    ```
-
-    ```py
                 print(f"x={x}, y={y}, label={label}")
-    ```
-
-    ```py
                 sleep(0.2)
     ```
 
@@ -872,61 +494,19 @@
 
     ```py
     import boto3
-    ```
-
-    ```py
     client = boto3.client(service_name="sagemaker")
-    ```
-
-    ```py
     def create_model(model_package_arn, 
-    ```
-
-    ```py
                      model_name, 
-    ```
-
-    ```py
                      role=role, 
-    ```
-
-    ```py
                      client=client):
-    ```
-
-    ```py
         container_list = [
-    ```
-
-    ```py
             {'ModelPackageName': model_package_arn}
-    ```
-
-    ```py
         ]
-    ```
-
-    ```py
         response = client.create_model(
-    ```
-
-    ```py
             ModelName = model_name,
-    ```
-
-    ```py
             ExecutionRoleArn = role,
-    ```
-
-    ```py
             Containers = container_list
-    ```
-
-    ```py
         )
-    ```
-
-    ```py
         return response["ModelArn"]
     ```
 
@@ -934,49 +514,16 @@
 
     ```py
     import string 
-    ```
-
-    ```py
     import random
-    ```
-
-    ```py
     def generate_random_string():
-    ```
-
-    ```py
         return ''.join(
-    ```
-
-    ```py
             random.sample(
-    ```
-
-    ```py
             string.ascii_uppercase,12)
-    ```
-
-    ```py
         )
-    ```
-
-    ```py
     model_name = f"ll-{generate_random_string()}"
-    ```
-
-    ```py
     model_arn = create_model(
-    ```
-
-    ```py
         model_package_arn=ll_package_arn,
-    ```
-
-    ```py
         model_name=model_name
-    ```
-
-    ```py
     )
     ```
 
@@ -984,61 +531,19 @@
 
     ```py
     def create_endpoint_config(
-    ```
-
-    ```py
             model_name, 
-    ```
-
-    ```py
             config_name, 
-    ```
-
-    ```py
             client=client):
-    ```
-
-    ```py
         response = client.create_endpoint_config(
-    ```
-
-    ```py
             EndpointConfigName = config_name,
-    ```
-
-    ```py
             ProductionVariants=[{
-    ```
-
-    ```py
                 'InstanceType': "ml.m5.xlarge",
-    ```
-
-    ```py
                 'InitialInstanceCount': 1,
-    ```
-
-    ```py
                 'InitialVariantWeight': 1,
-    ```
-
-    ```py
                 'ModelName': model_name,
-    ```
-
-    ```py
                 'VariantName': 'AllTraffic'
-    ```
-
-    ```py
             }]
-    ```
-
-    ```py
         )
-    ```
-
-    ```py
         return response["EndpointConfigArn"]
     ```
 
@@ -1048,21 +553,9 @@
 
     ```py
     config_name = f"config-{generate_random_string()}"
-    ```
-
-    ```py
     config_arn = create_endpoint_config(
-    ```
-
-    ```py
         model_name=model_name,
-    ```
-
-    ```py
         config_name=config_name
-    ```
-
-    ```py
     )
     ```
 
@@ -1070,17 +563,8 @@
 
     ```py
     response = client.update_endpoint(
-    ```
-
-    ```py
         EndpointName=predictor.endpoint_name,
-    ```
-
-    ```py
         EndpointConfigName=config_name
-    ```
-
-    ```py
     )
     ```
 
@@ -1094,9 +578,6 @@
 
     ```py
     print('Wait for update operation to complete')
-    ```
-
-    ```py
     sleep(60*5)
     ```
 
@@ -1110,25 +591,10 @@
 
     ```py
     predictor = Predictor(
-    ```
-
-    ```py
         endpoint_name=predictor.endpoint_name,
-    ```
-
-    ```py
         sagemaker_session=session,
-    ```
-
-    ```py
         serializer=JSONSerializer(),
-    ```
-
-    ```py
         deserializer=JSONDeserializer()
-    ```
-
-    ```py
     )
     ```
 
@@ -1136,33 +602,12 @@
 
     ```py
     payload = {
-    ```
-
-    ```py
         'instances': [
-    ```
-
-    ```py
             {
-    ```
-
-    ```py
               "features": [ 1.5, 2 ]
-    ```
-
-    ```py
             },
-    ```
-
-    ```py
         ]
-    ```
-
-    ```py
     }
-    ```
-
-    ```py
     predictor.predict(data=payload)
     ```
 
@@ -1192,9 +637,6 @@
 
     ```py
     endpoint_name = predictor.endpoint_name
-    ```
-
-    ```py
     %store endpoint_name
     ```
 
@@ -1236,17 +678,8 @@
 
     ```py
     %store -r s3_bucket
-    ```
-
-    ```py
     %store -r prefix
-    ```
-
-    ```py
     %store -r ll_package_arn
-    ```
-
-    ```py
     %store -r endpoint_name
     ```
 
@@ -1254,57 +687,18 @@
 
     ```py
     import sagemaker
-    ```
-
-    ```py
     from sagemaker import get_execution_role
-    ```
-
-    ```py
     from sagemaker.predictor import Predictor
-    ```
-
-    ```py
     from sagemaker.serializers import CSVSerializer
-    ```
-
-    ```py
     from sagemaker.deserializers import CSVDeserializer
-    ```
-
-    ```py
     session = sagemaker.Session()
-    ```
-
-    ```py
     role = get_execution_role()
-    ```
-
-    ```py
     predictor = Predictor(
-    ```
-
-    ```py
         endpoint_name=endpoint_name,
-    ```
-
-    ```py
         sagemaker_session=session,
-    ```
-
-    ```py
         role=role,
-    ```
-
-    ```py
         serializer=CSVSerializer(),
-    ```
-
-    ```py
         deserializer=CSVDeserializer()
-    ```
-
-    ```py
     )
     ```
 
@@ -1312,61 +706,19 @@
 
     ```py
     from sagemaker.model_monitor import DataCaptureConfig
-    ```
-
-    ```py
     base = f"s3://{s3_bucket}/{prefix}"
-    ```
-
-    ```py
     capture_upload_path = f"{base}/data-capture"
-    ```
-
-    ```py
     capture_config_dict = {
-    ```
-
-    ```py
         'enable_capture': True,
-    ```
-
-    ```py
         'sampling_percentage': 100,
-    ```
-
-    ```py
         'destination_s3_uri': capture_upload_path,
-    ```
-
-    ```py
         'kms_key_id': None,
-    ```
-
-    ```py
         'capture_options': ["REQUEST", "RESPONSE"],
-    ```
-
-    ```py
         'csv_content_types': ["text/csv"],
-    ```
-
-    ```py
         'json_content_types': ["application/json"]
-    ```
-
-    ```py
     }
-    ```
-
-    ```py
     data_capture_config = DataCaptureConfig(
-    ```
-
-    ```py
         **capture_config_dict
-    ```
-
-    ```py
     )
     ```
 
@@ -1376,17 +728,8 @@
 
     ```py
     %%time
-    ```
-
-    ```py
     predictor.update_data_capture_config(
-    ```
-
-    ```py
         data_capture_config=data_capture_config
-    ```
-
-    ```py
     )
     ```
 
@@ -1404,21 +747,9 @@
 
     ```py
     import random
-    ```
-
-    ```py
     def generate_random_payload():
-    ```
-
-    ```py
         x = random.randint(-5,5)
-    ```
-
-    ```py
         y = random.randint(-5,5)
-    ```
-
-    ```py
         return f"{x},{y}"
     ```
 
@@ -1426,41 +757,14 @@
 
     ```py
     def perform_good_input(predictor):
-    ```
-
-    ```py
         print("> PERFORM REQUEST WITH GOOD INPUT")
-    ```
-
-    ```py
         payload = generate_random_payload()
-    ```
-
-    ```py
         result = predictor.predict(data=payload)
-    ```
-
-    ```py
         print(result)
-    ```
-
-    ```py
     def perform_bad_input(predictor):
-    ```
-
-    ```py
         print("> PERFORM REQUEST WITH BAD INPUT")
-    ```
-
-    ```py
         payload = generate_random_payload() + ".50"
-    ```
-
-    ```py
         result = predictor.predict(data=payload)
-    ```
-
-    ```py
         print(result)
     ```
 
@@ -1484,33 +788,12 @@
 
     ```py
     from time import sleep
-    ```
-
-    ```py
     def generate_sample_requests(predictor):
-    ```
-
-    ```py
         for i in range(0, 2 * 240):
-    ```
-
-    ```py
             print(f"ITERATION # {i}")
-    ```
-
-    ```py
             perform_good_input(predictor)
-    ```
-
-    ```py
             perform_bad_input(predictor)
-    ```
-
-    ```py
             print("> SLEEPING FOR 30 SECONDS")
-    ```
-
-    ```py
             sleep(30)
     ```
 
@@ -1564,21 +847,9 @@
 
     ```py
     %store -r s3_bucket
-    ```
-
-    ```py
     %store -r prefix
-    ```
-
-    ```py
     %store -r ll_package_arn
-    ```
-
-    ```py
     %store -r endpoint_name
-    ```
-
-    ```py
     %store -r ll_package_arn
     ```
 
@@ -1586,41 +857,14 @@
 
     ```py
     import sagemaker
-    ```
-
-    ```py
     from sagemaker import get_execution_role
-    ```
-
-    ```py
     from sagemaker.predictor import Predictor
-    ```
-
-    ```py
     session = sagemaker.Session()
-    ```
-
-    ```py
     role = get_execution_role()
-    ```
-
-    ```py
     predictor = Predictor(
-    ```
-
-    ```py
         endpoint_name=endpoint_name,
-    ```
-
-    ```py
         sagemaker_session=session,
-    ```
-
-    ```py
         role=role
-    ```
-
-    ```py
     )
     ```
 
@@ -1628,13 +872,7 @@
 
     ```py
     %%bash
-    ```
-
-    ```py
     mkdir -p tmp
-    ```
-
-    ```py
     wget -O tmp/baseline.csv https://bit.ly/3td5vjx
     ```
 
@@ -1646,13 +884,7 @@
 
     ```py
     base = f's3://{s3_bucket}/{prefix}'
-    ```
-
-    ```py
     baseline_source_uri = f'{base}/baseline.csv'
-    ```
-
-    ```py
     baseline_output_uri = f"{base}/baseline-output"
     ```
 
@@ -1666,45 +898,15 @@
 
     ```py
     from sagemaker.model_monitor import DefaultModelMonitor
-    ```
-
-    ```py
     monitor_dict = {
-    ```
-
-    ```py
         'role': role,
-    ```
-
-    ```py
         'instance_count': 1,
-    ```
-
-    ```py
         'instance_type': 'ml.m5.large',
-    ```
-
-    ```py
         'volume_size_in_gb': 10,
-    ```
-
-    ```py
         'max_runtime_in_seconds': 1800,
-    ```
-
-    ```py
     }
-    ```
-
-    ```py
     default_monitor = DefaultModelMonitor(
-    ```
-
-    ```py
         **monitor_dict
-    ```
-
-    ```py
     )
     ```
 
@@ -1718,57 +920,18 @@
 
     ```py
     %%time
-    ```
-
-    ```py
     from sagemaker.model_monitor import dataset_format
-    ```
-
-    ```py
     dataset_format = dataset_format.DatasetFormat.csv(
-    ```
-
-    ```py
         header=True
-    ```
-
-    ```py
     )
-    ```
-
-    ```py
     baseline_dict = {
-    ```
-
-    ```py
         'baseline_dataset': baseline_source_uri,
-    ```
-
-    ```py
         'dataset_format': dataset_format,
-    ```
-
-    ```py
         'output_s3_uri': baseline_output_uri,
-    ```
-
-    ```py
         'wait': True
-    ```
-
-    ```py
     }
-    ```
-
-    ```py
     default_monitor.suggest_baseline(
-    ```
-
-    ```py
         **baseline_dict
-    ```
-
-    ```py
     )
     ```
 
@@ -1782,17 +945,8 @@
 
     ```py
     import pandas as pd
-    ```
-
-    ```py
     def flatten(input_dict):
-    ```
-
-    ```py
         df = pd.json_normalize(input_dict)
-    ```
-
-    ```py
         return df.head()
     ```
 
@@ -1800,17 +954,8 @@
 
     ```py
     baseline_job = default_monitor.latest_baselining_job
-    ```
-
-    ```py
     stats = baseline_job.baseline_statistics()
-    ```
-
-    ```py
     schema_dict = stats.body_dict["features"]
-    ```
-
-    ```py
     flatten(schema_dict)
     ```
 
@@ -1826,13 +971,7 @@
 
     ```py
     constraints = baseline_job.suggested_constraints()
-    ```
-
-    ```py
     constraints_dict = constraints.body_dict["features"]
-    ```
-
-    ```py
     flatten(constraints_dict)
     ```
 
@@ -1852,13 +991,7 @@
 
     ```py
     constraints.body_dict['features'][1]['inferred_type'] = 'Integral'
-    ```
-
-    ```py
     constraints.body_dict['features'][2]['inferred_type'] = 'Integral'
-    ```
-
-    ```py
     constraints.save()
     ```
 
@@ -1872,37 +1005,13 @@
 
     ```py
     from sagemaker.model_monitor import (
-    ```
-
-    ```py
         CronExpressionGenerator
-    ```
-
-    ```py
     )
-    ```
-
-    ```py
     from string import ascii_uppercase
-    ```
-
-    ```py
     import random
-    ```
-
-    ```py
     def generate_label():
-    ```
-
-    ```py
         chars = random.choices(ascii_uppercase, k=5)
-    ```
-
-    ```py
         output = 'monitor-' + ''.join(chars)
-    ```
-
-    ```py
         return output
     ```
 
@@ -1910,13 +1019,7 @@
 
     ```py
     s3_report_path = f'{base}/report'
-    ```
-
-    ```py
     baseline_statistics = default_monitor.baseline_statistics()
-    ```
-
-    ```py
     constraints = default_monitor.suggested_constraints()
     ```
 
@@ -1934,49 +1037,16 @@
 
     ```py
     schedule_dict = {
-    ```
-
-    ```py
         'monitor_schedule_name': generate_label(),
-    ```
-
-    ```py
         'endpoint_input': predictor.endpoint,
-    ```
-
-    ```py
         'output_s3_uri': s3_report_path,
-    ```
-
-    ```py
         'statistics': baseline_statistics,
-    ```
-
-    ```py
         'constraints': constraints,
-    ```
-
-    ```py
         'schedule_cron_expression': cron_expression,
-    ```
-
-    ```py
         'enable_cloudwatch_metrics': True
-    ```
-
-    ```py
     }
-    ```
-
-    ```py
     default_monitor.create_monitoring_schedule(
-    ```
-
-    ```py
         **schedule_dict
-    ```
-
-    ```py
     )
     ```
 
@@ -2004,9 +1074,6 @@
 
     ```py
     from time import sleep
-    ```
-
-    ```py
     sleep(300)
     ```
 
@@ -2018,21 +1085,9 @@
 
     ```py
     dm = default_monitor
-    ```
-
-    ```py
     monitoring_violations = \
-    ```
-
-    ```py
     dm.latest_monitoring_constraint_violations()
-    ```
-
-    ```py
     monitoring_statistics = \
-    ```
-
-    ```py
     dm.latest_monitoring_statistics()
     ```
 
@@ -2040,77 +1095,23 @@
 
     ```py
     %%time
-    ```
-
-    ```py
     from time import sleep
-    ```
-
-    ```py
     def get_violations():
-    ```
-
-    ```py
         return \
-    ```
-
-    ```py
         dm.latest_monitoring_constraint_violations()
-    ```
-
-    ```py
     def loop_and_load_violations():
-    ```
-
-    ```py
         for i in range(0, 2 * 120):
-    ```
-
-    ```py
             print(f"ITERATION # {i}")
-    ```
-
-    ```py
             print("> SLEEPING FOR 60 SECONDS")
-    ```
-
-    ```py
             sleep(60)
-    ```
-
-    ```py
             try:
-    ```
-
-    ```py
                 v = get_violations()
-    ```
-
-    ```py
                 violations = v
-    ```
-
-    ```py
                 if violations:
-    ```
-
-    ```py
                     return violations
-    ```
-
-    ```py
             except:
-    ```
-
-    ```py
                 pass
-    ```
-
-    ```py
         print("> DONE!")
-    ```
-
-    ```py
         return None              
     ```
 
@@ -2136,9 +1137,6 @@
 
     ```py
     violations = dm.latest_monitoring_constraint_violations()
-    ```
-
-    ```py
     violations.__dict__
     ```
 
@@ -2162,9 +1160,6 @@
 
     ```py
     monitoring_statistics = dm.latest_monitoring_statistics()
-    ```
-
-    ```py
     monitoring_statistics.__dict__
     ```
 
@@ -2218,9 +1213,6 @@
 
     ```py
     %store -r s3_bucket
-    ```
-
-    ```py
     %store -r capture_upload_path
     ```
 
@@ -2232,29 +1224,11 @@
 
     ```py
     results = !aws s3 ls {capture_upload_path} --recursive
-    ```
-
-    ```py
     processed = []
-    ```
-
-    ```py
     for result in results:
-    ```
-
-    ```py
         partial = result.split()[-1]
-    ```
-
-    ```py
         path = f"s3://{s3_bucket}/{partial}"
-    ```
-
-    ```py
         processed.append(path)
-    ```
-
-    ```py
     processed
     ```
 
@@ -2268,13 +1242,7 @@
 
     ```py
     for index, path in enumerate(processed):
-    ```
-
-    ```py
         print(index, path)
-    ```
-
-    ```py
         !aws s3 cp {path} captured/{index}.jsonl
     ```
 
@@ -2282,25 +1250,10 @@
 
     ```py
     import json
-    ```
-
-    ```py
     def load_json_file(path):
-    ```
-
-    ```py
         output = []
-    ```
-
-    ```py
         with open(path) as f:
-    ```
-
-    ```py
             output = [json.loads(line) for line in f]
-    ```
-
-    ```py
         return output
     ```
 
@@ -2308,33 +1261,12 @@
 
     ```py
     all_json = []
-    ```
-
-    ```py
     for index, _ in enumerate(processed):
-    ```
-
-    ```py
         print(f"INDEX: {index}")
-    ```
-
-    ```py
         new_records = load_json_file(
-    ```
-
-    ```py
             f"captured/{index}.jsonl"
-    ```
-
-    ```py
         )
-    ```
-
-    ```py
         all_json = all_json + new_records
-    ```
-
-    ```py
     all_json
     ```
 
@@ -2350,13 +1282,7 @@
 
     ```py
     from flatten_dict import flatten
-    ```
-
-    ```py
     first = flatten(all_json[0], reducer='dot')
-    ```
-
-    ```py
     first
     ```
 
@@ -2384,21 +1310,9 @@
 
     ```py
     flattened_json = []
-    ```
-
-    ```py
     for entry in all_json:
-    ```
-
-    ```py
         result = flatten(entry, reducer='dot')
-    ```
-
-    ```py
         flattened_json.append(result)
-    ```
-
-    ```py
     flattened_json
     ```
 
@@ -2406,13 +1320,7 @@
 
     ```py
     import pandas as pd
-    ```
-
-    ```py
     df = pd.DataFrame(flattened_json)
-    ```
-
-    ```py
     df
     ```
 
@@ -2440,9 +1348,6 @@
 
     ```py
     clean_df = df[['predicted_label', 'x', 'y']]
-    ```
-
-    ```py
     clean_df.head()
     ```
 
@@ -2458,25 +1363,10 @@
 
     ```py
     clean_df = clean_df.astype({
-    ```
-
-    ```py
         'predicted_label': 'int',
-    ```
-
-    ```py
         'x': 'float',
-    ```
-
-    ```py
         'y': 'float',
-    ```
-
-    ```py
     })
-    ```
-
-    ```py
     clean_df.head()
     ```
 
@@ -2522,41 +1412,14 @@
 
     ```py
     import sagemaker
-    ```
-
-    ```py
     from sagemaker import get_execution_role
-    ```
-
-    ```py
     from sagemaker.predictor import Predictor
-    ```
-
-    ```py
     session = sagemaker.Session()
-    ```
-
-    ```py
     role = get_execution_role()
-    ```
-
-    ```py
     predictor = Predictor(
-    ```
-
-    ```py
         endpoint_name=endpoint_name,
-    ```
-
-    ```py
         sagemaker_session=session,
-    ```
-
-    ```py
         role=role
-    ```
-
-    ```py
     )
     ```
 
@@ -2564,13 +1427,7 @@
 
     ```py
     monitors = predictor.list_monitors()
-    ```
-
-    ```py
     for monitor in monitors:
-    ```
-
-    ```py
         print(monitor.__dict__)
     ```
 
@@ -2580,9 +1437,6 @@
 
     ```py
     for monitor in monitors:
-    ```
-
-    ```py
         monitor.delete_monitoring_schedule()
     ```
 

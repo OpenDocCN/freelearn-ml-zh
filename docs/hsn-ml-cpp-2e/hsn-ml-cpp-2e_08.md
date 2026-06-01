@@ -503,9 +503,6 @@
     auto y = InitializeMatrix(n, n_factors);
     auto x = InitializeMatrix(m, n_factors);
     y matrix corresponds to user preferences, while the x matrix corresponds to the item parameters. We’ve also defined the number of factors we’ll be interested in after decomposition. These matrices are initialized with random values and normalized. Such an approach is used to speed up algorithm convergence. This can be seen in the following code snippet:
-    ```
-
-    ```py
     Matrix InitializeMatrix(Eigen::Index rows,
                             Eigen::Index cols) {
       Matrix mat = Matrix::Random(rows, cols).array().abs();

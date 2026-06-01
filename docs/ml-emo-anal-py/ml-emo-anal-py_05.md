@@ -62,57 +62,18 @@
 
     ```py
     class TWEET:
-    ```
-
-    ```py
         def __init__(self, id=False, src=False,
-    ```
-
-    ```py
                      text=False, tf=False,
-    ```
-
-    ```py
                      scores=False, tokens=False,
-    ```
-
-    ```py
                      args=False):
-    ```
-
-    ```py
             self.id = id
-    ```
-
-    ```py
             self.src = src
-    ```
-
-    ```py
             self.text = text
-    ```
-
-    ```py
             self.GS = scores
-    ```
-
-    ```py
             self.tokens = tokens
-    ```
-
-    ```py
             self.tf = ormalize(tf)
-    ```
-
-    ```py
             self.ARGS = args
-    ```
-
-    ```py
         def __repr__(self):
-    ```
-
-    ```py
             return self.text
     ```
 
@@ -120,29 +81,11 @@
 
     ```py
         def makeIndex(self):
-    ```
-
-    ```py
             index = {}
-    ```
-
-    ```py
             for tweet in self.tweets:
-    ```
-
-    ```py
                 for token in tweet.tokens:
-    ```
-
-    ```py
                     if not token in index
-    ```
-
-    ```py
                         index[token] = len(index)
-    ```
-
-    ```py
             return index
     ```
 

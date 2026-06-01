@@ -120,65 +120,20 @@ SETTINGS (S3_BUCKET 'bucket name');
 
     ```py
     create schema chapter8_kmeans_clustering;
-    ```
-
-    ```py
     create table chapter8_kmeans_clustering.housing_prices (
-    ```
-
-    ```py
         longitude decimal(10,2),
-    ```
-
-    ```py
         latitude decimal(10,2),
-    ```
-
-    ```py
         housing_median_age integer,
-    ```
-
-    ```py
         total_rooms integer,
-    ```
-
-    ```py
         total_bedrooms integer,
-    ```
-
-    ```py
         population integer,
-    ```
-
-    ```py
         households integer,
-    ```
-
-    ```py
         median_income decimal(10,6),
-    ```
-
-    ```py
         median_house_value integer,
-    ```
-
-    ```py
         ocean_proximity character varying (50)
-    ```
-
-    ```py
     )
-    ```
-
-    ```py
     diststyle auto;
-    ```
-
-    ```py
     copy chapter8_kmeans_clustering.housing_prices from 's3://packt-serverless-ml-redshift/chapter08/kmeans/housing_prices.csv'
-    ```
-
-    ```py
     iam_role default format as csv delimiter ',' quote '"' ignoreheader 1 region as 'eu-west-1';
     ```
 
@@ -188,9 +143,6 @@ SETTINGS (S3_BUCKET 'bucket name');
 
     ```py
     select * from chapter8_kmeans_clustering.housing_prices
-    ```
-
-    ```py
     limit 10;
     ```
 

@@ -263,9 +263,6 @@ arn:aws:sts::1234567890:assumed-role/kubeflow-on-eks/i-abcdefgh12345
 
     ```py
     wget -O prerequisites.zip https://bit.ly/3ByyDGV
-    ```
-
-    ```py
     unzip prerequisites.zip
     ```
 
@@ -291,9 +288,6 @@ arn:aws:sts::1234567890:assumed-role/kubeflow-on-eks/i-abcdefgh12345
 
     ```py
     cd ch10_prerequisites
-    ```
-
-    ```py
     chmod +x *.sh
     ```
 
@@ -349,13 +343,7 @@ Version: {Version:kustomize/v3.2.3 GitCommit:f8412aa3d39f32151525aff97a351288f5a
 
     ```py
     . ~/.bash_completion
-    ```
-
-    ```py
     . ~/.bash_profile
-    ```
-
-    ```py
     . ~/.bashrc
     ```
 
@@ -365,13 +353,7 @@ Version: {Version:kustomize/v3.2.3 GitCommit:f8412aa3d39f32151525aff97a351288f5a
 
     ```py
     export AWS_REGION="us-west-2"
-    ```
-
-    ```py
     echo "export AWS_REGION=${AWS_REGION}" | tee -a ~/.bash_profile
-    ```
-
-    ```py
     aws configure set default.region ${AWS_REGION}
     ```
 
@@ -411,13 +393,7 @@ Version: {Version:kustomize/v3.2.3 GitCommit:f8412aa3d39f32151525aff97a351288f5a
 
     ```py
     cd ~/environment
-    ```
-
-    ```py
     mkdir ch10
-    ```
-
-    ```py
     cd ch10
     ```
 
@@ -441,57 +417,18 @@ Version: {Version:kustomize/v3.2.3 GitCommit:f8412aa3d39f32151525aff97a351288f5a
 
     ```py
     ---
-    ```
-
-    ```py
     apiVersion: eksctl.io/v1alpha5
-    ```
-
-    ```py
     kind: ClusterConfig
-    ```
-
-    ```py
     metadata:
-    ```
-
-    ```py
       name: kubeflow-eks-000
-    ```
-
-    ```py
       region: us-west-2
-    ```
-
-    ```py
       version: "1.21"
-    ```
-
-    ```py
     availabilityZones: ["us-west-2a", "us-west-2b", "us-west-2c", "us-west-2d"]
-    ```
-
-    ```py
     managedNodeGroups:
-    ```
-
-    ```py
     - name: nodegroup
-    ```
-
-    ```py
       desiredCapacity: 5
-    ```
-
-    ```py
       instanceType: m5.xlarge
-    ```
-
-    ```py
       ssh:
-    ```
-
-    ```py
         enableSsm: true
     ```
 
@@ -549,9 +486,6 @@ Version: {Version:kustomize/v3.2.3 GitCommit:f8412aa3d39f32151525aff97a351288f5a
 
     ```py
     CLUSTER_NAME=kubeflow-eks-000
-    ```
-
-    ```py
     CLUSTER_REGION=us-west-2
     ```
 
@@ -579,25 +513,10 @@ Version: {Version:kustomize/v3.2.3 GitCommit:f8412aa3d39f32151525aff97a351288f5a
 
     ```py
     export KUBEFLOW_VERSION=v1.5.1
-    ```
-
-    ```py
     export AWS_VERSION=v1.5.1-aws-b1.0.0
-    ```
-
-    ```py
     git clone https://github.com/awslabs/kubeflow-manifests.git && cd kubeflow-manifests
-    ```
-
-    ```py
     git checkout ${AWS_VERSION}
-    ```
-
-    ```py
     git clone --branch ${KUBEFLOW_VERSION} \
-    ```
-
-    ```py
     https://github.com/kubeflow/manifests.git upstream
     ```
 
@@ -623,25 +542,10 @@ Version: {Version:kustomize/v3.2.3 GitCommit:f8412aa3d39f32151525aff97a351288f5a
 
     ```py
     ns_array=(kubeflow kubeflow-user-example-com kserve cert-manager istio-system auth knative-eventing knative-serving)
-    ```
-
-    ```py
     for i in ${ns_array[@]}; do 
-    ```
-
-    ```py
       echo "[+] kubectl get pods -n $i"
-    ```
-
-    ```py
       kubectl get pods -n $i; 
-    ```
-
-    ```py
       echo "---"
-    ```
-
-    ```py
     done
     ```
 
@@ -797,17 +701,8 @@ Version: {Version:kustomize/v3.2.3 GitCommit:f8412aa3d39f32151525aff97a351288f5a
 
     ```py
     def process_data(...):
-    ```
-
-    ```py
         import pandas as pd    
-    ```
-
-    ```py
         df_all_data = pd.read_csv(df_all_data_path)
-    ```
-
-    ```py
         # and so on...
     ```
 
@@ -815,33 +710,12 @@ Version: {Version:kustomize/v3.2.3 GitCommit:f8412aa3d39f32151525aff97a351288f5a
 
     ```py
     def evaluate_model(
-    ```
-
-    ```py
         model_path: InputPath(str),
-    ```
-
-    ```py
         df_test_data_path: InputPath(str)):
-    ```
-
-    ```py
         import pandas as pd
-    ```
-
-    ```py
         from joblib import load
-    ```
-
-    ```py
         df_test_data = pd.read_csv(df_test_data_path)
-    ```
-
-    ```py
         model = load(model_path)
-    ```
-
-    ```py
         # and so on...
     ```
 
@@ -849,17 +723,8 @@ Version: {Version:kustomize/v3.2.3 GitCommit:f8412aa3d39f32151525aff97a351288f5a
 
     ```py
     process_data_op = create_component_from_func(
-    ```
-
-    ```py
         process_data, 
-    ```
-
-    ```py
         packages_to_install=['pandas', 'sklearn']
-    ```
-
-    ```py
     )
     ```
 
@@ -899,17 +764,8 @@ Version: {Version:kustomize/v3.2.3 GitCommit:f8412aa3d39f32151525aff97a351288f5a
 
     ```py
     import kfp
-    ```
-
-    ```py
     from kfp import dsl
-    ```
-
-    ```py
     from kfp.components import InputPath, OutputPath
-    ```
-
-    ```py
     from kfp.components import create_component_from_func
     ```
 
@@ -917,41 +773,14 @@ Version: {Version:kustomize/v3.2.3 GitCommit:f8412aa3d39f32151525aff97a351288f5a
 
     ```py
     def download_dataset(
-    ```
-
-    ```py
         df_all_data_path: OutputPath(str)):
-    ```
-
-    ```py
         import pandas as pd
-    ```
-
-    ```py
         url="https://bit.ly/3POP8CI"
-    ```
-
-    ```py
         df_all_data = pd.read_csv(url)
-    ```
-
-    ```py
         print(df_all_data)
-    ```
-
-    ```py
         df_all_data.to_csv(
-    ```
-
-    ```py
             df_all_data_path, 
-    ```
-
-    ```py
             header=True, 
-    ```
-
-    ```py
             index=False)
     ```
 
@@ -959,133 +788,37 @@ Version: {Version:kustomize/v3.2.3 GitCommit:f8412aa3d39f32151525aff97a351288f5a
 
     ```py
     def process_data(
-    ```
-
-    ```py
         df_all_data_path: InputPath(str), 
-    ```
-
-    ```py
         df_training_data_path: OutputPath(str), 
-    ```
-
-    ```py
         df_test_data_path: OutputPath(str)):
-    ```
-
-    ```py
         import pandas as pd
-    ```
-
-    ```py
         from sklearn.model_selection import \
-    ```
-
-    ```py
             train_test_split
-    ```
-
-    ```py
         df_all_data = pd.read_csv(df_all_data_path)
-    ```
-
-    ```py
         print(df_all_data)
-    ```
-
-    ```py
         mem = 'management_experience_months'
-    ```
-
-    ```py
         ms = 'monthly_salary'
-    ```
-
-    ```py
         X = df_all_data[mem].values 
-    ```
-
-    ```py
         y = df_all_data[ms].values
-    ```
-
-    ```py
         X_train, X_test, y_train, y_test = \
-    ```
-
-    ```py
             train_test_split(
-    ```
-
-    ```py
                 X, y, test_size=0.3, random_state=0
-    ```
-
-    ```py
             )
-    ```
-
-    ```py
         df_training_data = pd.DataFrame({ 
-    ```
-
-    ```py
             'monthly_salary': y_train, 
-    ```
-
-    ```py
             'management_experience_months': X_train
-    ```
-
-    ```py
         })
-    ```
-
-    ```py
         df_training_data.to_csv(
-    ```
-
-    ```py
             df_training_data_path, 
-    ```
-
-    ```py
             header=True, index=False
-    ```
-
-    ```py
         )
-    ```
-
-    ```py
         df_test_data = pd.DataFrame({ 
-    ```
-
-    ```py
             'monthly_salary': y_test, 
-    ```
-
-    ```py
             'management_experience_months': X_test
-    ```
-
-    ```py
         })
-    ```
-
-    ```py
         df_test_data.to_csv(
-    ```
-
-    ```py
             df_test_data_path, 
-    ```
-
-    ```py
             header=True, index=False
-    ```
-
-    ```py
         )
     ```
 
@@ -1093,77 +826,23 @@ Version: {Version:kustomize/v3.2.3 GitCommit:f8412aa3d39f32151525aff97a351288f5a
 
     ```py
     def train_model(
-    ```
-
-    ```py
         df_training_data_path: InputPath(str),
-    ```
-
-    ```py
         model_path: OutputPath(str)):
-    ```
-
-    ```py
         import pandas as pd
-    ```
-
-    ```py
         from sklearn.linear_model import LinearRegression
-    ```
-
-    ```py
         from joblib import dump
-    ```
-
-    ```py
         df_training_data = pd.read_csv(
-    ```
-
-    ```py
             df_training_data_path
-    ```
-
-    ```py
         )
-    ```
-
-    ```py
         print(df_training_data)
-    ```
-
-    ```py
         mem = 'management_experience_months'
-    ```
-
-    ```py
         X_train = df_training_data[mem].values
-    ```
-
-    ```py
         ms = 'monthly_salary'
-    ```
-
-    ```py
         y_train = df_training_data[ms].values
-    ```
-
-    ```py
         model = LinearRegression().fit(
-    ```
-
-    ```py
             X_train.reshape(-1, 1), y_train
-    ```
-
-    ```py
         )
-    ```
-
-    ```py
         print(model)
-    ```
-
-    ```py
         dump(model, model_path)
     ```
 
@@ -1171,49 +850,16 @@ Version: {Version:kustomize/v3.2.3 GitCommit:f8412aa3d39f32151525aff97a351288f5a
 
     ```py
     def evaluate_model(
-    ```
-
-    ```py
         model_path: InputPath(str),
-    ```
-
-    ```py
         df_test_data_path: InputPath(str)):
-    ```
-
-    ```py
         import pandas as pd
-    ```
-
-    ```py
         from joblib import load
-    ```
-
-    ```py
         df_test_data = pd.read_csv(df_test_data_path)
-    ```
-
-    ```py
         mem = 'management_experience_months'
-    ```
-
-    ```py
         ms = 'monthly_salary'
-    ```
-
-    ```py
         X_test = df_test_data[mem].values
-    ```
-
-    ```py
         y_test = df_test_data[ms].values
-    ```
-
-    ```py
         model = load(model_path)
-    ```
-
-    ```py
         print(model.score(X_test.reshape(-1, 1), y_test))
     ```
 
@@ -1221,21 +867,9 @@ Version: {Version:kustomize/v3.2.3 GitCommit:f8412aa3d39f32151525aff97a351288f5a
 
     ```py
     def perform_sample_prediction(
-    ```
-
-    ```py
         model_path: InputPath(str)):
-    ```
-
-    ```py
         from joblib import load
-    ```
-
-    ```py
         model = load(model_path)
-    ```
-
-    ```py
         print(model.predict([[42]])[0])
     ```
 
@@ -1243,101 +877,29 @@ Version: {Version:kustomize/v3.2.3 GitCommit:f8412aa3d39f32151525aff97a351288f5a
 
     ```py
     download_dataset_op = create_component_from_func(
-    ```
-
-    ```py
         download_dataset, 
-    ```
-
-    ```py
         packages_to_install=['pandas']
-    ```
-
-    ```py
     )
-    ```
-
-    ```py
     process_data_op = create_component_from_func(
-    ```
-
-    ```py
         process_data, 
-    ```
-
-    ```py
         packages_to_install=['pandas', 'sklearn']
-    ```
-
-    ```py
     )
-    ```
-
-    ```py
     train_model_op = create_component_from_func(
-    ```
-
-    ```py
         train_model, 
-    ```
-
-    ```py
         packages_to_install=[
-    ```
-
-    ```py
             'pandas', 'sklearn', 'joblib'
-    ```
-
-    ```py
         ]
-    ```
-
-    ```py
     )
-    ```
-
-    ```py
     evaluate_model_op = create_component_from_func(
-    ```
-
-    ```py
         evaluate_model, 
-    ```
-
-    ```py
         packages_to_install=[
-    ```
-
-    ```py
             'pandas', 'joblib', 'sklearn'
-    ```
-
-    ```py
         ]
-    ```
-
-    ```py
     )
-    ```
-
-    ```py
     perform_sample_prediction_op = \
-    ```
-
-    ```py
         create_component_from_func(
-    ```
-
-    ```py
             perform_sample_prediction, 
-    ```
-
-    ```py
             packages_to_install=['joblib', 'sklearn']
-    ```
-
-    ```py
         )
     ```
 
@@ -1345,85 +907,25 @@ Version: {Version:kustomize/v3.2.3 GitCommit:f8412aa3d39f32151525aff97a351288f5a
 
     ```py
     @dsl.pipeline(
-    ```
-
-    ```py
         name='Basic pipeline',
-    ```
-
-    ```py
         description='Basic pipeline'
-    ```
-
-    ```py
     )
-    ```
-
-    ```py
     def basic_pipeline():
-    ```
-
-    ```py
         DOWNLOAD_DATASET = download_dataset_op()
-    ```
-
-    ```py
         PROCESS_DATA = process_data_op(
-    ```
-
-    ```py
             DOWNLOAD_DATASET.output
-    ```
-
-    ```py
         )
-    ```
-
-    ```py
         TRAIN_MODEL = train_model_op(
-    ```
-
-    ```py
             PROCESS_DATA.outputs['df_training_data']
-    ```
-
-    ```py
         )
-    ```
-
-    ```py
         EVALUATE_MODEL = evaluate_model_op(
-    ```
-
-    ```py
             TRAIN_MODEL.outputs['model'], 
-    ```
-
-    ```py
             PROCESS_DATA.outputs['df_test_data']
-    ```
-
-    ```py
         )
-    ```
-
-    ```py
         PERFORM_SAMPLE_PREDICTION = \
-    ```
-
-    ```py
             perform_sample_prediction_op(
-    ```
-
-    ```py
                 TRAIN_MODEL.outputs['model']
-    ```
-
-    ```py
             )
-    ```
-
-    ```py
         PERFORM_SAMPLE_PREDICTION.after(EVALUATE_MODEL)
     ```
 
@@ -1431,17 +933,8 @@ Version: {Version:kustomize/v3.2.3 GitCommit:f8412aa3d39f32151525aff97a351288f5a
 
     ```py
     kfp.compiler.Compiler().compile(
-    ```
-
-    ```py
         basic_pipeline, 
-    ```
-
-    ```py
         'basic_pipeline.yaml'
-    ```
-
-    ```py
     )
     ```
 
@@ -1491,13 +984,7 @@ Version: {Version:kustomize/v3.2.3 GitCommit:f8412aa3d39f32151525aff97a351288f5a
 
     ```py
     cd ~/environment/ch10/kubeflow-manifests/
-    ```
-
-    ```py
     cd deployments/vanilla/
-    ```
-
-    ```py
     kustomize build . | kubectl delete -f -
     ```
 

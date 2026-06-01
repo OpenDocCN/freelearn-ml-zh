@@ -148,13 +148,7 @@
 
     ```py
     ...
-    ```
-
-    ```py
     python3 -m pip install "aws-parallelcluster" --upgrade –-user
-    ```
-
-    ```py
     ...
     ```
 
@@ -162,29 +156,11 @@
 
     ```py
     ...
-    ```
-
-    ```py
     curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.38.0/install.sh | bash
-    ```
-
-    ```py
     chmod ug+x ~/.nvm/nvm.sh
-    ```
-
-    ```py
     source ~/.nvm/nvm.sh
-    ```
-
-    ```py
     nvm install --lts
-    ```
-
-    ```py
     node –version
-    ```
-
-    ```py
     ...
     ```
 
@@ -192,17 +168,8 @@
 
     ```py
     pcluster version
-    ```
-
-    ```py
     {
-    ```
-
-    ```py
         "version": "3.1.3"
-    ```
-
-    ```py
     }
     ```
 
@@ -355,41 +322,14 @@ pcluster list-clusters --query 'clusters[?clusterName==`mycluster`]'
 
     ```py
     pcluster ssh -n mycluster -i pcluster.pem
-    ```
-
-    ```py
     The authenticity of host '3.135.195.149 (3.135.195.149)' can't be established.
-    ```
-
-    ```py
     ECDSA key fingerprint is SHA256:DZPeIcVRpZDg3VMYhA+2zAvEoLnD3gI6mLVkMPkyg90.
-    ```
-
-    ```py
     ECDSA key fingerprint is MD5:87:16:df:e7:26:f5:a0:da:a8:3a:7c:c4:c8:92:60:34.
-    ```
-
-    ```py
     Are you sure you want to continue connecting (yes/no)? yes
-    ```
-
-    ```py
     Warning: Permanently added '3.135.195.149' (ECDSA) to the list of known hosts.
-    ```
-
-    ```py
     Last login: Sun May 15 22:36:41 2022
-    ```
-
-    ```py
     __|  __|_  )
-    ```
-
-    ```py
            _|  (     /   Amazon Linux 2 AMI
-    ```
-
-    ```py
           ___|\___|___|
     ```
 
@@ -397,17 +337,8 @@ pcluster list-clusters --query 'clusters[?clusterName==`mycluster`]'
 
     ```py
     ...
-    ```
-
-    ```py
     wget https://sourceforge.net/projects/openfoam/files/v2012/OpenFOAM-v2012.tgz
-    ```
-
-    ```py
     wget https://sourceforge.net/projects/openfoam/files/v2012/ThirdParty-v2012.tgz
-    ```
-
-    ```py
     ...
     ```
 
@@ -415,17 +346,8 @@ pcluster list-clusters --query 'clusters[?clusterName==`mycluster`]'
 
     ```py
     ...
-    ```
-
-    ```py
     tar -xf OpenFOAM-v2012.tgz
-    ```
-
-    ```py
     tar -xf ThirdParty-v2012.tgz
-    ```
-
-    ```py
     ...
     ```
 
@@ -433,21 +355,9 @@ pcluster list-clusters --query 'clusters[?clusterName==`mycluster`]'
 
     ```py
     ...
-    ```
-
-    ```py
     cd OpenFOAM-v2012
-    ```
-
-    ```py
     export WM_NCOMPPROCS=36
-    ```
-
-    ```py
     ./Allwmake
-    ```
-
-    ```py
     ...
     ```
 
@@ -610,9 +520,6 @@ mpirun -np $SLURM_NTASKS simpleFoam -parallel  -decomposeParDict system/decomp
 
     ```py
     echo $FOAM_TUTORIALS
-    ```
-
-    ```py
     /opt/openfoam9/tutorials
     ```
 

@@ -205,13 +205,7 @@ predictor = model.deploy(
 
     ```py
     import IPython
-    ```
-
-    ```py
     kernel = IPython.Application.instance().kernel
-    ```
-
-    ```py
     kernel.do_shutdown(True)
     ```
 
@@ -221,17 +215,8 @@ predictor = model.deploy(
 
     ```py
     from transformers import AutoModelForSequenceClassification as AMSC
-    ```
-
-    ```py
     pretrained = "distilbert-base-uncased-finetuned-sst-2-english"
-    ```
-
-    ```py
     model = AMSC.from_pretrained(pretrained)
-    ```
-
-    ```py
     model.save_pretrained(save_directory=".")
     ```
 
@@ -249,21 +234,9 @@ predictor = model.deploy(
 
     ```py
     import tarfile
-    ```
-
-    ```py
     tar = tarfile.open("model.tar.gz", "w:gz")
-    ```
-
-    ```py
     tar.add("pytorch_model.bin")
-    ```
-
-    ```py
     tar.add("config.json")
-    ```
-
-    ```py
     tar.close()
     ```
 
@@ -271,13 +244,7 @@ predictor = model.deploy(
 
     ```py
     %%bash
-    ```
-
-    ```py
     rm pytorch_model.bin
-    ```
-
-    ```py
     rm config.json
     ```
 
@@ -285,9 +252,6 @@ predictor = model.deploy(
 
     ```py
     s3_bucket = "<INSERT S3 BUCKET NAME HERE>"
-    ```
-
-    ```py
     prefix = "chapter07"
     ```
 
@@ -305,13 +269,7 @@ predictor = model.deploy(
 
     ```py
     model_data = "s3://{}/{}/model/model.tar.gz".format(
-    ```
-
-    ```py
         s3_bucket, prefix
-    ```
-
-    ```py
     )
     ```
 
@@ -327,13 +285,7 @@ predictor = model.deploy(
 
     ```py
     %store model_data
-    ```
-
-    ```py
     %store s3_bucket
-    ```
-
-    ```py
     %store prefix
     ```
 
@@ -397,29 +349,11 @@ predictor = model.deploy(
 
     ```py
     import json
-    ```
-
-    ```py
     from transformers import AutoModelForSequenceClassification as AMSC
-    ```
-
-    ```py
     from transformers import Trainer
-    ```
-
-    ```py
     from transformers import TrainingArguments
-    ```
-
-    ```py
     from torch.nn import functional as F
-    ```
-
-    ```py
     from transformers import AutoTokenizer
-    ```
-
-    ```py
     from time import sleep
     ```
 
@@ -439,13 +373,7 @@ predictor = model.deploy(
 
     ```py
     def model_fn(model_dir):
-    ```
-
-    ```py
         model = AMSC.from_pretrained(model_dir)
-    ```
-
-    ```py
         return model
     ```
 
@@ -455,45 +383,15 @@ predictor = model.deploy(
 
     ```py
     def humanize_prediction(output):
-    ```
-
-    ```py
         class_a, class_b = F.softmax(
-    ```
-
-    ```py
             output[0][0], 
-    ```
-
-    ```py
             dim = 0
-    ```
-
-    ```py
         ).tolist()
-    ```
-
-    ```py
         prediction = "-"
-    ```
-
-    ```py
         if class_a > class_b:
-    ```
-
-    ```py
             prediction = "NEGATIVE"
-    ```
-
-    ```py
         else:
-    ```
-
-    ```py
             prediction = "POSITIVE"
-    ```
-
-    ```py
         return prediction
     ```
 
@@ -503,65 +401,20 @@ predictor = model.deploy(
 
     ```py
     def predict_fn(input_data, model):
-    ```
-
-    ```py
         # sleep(30)
-    ```
-
-    ```py
         sentence = input_data['text']
-    ```
-
-    ```py
         tokenizer = AutoTokenizer.from_pretrained(
-    ```
-
-    ```py
             TOKENIZER
-    ```
-
-    ```py
         )
-    ```
-
-    ```py
         batch = tokenizer(
-    ```
-
-    ```py
             [sentence],
-    ```
-
-    ```py
             padding=True,
-    ```
-
-    ```py
             truncation=True,
-    ```
-
-    ```py
             max_length=512,
-    ```
-
-    ```py
             return_tensors="pt"
-    ```
-
-    ```py
         )
-    ```
-
-    ```py
         output = model(**batch)
-    ```
-
-    ```py
         prediction = humanize_prediction(output)
-    ```
-
-    ```py
         return prediction
     ```
 
@@ -575,29 +428,11 @@ predictor = model.deploy(
 
     ```py
     def input_fn(serialized_input_data, 
-    ```
-
-    ```py
                  content_type='application/json'):
-    ```
-
-    ```py
         if content_type == 'application/json':
-    ```
-
-    ```py
             input_data = json.loads(serialized_input_data)
-    ```
-
-    ```py
             return input_data
-    ```
-
-    ```py
         else:
-    ```
-
-    ```py
             raise Exception('Unsupported Content Type')
     ```
 
@@ -607,21 +442,9 @@ predictor = model.deploy(
 
     ```py
     def output_fn(prediction_output, 
-    ```
-
-    ```py
                   accept='application/json'):
-    ```
-
-    ```py
         if accept == 'application/json':
-    ```
-
-    ```py
             return json.dumps(prediction_output), accept
-    ```
-
-    ```py
         raise Exception('Unsupported Content Type')
     ```
 
@@ -701,29 +524,11 @@ predictor = model.deploy(
 
     ```py
     from setuptools import setup, find_packages
-    ```
-
-    ```py
     setup(name='distillbert',
-    ```
-
-    ```py
           version='1.0',
-    ```
-
-    ```py
           description='distillbert',
-    ```
-
-    ```py
           packages=find_packages(
-    ```
-
-    ```py
               exclude=('tests', 'docs')
-    ```
-
-    ```py
          ))
     ```
 
@@ -763,13 +568,7 @@ predictor = model.deploy(
 
     ```py
     %store -r model_data
-    ```
-
-    ```py
     %store -r s3_bucket
-    ```
-
-    ```py
     %store -r prefix
     ```
 
@@ -779,9 +578,6 @@ predictor = model.deploy(
 
     ```py
     from sagemaker import get_execution_role 
-    ```
-
-    ```py
     role = get_execution_role()
     ```
 
@@ -789,37 +585,13 @@ predictor = model.deploy(
 
     ```py
     from sagemaker.pytorch.model import PyTorchModel
-    ```
-
-    ```py
     model = PyTorchModel(
-    ```
-
-    ```py
         model_data=model_data, 
-    ```
-
-    ```py
         role=role, 
-    ```
-
-    ```py
         source_dir="scripts",
-    ```
-
-    ```py
         entry_point='inference.py', 
-    ```
-
-    ```py
         framework_version='1.6.0',
-    ```
-
-    ```py
         py_version="py3"
-    ```
-
-    ```py
     )
     ```
 
@@ -841,37 +613,13 @@ predictor = model.deploy(
 
     ```py
     %%time
-    ```
-
-    ```py
     from sagemaker.serializers import JSONSerializer
-    ```
-
-    ```py
     from sagemaker.deserializers import JSONDeserializer
-    ```
-
-    ```py
     predictor = model.deploy(
-    ```
-
-    ```py
         instance_type='ml.m5.xlarge', 
-    ```
-
-    ```py
         initial_instance_count=1,
-    ```
-
-    ```py
         serializer=JSONSerializer(),
-    ```
-
-    ```py
         deserializer=JSONDeserializer()
-    ```
-
-    ```py
     )
     ```
 
@@ -885,17 +633,8 @@ predictor = model.deploy(
 
     ```py
     payload = {
-    ```
-
-    ```py
         "text": "I love reading the book MLE on AWS!"
-    ```
-
-    ```py
     }
-    ```
-
-    ```py
     predictor.predict(payload)
     ```
 
@@ -905,17 +644,8 @@ predictor = model.deploy(
 
     ```py
     payload = {
-    ```
-
-    ```py
         "text": "This is the worst spaghetti I've had"
-    ```
-
-    ```py
     }
-    ```
-
-    ```py
     predictor.predict(payload)
     ```
 
@@ -957,13 +687,7 @@ predictor = model.deploy(
 
     ```py
     %store -r model_data
-    ```
-
-    ```py
     %store -r s3_bucket
-    ```
-
-    ```py
     %store -r prefix
     ```
 
@@ -973,9 +697,6 @@ predictor = model.deploy(
 
     ```py
     from sagemaker import get_execution_role 
-    ```
-
-    ```py
     role = get_execution_role()
     ```
 
@@ -983,21 +704,9 @@ predictor = model.deploy(
 
     ```py
     from sagemaker.serverless import ServerlessInferenceConfig
-    ```
-
-    ```py
     serverless_config = ServerlessInferenceConfig(
-    ```
-
-    ```py
       memory_size_in_mb=4096,
-    ```
-
-    ```py
       max_concurrency=5,
-    ```
-
-    ```py
     )
     ```
 
@@ -1005,73 +714,22 @@ predictor = model.deploy(
 
     ```py
     from sagemaker.pytorch.model import PyTorchModel
-    ```
-
-    ```py
     from sagemaker.serializers import JSONSerializer
-    ```
-
-    ```py
     from sagemaker.deserializers import JSONDeserializer
-    ```
-
-    ```py
     model = PyTorchModel(
-    ```
-
-    ```py
         model_data=model_data, 
-    ```
-
-    ```py
         role=role, 
-    ```
-
-    ```py
         source_dir="scripts",
-    ```
-
-    ```py
         entry_point='inference.py', 
-    ```
-
-    ```py
         framework_version='1.6.0',
-    ```
-
-    ```py
         py_version="py3"
-    ```
-
-    ```py
     )
-    ```
-
-    ```py
     predictor = model.deploy(
-    ```
-
-    ```py
         instance_type='ml.m5.xlarge', 
-    ```
-
-    ```py
         initial_instance_count=1,
-    ```
-
-    ```py
         serializer=JSONSerializer(),
-    ```
-
-    ```py
         deserializer=JSONDeserializer(),
-    ```
-
-    ```py
         serverless_inference_config=serverless_config
-    ```
-
-    ```py
     )
     ```
 
@@ -1083,17 +741,8 @@ predictor = model.deploy(
 
     ```py
     payload = {
-    ```
-
-    ```py
         "text": "I love reading the book MLE on AWS!"
-    ```
-
-    ```py
     }
-    ```
-
-    ```py
     predictor.predict(payload)
     ```
 
@@ -1103,17 +752,8 @@ predictor = model.deploy(
 
     ```py
     payload = {
-    ```
-
-    ```py
         "text": "This is the worst spaghetti I've had"
-    ```
-
-    ```py
     }
-    ```
-
-    ```py
     predictor.predict(payload)
     ```
 
@@ -1279,13 +919,7 @@ predictor = model.deploy(
 
     ```py
     %store -r model_data
-    ```
-
-    ```py
     %store -r s3_bucket
-    ```
-
-    ```py
     %store -r prefix
     ```
 
@@ -1295,17 +929,8 @@ predictor = model.deploy(
 
     ```py
     input_data = "s3://{}/{}/data/input.json".format(
-    ```
-
-    ```py
         s3_bucket,
-    ```
-
-    ```py
         prefix
-    ```
-
-    ```py
     )
     ```
 
@@ -1319,9 +944,6 @@ predictor = model.deploy(
 
     ```py
     from sagemaker import get_execution_role 
-    ```
-
-    ```py
     role = get_execution_role()
     ```
 
@@ -1329,21 +951,9 @@ predictor = model.deploy(
 
     ```py
     from sagemaker.async_inference import AsyncInferenceConfig
-    ```
-
-    ```py
     output_path = f"s3://{s3_bucket}/{prefix}/output"
-    ```
-
-    ```py
     async_config = AsyncInferenceConfig(
-    ```
-
-    ```py
         output_path=output_path
-    ```
-
-    ```py
     )
     ```
 
@@ -1353,37 +963,13 @@ predictor = model.deploy(
 
     ```py
     from sagemaker.pytorch.model import PyTorchModel
-    ```
-
-    ```py
     model = PyTorchModel(
-    ```
-
-    ```py
         model_data=model_data, 
-    ```
-
-    ```py
         role=role, 
-    ```
-
-    ```py
         source_dir="scripts",
-    ```
-
-    ```py
         entry_point='inference.py', 
-    ```
-
-    ```py
         framework_version='1.6.0',
-    ```
-
-    ```py
         py_version="py3"
-    ```
-
-    ```py
     )
     ```
 
@@ -1393,41 +979,14 @@ predictor = model.deploy(
 
     ```py
     %%time
-    ```
-
-    ```py
     from sagemaker.serializers import JSONSerializer
-    ```
-
-    ```py
     from sagemaker.deserializers import JSONDeserializer
-    ```
-
-    ```py
     predictor = model.deploy(
-    ```
-
-    ```py
         instance_type='ml.m5.xlarge', 
-    ```
-
-    ```py
         initial_instance_count=1,
-    ```
-
-    ```py
         serializer=JSONSerializer(),
-    ```
-
-    ```py
         deserializer=JSONDeserializer(),
-    ```
-
-    ```py
         async_inference_config=async_config
-    ```
-
-    ```py
     )
     ```
 
@@ -1447,13 +1006,7 @@ predictor = model.deploy(
 
     ```py
     response = predictor.predict_async(
-    ```
-
-    ```py
         input_path=input_data
-    ```
-
-    ```py
     )
     ```
 
@@ -1469,13 +1022,7 @@ predictor = model.deploy(
 
     ```py
     from time import sleep
-    ```
-
-    ```py
     sleep(40)
-    ```
-
-    ```py
     response.get_result()
     ```
 

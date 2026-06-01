@@ -684,21 +684,9 @@ predictor = multi_model.deploy(instance_type='ml.m4.xlarge', endpoint_name='mult
 
     ```py
     from sagemaker import Session
-    ```
-
-    ```py
     role = get_execution_role()
-    ```
-
-    ```py
     sagemaker_session = Session()
-    ```
-
-    ```py
     vpc_config = {'SecurityGroupIds': ['sg-xxxxx'], 'Subnets': ['subnet-xxxxx']}
-    ```
-
-    ```py
     predictor = model.deploy(instance_type='ml.m4.xlarge', endpoint_name='secured-endpoint', vpc_config_override=vpc_config)
     ```
 
@@ -706,57 +694,18 @@ predictor = multi_model.deploy(instance_type='ml.m4.xlarge', endpoint_name='mult
 
     ```py
       "Version": "2012-10-17",
-    ```
-
-    ```py
       "Statement": [
-    ```
-
-    ```py
        {
-    ```
-
-    ```py
          "Effect": "Allow",
-    ```
-
-    ```py
          "Action": "sagemaker:CreateModel",
-    ```
-
-    ```py
          "Resource": "arn:aws:sagemaker:region:account-id:model/model-name"
-    ```
-
-    ```py
        },
-    ```
-
-    ```py
        {
-    ```
-
-    ```py
           "Effect": "Deny",
-    ```
-
-    ```py
           "Action": "sagemaker:CreateModel",
-    ```
-
-    ```py
           "Resource": "*"
-    ```
-
-    ```py
       }
-    ```
-
-    ```py
     ]
-    ```
-
-    ```py
     }
     ```
 
@@ -764,17 +713,8 @@ predictor = multi_model.deploy(instance_type='ml.m4.xlarge', endpoint_name='mult
 
     ```py
     from sagemaker import Session
-    ```
-
-    ```py
     role = get_execution_role()
-    ```
-
-    ```py
     sagemaker_session = Session()
-    ```
-
-    ```py
     predictor = model.deploy(instance_type='ml.m4.xlarge', endpoint_name='encrypted-endpoint', encrypt_parameters=True)
     ```
 
@@ -782,41 +722,14 @@ predictor = multi_model.deploy(instance_type='ml.m4.xlarge', endpoint_name='mult
 
     ```py
     from sagemaker.model_monitor import EndpointInput
-    ```
-
-    ```py
     from sagemaker import get_execution_role
-    ```
-
-    ```py
     role = get_execution_role()
-    ```
-
-    ```py
     monitor = ModelQualityMonitor(
-    ```
-
-    ```py
         role=role,
-    ```
-
-    ```py
         instance_count=1,
-    ```
-
-    ```py
         instance_type='ml.m4.xlarge',
-    ```
-
-    ```py
         volume_size_in_gb=20,
-    ```
-
-    ```py
         max_runtime_in_seconds=1800
-    ```
-
-    ```py
     )
     ```
 

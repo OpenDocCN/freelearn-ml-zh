@@ -656,17 +656,8 @@ spark_processor.run(
 
     ```py
     from super_image import EdsrModel, ImageLoader
-    ```
-
-    ```py
     from PIL import Image
-    ```
-
-    ```py
     import requests
-    ```
-
-    ```py
     model = EdsrModel.from_pretrained('eugenesiow/edsr-base', scale=4)
     ```
 
@@ -674,45 +665,15 @@ spark_processor.run(
 
     ```py
     import os
-    ```
-
-    ```py
     from os import listdir
-    ```
-
-    ```py
     folder_dir = "horse-or-human/"
-    ```
-
-    ```py
     for folder in os.listdir(folder_dir):
-    ```
-
-    ```py
         folder_path = f'{folder_dir}{folder}'
-    ```
-
-    ```py
         for image_file in os.listdir(folder_path):
-    ```
-
-    ```py
             path = f'{folder_path}/{image_file}'
-    ```
-
-    ```py
             image = Image.open(path)
-    ```
-
-    ```py
             inputs = ImageLoader.load_image(image)
-    ```
-
-    ```py
             preds = model(inputs)
-    ```
-
-    ```py
             ImageLoader.save_image(preds, path)
     ```
 

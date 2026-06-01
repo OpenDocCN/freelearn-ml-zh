@@ -324,21 +324,9 @@ Venn-ABERS 往往在校准方面显示出最显著的改进，在实现良好校
 
     ```py
     from nonconformist.base import ClassifierAdapter
-    ```
-
-    ```py
     from nonconformist.cp import IcpClassifier
-    ```
-
-    ```py
     from nonconformist.nc import NcFactory
-    ```
-
-    ```py
     from nonconformist.nc import ClassifierNc,
-    ```
-
-    ```py
     InverseProbabilityErrFunc, andMarginErrFunc specify the nonconformity measure using NcFactory.create_nc
     ```
 
@@ -352,9 +340,6 @@ Venn-ABERS 往往在校准方面显示出最显著的改进，在实现良好校
 
     ```py
     icp.fit(X_train, y_train)
-    ```
-
-    ```py
     icp.calibrate(X_calib, y_calib)
     ```
 
@@ -362,17 +347,8 @@ Venn-ABERS 往往在校准方面显示出最显著的改进，在实现良好校
 
     ```py
     y_pred_calib = model.predict(X_calib)
-    ```
-
-    ```py
     y_pred_score_calib = model.predict_proba(X_calib)
-    ```
-
-    ```py
     y_pred_test = model.predict(X_test)
-    ```
-
-    ```py
     y_pred_score_test = model.predict_proba(X_test)
     ```
 
@@ -434,9 +410,6 @@ X_train, X_calib, y_train, y_calib = train_test_split(X_train_calib, y_train_cal
 
     ```py
     model = LogisticRegression()
-    ```
-
-    ```py
     model.fit(X_train, y_train)
     ```
 
@@ -444,17 +417,8 @@ X_train, X_calib, y_train, y_calib = train_test_split(X_train_calib, y_train_cal
 
     ```py
     y_pred_calib = model.predict(X_calib)
-    ```
-
-    ```py
     y_pred_score_calib = model.predict_proba(X_calib)
-    ```
-
-    ```py
     y_pred_test = model.predict(X_test)
-    ```
-
-    ```py
     y_pred_score_test = model.predict_proba(X_test)
     ```
 
@@ -462,9 +426,6 @@ X_train, X_calib, y_train, y_calib = train_test_split(X_train_calib, y_train_cal
 
     ```py
     print('Classification accuracy on the test: {}'.format(accuracy_score(y_test, y_pred_test)))
-    ```
-
-    ```py
     print('ROC AUC on the test set: {}'.format(roc_auc_score(y_test, y_pred_score_test[:,1])))
     ```
 

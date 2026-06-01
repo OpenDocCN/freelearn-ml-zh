@@ -338,13 +338,7 @@ Azure Machine Learning 为业务用户提供多种推理选项，以支持批量
 
     ```py
     GROUP=amlworkspace-rg
-    ```
-
-    ```py
     LOCATION=westus
-    ```
-
-    ```py
     WORKSPACE=amworkspace
     ```
 

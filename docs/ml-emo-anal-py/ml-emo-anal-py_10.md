@@ -332,133 +332,37 @@ def scoreproportions(clsfs):    ignore = ["neutral", "--"]
 
     ```py
         def bestThreshold(self, bestthreshold, start=0, end=sys.maxsize):
-    ```
-
-    ```py
             train = self.train.tweets[:len(self.test.tweets)]
-    ```
-
-    ```py
             self.applyToTweets(train, threshold=0, probs=True)
-    ```
-
-    ```py
             if bestthreshold == "global":
-    ```
-
-    ```py
                 predicted = [t.predicted for t in train]
-    ```
-
-    ```py
                 # select the required columns from the prediction
-    ```
-
-    ```py
                 predicted = numpy.array(predicted)[start:end, :]
-    ```
-
-    ```py
                 lowest = threshold = numpy.min(predicted)
-    ```
-
-    ```py
                 highest = numpy.max(predicted)
-    ```
-
-    ```py
                 step = (highest-lowest)/20
-    ```
-
-    ```py
                 best = []
-    ```
-
-    ```py
                 GS = numpy.array([t.GS for t in train])[:, start:end]
-    ```
-
-    ```py
                 for i in range(20):
-    ```
-
-    ```py
                     l = self.applyToTweets(train, threshold=threshold)
-    ```
-
-    ```py
                     l = numpy.array(l)[:, start:end]
-    ```
-
-    ```py
                     m = metrics.getmetrics(GS, l, show=False)
-    ```
-
-    ```py
                     (macroF, tp, tn, fp, fn) = m
-    ```
-
-    ```py
                     j = tp/(tp+fp+fn)
-    ```
-
-    ```py
                     best = max(best, [j, threshold])
-    ```
-
-    ```py
                     if show:
-    ```
-
-    ```py
                         print("%.2f %.3f"%(threshold, j))
-    ```
-
-    ```py
                     threshold += step
-    ```
-
-    ```py
                 return best[1]
-    ```
-
-    ```py
             elif bestthreshold == "local":
-    ```
-
-    ```py
                 # do the global version, but just for each column in turn
-    ```
-
-    ```py
                 localthresholds = []
-    ```
-
-    ```py
                 for i in range(len(self.train.emotions)):
-    ```
-
-    ```py
                     localthreshold = self.bestThreshold("global",
-    ```
-
-    ```py
                                                         start=i, end=i+1)
-    ```
-
-    ```py
                     localthresholds.append(localthreshold)
-    ```
-
-    ```py
                 return localthresholds
-    ```
-
-    ```py
             else:
-    ```
-
-    ```py
                 raise Exception("%s unexpected value for bestthreshold"%(bestthreshold))
     ```
 

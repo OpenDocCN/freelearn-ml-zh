@@ -104,101 +104,29 @@ Redshift ML 简单 CREATE MODEL 是 Amazon Redshift 中的一个功能，允许�
 
     ```py
     CREATE TABLE IF NOT EXISTS chapter5_buildfirstmodel.customer_calls_fact (
-    ```
-
-    ```py
     state varchar(2),
-    ```
-
-    ```py
     account_length int,
-    ```
-
-    ```py
     area_code int,
-    ```
-
-    ```py
     phone varchar(8),
-    ```
-
-    ```py
     intl_plan varchar(3),
-    ```
-
-    ```py
     vMail_plan varchar(3),
-    ```
-
-    ```py
     vMail_message int,
-    ```
-
-    ```py
     day_mins float,
-    ```
-
-    ```py
     day_calls int,
-    ```
-
-    ```py
     day_charge float,
-    ```
-
-    ```py
     total_charge float,
-    ```
-
-    ```py
     eve_mins float,
-    ```
-
-    ```py
     eve_calls int,
-    ```
-
-    ```py
     eve_charge float,
-    ```
-
-    ```py
     night_mins float,
-    ```
-
-    ```py
     night_calls int,
-    ```
-
-    ```py
     night_charge float,
-    ```
-
-    ```py
     intl_mins float,
-    ```
-
-    ```py
     intl_calls int,
-    ```
-
-    ```py
     intl_charge float,
-    ```
-
-    ```py
     cust_serv_calls int,
-    ```
-
-    ```py
     churn varchar(6),
-    ```
-
-    ```py
     record_date date)
-    ```
-
-    ```py
     Diststyle AUTO;
     ```
 
@@ -206,21 +134,9 @@ Redshift ML 简单 CREATE MODEL 是 Amazon Redshift 中的一个功能，允许�
 
     ```py
             COPY  chapter5_buildfirstmodel.customer_calls_fact
-    ```
-
-    ```py
     FROM 's3://packt-serverless-ml-redshift/chapter05/customerdime/'
-    ```
-
-    ```py
     IAM_ROLE default
-    ```
-
-    ```py
     delimiter ',' IGNOREHEADER 1
-    ```
-
-    ```py
     region 'eu-west-1';
     ```
 
@@ -230,13 +146,7 @@ Redshift ML 简单 CREATE MODEL 是 Amazon Redshift 中的一个功能，允许�
 
     ```py
     SELECT churn, count(*) Customer_Count FROM chapter5_buildfirstmodel.customer_calls_fact
-    ```
-
-    ```py
     GROUP BY churn
-    ```
-
-    ```py
     ;
     ```
 
@@ -300,13 +210,7 @@ CREATE MODEL model_name
 
     ```py
     select sum(case when record_date <'2020-08-01' then 1 else 0 end) as Training_Data_Set,
-    ```
-
-    ```py
     sum(case when record_date >'2020-07-31' then 1 else 0 end) as Test_Data_Set
-    ```
-
-    ```py
     from chapter5_buildfirstmodel.customer_calls_fact
     ```
 
@@ -322,137 +226,38 @@ CREATE MODEL model_name
 
     ```py
     CREATE MODEL chapter5_buildfirstmodel.customer_churn_model
-    ```
-
-    ```py
     FROM (SELECT state,
-    ```
-
-    ```py
                   account_length,
-    ```
-
-    ```py
                   area_code,
-    ```
-
-    ```py
                   phone,
-    ```
-
-    ```py
                   intl_plan,
-    ```
-
-    ```py
                   vMail_plan,
-    ```
-
-    ```py
                   vMail_message,
-    ```
-
-    ```py
                   day_mins,
-    ```
-
-    ```py
                   day_calls,
-    ```
-
-    ```py
                   day_charge,
-    ```
-
-    ```py
                   total_charge,
-    ```
-
-    ```py
                   eve_mins,
-    ```
-
-    ```py
                   eve_calls,
-    ```
-
-    ```py
                   eve_charge,
-    ```
-
-    ```py
                   night_mins,
-    ```
-
-    ```py
                   night_calls,
-    ```
-
-    ```py
                   night_charge,
-    ```
-
-    ```py
                   intl_mins,
-    ```
-
-    ```py
                   intl_calls,
-    ```
-
-    ```py
                   intl_charge,
-    ```
-
-    ```py
                   cust_serv_calls,
-    ```
-
-    ```py
                  replace(churn,'.','') as churn
-    ```
-
-    ```py
           FROM chapter5_buildfirstmodel.customer_calls_fact
-    ```
-
-    ```py
              WHERE record_date < '2020-08-01'
-    ```
-
-    ```py
          )
-    ```
-
-    ```py
     TARGET churn
-    ```
-
-    ```py
     FUNCTION predict_customer_churn
-    ```
-
-    ```py
     IAM_ROLE default
-    ```
-
-    ```py
     SETTINGS (
-    ```
-
-    ```py
       S3_BUCKET 'serverlessmachinelearningwithredshift-<your account id>',
-    ```
-
-    ```py
       MAX_RUNTIME 1800
-    ```
-
-    ```py
     )
-    ```
-
-    ```py
     ;
     ```
 

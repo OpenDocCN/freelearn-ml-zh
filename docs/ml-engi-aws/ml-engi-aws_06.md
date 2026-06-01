@@ -165,13 +165,7 @@ hyperparameter_tuner.fit(...)
 
     ```py
     Good day, 
-    ```
-
-    ```py
     I am planning to run a SageMaker training job using 2 x ml.p2.xlarge instances to train an Image Classification model. After this I am planning to use Managed Spot Training to run a similar example and will need 2 x ml.p2.xlarge (spot) instances. Hope these 2 limit increase requests can be processed as soon as possible in the Oregon (us-west-2) region.
-    ```
-
-    ```py
     You can find the relevant notebooks here: https://github.com/PacktPublishing/Machine-Learning-Engineering-on-AWS
     ```
 
@@ -345,9 +339,6 @@ MNIST 数据集包含数千张手写数字的图片。通常的挑战在于正�
 
     ```py
     %%time
-    ```
-
-    ```py
     !cd tmp && unzip batch1.zip && rm batch1.zip
     ```
 
@@ -391,33 +382,12 @@ MNIST 数据集包含数千张手写数字的图片。通常的挑战在于正�
 
     ```py
     import ipyplot
-    ```
-
-    ```py
     import glob
-    ```
-
-    ```py
     for i in range(0,10):    
-    ```
-
-    ```py
         image_files = glob.glob(f"tmp/train/{i}/*.png")
-    ```
-
-    ```py
         print(f'---{i}---')
-    ```
-
-    ```py
         ipyplot.plot_images(image_files, 
-    ```
-
-    ```py
                             max_images=5, 
-    ```
-
-    ```py
                             img_width=128)
     ```
 
@@ -449,9 +419,6 @@ MNIST 数据集包含数千张手写数字的图片。通常的挑战在于正�
 
     ```py
     s3_bucket = "<INSERT S3 BUCKET NAME HERE>"
-    ```
-
-    ```py
     prefix = "ch06"
     ```
 
@@ -461,9 +428,6 @@ MNIST 数据集包含数千张手写数字的图片。通常的挑战在于正�
 
     ```py
     training_samples = glob.glob(f"tmp/train/*/*.png")
-    ```
-
-    ```py
     len(training_samples)
     ```
 
@@ -481,9 +445,6 @@ MNIST 数据集包含数千张手写数字的图片。通常的挑战在于正�
 
     ```py
     %%time
-    ```
-
-    ```py
     !aws s3 cp tmp/.  s3://{s3_bucket}/{prefix}/ --recursive
     ```
 
@@ -517,9 +478,6 @@ MNIST 数据集包含数千张手写数字的图片。通常的挑战在于正�
 
     ```py
     import sagemaker
-    ```
-
-    ```py
     import boto3
     ```
 
@@ -527,13 +485,7 @@ MNIST 数据集包含数千张手写数字的图片。通常的挑战在于正�
 
     ```py
     session = sagemaker.Session()
-    ```
-
-    ```py
     role = sagemaker.get_execution_role()
-    ```
-
-    ```py
     region_name = boto3.Session().region_name
     ```
 
@@ -541,25 +493,10 @@ MNIST 数据集包含数千张手写数字的图片。通常的挑战在于正�
 
     ```py
     image = sagemaker.image_uris.retrieve(
-    ```
-
-    ```py
         "image-classification", 
-    ```
-
-    ```py
         region_name, 
-    ```
-
-    ```py
         "1"
-    ```
-
-    ```py
     )
-    ```
-
-    ```py
     image
     ```
 
@@ -569,57 +506,18 @@ MNIST 数据集包含数千张手写数字的图片。通常的挑战在于正�
 
     ```py
     def map_path(source):
-    ```
-
-    ```py
         return 's3://{}/{}/{}'.format(
-    ```
-
-    ```py
             s3_bucket, 
-    ```
-
-    ```py
             prefix, 
-    ```
-
-    ```py
             source
-    ```
-
-    ```py
         )
-    ```
-
-    ```py
     def map_input(source):
-    ```
-
-    ```py
         path = map_path(source)
-    ```
-
-    ```py
         return sagemaker.inputs.TrainingInput(
-    ```
-
-    ```py
             path, 
-    ```
-
-    ```py
             distribution='FullyReplicated', 
-    ```
-
-    ```py
             content_type='application/x-image', 
-    ```
-
-    ```py
             s3_data_type='S3Prefix'
-    ```
-
-    ```py
         )
     ```
 
@@ -627,29 +525,11 @@ MNIST 数据集包含数千张手写数字的图片。通常的挑战在于正�
 
     ```py
     data_channels = {}
-    ```
-
-    ```py
     channels = ["train", 
-    ```
-
-    ```py
                 "validation",
-    ```
-
-    ```py
                 "train_lst",
-    ```
-
-    ```py
                 "validation_lst"]
-    ```
-
-    ```py
     for channel in channels:
-    ```
-
-    ```py
         data_channels[channel] = map_input(channel)
     ```
 
@@ -659,9 +539,6 @@ MNIST 数据集包含数千张手写数字的图片。通常的挑战在于正�
 
     ```py
     output_path = map_path("output")
-    ```
-
-    ```py
     output_path
     ```
 
@@ -679,37 +556,13 @@ MNIST 数据集包含数千张手写数字的图片。通常的挑战在于正�
 
     ```py
     estimator = sagemaker.estimator.Estimator(
-    ```
-
-    ```py
         image,
-    ```
-
-    ```py
         role, 
-    ```
-
-    ```py
         instance_count=2, 
-    ```
-
-    ```py
         instance_type='ml.p2.xlarge',
-    ```
-
-    ```py
         output_path=output_path,
-    ```
-
-    ```py
         sagemaker_session=session,
-    ```
-
-    ```py
         enable_network_isolation=True
-    ```
-
-    ```py
     )
     ```
 
@@ -723,45 +576,15 @@ MNIST 数据集包含数千张手写数字的图片。通常的挑战在于正�
 
     ```py
     hyperparameters = {
-    ```
-
-    ```py
         'num_training_samples': len(training_samples),
-    ```
-
-    ```py
         'num_layers': 18,
-    ```
-
-    ```py
         'image_shape': "1,28,28",
-    ```
-
-    ```py
         'num_classes': 10,
-    ```
-
-    ```py
         'mini_batch_size': 100,
-    ```
-
-    ```py
         'epochs': 3,
-    ```
-
-    ```py
         'learning_rate': 0.01,
-    ```
-
-    ```py
         'top_k': 5,
-    ```
-
-    ```py
         'precision_dtype': 'float32'    
-    ```
-
-    ```py
     }
     ```
 
@@ -792,9 +615,6 @@ estimator.set_hyperparameters(
 
     ```py
     %%time
-    ```
-
-    ```py
     estimator.fit(inputs=data_channels, logs=True)
     ```
 
@@ -842,9 +662,6 @@ estimator.set_hyperparameters(
 
     ```py
     model_data = estimator.model_data
-    ```
-
-    ```py
     job_name = estimator.latest_training_job.name
     ```
 
@@ -852,21 +669,9 @@ estimator.set_hyperparameters(
 
     ```py
     %store model_data
-    ```
-
-    ```py
     %store job_name
-    ```
-
-    ```py
     %store role
-    ```
-
-    ```py
     %store region_name
-    ```
-
-    ```py
     %store image
     ```
 
@@ -882,17 +687,8 @@ estimator.set_hyperparameters(
 
     ```py
     endpoint = estimator.deploy(
-    ```
-
-    ```py
         initial_instance_count = 1,
-    ```
-
-    ```py
         instance_type = 'ml.m5.xlarge'
-    ```
-
-    ```py
     )
     ```
 
@@ -912,17 +708,8 @@ estimator.set_hyperparameters(
 
     ```py
     from sagemaker.serializers import IdentitySerializer
-    ```
-
-    ```py
     endpoint.serializer = IdentitySerializer(
-    ```
-
-    ```py
         content_type="application/x-image"
-    ```
-
-    ```py
     )
     ```
 
@@ -930,73 +717,22 @@ estimator.set_hyperparameters(
 
     ```py
     import json
-    ```
-
-    ```py
     def get_class_from_results(results):
-    ```
-
-    ```py
         results_prob_list = json.loads(results)
-    ```
-
-    ```py
         best_index = results_prob_list.index(
-    ```
-
-    ```py
             max(results_prob_list)
-    ```
-
-    ```py
         )
-    ```
-
-    ```py
         return {
-    ```
-
-    ```py
             0: "ZERO",
-    ```
-
-    ```py
             1: "ONE",
-    ```
-
-    ```py
             2: "TWO",
-    ```
-
-    ```py
             3: "THREE",
-    ```
-
-    ```py
             4: "FOUR",
-    ```
-
-    ```py
             5: "FIVE",
-    ```
-
-    ```py
             6: "SIX",
-    ```
-
-    ```py
             7: "SEVEN",
-    ```
-
-    ```py
             8: "EIGHT",
-    ```
-
-    ```py
             9: "NINE"
-    ```
-
-    ```py
         }[best_index]
     ```
 
@@ -1004,37 +740,13 @@ estimator.set_hyperparameters(
 
     ```py
     from IPython.display import Image, display
-    ```
-
-    ```py
     def predict(filename, endpoint=endpoint):
-    ```
-
-    ```py
         byte_array_input = None
-    ```
-
-    ```py
         with open(filename, 'rb') as image:
-    ```
-
-    ```py
             f = image.read()
-    ```
-
-    ```py
             byte_array_input = bytearray(f)
-    ```
-
-    ```py
         display(Image(filename))
-    ```
-
-    ```py
         results = endpoint.predict(byte_array_input)
-    ```
-
-    ```py
         return get_class_from_results(results)
     ```
 
@@ -1058,13 +770,7 @@ estimator.set_hyperparameters(
 
     ```py
     results = !ls -1 tmp/test
-    ```
-
-    ```py
     for filename in results:
-    ```
-
-    ```py
         print(predict(f"tmp/test/{filename}"))
     ```
 
@@ -1200,9 +906,6 @@ estimator.set_hyperparameters(
 
     ```py
     s3_bucket = "<INSERT S3 BUCKET NAME HERE>"
-    ```
-
-    ```py
     prefix = "ch06"
     ```
 
@@ -1218,17 +921,8 @@ estimator.set_hyperparameters(
 
     ```py
     %store -r role
-    ```
-
-    ```py
     %store -r region_name
-    ```
-
-    ```py
     %store -r job_name
-    ```
-
-    ```py
     %store -r image
     ```
 
@@ -1244,13 +938,7 @@ estimator.set_hyperparameters(
 
     ```py
     import sagemaker
-    ```
-
-    ```py
     from sagemaker.estimator import Estimator
-    ```
-
-    ```py
     session = sagemaker.Session()
     ```
 
@@ -1272,9 +960,6 @@ estimator.set_hyperparameters(
 
     ```py
     model_data = previous.model_data
-    ```
-
-    ```py
     model_data
     ```
 
@@ -1284,29 +969,11 @@ estimator.set_hyperparameters(
 
     ```py
     import string 
-    ```
-
-    ```py
     import random
-    ```
-
-    ```py
     def generate_random_string():
-    ```
-
-    ```py
         return ''.join(
-    ```
-
-    ```py
             random.sample(
-    ```
-
-    ```py
             string.ascii_uppercase,12)
-    ```
-
-    ```py
         )
     ```
 
@@ -1314,9 +981,6 @@ estimator.set_hyperparameters(
 
     ```py
     base_job_name = generate_random_string()
-    ```
-
-    ```py
     base_job_name
     ```
 
@@ -1330,13 +994,7 @@ estimator.set_hyperparameters(
 
     ```py
     checkpoint_folder="checkpoints"
-    ```
-
-    ```py
     checkpoint_s3_bucket="s3://{}/{}/{}".format(s3_bucket, base_job_name, checkpoint_folder)
-    ```
-
-    ```py
     checkpoint_local_path="/opt/ml/checkpoints"
     ```
 
@@ -1350,9 +1008,6 @@ estimator.set_hyperparameters(
 
     ```py
     %%time
-    ```
-
-    ```py
     !wget -O tmp2/batch2.zip https://bit.ly/3KyonQE
     ```
 
@@ -1360,9 +1015,6 @@ estimator.set_hyperparameters(
 
     ```py
     %%time
-    ```
-
-    ```py
     !cd tmp2 && unzip batch2.zip && rm batch2.zip
     ```
 
@@ -1370,13 +1022,7 @@ estimator.set_hyperparameters(
 
     ```py
     import glob
-    ```
-
-    ```py
     training_samples = glob.glob(f"tmp2/train/*/*.png")
-    ```
-
-    ```py
     len(training_samples)
     ```
 
@@ -1392,9 +1038,6 @@ estimator.set_hyperparameters(
 
     ```py
     %%time
-    ```
-
-    ```py
     !aws s3 cp tmp2/.  s3://{s3_bucket}/{prefix}/ --recursive
     ```
 
@@ -1402,57 +1045,18 @@ estimator.set_hyperparameters(
 
     ```py
     def map_path(source):
-    ```
-
-    ```py
         return 's3://{}/{}/{}'.format(
-    ```
-
-    ```py
             s3_bucket, 
-    ```
-
-    ```py
             prefix, 
-    ```
-
-    ```py
             source
-    ```
-
-    ```py
         )
-    ```
-
-    ```py
     def map_input(source):
-    ```
-
-    ```py
         path = map_path(source)
-    ```
-
-    ```py
         return sagemaker.inputs.TrainingInput(
-    ```
-
-    ```py
             path, 
-    ```
-
-    ```py
             distribution='FullyReplicated', 
-    ```
-
-    ```py
             content_type='application/x-image', 
-    ```
-
-    ```py
             s3_data_type='S3Prefix'
-    ```
-
-    ```py
         )
     ```
 
@@ -1460,29 +1064,11 @@ estimator.set_hyperparameters(
 
     ```py
     data_channels = {}
-    ```
-
-    ```py
     channels = ["train", 
-    ```
-
-    ```py
                 "validation",
-    ```
-
-    ```py
                 "train_lst",
-    ```
-
-    ```py
                 "validation_lst"]
-    ```
-
-    ```py
     for channel in channels:
-    ```
-
-    ```py
         data_channels[channel] = map_input(channel)
     ```
 
@@ -1496,65 +1082,20 @@ estimator.set_hyperparameters(
 
     ```py
     estimator = sagemaker.estimator.Estimator(
-    ```
-
-    ```py
         image,
-    ```
-
-    ```py
         role, 
-    ```
-
-    ```py
         instance_count=2, 
-    ```
-
-    ```py
         instance_type='ml.p2.xlarge',
-    ```
-
-    ```py
         output_path=output_path,
-    ```
-
-    ```py
         sagemaker_session=session,
-    ```
-
-    ```py
         enable_network_isolation=True,
-    ```
-
-    ```py
         model_uri=model_data,
-    ```
-
-    ```py
         use_spot_instances=True,
-    ```
-
-    ```py
         max_run=1800,
-    ```
-
-    ```py
         max_wait=3600,
-    ```
-
-    ```py
         base_job_name=base_job_name,
-    ```
-
-    ```py
         checkpoint_s3_uri=checkpoint_s3_bucket,
-    ```
-
-    ```py
         checkpoint_local_path=checkpoint_local_path
-    ```
-
-    ```py
     )
     ```
 
@@ -1574,45 +1115,15 @@ estimator.set_hyperparameters(
 
     ```py
     hyperparameters = {
-    ```
-
-    ```py
         'num_training_samples': len(training_samples),
-    ```
-
-    ```py
         'num_layers': 18,
-    ```
-
-    ```py
         'image_shape': "1,28,28",
-    ```
-
-    ```py
         'num_classes': 10,
-    ```
-
-    ```py
         'mini_batch_size': 100,
-    ```
-
-    ```py
         'epochs': 3,
-    ```
-
-    ```py
         'learning_rate': 0.01,
-    ```
-
-    ```py
         'top_k': 5,
-    ```
-
-    ```py
         'precision_dtype': 'float32'    
-    ```
-
-    ```py
     }
     ```
 
@@ -1632,9 +1143,6 @@ estimator.set_hyperparameters(
 
     ```py
     %%time
-    ```
-
-    ```py
     estimator.fit(inputs=data_channels, logs=True)
     ```
 

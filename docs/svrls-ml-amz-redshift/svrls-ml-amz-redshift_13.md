@@ -145,41 +145,14 @@ SHOW MODEL chapter7_regressionmodel.predict_ticket_price_auto_20230624;
 
     ```py
     create table chapter13.local_inf_ml_model_components
-    ```
-
-    ```py
     (model_name varchar(500),
-    ```
-
-    ```py
     schema_name varchar(500),
-    ```
-
-    ```py
     automlJobName varchar(500),
-    ```
-
-    ```py
     functionName varchar(500),
-    ```
-
-    ```py
     inputs_data_type varchar(500),
-    ```
-
-    ```py
     target_column varchar(50),
-    ```
-
-    ```py
     returns_data_type varchar(50),
-    ```
-
-    ```py
     model_arn varchar (500),
-    ```
-
-    ```py
     S3_Bucket varchar (200) );
     ```
 

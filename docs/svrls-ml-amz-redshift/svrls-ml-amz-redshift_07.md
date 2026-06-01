@@ -134,37 +134,13 @@ Leung SS, Lau JT, Xu YY, Tse LY, Huen KF, Wong GW, Law WY, Yeung VT, Yeung WK, �
 
     ```py
     --create table to load data
-    ```
-
-    ```py
     DROP TABLE chapter7_RegressionModel.height_weight;
-    ```
-
-    ```py
     CREATE TABLE chapter7_RegressionModel.height_weight
-    ```
-
-    ```py
     (
-    ```
-
-    ```py
         Id integer,
-    ```
-
-    ```py
         HeightInches decimal(9,2),
-    ```
-
-    ```py
         weightPounds decimal(9,2)
-    ```
-
-    ```py
     )
-    ```
-
-    ```py
     ;
     ```
 
@@ -172,29 +148,11 @@ Leung SS, Lau JT, Xu YY, Tse LY, Huen KF, Wong GW, Law WY, Yeung VT, Yeung WK, �
 
     ```py
     TRUNCATE chapter7_RegressionModel.height_weight;
-    ```
-
-    ```py
     COPY chapter7_RegressionModel.height_weight
-    ```
-
-    ```py
     FROM 's3://packt-serverless-ml-redshift/chapter07/heightweight/HeightWeight.csv'
-    ```
-
-    ```py
     IAM_ROLE default
-    ```
-
-    ```py
     CSV
-    ```
-
-    ```py
     IGNOREHEADER 1
-    ```
-
-    ```py
     REGION AS 'eu-west-1';
     ```
 
@@ -204,13 +162,7 @@ Leung SS, Lau JT, Xu YY, Tse LY, Huen KF, Wong GW, Law WY, Yeung VT, Yeung WK, �
 
     ```py
     SELECT * FROM
-    ```
-
-    ```py
     chapter7_RegressionModel.height_weight
-    ```
-
-    ```py
     ORDER BY 2,3;
     ```
 
@@ -425,73 +377,22 @@ order by 1;
 
     ```py
     CREATE TABLE chapter7_RegressionModel.sporting_event_ticket_info_training (
-    ```
-
-    ```py
         ticket_id double precision ,
-    ```
-
-    ```py
         event_id bigint,
-    ```
-
-    ```py
         sport character varying(500),
-    ```
-
-    ```py
         event_date_time timestamp without time zone,
-    ```
-
-    ```py
         home_team character varying(500),
-    ```
-
-    ```py
         away_team character varying(500),
-    ```
-
-    ```py
         location character varying(500),
-    ```
-
-    ```py
         city character varying(500),
-    ```
-
-    ```py
         seat_level bigint,
-    ```
-
-    ```py
         seat_section bigint,
-    ```
-
-    ```py
         seat_row character varying(500),
-    ```
-
-    ```py
         seat bigint ENCODE az64,
-    ```
-
-    ```py
         list_ticket_price double precision,
-    ```
-
-    ```py
         final_ticket_price double precision ,
-    ```
-
-    ```py
         ticketholder character varying(500)
-    ```
-
-    ```py
     )
-    ```
-
-    ```py
     DISTSTYLE AUTO;
     ```
 
@@ -499,37 +400,13 @@ order by 1;
 
     ```py
     --insert ~70% of data into training_set
-    ```
-
-    ```py
     insert into   chapter7_RegressionModel.sporting_event_ticket_info_training
-    ```
-
-    ```py
     (  ticket_id ,event_id ,sport , event_date_time,  home_team , away_team , location , city , seat_level, seat_section,
-    ```
-
-    ```py
         seat_row ,  seat, list_ticket_price, final_ticket_price, ticketholder )
-    ```
-
-    ```py
      select
-    ```
-
-    ```py
      ticket_id ,event_id ,sport , event_date_time,  home_team , away_team , location , city , seat_level, seat_section,
-    ```
-
-    ```py
         seat_row ,  seat, list_ticket_price, final_ticket_price, ticketholder
-    ```
-
-    ```py
      from chapter7_RegressionModel.sporting_event_ticket_info
-    ```
-
-    ```py
      where event_date_time < '2019-10-20';
     ```
 
@@ -537,73 +414,22 @@ order by 1;
 
     ```py
     CREATE TABLE chapter7_RegressionModel.sporting_event_ticket_info_validation (
-    ```
-
-    ```py
         ticket_id double precision ,
-    ```
-
-    ```py
         event_id bigint,
-    ```
-
-    ```py
         sport character varying(500),
-    ```
-
-    ```py
         event_date_time timestamp without time zone,
-    ```
-
-    ```py
         home_team character varying(500),
-    ```
-
-    ```py
         away_team character varying(500),
-    ```
-
-    ```py
         location character varying(500),
-    ```
-
-    ```py
         city character varying(500),
-    ```
-
-    ```py
         seat_level bigint,
-    ```
-
-    ```py
         seat_section bigint,
-    ```
-
-    ```py
         seat_row character varying(500),
-    ```
-
-    ```py
         seat bigint ENCODE az64,
-    ```
-
-    ```py
         list_ticket_price double precision,
-    ```
-
-    ```py
         final_ticket_price double precision ,
-    ```
-
-    ```py
         ticketholder character varying(500)
-    ```
-
-    ```py
     )
-    ```
-
-    ```py
     DISTSTYLE AUTO;
     ```
 
@@ -611,33 +437,12 @@ order by 1;
 
     ```py
     insert into  chapter7_RegressionModel.sporting_event_ticket_info_validation
-    ```
-
-    ```py
     (  ticket_id ,event_id ,sport , event_date_time,  home_team , away_team , location , city , seat_level, seat_section,
-    ```
-
-    ```py
         seat_row ,  seat, list_ticket_price, final_ticket_price, ticketholder )
-    ```
-
-    ```py
      select
-    ```
-
-    ```py
      ticket_id ,event_id ,sport , event_date_time,  home_team , away_team , location , city , seat_level, seat_section,
-    ```
-
-    ```py
         seat_row ,  seat, list_ticket_price, final_ticket_price, ticketholder
-    ```
-
-    ```py
      from chapter7_RegressionModel.sporting_event_ticket_info
-    ```
-
-    ```py
      where event_date_time between '2019-10-20' and '2019-10-22' ;
     ```
 
@@ -645,73 +450,22 @@ order by 1;
 
     ```py
     CREATE TABLE chapter7_RegressionModel.sporting_event_ticket_info_testing (
-    ```
-
-    ```py
         ticket_id double precision ,
-    ```
-
-    ```py
         event_id bigint,
-    ```
-
-    ```py
         sport character varying(500),
-    ```
-
-    ```py
         event_date_time timestamp without time zone,
-    ```
-
-    ```py
         home_team character varying(500),
-    ```
-
-    ```py
         away_team character varying(500),
-    ```
-
-    ```py
         location character varying(500),
-    ```
-
-    ```py
         city character varying(500),
-    ```
-
-    ```py
         seat_level bigint,
-    ```
-
-    ```py
         seat_section bigint,
-    ```
-
-    ```py
         seat_row character varying(500),
-    ```
-
-    ```py
         seat bigint ENCODE az64,
-    ```
-
-    ```py
         list_ticket_price double precision,
-    ```
-
-    ```py
         final_ticket_price double precision ,
-    ```
-
-    ```py
         ticketholder character varying(500)
-    ```
-
-    ```py
     )
-    ```
-
-    ```py
     DISTSTYLE AUTO;
     ```
 
@@ -719,37 +473,13 @@ order by 1;
 
     ```py
     insert into   chapter7_RegressionModel.sporting_event_ticket_info_testing
-    ```
-
-    ```py
     (  ticket_id ,event_id ,sport , event_date_time,  home_team , away_team , location , city , seat_level, seat_section,
-    ```
-
-    ```py
         seat_row ,  seat, list_ticket_price, final_ticket_price, ticketholder )
-    ```
-
-    ```py
     select
-    ```
-
-    ```py
      ticket_id ,event_id ,sport , event_date_time,  home_team , away_team , location , city , seat_level, seat_section,
-    ```
-
-    ```py
         seat_row ,  seat, list_ticket_price, final_ticket_price, ticketholder
-    ```
-
-    ```py
      from chapter7_RegressionModel.sporting_event_ticket_info
-    ```
-
-    ```py
      where event_date_time >  '2019-10-22'
-    ```
-
-    ```py
      ;
     ```
 

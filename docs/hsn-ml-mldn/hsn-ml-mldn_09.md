@@ -275,9 +275,6 @@ var rating = JsonConvert.DeserializeObject<MusicRating>(json);
       15 0.5241 1.2795e+01
       16 0.4863 1.2281e+01
       17 0.4571 1.1938e+01
-    ```
-
-    ```py
       18 0.4209 1.1532e+01
       19 0.3975 1.1227e+01
 

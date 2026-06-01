@@ -792,9 +792,6 @@ MDV              4.120      15,183.616           
      1    156
     -1     18
     Name: anomaly, dtype: int64
-    ```
-
-    ```py
     inlier, outlier = 
       covidanalysis.loc[covidanalysis.anomaly==1],\
       covidanalysis.loc[covidanalysis.anomaly==-1]

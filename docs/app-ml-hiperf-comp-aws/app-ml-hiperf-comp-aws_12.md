@@ -223,17 +223,8 @@ huggingface_estimator = HuggingFace(entry_point='train.py',
 
     ```py
     …
-    ```
-
-    ```py
     # starting the train job with our uploaded datasets as input
-    ```
-
-    ```py
     huggingface_estimator.fit({'data': data_input_path})
-    ```
-
-    ```py
     …
     ```
 

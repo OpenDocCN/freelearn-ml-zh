@@ -834,9 +834,6 @@ buildFormula <- function(
     ```py
       return(formulaKnn)
     }
-    ```
-
-    ```py
     formulaKnnTop <- buildFormula(arrayFeatures, nFeatures = 10)
     formulaKnnTop
     ```

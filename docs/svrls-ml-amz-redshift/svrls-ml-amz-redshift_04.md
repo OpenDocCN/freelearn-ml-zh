@@ -356,29 +356,11 @@ CREATE MODEL guest_clusters
 
     ```py
     CREATE MODEL predict_guest_cancellation_local_inf
-    ```
-
-    ```py
         FROM 'sagemaker_job_name'
-    ```
-
-    ```py
         FUNCTION predict_cancelled_reservation_local(bigint, varchar, timestamp, char, bigint, char)
-    ```
-
-    ```py
         RETURNS char
-    ```
-
-    ```py
         IAM_ROLE default
-    ```
-
-    ```py
         SETTINGS (
-    ```
-
-    ```py
           S3_BUCKET '<<your-S3-bucket>>' );
     ```
 

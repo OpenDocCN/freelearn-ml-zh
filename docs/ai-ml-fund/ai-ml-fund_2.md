@@ -488,9 +488,6 @@ abs(5-2) + abs(1-5) = 3 + 4 = 7
             step_counter += 1
             current_node = nodes_to_visit.pop(0)
             visited_nodes.append(current_node)
-    ```
-
-    ```py
             successor_nodes = successors(current_node, visited_nodes)
             update_costs(costs, current_node, successor_nodes)
             nodes_to_visit.extend(successor_nodes)
@@ -975,9 +972,6 @@ from simpleai.search import SearchProblem, astar
             self.size = size
             self.start = start
             self.end = end
-    ```
-
-    ```py
             self.obstacles = obstacles
             super(ShortestPath, self).__init__(initial_state=self.start)
         def actions(self, state):
